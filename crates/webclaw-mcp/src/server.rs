@@ -191,10 +191,10 @@ impl WebclawMcp {
     async fn crawl(&self, Parameters(params): Parameters<CrawlParams>) -> Result<String, String> {
         validate_url(&params.url)?;
 
-        if let Some(max) = params.max_pages {
-            if max > 500 {
-                return Err("max_pages cannot exceed 500".into());
-            }
+        if let Some(max) = params.max_pages
+            && max > 500
+        {
+            return Err("max_pages cannot exceed 500".into());
         }
 
         let format = params.format.as_deref().unwrap_or("markdown");

@@ -127,6 +127,82 @@ fn format_view_count(raw: &str) -> String {
     }
 }
 
+/// A caption track URL extracted from ytInitialPlayerResponse.
+#[derive(Debug, Clone)]
+pub struct CaptionTrack {
+    pub url: String,
+    pub lang: String,
+    pub name: String,
+}
+
+/// Extract caption track URLs from ytInitialPlayerResponse JSON.
+/// Returns empty vec if no captions are available.
+pub fn extract_caption_tracks(html: &str) -> Vec<CaptionTrack> {
+    let Some(json_str) = YT_PLAYER_RE.captures(html).and_then(|c| c.get(1)) else {
+        return vec![];
+    };
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str.as_str()) else {
+        return vec![];
+    };
+
+    let Some(tracks) = value
+        .get("captions")
+        .and_then(|c| c.get("playerCaptionsTracklistRenderer"))
+        .and_then(|r| r.get("captionTracks"))
+        .and_then(|t| t.as_array())
+    else {
+        return vec![];
+    };
+
+    tracks
+        .iter()
+        .filter_map(|t| {
+            let url = t.get("baseUrl")?.as_str()?.to_string();
+            let lang = t
+                .get("languageCode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("en")
+                .to_string();
+            let name = t
+                .get("name")
+                .and_then(|v| v.get("simpleText"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(&lang)
+                .to_string();
+            Some(CaptionTrack { url, lang, name })
+        })
+        .collect()
+}
+
+/// Parse YouTube timed text XML into plain transcript text.
+/// The XML format is: `<transcript><text start="0" dur="1.5">Hello</text>...</transcript>`
+pub fn parse_timed_text(xml: &str) -> String {
+    // Simple regex-based parsing to avoid adding an XML crate dependency.
+    // Extract text content between <text ...>...</text> tags.
+    static TEXT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<text[^>]*>([^<]*)</text>").unwrap());
+
+    let mut lines: Vec<String> = Vec::new();
+    for cap in TEXT_RE.captures_iter(xml) {
+        let text = cap[1].trim();
+        if text.is_empty() {
+            continue;
+        }
+        // Decode XML entities
+        let decoded = text
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&apos;", "'")
+            .replace("\n", " ");
+        lines.push(decoded);
+    }
+
+    lines.join(" ")
+}
+
 /// Format extracted metadata into structured markdown.
 fn format_markdown(meta: &VideoMeta) -> String {
     let mut md = format!("# {}\n\n", meta.title);

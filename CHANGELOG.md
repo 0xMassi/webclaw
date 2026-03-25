@@ -3,10 +3,17 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.1.2] — 2026-03-24
+## [0.1.2] — 2026-03-25
+
+### Changed
+- Default TLS profile switched from Chrome145/Win to Safari26/Mac (highest pass rate across CF-protected sites)
+- Plain client fallback: when impersonated TLS gets connection error or 403, automatically retries without impersonation (fixes ycombinator.com, producthunt.com, and similar sites)
 
 ### Fixed
 - Reddit scraping: use plain HTTP client for `.json` endpoint (TLS fingerprinting was getting blocked)
+
+### Added
+- YouTube transcript extraction infrastructure in webclaw-core (caption track parsing, timed text XML parser) — wired up when cloud API launches
 
 ---
 

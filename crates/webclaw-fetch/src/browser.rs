@@ -83,8 +83,8 @@ pub fn extra_profiles() -> Vec<ImpersonateProfile> {
 
 pub fn latest_chrome() -> ImpersonateProfile {
     ImpersonateProfile {
-        browser: Impersonate::ChromeV145,
-        os: ImpersonateOS::Windows,
+        browser: Impersonate::SafariV26,
+        os: ImpersonateOS::MacOS,
     }
 }
 

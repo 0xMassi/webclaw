@@ -206,7 +206,11 @@ impl FetchClient {
         Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
     }
 
-    /// Single fetch attempt (no retry).
+    /// Single fetch attempt with automatic plain-client fallback.
+    ///
+    /// If the TLS-impersonated client fails with a connection error or gets a 403,
+    /// retries with a plain client (no impersonation). Some sites (e.g. ycombinator.com)
+    /// reject forged TLS fingerprints but accept default rustls connections.
     async fn fetch_once(&self, url: &str) -> Result<FetchResult, FetchError> {
         let start = Instant::now();
 
@@ -222,8 +226,47 @@ impl FetchClient {
             ClientPool::Rotating { clients } => pick_random(clients),
         };
 
-        let response = client.get(url).send().await?;
+        // Try impersonated client first
+        let needs_plain_fallback = match client.get(url).send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                if status == 403 {
+                    debug!(url, "impersonated client got 403, trying plain fallback");
+                    true
+                } else {
+                    return Self::response_to_result(response, start).await;
+                }
+            }
+            Err(_e) => {
+                debug!(
+                    url,
+                    "impersonated client connection failed, trying plain fallback"
+                );
+                true
+            }
+        };
 
+        // Plain client fallback (no TLS impersonation)
+        if needs_plain_fallback {
+            let plain = primp::Client::builder()
+                .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+                .cookie_store(true)
+                .timeout(Duration::from_secs(30))
+                .build()
+                .map_err(|e| FetchError::Build(format!("plain client: {e}")))?;
+
+            let response = plain.get(url).send().await?;
+            return Self::response_to_result(response, start).await;
+        }
+
+        unreachable!()
+    }
+
+    /// Convert a primp Response into a FetchResult.
+    async fn response_to_result(
+        response: primp::Response,
+        start: Instant,
+    ) -> Result<FetchResult, FetchError> {
         let status = response.status().as_u16();
         let final_url = response.url().to_string();
 
@@ -301,7 +344,31 @@ impl FetchClient {
 
         let start = Instant::now();
         let client = self.pick_client(url);
-        let response = client.get(url).send().await?;
+
+        // Try impersonated client, fall back to plain on connection error or 403
+        let response = match client.get(url).send().await {
+            Ok(resp) if resp.status().as_u16() == 403 => {
+                debug!(url, "impersonated client got 403, trying plain fallback");
+                let plain = primp::Client::builder()
+                    .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+                    .cookie_store(true)
+                    .timeout(Duration::from_secs(30))
+                    .build()
+                    .map_err(|e| FetchError::Build(format!("plain fallback: {e}")))?;
+                plain.get(url).send().await?
+            }
+            Ok(resp) => resp,
+            Err(_e) => {
+                debug!(url, "impersonated client failed, trying plain fallback");
+                let plain = primp::Client::builder()
+                    .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+                    .cookie_store(true)
+                    .timeout(Duration::from_secs(30))
+                    .build()
+                    .map_err(|e| FetchError::Build(format!("plain fallback: {e}")))?;
+                plain.get(url).send().await?
+            }
+        };
 
         let status = response.status().as_u16();
         let final_url = response.url().to_string();
@@ -351,6 +418,14 @@ impl FetchClient {
             }
 
             let extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
+
+            // YouTube transcript: caption URLs are IP-signed and expire immediately,
+            // so the timedtext endpoint returns empty responses. The innertube
+            // get_transcript API requires cookies/consent. Transcript extraction
+            // will be enabled via the cloud API (JS rendering + cookie jar).
+            // The extraction functions exist in webclaw_core::youtube but are not
+            // wired up here until we have a reliable fetch path.
+
             Ok(extraction)
         }
     }

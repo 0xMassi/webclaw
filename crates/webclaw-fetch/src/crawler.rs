@@ -7,7 +7,9 @@
 /// When `use_sitemap` is enabled, the crawler first discovers URLs from the
 /// site's sitemaps and seeds the BFS frontier before crawling.
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -45,6 +47,9 @@ pub struct CrawlConfig {
     /// Optional channel sender for streaming per-page results as they complete.
     /// When set, each `PageResult` is sent on this channel immediately after extraction.
     pub progress_tx: Option<tokio::sync::broadcast::Sender<PageResult>>,
+    /// When set to `true`, the crawler breaks out of the main loop early.
+    /// Callers (e.g. a Ctrl+C handler) can flip this to request graceful cancellation.
+    pub cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 impl Default for CrawlConfig {
@@ -60,6 +65,7 @@ impl Default for CrawlConfig {
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             progress_tx: None,
+            cancel_flag: None,
         }
     }
 }
@@ -72,6 +78,12 @@ pub struct CrawlResult {
     pub ok: usize,
     pub errors: usize,
     pub elapsed_secs: f64,
+    /// URLs visited during this crawl (for resume state).
+    #[serde(skip)]
+    pub visited: HashSet<String>,
+    /// Remaining frontier when crawl was cancelled (for resume state).
+    #[serde(skip)]
+    pub remaining_frontier: Vec<(String, usize)>,
 }
 
 /// Outcome of extracting a single page during the crawl.
@@ -83,6 +95,17 @@ pub struct PageResult {
     pub error: Option<String>,
     #[serde(skip)]
     pub elapsed: Duration,
+}
+
+/// Serializable crawl state for resume after Ctrl+C cancellation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlState {
+    pub seed_url: String,
+    pub visited: Vec<String>,
+    pub frontier: Vec<(String, usize)>,
+    pub completed_pages: usize,
+    pub max_pages: usize,
+    pub max_depth: usize,
 }
 
 /// Recursive crawler that wraps a shared [`FetchClient`].
@@ -108,6 +131,43 @@ impl Crawler {
         })
     }
 
+    /// Save current crawl state to a JSON file for later resume.
+    pub fn save_state(
+        path: &Path,
+        seed_url: &str,
+        visited: &HashSet<String>,
+        frontier: &[(String, usize)],
+        completed_pages: usize,
+        max_pages: usize,
+        max_depth: usize,
+    ) -> Result<(), String> {
+        let state = CrawlState {
+            seed_url: seed_url.to_string(),
+            visited: visited.iter().cloned().collect(),
+            frontier: frontier.to_vec(),
+            completed_pages,
+            max_pages,
+            max_depth,
+        };
+        let json =
+            serde_json::to_string_pretty(&state).map_err(|e| format!("serialize state: {e}"))?;
+        std::fs::write(path, json).map_err(|e| format!("write state to {}: {e}", path.display()))
+    }
+
+    /// Load crawl state from a JSON file. Returns `None` if file doesn't exist.
+    pub fn load_state(path: &Path) -> Option<CrawlState> {
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
+    /// Returns true if the cancel flag has been set.
+    fn is_cancelled(&self) -> bool {
+        self.config
+            .cancel_flag
+            .as_ref()
+            .is_some_and(|f| f.load(Ordering::Relaxed))
+    }
+
     /// Crawl starting from `start_url`, returning results for every page visited.
     ///
     /// Uses breadth-first traversal: all pages at depth N are fetched (concurrently,
@@ -115,7 +175,10 @@ impl Crawler {
     ///
     /// When `config.use_sitemap` is true, sitemap URLs are discovered first and
     /// added to the initial frontier at depth 0 alongside the seed URL.
-    pub async fn crawl(&self, start_url: &str) -> CrawlResult {
+    ///
+    /// If `resume_state` is provided, the crawl resumes from the saved state
+    /// (pre-populated visited set and frontier) instead of starting fresh.
+    pub async fn crawl(&self, start_url: &str, resume_state: Option<CrawlState>) -> CrawlResult {
         let start = Instant::now();
 
         let seed = match Url::parse(start_url) {
@@ -133,46 +196,66 @@ impl Crawler {
                     ok: 0,
                     errors: 1,
                     elapsed_secs: 0.0,
+                    visited: HashSet::new(),
+                    remaining_frontier: Vec::new(),
                 };
             }
         };
 
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency));
-        let mut visited: HashSet<String> = HashSet::new();
+        let mut visited: HashSet<String>;
         let mut pages: Vec<PageResult> = Vec::new();
+        let mut frontier: Vec<(String, usize)>;
 
-        // BFS frontier: vec of (normalized_url, depth) for the current level
-        let mut frontier: Vec<(String, usize)> = vec![(normalize(&seed), 0)];
+        // Resume from saved state or start fresh
+        if let Some(state) = resume_state {
+            visited = state.visited.into_iter().collect();
+            frontier = state.frontier;
+            info!(
+                visited = visited.len(),
+                frontier = frontier.len(),
+                "resuming crawl from saved state"
+            );
+        } else {
+            visited = HashSet::new();
+            frontier = vec![(normalize(&seed), 0)];
 
-        // Seed frontier from sitemap if enabled
-        if self.config.use_sitemap {
-            let base_url = format!("{}://{}", seed.scheme(), seed.host_str().unwrap_or(""));
-            match sitemap::discover(&self.client, &base_url).await {
-                Ok(entries) => {
-                    let before = frontier.len();
-                    for entry in entries {
-                        if self.qualify_link(&entry.url, &visited).is_some() {
-                            let parsed = match Url::parse(&entry.url) {
-                                Ok(u) => u,
-                                Err(_) => continue,
-                            };
-                            let norm = normalize(&parsed);
-                            frontier.push((norm, 0));
+            // Seed frontier from sitemap if enabled
+            if self.config.use_sitemap {
+                let base_url = format!("{}://{}", seed.scheme(), seed.host_str().unwrap_or(""));
+                match sitemap::discover(&self.client, &base_url).await {
+                    Ok(entries) => {
+                        let before = frontier.len();
+                        for entry in entries {
+                            if self.qualify_link(&entry.url, &visited).is_some() {
+                                let parsed = match Url::parse(&entry.url) {
+                                    Ok(u) => u,
+                                    Err(_) => continue,
+                                };
+                                let norm = normalize(&parsed);
+                                frontier.push((norm, 0));
+                            }
                         }
+                        let added = frontier.len() - before;
+                        info!(
+                            sitemap_urls = added,
+                            "seeded frontier from sitemap discovery"
+                        );
                     }
-                    let added = frontier.len() - before;
-                    info!(
-                        sitemap_urls = added,
-                        "seeded frontier from sitemap discovery"
-                    );
-                }
-                Err(e) => {
-                    warn!(error = %e, "sitemap discovery failed, continuing with seed URL only");
+                    Err(e) => {
+                        warn!(error = %e, "sitemap discovery failed, continuing with seed URL only");
+                    }
                 }
             }
         }
 
         while !frontier.is_empty() && pages.len() < self.config.max_pages {
+            // Check cancel flag before processing each batch
+            if self.is_cancelled() {
+                info!("crawl cancelled by user");
+                break;
+            }
+
             // Dedup this level's frontier against the visited set and page cap
             let batch: Vec<(String, usize)> = frontier
                 .drain(..)
@@ -265,6 +348,12 @@ impl Crawler {
                 if pages.len() >= self.config.max_pages {
                     break;
                 }
+
+                // Check cancel flag between page results
+                if self.is_cancelled() {
+                    info!("crawl cancelled by user (mid-batch)");
+                    break;
+                }
             }
 
             frontier = next_frontier;
@@ -286,6 +375,8 @@ impl Crawler {
             ok: ok_count,
             errors: err_count,
             elapsed_secs: total_elapsed.as_secs_f64(),
+            remaining_frontier: frontier,
+            visited,
             pages,
         }
     }

@@ -3,6 +3,18 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.3] — 2026-03-25
+
+### Added
+- Crawl streaming: real-time progress on stderr as pages complete (`[2/50] OK https://... (234ms, 1523 words)`)
+- Crawl resume/cancel: `--crawl-state <path>` saves progress on Ctrl+C and resumes from where it left off
+- MCP server proxy support via `WEBCLAW_PROXY` and `WEBCLAW_PROXY_FILE` env vars
+
+### Changed
+- Crawl results now expose visited set and remaining frontier for accurate state persistence
+
+---
+
 ## [0.1.2] — 2026-03-25
 
 ### Changed

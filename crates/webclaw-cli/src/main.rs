@@ -4,8 +4,10 @@
 mod cloud;
 
 use std::io::{self, Read as _};
+use std::path::PathBuf;
 use std::process;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, ValueEnum};
 use tracing_subscriber::EnvFilter;
@@ -14,7 +16,7 @@ use webclaw_core::{
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
-    FetchConfig, FetchResult, SitemapEntry,
+    FetchConfig, FetchResult, PageResult, SitemapEntry,
 };
 use webclaw_llm::LlmProvider;
 use webclaw_pdf::PdfMode;
@@ -197,6 +199,10 @@ struct Cli {
     /// Glob patterns for crawl URL paths to exclude (comma-separated, e.g. "/changelog/*,/blog/*")
     #[arg(long)]
     exclude_paths: Option<String>,
+
+    /// Path to save/resume crawl state. On Ctrl+C: saves progress. On start: resumes if file exists.
+    #[arg(long)]
+    crawl_state: Option<PathBuf>,
 
     /// Seed crawl frontier from sitemap discovery (robots.txt + /sitemap.xml)
     #[arg(long)]
@@ -903,6 +909,23 @@ fn print_map_output(entries: &[SitemapEntry], format: &OutputFormat) {
     }
 }
 
+/// Format a streaming progress line for a completed page.
+fn format_progress(page: &PageResult, index: usize, max_pages: usize) -> String {
+    let status = if page.error.is_some() { "ERR" } else { "OK " };
+    let timing = format!("{}ms", page.elapsed.as_millis());
+    let detail = if let Some(ref extraction) = page.extraction {
+        format!(", {} words", extraction.metadata.word_count)
+    } else if let Some(ref err) = page.error {
+        format!(" ({err})")
+    } else {
+        String::new()
+    };
+    format!(
+        "[{index}/{max_pages}] {status} {} ({timing}{detail})",
+        page.url
+    )
+}
+
 async fn run_crawl(cli: &Cli) -> Result<(), String> {
     let url = cli
         .urls
@@ -926,6 +949,23 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
         .unwrap_or_default();
 
+    // Set up streaming progress channel
+    let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(100);
+
+    // Set up cancel flag for Ctrl+C handling
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+
+    // Register Ctrl+C handler when --crawl-state is set
+    let state_path = cli.crawl_state.clone();
+    if state_path.is_some() {
+        let flag = Arc::clone(&cancel_flag);
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            flag.store(true, Ordering::Relaxed);
+            eprintln!("\nCtrl+C received, saving crawl state...");
+        });
+    }
+
     let config = CrawlConfig {
         fetch: build_fetch_config(cli),
         max_depth: cli.depth,
@@ -936,11 +976,67 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         use_sitemap: cli.sitemap,
         include_patterns,
         exclude_patterns,
-        progress_tx: None,
+        progress_tx: Some(progress_tx),
+        cancel_flag: Some(Arc::clone(&cancel_flag)),
     };
 
+    // Load resume state if --crawl-state file exists
+    let resume_state = state_path
+        .as_ref()
+        .and_then(|p| Crawler::load_state(p))
+        .inspect(|s| {
+            eprintln!(
+                "Resuming crawl: {} pages already visited, {} URLs in frontier",
+                s.visited.len(),
+                s.frontier.len(),
+            );
+        });
+
+    let max_pages = cli.max_pages;
+    let completed_offset = resume_state.as_ref().map_or(0, |s| s.completed_pages);
+
+    // Spawn background task to print streaming progress to stderr
+    let progress_handle = tokio::spawn(async move {
+        let mut count = completed_offset;
+        while let Ok(page) = progress_rx.recv().await {
+            count += 1;
+            eprintln!("{}", format_progress(&page, count, max_pages));
+        }
+    });
+
     let crawler = Crawler::new(url, config).map_err(|e| format!("crawler error: {e}"))?;
-    let result = crawler.crawl(url).await;
+    let result = crawler.crawl(url, resume_state).await;
+
+    // Drop the crawler (and its progress_tx clone) so the progress task finishes
+    drop(crawler);
+    let _ = progress_handle.await;
+
+    // If cancelled via Ctrl+C and --crawl-state is set, save state for resume
+    let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+    if was_cancelled {
+        if let Some(ref path) = state_path {
+            Crawler::save_state(
+                path,
+                url,
+                &result.visited,
+                &result.remaining_frontier,
+                completed_offset + result.pages.len(),
+                cli.max_pages,
+                cli.depth,
+            )?;
+            eprintln!(
+                "Crawl state saved to {} ({} pages completed). Resume with --crawl-state {}",
+                path.display(),
+                completed_offset + result.pages.len(),
+                path.display(),
+            );
+        }
+    } else if let Some(ref path) = state_path {
+        // Crawl completed normally — clean up state file
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 
     // Log per-page errors and extraction warnings to stderr
     for page in &result.pages {

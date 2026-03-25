@@ -13,7 +13,7 @@ pub mod sitemap;
 
 pub use browser::BrowserProfile;
 pub use client::{BatchExtractResult, BatchResult, FetchClient, FetchConfig, FetchResult};
-pub use crawler::{CrawlConfig, CrawlResult, Crawler, PageResult};
+pub use crawler::{CrawlConfig, CrawlResult, CrawlState, Crawler, PageResult};
 pub use error::FetchError;
 pub use proxy::{parse_proxy_file, parse_proxy_line};
 pub use sitemap::SitemapEntry;

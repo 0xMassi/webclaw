@@ -62,12 +62,20 @@ impl WebclawMcp {
     pub async fn new() -> Self {
         let mut config = webclaw_fetch::FetchConfig::default();
 
-        // Auto-load proxies.txt if present
-        if std::path::Path::new("proxies.txt").exists()
-            && let Ok(pool) = webclaw_fetch::parse_proxy_file("proxies.txt")
+        // Load proxy config from env vars or local file
+        if let Ok(proxy) = std::env::var("WEBCLAW_PROXY") {
+            info!("using single proxy from WEBCLAW_PROXY");
+            config.proxy = Some(proxy);
+        }
+
+        let proxy_file = std::env::var("WEBCLAW_PROXY_FILE")
+            .ok()
+            .unwrap_or_else(|| "proxies.txt".to_string());
+        if std::path::Path::new(&proxy_file).exists()
+            && let Ok(pool) = webclaw_fetch::parse_proxy_file(&proxy_file)
             && !pool.is_empty()
         {
-            info!(count = pool.len(), "loaded proxy pool from proxies.txt");
+            info!(count = pool.len(), file = %proxy_file, "loaded proxy pool");
             config.proxy_pool = pool;
         }
 
@@ -210,7 +218,7 @@ impl WebclawMcp {
         let crawler = webclaw_fetch::Crawler::new(&params.url, config)
             .map_err(|e| format!("Crawler init failed: {e}"))?;
 
-        let result = crawler.crawl(&params.url).await;
+        let result = crawler.crawl(&params.url, None).await;
 
         let mut output = format!(
             "Crawled {} pages ({} ok, {} errors) in {:.1}s\n\n",

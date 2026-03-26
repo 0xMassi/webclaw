@@ -9,6 +9,8 @@ pub mod diff;
 pub mod domain;
 pub mod error;
 pub mod extractor;
+#[cfg(feature = "quickjs")]
+pub mod js_eval;
 pub mod llm;
 pub mod markdown;
 pub mod metadata;
@@ -155,6 +157,22 @@ pub fn extract_with_options(
         content.markdown.push_str("\n\n");
         content.markdown.push_str(&island_md);
         meta.word_count = extractor::word_count(&content.markdown);
+    }
+
+    // QuickJS: execute inline <script> tags to capture JS-assigned data blobs
+    // (e.g., window.__PRELOADED_STATE__, self.__next_f). This supplements the
+    // static JSON data island extraction above with runtime-evaluated data.
+    #[cfg(feature = "quickjs")]
+    {
+        let blobs = js_eval::extract_js_data(html);
+        if !blobs.is_empty() {
+            let js_text = js_eval::extract_readable_text(&blobs);
+            if !js_text.is_empty() {
+                content.markdown.push_str("\n\n");
+                content.markdown.push_str(&js_text);
+                meta.word_count = extractor::word_count(&content.markdown);
+            }
+        }
     }
 
     // Domain detection from URL patterns and DOM heuristics

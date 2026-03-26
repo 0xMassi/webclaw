@@ -3,6 +3,17 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.4] — 2026-03-26
+
+### Added
+- QuickJS integration for extracting data from inline JavaScript (NYTimes +168%, Wired +580% more content)
+- Executes inline `<script>` tags in a sandboxed runtime to capture `window.__*` data blobs
+- Parses Next.js RSC flight data (`self.__next_f`) for App Router sites
+- Smart text filtering rejects CSS, base64, file paths, and code — only keeps readable prose
+- Feature-gated with `quickjs` feature flag (enabled by default, disable for WASM builds)
+
+---
+
 ## [0.1.3] — 2026-03-25
 
 ### Added

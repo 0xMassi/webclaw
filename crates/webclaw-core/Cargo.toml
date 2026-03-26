@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["quickjs"]
+quickjs = ["rquickjs"]
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -16,6 +20,7 @@ url = { version = "2", features = ["serde"] }
 regex = "1"
 once_cell = "1"
 similar = "2"
+rquickjs = { version = "0.9", features = ["classes", "properties"], optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

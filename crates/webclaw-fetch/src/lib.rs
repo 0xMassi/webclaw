@@ -5,6 +5,7 @@
 pub mod browser;
 pub mod client;
 pub mod crawler;
+pub mod document;
 pub mod error;
 pub mod linkedin;
 pub mod proxy;

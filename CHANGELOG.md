@@ -3,6 +3,19 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.0] — 2026-03-26
+
+### Added
+- **DOCX extraction**: auto-detected by Content-Type or URL extension, outputs markdown with headings
+- **XLSX/XLS extraction**: spreadsheets converted to markdown tables, multi-sheet support via calamine
+- **CSV extraction**: parsed with quoted field handling, output as markdown table
+- **HTML output format**: `-f html` returns sanitized HTML from the extracted content
+- **Multi-URL watch**: `--watch` now works with `--urls-file` to monitor multiple URLs in parallel
+- **Batch + LLM extraction**: `--extract-prompt` and `--extract-json` now work with multiple URLs
+- **Scheduled batch watch**: watch multiple URLs with aggregate change reports and per-URL diffs
+
+---
+
 ## [0.1.7] — 2026-03-26
 
 ### Fixed

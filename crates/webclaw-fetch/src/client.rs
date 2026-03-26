@@ -399,6 +399,27 @@ impl FetchClient {
 
             let pdf_result = webclaw_pdf::extract_pdf(&bytes, self.pdf_mode.clone())?;
             Ok(pdf_to_extraction_result(&pdf_result, &final_url))
+        } else if let Some(doc_type) =
+            crate::document::is_document_content_type(&headers, &final_url)
+        {
+            debug!(status, doc_type = ?doc_type, "detected document response, extracting");
+
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|e| FetchError::BodyDecode(e.to_string()))?;
+
+            let elapsed = start.elapsed();
+            debug!(
+                status,
+                bytes = bytes.len(),
+                elapsed_ms = %elapsed.as_millis(),
+                "document fetch complete"
+            );
+
+            let mut result = crate::document::extract_document(&bytes, doc_type)?;
+            result.metadata.url = Some(final_url);
+            Ok(result)
         } else {
             let html = response
                 .text()

@@ -12,7 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use clap::{Parser, ValueEnum};
 use tracing_subscriber::EnvFilter;
 use webclaw_core::{
-    ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options, to_llm_text,
+    ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options,
+    to_llm_text,
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
@@ -157,6 +158,23 @@ struct Cli {
     /// Compare against a previous JSON snapshot
     #[arg(long)]
     diff_with: Option<String>,
+
+    /// Watch a URL for changes. Checks at the specified interval and reports diffs.
+    #[arg(long)]
+    watch: bool,
+
+    /// Watch interval in seconds [default: 300]
+    #[arg(long, default_value = "300")]
+    watch_interval: u64,
+
+    /// Command to run when changes are detected (receives diff JSON on stdin)
+    #[arg(long)]
+    on_change: Option<String>,
+
+    /// Webhook URL: POST a JSON payload when an operation completes.
+    /// Works with crawl, batch, watch (on change), and single URL modes.
+    #[arg(long, env = "WEBCLAW_WEBHOOK_URL")]
+    webhook: Option<String>,
 
     /// Extract brand identity (colors, fonts, logo)
     #[arg(long)]
@@ -1171,6 +1189,24 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         result.total, result.ok, result.errors, result.elapsed_secs,
     );
 
+    // Fire webhook on crawl complete
+    if let Some(ref webhook_url) = cli.webhook {
+        let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
+        fire_webhook(
+            webhook_url,
+            &serde_json::json!({
+                "event": "crawl_complete",
+                "total": result.total,
+                "ok": result.ok,
+                "errors": result.errors,
+                "elapsed_secs": result.elapsed_secs,
+                "urls": urls,
+            }),
+        );
+        // Brief pause so the async webhook has time to fire
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
     if result.errors > 0 {
         Err(format!(
             "{} of {} pages failed",
@@ -1260,11 +1296,192 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
         errors
     );
 
+    // Fire webhook on batch complete
+    if let Some(ref webhook_url) = cli.webhook {
+        let urls: Vec<&str> = results.iter().map(|r| r.url.as_str()).collect();
+        fire_webhook(
+            webhook_url,
+            &serde_json::json!({
+                "event": "batch_complete",
+                "total": results.len(),
+                "ok": ok,
+                "errors": errors,
+                "urls": urls,
+            }),
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
     if errors > 0 {
         Err(format!("{errors} of {} URLs failed", results.len()))
     } else {
         Ok(())
     }
+}
+
+fn timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let hours = (now % 86400) / 3600;
+    let minutes = (now % 3600) / 60;
+    let seconds = now % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+/// Fire a webhook POST with a JSON payload. Non-blocking — errors logged to stderr.
+/// Auto-detects Discord and Slack webhook URLs and wraps the payload accordingly.
+fn fire_webhook(url: &str, payload: &serde_json::Value) {
+    let url = url.to_string();
+    let is_discord = url.contains("discord.com/api/webhooks");
+    let is_slack = url.contains("hooks.slack.com");
+
+    let body = if is_discord {
+        let event = payload
+            .get("event")
+            .and_then(|v| v.as_str())
+            .unwrap_or("notification");
+        let details = serde_json::to_string_pretty(payload).unwrap_or_default();
+        serde_json::json!({
+            "embeds": [{
+                "title": format!("webclaw: {event}"),
+                "description": format!("```json\n{details}\n```"),
+                "color": 5814783
+            }]
+        })
+        .to_string()
+    } else if is_slack {
+        let event = payload
+            .get("event")
+            .and_then(|v| v.as_str())
+            .unwrap_or("notification");
+        let details = serde_json::to_string_pretty(payload).unwrap_or_default();
+        serde_json::json!({
+            "text": format!("*webclaw: {event}*\n```{details}```")
+        })
+        .to_string()
+    } else {
+        serde_json::to_string(payload).unwrap_or_default()
+    };
+    tokio::spawn(async move {
+        match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            Ok(c) => match c
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    eprintln!(
+                        "[webhook] POST {} -> {}",
+                        &url[..url.len().min(60)],
+                        resp.status()
+                    );
+                }
+                Err(e) => eprintln!("[webhook] POST failed: {e}"),
+            },
+            Err(e) => eprintln!("[webhook] client error: {e}"),
+        }
+    });
+}
+
+async fn run_watch(cli: &Cli) -> Result<(), String> {
+    let raw_url = cli.urls.first().ok_or("--watch requires a URL argument")?;
+    let url = normalize_url(raw_url);
+
+    let client =
+        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
+    let options = build_extraction_options(cli);
+
+    // Initial snapshot
+    let mut previous = client
+        .fetch_and_extract_with_options(&url, &options)
+        .await
+        .map_err(|e| format!("initial fetch failed: {e}"))?;
+
+    eprintln!(
+        "[watch] Initial snapshot: {url} ({} words)",
+        previous.metadata.word_count
+    );
+
+    // Ctrl+C handler
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancelled);
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        flag.store(true, Ordering::Relaxed);
+    });
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(cli.watch_interval)).await;
+
+        if cancelled.load(Ordering::Relaxed) {
+            eprintln!("[watch] Stopped");
+            break;
+        }
+
+        let current = match client.fetch_and_extract_with_options(&url, &options).await {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("[watch] Fetch error ({}): {e}", timestamp());
+                continue;
+            }
+        };
+
+        let diff = webclaw_core::diff::diff(&previous, &current);
+
+        if diff.status == ChangeStatus::Same {
+            eprintln!("[watch] No changes ({})", timestamp());
+        } else {
+            print_diff_output(&diff, &cli.format);
+            eprintln!("[watch] Changes detected! ({})", timestamp());
+
+            if let Some(ref cmd) = cli.on_change {
+                let diff_json = serde_json::to_string(&diff).unwrap_or_default();
+                eprintln!("[watch] Running: {cmd}");
+                match tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(cmd)
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(mut child) => {
+                        // Pipe diff JSON to stdin, then detach
+                        if let Some(mut stdin) = child.stdin.take() {
+                            use tokio::io::AsyncWriteExt;
+                            let _ = stdin.write_all(diff_json.as_bytes()).await;
+                        }
+                    }
+                    Err(e) => eprintln!("[watch] Failed to run command: {e}"),
+                }
+            }
+
+            // Fire webhook on change
+            if let Some(ref webhook_url) = cli.webhook {
+                fire_webhook(
+                    webhook_url,
+                    &serde_json::json!({
+                        "event": "watch_change",
+                        "url": url,
+                        "status": format!("{:?}", diff.status),
+                        "word_count_delta": diff.word_count_delta,
+                        "metadata_changes": diff.metadata_changes.len(),
+                        "links_added": diff.links_added.len(),
+                        "links_removed": diff.links_removed.len(),
+                    }),
+                );
+            }
+
+            previous = current;
+        }
+    }
+
+    Ok(())
 }
 
 async fn run_diff(cli: &Cli, snapshot_path: &str) -> Result<(), String> {
@@ -1430,6 +1647,15 @@ async fn main() {
     // --crawl: recursive crawl mode
     if cli.crawl {
         if let Err(e) = run_crawl(&cli).await {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    // --watch: poll a URL for changes
+    if cli.watch {
+        if let Err(e) = run_watch(&cli).await {
             eprintln!("error: {e}");
             process::exit(1);
         }

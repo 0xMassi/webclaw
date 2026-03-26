@@ -3,6 +3,16 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.6] — 2026-03-26
+
+### Added
+- `--watch`: monitor a URL for changes at a configurable interval with diff output
+- `--watch-interval`: seconds between checks (default: 300)
+- `--on-change`: run a command when changes are detected (diff JSON piped to stdin)
+- `--webhook`: POST JSON notifications on crawl/batch complete and watch changes. Auto-formats for Discord and Slack webhooks
+
+---
+
 ## [0.1.5] — 2026-03-26
 
 ### Added

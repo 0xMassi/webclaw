@@ -99,13 +99,6 @@ jobs:
     name: Docker
     needs: release
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - platform: linux/amd64
-            binary_target: x86_64-unknown-linux-gnu
-          - platform: linux/arm64
-            binary_target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
 
@@ -117,53 +110,43 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Download pre-built binaries from the release instead of recompiling
+      # Download pre-built binaries for both architectures
       - name: Download release binaries
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          dir="webclaw-${tag}-${{ matrix.binary_target }}"
-          tarball="${dir}.tar.gz"
-          curl -sSL "https://github.com/0xMassi/webclaw/releases/download/${tag}/${tarball}" -o release.tar.gz
-          tar xzf release.tar.gz
-          mkdir -p binaries
-          cp "${dir}/webclaw" binaries/webclaw
-          cp "${dir}/webclaw-mcp" binaries/webclaw-mcp
-          chmod +x binaries/*
-          ls -la binaries/
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            dir="webclaw-${tag}-${target}"
+            curl -sSL "https://github.com/0xMassi/webclaw/releases/download/${tag}/${dir}.tar.gz" -o "${target}.tar.gz"
+            tar xzf "${target}.tar.gz"
+            mkdir -p "binaries-${target}"
+            cp "${dir}/webclaw" "binaries-${target}/webclaw"
+            cp "${dir}/webclaw-mcp" "binaries-${target}/webclaw-mcp"
+            chmod +x "binaries-${target}"/*
+          done
+          ls -laR binaries-*/
 
+      # Build per-arch images with plain docker build (no buildx manifest nesting)
       - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.ci
-          push: true
-          platforms: ${{ matrix.platform }}
-          tags: ghcr.io/0xmassi/webclaw:${{ github.ref_name }}-${{ matrix.binary_target }}
-          build-args: |
-            BINARY_DIR=binaries
-
-  docker-manifest:
-    name: Docker Manifest
-    needs: docker
-    runs-on: ubuntu-latest
-    steps:
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create multi-arch manifest
         run: |
           tag="${GITHUB_REF#refs/tags/}"
+
+          # amd64
+          docker build -f Dockerfile.ci --build-arg BINARY_DIR=binaries-x86_64-unknown-linux-gnu \
+            --platform linux/amd64 -t ghcr.io/0xmassi/webclaw:${tag}-amd64 --push .
+
+          # arm64
+          docker build -f Dockerfile.ci --build-arg BINARY_DIR=binaries-aarch64-unknown-linux-gnu \
+            --platform linux/arm64 -t ghcr.io/0xmassi/webclaw:${tag}-arm64 --push .
+
+          # Multi-arch manifest
           docker manifest create ghcr.io/0xmassi/webclaw:${tag} \
-            ghcr.io/0xmassi/webclaw:${tag}-x86_64-unknown-linux-gnu \
-            ghcr.io/0xmassi/webclaw:${tag}-aarch64-unknown-linux-gnu
+            ghcr.io/0xmassi/webclaw:${tag}-amd64 \
+            ghcr.io/0xmassi/webclaw:${tag}-arm64
           docker manifest push ghcr.io/0xmassi/webclaw:${tag}
 
           docker manifest create ghcr.io/0xmassi/webclaw:latest \
-            ghcr.io/0xmassi/webclaw:${tag}-x86_64-unknown-linux-gnu \
-            ghcr.io/0xmassi/webclaw:${tag}-aarch64-unknown-linux-gnu
+            ghcr.io/0xmassi/webclaw:${tag}-amd64 \
+            ghcr.io/0xmassi/webclaw:${tag}-arm64
           docker manifest push ghcr.io/0xmassi/webclaw:latest
 
   homebrew:

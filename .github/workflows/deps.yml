@@ -1,0 +1,31 @@
+name: Dependency Check
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Every Monday 9am UTC
+  workflow_dispatch: # Manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "--cfg reqwest_unstable"
+
+jobs:
+  check-primp:
+    name: Check primp compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Try building with latest primp — if patches are out of sync this fails
+      - name: Update primp to latest
+        run: cargo update -p primp
+
+      - name: Build with latest deps
+        run: cargo build -p webclaw-cli
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::primp updated and build broke. Patches in Cargo.toml may need syncing with https://github.com/deedy5/primp/blob/main/Cargo.toml"

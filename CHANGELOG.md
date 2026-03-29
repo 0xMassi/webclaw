@@ -3,6 +3,27 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.0] — 2026-03-29
+
+### Changed
+- **Replaced primp with webclaw-tls**: entire TLS fingerprinting stack is now our own. Zero primp references remain.
+- **Own TLS library**: [webclaw-tls](https://github.com/0xMassi/webclaw-tls) — patched rustls, h2, hyper, hyper-util, reqwest for browser-grade fingerprinting.
+- **Perfect Chrome 146 fingerprint**: JA4 `t13d1517h2_8daaf6152771_b6f405a00624` + Akamai HTTP/2 hash match — the only library in any language to achieve this.
+- **99% bypass rate**: 101/102 sites pass (up from ~85% with primp).
+- **Browser profiles**: Chrome 146 (Win/Mac), Firefox 135+, Safari 18, Edge 146 — captured from real browsers.
+
+### Fixed
+- **HTTPS completely broken (#5)**: primp's forked rustls rejected valid certificates (UnknownIssuer on cross-signed chains like example.com). Fixed by using native OS root CAs alongside Mozilla bundle.
+- **Unknown certificate extensions**: servers returning SCT in certificate entries no longer cause TLS errors.
+
+### Added
+- **Native root CA support**: uses OS trust store (macOS Keychain, Windows cert store) in addition to webpki-roots.
+- **HTTP/2 fingerprinting**: SETTINGS frame ordering and pseudo-header ordering match real browsers.
+- **Per-browser header ordering**: HTTP headers sent in browser-specific wire order.
+- **Bandwidth tracking**: atomic byte counters shared across cloned clients.
+
+---
+
 ## [0.2.2] — 2026-03-27
 
 ### Fixed

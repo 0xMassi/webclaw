@@ -247,11 +247,17 @@ impl FetchClient {
         };
 
         // Plain client fallback (no TLS impersonation)
+        // danger_accept_invalid_certs: the primp-patched rustls rejects some valid
+        // certificates with UnknownCertificateExtension / UnknownIssuer.  For the
+        // plain-text fallback (which only runs when the impersonated client already
+        // failed) accepting certs unconditionally lets the request succeed while the
+        // upstream rustls fork is fixed.
         if needs_plain_fallback {
             let plain = primp::Client::builder()
                 .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
                 .cookie_store(true)
                 .timeout(Duration::from_secs(30))
+                .danger_accept_invalid_certs(true)
                 .build()
                 .map_err(|e| FetchError::Build(format!("plain client: {e}")))?;
 
@@ -327,6 +333,7 @@ impl FetchClient {
             let plain = primp::Client::builder()
                 .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
                 .timeout(std::time::Duration::from_secs(15))
+                .danger_accept_invalid_certs(true)
                 .build()
                 .map_err(|e| FetchError::Build(format!("reddit client: {e}")))?;
             let response = plain.get(&json_url).send().await?;
@@ -353,6 +360,7 @@ impl FetchClient {
                     .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
                     .cookie_store(true)
                     .timeout(Duration::from_secs(30))
+                    .danger_accept_invalid_certs(true)
                     .build()
                     .map_err(|e| FetchError::Build(format!("plain fallback: {e}")))?;
                 plain.get(url).send().await?
@@ -364,6 +372,7 @@ impl FetchClient {
                     .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
                     .cookie_store(true)
                     .timeout(Duration::from_secs(30))
+                    .danger_accept_invalid_certs(true)
                     .build()
                     .map_err(|e| FetchError::Build(format!("plain fallback: {e}")))?;
                 plain.get(url).send().await?

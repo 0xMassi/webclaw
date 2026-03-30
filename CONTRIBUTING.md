@@ -40,7 +40,7 @@ Both must pass cleanly before submitting a PR.
 
 - Rust edition 2024, formatted with `rustfmt` (see `rustfmt.toml`, `style_edition = "2024"`)
 - `webclaw-core` has zero network dependencies -- keep it WASM-safe
-- `webclaw-llm` uses plain `reqwest`, not the patched TLS variant
+- `webclaw-llm` uses plain `reqwest` — LLM APIs don't need TLS fingerprinting
 - Prefer returning `Result` over panicking. No `.unwrap()` on untrusted input.
 - Doc comments on all public items. Explain *why*, not *what*.
 
@@ -87,6 +87,23 @@ Body is optional but encouraged for non-trivial changes.
 - For extraction bugs: include the URL (or HTML snippet) and the output format used
 - Security issues: email directly instead of opening a public issue
 
+## Architecture
+
+```
+webclaw (this repo)
+├── crates/
+│   ├── webclaw-core/    # Pure extraction engine (HTML → markdown/json/text)
+│   ├── webclaw-fetch/   # HTTP client + crawler + sitemap + batch
+│   ├── webclaw-llm/     # LLM provider chain (Ollama → OpenAI → Anthropic)
+│   ├── webclaw-pdf/     # PDF text extraction
+│   ├── webclaw-cli/     # CLI binary
+│   └── webclaw-mcp/     # MCP server binary
+│
+└── [patch.crates-io]    # Points to webclaw-tls for TLS fingerprinting
+```
+
+TLS fingerprinting lives in a separate repo: [webclaw-tls](https://github.com/0xMassi/webclaw-tls). The `[patch.crates-io]` section in `Cargo.toml` overrides rustls, h2, hyper, hyper-util, and reqwest with our patched forks for browser-grade JA4 + HTTP/2 Akamai fingerprinting.
+
 ## Crate Boundaries
 
 Changes that cross crate boundaries need extra care:
@@ -94,8 +111,8 @@ Changes that cross crate boundaries need extra care:
 | Crate | Network? | Key constraint |
 |-------|----------|----------------|
 | webclaw-core | No | Zero network deps, WASM-safe |
-| webclaw-fetch | Yes (Impit) | Requires `[patch.crates-io]` |
-| webclaw-llm | Yes (reqwest) | Plain reqwest, not Impit-patched |
+| webclaw-fetch | Yes (webclaw-http) | Uses [webclaw-tls](https://github.com/0xMassi/webclaw-tls) for TLS fingerprinting |
+| webclaw-llm | Yes (reqwest) | Plain reqwest — LLM APIs don't need TLS fingerprinting |
 | webclaw-pdf | No | Minimal, wraps pdf-extract |
 | webclaw-cli | Yes | Depends on all above |
 | webclaw-mcp | Yes | MCP server via rmcp |

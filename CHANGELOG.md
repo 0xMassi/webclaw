@@ -3,6 +3,15 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.2] — 2026-03-31
+
+### Added
+- **`--cookie-file` flag**: load cookies from JSON files exported by browser extensions (EditThisCookie, Cookie-Editor). Format: `[{name, value, domain, ...}]`.
+- **MCP `cookies` parameter**: the `scrape` tool now accepts a `cookies` array for authenticated scraping.
+- **Combined cookies**: `--cookie` and `--cookie-file` can be used together and merge automatically.
+
+---
+
 ## [0.3.1] — 2026-03-30
 
 ### Added

@@ -95,6 +95,11 @@ cp env.example .env
 docker compose up -d
 ```
 
+### Self-Hosted REST API (Dokploy)
+
+Ready to serve structured JSON for your external apps. Low memory footprint (~30MB), high performance.
+See [DOKPLOY.md](DOKPLOY.md) for deployment instructions.
+
 ---
 
 ## Why webclaw?
@@ -319,6 +324,7 @@ webclaw/
     webclaw-llm      LLM provider chain (Ollama -> OpenAI -> Anthropic)
     webclaw-pdf      PDF text extraction
     webclaw-mcp      MCP server (10 tools for AI agents)
+    webclaw-api      REST API server (lightweight, Axum-based)
     webclaw-cli      CLI binary
 ```
 

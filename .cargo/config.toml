@@ -1,2 +1,2 @@
-[build]
-rustflags = ["--cfg", "reqwest_unstable"]
+# No special build flags needed.
+# wreq handles TLS via BoringSSL internally.

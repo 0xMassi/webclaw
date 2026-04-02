@@ -1,8 +1,9 @@
 /// Extract structured data from HTML.
 ///
-/// Handles two sources:
+/// Handles three sources:
 /// 1. JSON-LD (`<script type="application/ld+json">`) — e-commerce, news, recipes
-/// 2. SvelteKit data islands (`kit.start(app, element, { data: [...] })`) — SPAs
+/// 2. `__NEXT_DATA__` (`<script id="__NEXT_DATA__" type="application/json">`) — Next.js pages
+/// 3. SvelteKit data islands (`kit.start(app, element, { data: [...] })`) — SPAs
 use serde_json::Value;
 
 /// Extract all JSON-LD blocks from raw HTML.
@@ -60,6 +61,59 @@ pub fn extract_json_ld(html: &str) -> Vec<Value> {
     }
 
     results
+}
+
+/// Extract `__NEXT_DATA__` from Next.js pages.
+///
+/// Next.js embeds server-rendered page data in:
+/// `<script id="__NEXT_DATA__" type="application/json">{...}</script>`
+///
+/// Returns the `pageProps` object (the actual page data), skipping Next.js
+/// internals like `buildId`, `isFallback`, etc.
+pub fn extract_next_data(html: &str) -> Vec<Value> {
+    let Some(id_pos) = html.find("__NEXT_DATA__") else {
+        return Vec::new();
+    };
+
+    // Find the enclosing <script> tag
+    let Some(tag_start) = html[..id_pos].rfind("<script") else {
+        return Vec::new();
+    };
+    let tag_region = &html[tag_start..];
+
+    let Some(tag_end) = tag_region.find('>') else {
+        return Vec::new();
+    };
+
+    let content_start = tag_start + tag_end + 1;
+    let remaining = &html[content_start..];
+    let Some(close) = remaining.find("</script>") else {
+        return Vec::new();
+    };
+
+    let json_str = remaining[..close].trim();
+    if json_str.len() < 20 {
+        return Vec::new();
+    }
+
+    let Ok(data) = serde_json::from_str::<Value>(json_str) else {
+        return Vec::new();
+    };
+
+    // Extract pageProps — the actual page data
+    if let Some(page_props) = data.get("props").and_then(|p| p.get("pageProps"))
+        && page_props.is_object()
+        && page_props.as_object().is_some_and(|m| !m.is_empty())
+    {
+        return vec![page_props.clone()];
+    }
+
+    // Fallback: return the whole thing if pageProps is missing/empty
+    if data.is_object() {
+        vec![data]
+    } else {
+        Vec::new()
+    }
 }
 
 /// Extract data from SvelteKit's `kit.start()` pattern.

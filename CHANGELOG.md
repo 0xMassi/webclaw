@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.5] — 2026-04-02
+
+### Added
+- **`__NEXT_DATA__` extraction**: Next.js pages now have their `pageProps` JSON extracted into `structured_data`. Contains prices, product info, page state, and other data that isn't in the visible HTML. Tested on 45 sites — 13 now return rich structured data (BBC, Forbes, Nike, Stripe, TripAdvisor, Glassdoor, NASA, etc.).
+
+---
+
 ## [0.3.4] — 2026-04-01
 
 ### Added

@@ -522,7 +522,8 @@ impl WebclawMcp {
     }
 
     /// Run a deep research investigation on a topic or question. Requires WEBCLAW_API_KEY.
-    /// Starts an async research job on the webclaw cloud API, then polls until complete.
+    /// Saves full result to ~/.webclaw/research/ and returns the file path + key findings.
+    /// Checks cache first — same query returns the cached result without spending credits.
     #[tool]
     async fn research(
         &self,
@@ -532,6 +533,15 @@ impl WebclawMcp {
             .cloud
             .as_ref()
             .ok_or("Research requires WEBCLAW_API_KEY. Get a key at https://webclaw.io")?;
+
+        let research_dir = research_dir();
+        let slug = slugify(&params.query);
+
+        // Check cache first
+        if let Some(cached) = load_cached_research(&research_dir, &slug) {
+            info!(query = %params.query, "returning cached research");
+            return Ok(cached);
+        }
 
         let mut body = json!({ "query": params.query });
         if let Some(deep) = params.deep {
@@ -551,7 +561,7 @@ impl WebclawMcp {
 
         info!(job_id = %job_id, "research job started, polling for completion");
 
-        // Poll until completed or failed, with a max iteration cap (~10 minutes)
+        // Poll until completed or failed
         for poll in 0..RESEARCH_MAX_POLLS {
             tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -563,32 +573,37 @@ impl WebclawMcp {
 
             match status {
                 "completed" => {
-                    // Return structured result: report + sources + findings
-                    let mut result = json!({
-                        "id": job_id,
+                    // Save full result to file
+                    let (report_path, json_path) =
+                        save_research(&research_dir, &slug, &status_resp);
+
+                    // Build compact response: file paths + findings (no full report)
+                    let sources_count = status_resp
+                        .get("sources_count")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let findings_count = status_resp
+                        .get("findings_count")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+
+                    let mut response = json!({
                         "status": "completed",
+                        "query": params.query,
+                        "report_file": report_path,
+                        "json_file": json_path,
+                        "sources_count": sources_count,
+                        "findings_count": findings_count,
                     });
 
-                    if let Some(report) = status_resp.get("report") {
-                        result["report"] = report.clone();
+                    if let Some(findings) = status_resp.get("findings") {
+                        response["findings"] = findings.clone();
                     }
                     if let Some(sources) = status_resp.get("sources") {
-                        result["sources"] = sources.clone();
-                    }
-                    if let Some(findings) = status_resp.get("findings") {
-                        result["findings"] = findings.clone();
-                    }
-                    if let Some(elapsed) = status_resp.get("elapsed_ms") {
-                        result["elapsed_ms"] = elapsed.clone();
-                    }
-                    if let Some(sc) = status_resp.get("sources_count") {
-                        result["sources_count"] = sc.clone();
-                    }
-                    if let Some(fc) = status_resp.get("findings_count") {
-                        result["findings_count"] = fc.clone();
+                        response["sources"] = sources.clone();
                     }
 
-                    return Ok(serde_json::to_string_pretty(&result).unwrap_or_default());
+                    return Ok(serde_json::to_string_pretty(&response).unwrap_or_default());
                 }
                 "failed" => {
                     let error = status_resp
@@ -664,4 +679,89 @@ impl ServerHandler for WebclawMcp {
                  Tools: scrape, crawl, map, batch, extract, summarize, diff, brand, research, search.",
             ))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Research file helpers
+// ---------------------------------------------------------------------------
+
+fn research_dir() -> std::path::PathBuf {
+    let dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".webclaw")
+        .join("research");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
+fn slugify(query: &str) -> String {
+    let s: String = query
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_lowercase();
+    if s.len() > 60 { s[..60].to_string() } else { s }
+}
+
+/// Check for a cached research result. Returns the compact response if found.
+fn load_cached_research(dir: &std::path::Path, slug: &str) -> Option<String> {
+    let json_path = dir.join(format!("{slug}.json"));
+    let report_path = dir.join(format!("{slug}.md"));
+
+    if !json_path.exists() || !report_path.exists() {
+        return None;
+    }
+
+    let json_str = std::fs::read_to_string(&json_path).ok()?;
+    let data: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+
+    // Build compact response from cache
+    let mut response = json!({
+        "status": "completed",
+        "cached": true,
+        "query": data.get("query").cloned().unwrap_or(json!("")),
+        "report_file": report_path.to_string_lossy(),
+        "json_file": json_path.to_string_lossy(),
+        "sources_count": data.get("sources_count").cloned().unwrap_or(json!(0)),
+        "findings_count": data.get("findings_count").cloned().unwrap_or(json!(0)),
+    });
+
+    if let Some(findings) = data.get("findings") {
+        response["findings"] = findings.clone();
+    }
+    if let Some(sources) = data.get("sources") {
+        response["sources"] = sources.clone();
+    }
+
+    Some(serde_json::to_string_pretty(&response).unwrap_or_default())
+}
+
+/// Save research result to disk. Returns (report_path, json_path) as strings.
+fn save_research(dir: &std::path::Path, slug: &str, data: &serde_json::Value) -> (String, String) {
+    let json_path = dir.join(format!("{slug}.json"));
+    let report_path = dir.join(format!("{slug}.md"));
+
+    // Save full JSON
+    if let Ok(json_str) = serde_json::to_string_pretty(data) {
+        std::fs::write(&json_path, json_str).ok();
+    }
+
+    // Save report as markdown
+    if let Some(report) = data.get("report").and_then(|v| v.as_str()) {
+        std::fs::write(&report_path, report).ok();
+    }
+
+    (
+        report_path.to_string_lossy().to_string(),
+        json_path.to_string_lossy().to_string(),
+    )
 }

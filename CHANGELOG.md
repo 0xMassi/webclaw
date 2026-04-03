@@ -3,6 +3,17 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.8] — 2026-04-03
+
+### Fixed
+- **MCP research token overflow**: research results are now saved to `~/.webclaw/research/` and the MCP tool returns file paths + findings instead of the full report. Prevents "exceeds maximum allowed tokens" errors in Claude/Cursor.
+- **Research caching**: same query returns cached result instantly without spending credits.
+- **Anthropic rate limit throttling**: 60s delay between LLM calls in research to stay under Tier 1 limits (50K input tokens/min).
+
+### Added
+- **`dirs` dependency** for `~/.webclaw/research/` path resolution.
+
+---
 ## [0.3.7] — 2026-04-03
 
 ### Added

@@ -319,34 +319,46 @@ impl WebclawMcp {
     }
 
     /// Extract structured data from a web page using an LLM. Provide either a JSON schema or a natural language prompt.
-    /// Automatically falls back to the webclaw cloud API when bot protection is detected.
+    /// Falls back to the webclaw cloud API when no local LLM is available or bot protection is detected.
     #[tool]
     async fn extract(
         &self,
         Parameters(params): Parameters<ExtractParams>,
     ) -> Result<String, String> {
         validate_url(&params.url)?;
-        let chain = self.llm_chain.as_ref().ok_or(
-            "No LLM providers available. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or run Ollama locally.",
-        )?;
 
         if params.schema.is_none() && params.prompt.is_none() {
             return Err("Either 'schema' or 'prompt' is required for extraction.".into());
         }
 
-        // For extract, if we get a cloud fallback we call the cloud extract endpoint directly
+        // No local LLM — fall back to cloud API directly
+        if self.llm_chain.is_none() {
+            let cloud = self.cloud.as_ref().ok_or(
+                "No LLM providers available. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or WEBCLAW_API_KEY for cloud fallback.",
+            )?;
+            let mut body = json!({"url": params.url});
+            if let Some(ref schema) = params.schema {
+                body["schema"] = json!(schema);
+            }
+            if let Some(ref prompt) = params.prompt {
+                body["prompt"] = json!(prompt);
+            }
+            let resp = cloud.post("extract", body).await?;
+            return Ok(serde_json::to_string_pretty(&resp).unwrap_or_default());
+        }
+
+        let chain = self.llm_chain.as_ref().unwrap();
+
         let llm_content = match self.smart_fetch_llm(&params.url).await? {
             SmartFetchResult::Local(extraction) => {
                 webclaw_core::to_llm_text(&extraction, Some(&params.url))
             }
-            SmartFetchResult::Cloud(resp) => {
-                // Use the LLM format from cloud, fall back to markdown
-                resp.get("llm")
-                    .or_else(|| resp.get("markdown"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            }
+            SmartFetchResult::Cloud(resp) => resp
+                .get("llm")
+                .or_else(|| resp.get("markdown"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         };
 
         let data = if let Some(ref schema) = params.schema {
@@ -364,16 +376,32 @@ impl WebclawMcp {
     }
 
     /// Summarize the content of a web page using an LLM.
-    /// Automatically falls back to the webclaw cloud API when bot protection is detected.
+    /// Falls back to the webclaw cloud API when no local LLM is available or bot protection is detected.
     #[tool]
     async fn summarize(
         &self,
         Parameters(params): Parameters<SummarizeParams>,
     ) -> Result<String, String> {
         validate_url(&params.url)?;
-        let chain = self.llm_chain.as_ref().ok_or(
-            "No LLM providers available. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or run Ollama locally.",
-        )?;
+
+        // No local LLM — fall back to cloud API directly
+        if self.llm_chain.is_none() {
+            let cloud = self.cloud.as_ref().ok_or(
+                "No LLM providers available. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or WEBCLAW_API_KEY for cloud fallback.",
+            )?;
+            let mut body = json!({"url": params.url});
+            if let Some(sentences) = params.max_sentences {
+                body["max_sentences"] = json!(sentences);
+            }
+            let resp = cloud.post("summarize", body).await?;
+            let summary = resp.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            if summary.is_empty() {
+                return Ok(serde_json::to_string_pretty(&resp).unwrap_or_default());
+            }
+            return Ok(summary.to_string());
+        }
+
+        let chain = self.llm_chain.as_ref().unwrap();
 
         let llm_content = match self.smart_fetch_llm(&params.url).await? {
             SmartFetchResult::Local(extraction) => {
@@ -535,15 +563,32 @@ impl WebclawMcp {
 
             match status {
                 "completed" => {
-                    let report = status_resp
-                        .get("report")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    // Return structured result: report + sources + findings
+                    let mut result = json!({
+                        "id": job_id,
+                        "status": "completed",
+                    });
 
-                    if report.is_empty() {
-                        return Ok(serde_json::to_string_pretty(&status_resp).unwrap_or_default());
+                    if let Some(report) = status_resp.get("report") {
+                        result["report"] = report.clone();
                     }
-                    return Ok(report.to_string());
+                    if let Some(sources) = status_resp.get("sources") {
+                        result["sources"] = sources.clone();
+                    }
+                    if let Some(findings) = status_resp.get("findings") {
+                        result["findings"] = findings.clone();
+                    }
+                    if let Some(elapsed) = status_resp.get("elapsed_ms") {
+                        result["elapsed_ms"] = elapsed.clone();
+                    }
+                    if let Some(sc) = status_resp.get("sources_count") {
+                        result["sources_count"] = sc.clone();
+                    }
+                    if let Some(fc) = status_resp.get("findings_count") {
+                        result["findings_count"] = fc.clone();
+                    }
+
+                    return Ok(serde_json::to_string_pretty(&result).unwrap_or_default());
                 }
                 "failed" => {
                     let error = status_resp

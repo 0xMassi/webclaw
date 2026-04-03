@@ -268,6 +268,15 @@ struct Cli {
     #[arg(long)]
     cloud: bool,
 
+    /// Run deep research on a topic via the cloud API. Requires --api-key.
+    /// Saves full result (report + sources + findings) to a JSON file.
+    #[arg(long)]
+    research: Option<String>,
+
+    /// Enable deep research mode (longer, more thorough report). Used with --research.
+    #[arg(long)]
+    deep: bool,
+
     /// Output directory: save each page to a separate file instead of stdout.
     /// Works with --crawl, batch (multiple URLs), and single URL mode.
     /// Filenames are derived from URL paths (e.g. /docs/api -> docs/api.md).
@@ -2067,6 +2076,141 @@ fn has_llm_flags(cli: &Cli) -> bool {
     cli.extract_json.is_some() || cli.extract_prompt.is_some() || cli.summarize.is_some()
 }
 
+async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
+    let api_key = cli
+        .api_key
+        .as_deref()
+        .ok_or("--research requires WEBCLAW_API_KEY (set via env or --api-key)")?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|e| format!("http client error: {e}"))?;
+
+    let mut body = serde_json::json!({ "query": query });
+    if cli.deep {
+        body["deep"] = serde_json::json!(true);
+    }
+
+    eprintln!("Starting research: {query}");
+    if cli.deep {
+        eprintln!("Deep mode enabled (longer, more thorough)");
+    }
+
+    // Start job
+    let resp = client
+        .post("https://api.webclaw.io/v1/research")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("API error: {e}"))?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("parse error: {e}"))?;
+
+    let job_id = resp
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("API did not return a job ID")?
+        .to_string();
+
+    eprintln!("Job started: {job_id}");
+
+    // Poll
+    for poll in 0..200 {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        let status_resp = client
+            .get(format!("https://api.webclaw.io/v1/research/{job_id}"))
+            .header("Authorization", format!("Bearer {api_key}"))
+            .send()
+            .await
+            .map_err(|e| format!("poll error: {e}"))?
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("parse error: {e}"))?;
+
+        let status = status_resp
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        match status {
+            "completed" => {
+                let report = status_resp
+                    .get("report")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                // Save full result to JSON file
+                let slug: String = query
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == ' ' {
+                            c
+                        } else {
+                            ' '
+                        }
+                    })
+                    .collect::<String>()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join("-")
+                    .to_lowercase();
+                let slug = if slug.len() > 50 { &slug[..50] } else { &slug };
+                let filename = format!("research-{slug}.json");
+
+                let json = serde_json::to_string_pretty(&status_resp).unwrap_or_default();
+                std::fs::write(&filename, &json)
+                    .map_err(|e| format!("failed to write {filename}: {e}"))?;
+
+                let elapsed = status_resp
+                    .get("elapsed_ms")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let sources = status_resp
+                    .get("sources_count")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let findings = status_resp
+                    .get("findings_count")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+
+                eprintln!(
+                    "Research complete: {sources} sources, {findings} findings, {:.1}s",
+                    elapsed as f64 / 1000.0
+                );
+                eprintln!("Saved to: {filename}");
+
+                // Print report to stdout
+                if !report.is_empty() {
+                    println!("{report}");
+                }
+
+                return Ok(());
+            }
+            "failed" => {
+                let error = status_resp
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                return Err(format!("Research failed: {error}"));
+            }
+            _ => {
+                if poll % 10 == 9 {
+                    eprintln!("Still researching... ({:.0}s)", (poll + 1) as f64 * 3.0);
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "Research timed out after ~10 minutes. Check status: GET /v1/research/{job_id}"
+    ))
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -2120,6 +2264,15 @@ async fn main() {
     // --brand: brand identity extraction mode
     if cli.brand {
         if let Err(e) = run_brand(&cli).await {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    // --research: deep research via cloud API
+    if let Some(ref query) = cli.research {
+        if let Err(e) = run_research(&cli, query).await {
             eprintln!("error: {e}");
             process::exit(1);
         }

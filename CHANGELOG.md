@@ -3,6 +3,15 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.7] — 2026-04-03
+
+### Added
+- **`--research` CLI flag**: run deep research via the cloud API. Prints report to stdout and saves full result (report + sources + findings) to a JSON file. Supports `--deep` for longer reports.
+- **MCP extract/summarize cloud fallback**: when no local LLM is available, these tools now fall back to the cloud API instead of erroring. Set `WEBCLAW_API_KEY` for automatic fallback.
+- **MCP research structured output**: the research tool now returns structured JSON (report + sources + findings + metadata) instead of raw text, so agents can reference individual findings and source URLs.
+
+---
+
 ## [0.3.6] — 2026-04-02
 
 ### Added

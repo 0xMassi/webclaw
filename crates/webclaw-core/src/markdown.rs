@@ -14,6 +14,12 @@ use crate::types::{CodeBlock, Image, Link};
 
 static CODE_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("code").unwrap());
 
+/// Maximum recursion depth for DOM traversal.
+/// Express.co.uk live blogs and similar pages can nest 1000+ levels deep,
+/// overflowing the default ~1 MB stack on Windows.  When we hit this limit
+/// we fall back to plain-text collection (which uses an iterator, not recursion).
+const MAX_DOM_DEPTH: usize = 200;
+
 /// Collected assets found during conversion.
 pub struct ConvertedAssets {
     pub links: Vec<Link>,
@@ -34,7 +40,7 @@ pub fn convert(
         code_blocks: Vec::new(),
     };
 
-    let md = node_to_md(element, base_url, &mut assets, 0, exclude);
+    let md = node_to_md(element, base_url, &mut assets, 0, exclude, 0);
     let plain = strip_markdown(&md);
     let md = collapse_whitespace(&md);
     let plain = collapse_whitespace(&plain);
@@ -49,9 +55,15 @@ fn node_to_md(
     assets: &mut ConvertedAssets,
     list_depth: usize,
     exclude: &HashSet<NodeId>,
+    depth: usize,
 ) -> String {
     if exclude.contains(&element.id()) {
         return String::new();
+    }
+
+    // Guard against deeply nested DOM trees (e.g., Express.co.uk live blogs).
+    if depth > MAX_DOM_DEPTH {
+        return collect_text(element);
     }
 
     if noise::is_noise(element) || noise::is_noise_descendant(element) {
@@ -67,38 +79,38 @@ fn node_to_md(
         // Headings
         "h1" => format!(
             "\n\n# {}\n\n",
-            inline_text(element, base_url, assets, exclude)
+            inline_text(element, base_url, assets, exclude, depth)
         ),
         "h2" => format!(
             "\n\n## {}\n\n",
-            inline_text(element, base_url, assets, exclude)
+            inline_text(element, base_url, assets, exclude, depth)
         ),
         "h3" => format!(
             "\n\n### {}\n\n",
-            inline_text(element, base_url, assets, exclude)
+            inline_text(element, base_url, assets, exclude, depth)
         ),
         "h4" => format!(
             "\n\n#### {}\n\n",
-            inline_text(element, base_url, assets, exclude)
+            inline_text(element, base_url, assets, exclude, depth)
         ),
         "h5" => format!(
             "\n\n##### {}\n\n",
-            inline_text(element, base_url, assets, exclude)
+            inline_text(element, base_url, assets, exclude, depth)
         ),
         "h6" => format!(
             "\n\n###### {}\n\n",
-            inline_text(element, base_url, assets, exclude)
+            inline_text(element, base_url, assets, exclude, depth)
         ),
 
         // Paragraph
         "p" => format!(
             "\n\n{}\n\n",
-            inline_text(element, base_url, assets, exclude)
+            inline_text(element, base_url, assets, exclude, depth)
         ),
 
         // Links
         "a" => {
-            let text = inline_text(element, base_url, assets, exclude);
+            let text = inline_text(element, base_url, assets, exclude, depth);
             let href = element
                 .value()
                 .attr("href")
@@ -163,11 +175,24 @@ fn node_to_md(
             }
         }
 
-        // Bold
-        "strong" | "b" => format!("**{}**", inline_text(element, base_url, assets, exclude)),
+        // Bold — if it contains block elements (e.g., Drudge wraps entire columns
+        // in <b>), treat as a container instead of inline bold.
+        "strong" | "b" => {
+            if cell_has_block_content(element) {
+                children_to_md(element, base_url, assets, list_depth, exclude, depth)
+            } else {
+                format!("**{}**", inline_text(element, base_url, assets, exclude, depth))
+            }
+        }
 
-        // Italic
-        "em" | "i" => format!("*{}*", inline_text(element, base_url, assets, exclude)),
+        // Italic — same block-content check as bold.
+        "em" | "i" => {
+            if cell_has_block_content(element) {
+                children_to_md(element, base_url, assets, list_depth, exclude, depth)
+            } else {
+                format!("*{}*", inline_text(element, base_url, assets, exclude, depth))
+            }
+        }
 
         // Inline code
         "code" => {
@@ -200,13 +225,13 @@ fn node_to_md(
                             .attr("class")
                             .and_then(extract_language_from_class)
                     });
-                (collect_preformatted_text(code_el), lang)
+                (collect_preformatted_text(code_el, depth), lang)
             } else {
                 let lang = element
                     .value()
                     .attr("class")
                     .and_then(extract_language_from_class);
-                (collect_preformatted_text(element), lang)
+                (collect_preformatted_text(element, depth), lang)
             };
 
             let code = code.trim_matches('\n').to_string();
@@ -221,7 +246,7 @@ fn node_to_md(
 
         // Blockquote
         "blockquote" => {
-            let inner = children_to_md(element, base_url, assets, list_depth, exclude);
+            let inner = children_to_md(element, base_url, assets, list_depth, exclude, depth);
             let quoted = inner
                 .trim()
                 .lines()
@@ -233,19 +258,19 @@ fn node_to_md(
 
         // Unordered list
         "ul" => {
-            let items = list_items(element, base_url, assets, list_depth, false, exclude);
+            let items = list_items(element, base_url, assets, list_depth, false, exclude, depth);
             format!("\n\n{items}\n\n")
         }
 
         // Ordered list
         "ol" => {
-            let items = list_items(element, base_url, assets, list_depth, true, exclude);
+            let items = list_items(element, base_url, assets, list_depth, true, exclude, depth);
             format!("\n\n{items}\n\n")
         }
 
         // List item — handled by ul/ol parent, but if encountered standalone:
         "li" => {
-            let text = inline_text(element, base_url, assets, exclude);
+            let text = inline_text(element, base_url, assets, exclude, depth);
             format!("- {text}\n")
         }
 
@@ -258,11 +283,11 @@ fn node_to_md(
         // Table
         "table" => format!(
             "\n\n{}\n\n",
-            table_to_md(element, base_url, assets, exclude)
+            table_to_md(element, base_url, assets, exclude, depth)
         ),
 
         // Divs and other containers — just recurse
-        _ => children_to_md(element, base_url, assets, list_depth, exclude),
+        _ => children_to_md(element, base_url, assets, list_depth, exclude, depth),
     }
 }
 
@@ -273,13 +298,14 @@ fn children_to_md(
     assets: &mut ConvertedAssets,
     list_depth: usize,
     exclude: &HashSet<NodeId>,
+    depth: usize,
 ) -> String {
     let mut out = String::new();
     for child in element.children() {
         match child.value() {
             Node::Element(_) => {
                 if let Some(child_el) = ElementRef::wrap(child) {
-                    let chunk = node_to_md(child_el, base_url, assets, list_depth, exclude);
+                    let chunk = node_to_md(child_el, base_url, assets, list_depth, exclude, depth + 1);
                     if !chunk.is_empty() && !out.is_empty() && needs_separator(&out, &chunk) {
                         out.push(' ');
                     }
@@ -302,13 +328,14 @@ fn inline_text(
     base_url: Option<&Url>,
     assets: &mut ConvertedAssets,
     exclude: &HashSet<NodeId>,
+    depth: usize,
 ) -> String {
     let mut out = String::new();
     for child in element.children() {
         match child.value() {
             Node::Element(_) => {
                 if let Some(child_el) = ElementRef::wrap(child) {
-                    let chunk = node_to_md(child_el, base_url, assets, 0, exclude);
+                    let chunk = node_to_md(child_el, base_url, assets, 0, exclude, depth + 1);
                     if !chunk.is_empty() && !out.is_empty() && needs_separator(&out, &chunk) {
                         out.push(' ');
                     }
@@ -343,7 +370,10 @@ fn collect_text(element: ElementRef<'_>) -> String {
 /// Every text node is pushed verbatim -- no trimming, no collapsing.
 /// Handles `<br>` as newlines and inserts newlines between block-level children
 /// (e.g., `<div>` lines produced by some syntax highlighters).
-fn collect_preformatted_text(element: ElementRef<'_>) -> String {
+fn collect_preformatted_text(element: ElementRef<'_>, depth: usize) -> String {
+    if depth > MAX_DOM_DEPTH {
+        return element.text().collect::<String>();
+    }
     let mut out = String::new();
     for child in element.children() {
         match child.value() {
@@ -357,12 +387,12 @@ fn collect_preformatted_text(element: ElementRef<'_>) -> String {
                         if !out.is_empty() && !out.ends_with('\n') {
                             out.push('\n');
                         }
-                        out.push_str(&collect_preformatted_text(child_el));
+                        out.push_str(&collect_preformatted_text(child_el, depth + 1));
                         if !out.ends_with('\n') {
                             out.push('\n');
                         }
                     } else {
-                        out.push_str(&collect_preformatted_text(child_el));
+                        out.push_str(&collect_preformatted_text(child_el, depth + 1));
                     }
                 }
             }
@@ -392,6 +422,7 @@ fn list_items(
     depth: usize,
     ordered: bool,
     exclude: &HashSet<NodeId>,
+    dom_depth: usize,
 ) -> String {
     let indent = "  ".repeat(depth);
     let mut out = String::new();
@@ -430,6 +461,7 @@ fn list_items(
                                 depth + 1,
                                 child_tag == "ol",
                                 exclude,
+                                dom_depth + 1,
                             ));
                         } else {
                             inline_parts.push_str(&node_to_md(
@@ -438,6 +470,7 @@ fn list_items(
                                 assets,
                                 depth,
                                 exclude,
+                                dom_depth + 1,
                             ));
                         }
                     } else if let Some(text) = li_child.value().as_text() {
@@ -460,23 +493,42 @@ fn list_items(
     out.trim_end_matches('\n').to_string()
 }
 
+/// Check whether a table cell contains block-level elements, indicating a layout
+/// table rather than a data table.
+fn cell_has_block_content(cell: ElementRef<'_>) -> bool {
+    const BLOCK_TAGS: &[&str] = &[
+        "p", "div", "ul", "ol", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "pre",
+        "table", "section", "article", "header", "footer", "nav", "aside",
+    ];
+    for desc in cell.descendants() {
+        if let Some(el) = ElementRef::wrap(desc) {
+            if BLOCK_TAGS.contains(&el.value().name()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn table_to_md(
     table_el: ElementRef<'_>,
     base_url: Option<&Url>,
     assets: &mut ConvertedAssets,
     exclude: &HashSet<NodeId>,
+    depth: usize,
 ) -> String {
-    let mut rows: Vec<Vec<String>> = Vec::new();
+    // Collect all <td>/<th> cells grouped by row, and detect layout tables
+    let mut raw_rows: Vec<Vec<ElementRef<'_>>> = Vec::new();
     let mut has_header = false;
+    let mut is_layout = false;
 
-    // Collect rows from thead and tbody
     for child in table_el.descendants() {
         if let Some(el) = ElementRef::wrap(child) {
             if exclude.contains(&el.id()) {
                 continue;
             }
             if el.value().name() == "tr" {
-                let cells: Vec<String> = el
+                let cells: Vec<ElementRef<'_>> = el
                     .children()
                     .filter_map(ElementRef::wrap)
                     .filter(|c| {
@@ -487,20 +539,52 @@ fn table_to_md(
                         if c.value().name() == "th" {
                             has_header = true;
                         }
-                        inline_text(c, base_url, assets, exclude)
+                        if !is_layout && cell_has_block_content(c) {
+                            is_layout = true;
+                        }
+                        c
                     })
                     .collect();
 
                 if !cells.is_empty() {
-                    rows.push(cells);
+                    raw_rows.push(cells);
                 }
             }
         }
     }
 
-    if rows.is_empty() {
+    if raw_rows.is_empty() {
         return String::new();
     }
+
+    // Layout table: render each cell as a standalone block section
+    if is_layout {
+        let mut out = String::new();
+        for row in &raw_rows {
+            for cell in row {
+                let content =
+                    children_to_md(*cell, base_url, assets, 0, exclude, depth);
+                let content = content.trim();
+                if !content.is_empty() {
+                    if !out.is_empty() {
+                        out.push_str("\n\n");
+                    }
+                    out.push_str(content);
+                }
+            }
+        }
+        return out;
+    }
+
+    // Data table: render as markdown table
+    let mut rows: Vec<Vec<String>> = raw_rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|c| inline_text(*c, base_url, assets, exclude, depth))
+                .collect()
+        })
+        .collect();
 
     // Find max column count
     let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
@@ -993,6 +1077,54 @@ mod tests {
         assert!(md.contains("| Name | Age |"));
         assert!(md.contains("| --- | --- |"));
         assert!(md.contains("| Alice | 30 |"));
+    }
+
+    #[test]
+    fn layout_table() {
+        // Layout tables (cells with block elements) should render as sections, not markdown tables
+        let html = r##"
+        <table>
+            <tr>
+                <td>
+                    <p>Column one first paragraph</p>
+                    <p>Column one second paragraph</p>
+                </td>
+                <td>
+                    <p>Column two content</p>
+                    <hr>
+                    <p>Column two after rule</p>
+                </td>
+            </tr>
+        </table>"##;
+        let (md, _, _) = convert_html(html, None);
+        // Should NOT produce markdown table syntax
+        assert!(!md.contains("| "), "layout table should not use pipe syntax: {md}");
+        // Should contain the content as separate blocks
+        assert!(md.contains("Column one first paragraph"), "missing content: {md}");
+        assert!(md.contains("Column two content"), "missing content: {md}");
+        assert!(md.contains("Column two after rule"), "missing content: {md}");
+    }
+
+    #[test]
+    fn layout_table_with_links() {
+        // Drudge-style layout: cells full of links and divs
+        let html = r##"
+        <table>
+            <tr>
+                <td>
+                    <div><a href="https://example.com/1">Headline One</a></div>
+                    <div><a href="https://example.com/2">Headline Two</a></div>
+                </td>
+                <td>
+                    <div><a href="https://example.com/3">Headline Three</a></div>
+                </td>
+            </tr>
+        </table>"##;
+        let (md, _, _) = convert_html(html, None);
+        assert!(!md.contains("| "), "layout table should not use pipe syntax: {md}");
+        assert!(md.contains("[Headline One](https://example.com/1)"), "missing link: {md}");
+        assert!(md.contains("[Headline Two](https://example.com/2)"), "missing link: {md}");
+        assert!(md.contains("[Headline Three](https://example.com/3)"), "missing link: {md}");
     }
 
     #[test]

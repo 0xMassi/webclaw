@@ -45,7 +45,32 @@ pub fn extract(html: &str, url: Option<&str>) -> Result<ExtractionResult, Extrac
 /// `html`    — raw HTML string to parse
 /// `url`     — optional source URL, used for resolving relative links and domain detection
 /// `options` — controls include/exclude selectors, main content mode, and raw HTML output
+///
+/// Spawns extraction on a thread with an 8 MB stack to handle deeply nested
+/// HTML (e.g., Express.co.uk live blogs) without overflowing the default 1-2 MB
+/// main-thread stack on Windows.
 pub fn extract_with_options(
+    html: &str,
+    url: Option<&str>,
+    options: &ExtractionOptions,
+) -> Result<ExtractionResult, ExtractError> {
+    // The default main-thread stack on Windows is 1 MB, which can overflow
+    // on deeply nested pages.  Spawn a worker thread with 8 MB to be safe.
+    const STACK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
+
+    let html = html.to_string();
+    let url = url.map(|u| u.to_string());
+    let options = options.clone();
+
+    std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(move || extract_with_options_inner(&html, url.as_deref(), &options))
+        .map_err(|_| ExtractError::NoContent)?
+        .join()
+        .unwrap_or(Err(ExtractError::NoContent))
+}
+
+fn extract_with_options_inner(
     html: &str,
     url: Option<&str>,
     options: &ExtractionOptions,
@@ -528,6 +553,46 @@ mod tests {
         assert!(
             !json.contains("raw_html"),
             "raw_html should be absent from JSON when None"
+        );
+    }
+
+    #[test]
+    fn express_live_blog_no_stack_overflow() {
+        // Real-world Express.co.uk live blog that previously caused stack overflow
+        let html = include_str!("../testdata/express_test.html");
+        let result = extract(
+            html,
+            Some("https://www.express.co.uk/news/world/2189934/iran-live-donald-trump-uae-dubai-kuwait-attacks"),
+        );
+        assert!(result.is_ok(), "Should not stack overflow on Express.co.uk live blog");
+        let result = result.unwrap();
+        assert!(
+            result.metadata.word_count > 100,
+            "Should extract meaningful content, got {} words",
+            result.metadata.word_count
+        );
+    }
+
+    #[test]
+    fn deeply_nested_html_no_stack_overflow() {
+        // Simulate deeply nested HTML like Express.co.uk live blogs
+        let depth = 500;
+        let mut html = String::from("<html><body>");
+        for _ in 0..depth {
+            html.push_str("<div><span>");
+        }
+        html.push_str("<p>Deep content here</p>");
+        for _ in 0..depth {
+            html.push_str("</span></div>");
+        }
+        html.push_str("</body></html>");
+
+        let result = extract(&html, None);
+        assert!(result.is_ok(), "Should not stack overflow on deeply nested HTML");
+        let result = result.unwrap();
+        assert!(
+            result.content.markdown.contains("Deep content"),
+            "Should extract content from deep nesting"
         );
     }
 }

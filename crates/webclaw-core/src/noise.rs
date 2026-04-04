@@ -7,9 +7,12 @@
 use scraper::ElementRef;
 
 const NOISE_TAGS: &[&str] = &[
-    "script", "style", "noscript", "iframe", "svg", "nav", "aside", "footer", "header", "form",
-    "video", "audio",
-    "canvas",
+    "script", "style", "noscript", "iframe", "svg", "nav", "aside", "footer", "header", "video",
+    "audio", "canvas",
+    // NOTE: <form> removed from this list — ASP.NET and similar frameworks wrap the
+    // entire page body in a single <form> tag that contains all real content.
+    // Forms are now handled with a heuristic in is_noise() that distinguishes
+    // small input forms (noise) from page-wrapping forms (not noise).
     // NOTE: <picture> removed — it's a responsive image container, not noise.
     // <picture> wraps <source> and <img> for responsive images.
 ];
@@ -189,6 +192,28 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
         return true;
     }
 
+    // <form> heuristic: ASP.NET wraps the entire page body in a single <form>.
+    // These page-wrapping forms contain hundreds of words of real content.
+    // Small forms (login, search, newsletter) are noise.
+    if tag == "form" {
+        let text_len = el.text().collect::<String>().len();
+        // A form with substantial text (>500 chars) is likely a page wrapper, not noise.
+        // Small forms (login/search/subscribe) rarely exceed a few hundred chars.
+        if text_len < 500 {
+            return true;
+        }
+        // Also check noise classes/IDs — a big form with class="login-form" is still noise
+        if let Some(class) = el.value().attr("class") {
+            let cl = class.to_lowercase();
+            if cl.contains("login") || cl.contains("search") || cl.contains("subscribe")
+                || cl.contains("signup") || cl.contains("newsletter") || cl.contains("contact")
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ARIA role-based noise
     if let Some(role) = el.value().attr("role")
         && NOISE_ROLES.contains(&role)
@@ -200,10 +225,12 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
     // check each against the noise list. "free-modal-container" splits into
     // ["free-modal-container"] which does NOT match "modal".
     if let Some(class) = el.value().attr("class") {
+        let mut class_matched = false;
         for token in class.split_whitespace() {
             let lower = token.to_lowercase();
             if NOISE_CLASSES.contains(&lower.as_str()) {
-                return true;
+                class_matched = true;
+                break;
             }
             // Structural elements use compound names (FooterLinks, Header-nav, etc.)
             // These are always noise regardless of compound form.
@@ -211,11 +238,24 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
                 || lower.starts_with("header-")
                 || lower.starts_with("nav-")
             {
-                return true;
+                class_matched = true;
+                break;
             }
         }
-        // Also check for ad-specific patterns (standalone "ad" class)
-        if is_ad_class(class) {
+        if !class_matched {
+            class_matched = is_ad_class(class);
+        }
+
+        if class_matched {
+            // Safety valve: malformed HTML can leave noise containers unclosed,
+            // causing them to absorb the entire page content. A real header/nav/
+            // footer rarely exceeds a few thousand characters of text. If a
+            // noise-class element has massive text content, it's almost certainly
+            // a broken wrapper — treat it as content, not noise.
+            let text_len = el.text().collect::<String>().len();
+            if text_len > 5000 {
+                return false;
+            }
             return true;
         }
     }
@@ -224,6 +264,11 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
     if let Some(id) = el.value().attr("id") {
         let id_lower = id.to_lowercase();
         if NOISE_IDS.contains(&id_lower.as_str()) && !is_structural_id(&id_lower) {
+            // Same safety valve for ID-matched noise elements
+            let text_len = el.text().collect::<String>().len();
+            if text_len > 5000 {
+                return false;
+            }
             return true;
         }
         // Cookie consent platform IDs (prefix match — these generate huge overlays)
@@ -752,5 +797,38 @@ mod tests {
         assert!(!is_css_class_text(
             "The quick brown fox jumps over the lazy text-lg dog"
         ));
+    }
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::*;
+    use scraper::Html;
+
+    #[test]
+    fn aspnet_page_wrapping_form_is_not_noise() {
+        let html = r#"<html><body><form method="post" action="./page.aspx" id="form1"><div class="wrapper"><div class="content"><h1>Support</h1><h3>Question one?</h3><p>Long answer text that should definitely be captured by the extraction engine. This is real content with multiple sentences to ensure it passes any text length thresholds in the scoring algorithm. We need at least five hundred characters of actual text content here to exceed the threshold. Adding more sentences about various topics including data formats, historical prices, stock market analysis, technical indicators, and trading strategies. This paragraph discusses how intraday data can be used for backtesting quantitative models and developing automated trading systems.</p><h3>Question two?</h3><p>Another substantial answer paragraph with detailed information about the product features and capabilities.</p></div></div></form></body></html>"#;
+        let doc = Html::parse_document(html);
+        let form = doc.select(&scraper::Selector::parse("form").unwrap()).next().unwrap();
+        let text = form.text().collect::<String>();
+        let text_len = text.len();
+        assert!(text_len >= 500, "Form text should be >= 500 chars, got {text_len}");
+        assert!(!is_noise(form), "ASP.NET page-wrapping form should NOT be noise");
+    }
+
+    #[test]
+    fn small_login_form_is_noise() {
+        let html = r#"
+        <html><body>
+        <form action="/login">
+            <input type="text" name="user" />
+            <input type="password" name="pass" />
+            <button>Login</button>
+        </form>
+        </body></html>
+        "#;
+        let doc = Html::parse_document(html);
+        let form = doc.select(&scraper::Selector::parse("form").unwrap()).next().unwrap();
+        assert!(is_noise(form), "Small login form SHOULD be noise");
     }
 }

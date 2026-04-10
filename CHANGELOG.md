@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.11] — 2026-04-10
+
+### Added
+- **Sitemap fallback paths**: discovery now tries `/sitemap_index.xml`, `/wp-sitemap.xml`, and `/sitemap/sitemap-index.xml` in addition to the standard `/sitemap.xml`. Sites using WordPress or non-standard sitemap locations are now discovered without needing external search.
+
+---
+
 ## [0.3.10] — 2026-04-10
 
 ### Changed

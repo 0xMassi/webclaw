@@ -2,7 +2,7 @@
 ///
 /// Discovers URLs from a site's sitemaps using a 3-step process:
 /// 1. Parse robots.txt for `Sitemap:` directives
-/// 2. Try /sitemap.xml as fallback
+/// 2. Try common sitemap paths as fallback
 /// 3. Recursively resolve sitemap index files
 ///
 /// All HTTP requests go through FetchClient to inherit TLS fingerprinting.
@@ -20,6 +20,14 @@ use crate::error::FetchError;
 /// Prevents infinite loops from circular sitemap references.
 const MAX_RECURSION_DEPTH: usize = 3;
 
+/// Common sitemap paths to try when robots.txt doesn't list any.
+const FALLBACK_SITEMAP_PATHS: &[&str] = &[
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+    "/wp-sitemap.xml",
+    "/sitemap/sitemap-index.xml",
+];
+
 /// A single URL discovered from a sitemap.
 #[derive(Debug, Clone, Serialize)]
 pub struct SitemapEntry {
@@ -33,7 +41,7 @@ pub struct SitemapEntry {
 ///
 /// Discovery order:
 /// 1. Fetch /robots.txt, parse `Sitemap:` directives
-/// 2. Fetch /sitemap.xml directly
+/// 2. Try common sitemap paths as fallback (skipping any already found)
 /// 3. If sitemap index, recursively fetch child sitemaps
 /// 4. Deduplicate by URL
 ///
@@ -63,10 +71,12 @@ pub async fn discover(
         }
     }
 
-    // Step 2: Always try /sitemap.xml as well (may not be listed in robots.txt)
-    let default_sitemap = format!("{base}/sitemap.xml");
-    if !sitemap_urls.iter().any(|u| u == &default_sitemap) {
-        sitemap_urls.push(default_sitemap);
+    // Step 2: Try common sitemap paths (skipping any already discovered via robots.txt)
+    for path in FALLBACK_SITEMAP_PATHS {
+        let candidate = format!("{base}{path}");
+        if !sitemap_urls.iter().any(|u| u == &candidate) {
+            sitemap_urls.push(candidate);
+        }
     }
 
     // Step 3: Fetch and parse each sitemap, handling indexes recursively
@@ -578,5 +588,14 @@ mod tests {
 
         assert_eq!(detect_sitemap_type("garbage"), SitemapType::Unknown);
         assert_eq!(detect_sitemap_type(""), SitemapType::Unknown);
+    }
+
+    #[test]
+    fn test_fallback_paths_constant() {
+        // Verify the constant has the expected paths
+        assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemap.xml"));
+        assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemap_index.xml"));
+        assert!(FALLBACK_SITEMAP_PATHS.contains(&"/wp-sitemap.xml"));
+        assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemap/sitemap-index.xml"));
     }
 }

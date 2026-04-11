@@ -247,7 +247,7 @@ struct Cli {
     #[arg(long, num_args = 0..=1, default_missing_value = "3")]
     summarize: Option<usize>,
 
-    /// Force a specific LLM provider (ollama, openai, anthropic)
+    /// Force a specific LLM provider (gemini, ollama, openai, anthropic)
     #[arg(long, env = "NOXA_LLM_PROVIDER")]
     llm_provider: Option<String>,
 
@@ -1814,6 +1814,17 @@ async fn run_brand(cli: &Cli) -> Result<(), String> {
 async fn build_llm_provider(cli: &Cli) -> Result<Box<dyn LlmProvider>, String> {
     if let Some(ref name) = cli.llm_provider {
         match name.as_str() {
+            "gemini" => {
+                let provider = noxa_llm::providers::gemini_cli::GeminiCliProvider::new(
+                    cli.llm_model.clone(),
+                );
+                if !provider.is_available().await {
+                    return Err(
+                        "gemini CLI not found on PATH -- install it or omit --llm-provider".into(),
+                    );
+                }
+                Ok(Box::new(provider))
+            }
             "ollama" => {
                 let provider = noxa_llm::providers::ollama::OllamaProvider::new(
                     cli.llm_base_url.clone(),
@@ -1842,14 +1853,14 @@ async fn build_llm_provider(cli: &Cli) -> Result<Box<dyn LlmProvider>, String> {
                 Ok(Box::new(provider))
             }
             other => Err(format!(
-                "unknown LLM provider: {other} (use ollama, openai, or anthropic)"
+                "unknown LLM provider: {other} (use gemini, ollama, openai, or anthropic)"
             )),
         }
     } else {
         let chain = noxa_llm::ProviderChain::default().await;
         if chain.is_empty() {
             return Err(
-                "no LLM providers available -- start Ollama or set OPENAI_API_KEY / ANTHROPIC_API_KEY"
+                "no LLM providers available -- install the gemini CLI, start Ollama, or set OPENAI_API_KEY / ANTHROPIC_API_KEY"
                     .into(),
             );
         }

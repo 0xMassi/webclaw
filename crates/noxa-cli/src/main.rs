@@ -1902,6 +1902,7 @@ async fn run_llm(cli: &Cli, resolved: &config::ResolvedConfig) -> Result<(), Str
         let schema: serde_json::Value =
             serde_json::from_str(&schema_str).map_err(|e| format!("invalid JSON schema: {e}"))?;
 
+        let t = std::time::Instant::now();
         let extracted = noxa_llm::extract::extract_json(
             &result.content.plain_text,
             &schema,
@@ -1910,12 +1911,14 @@ async fn run_llm(cli: &Cli, resolved: &config::ResolvedConfig) -> Result<(), Str
         )
         .await
         .map_err(|e| format!("LLM extraction failed: {e}"))?;
+        eprintln!("LLM: {:.1}s", t.elapsed().as_secs_f64());
 
         println!(
             "{}",
             serde_json::to_string_pretty(&extracted).expect("serialization failed")
         );
     } else if let Some(ref prompt) = cli.extract_prompt {
+        let t = std::time::Instant::now();
         let extracted = noxa_llm::extract::extract_with_prompt(
             &result.content.plain_text,
             prompt,
@@ -1924,12 +1927,14 @@ async fn run_llm(cli: &Cli, resolved: &config::ResolvedConfig) -> Result<(), Str
         )
         .await
         .map_err(|e| format!("LLM extraction failed: {e}"))?;
+        eprintln!("LLM: {:.1}s", t.elapsed().as_secs_f64());
 
         println!(
             "{}",
             serde_json::to_string_pretty(&extracted).expect("serialization failed")
         );
     } else if let Some(sentences) = cli.summarize {
+        let t = std::time::Instant::now();
         let summary = noxa_llm::summarize::summarize(
             &result.content.plain_text,
             Some(sentences),
@@ -1938,6 +1943,7 @@ async fn run_llm(cli: &Cli, resolved: &config::ResolvedConfig) -> Result<(), Str
         )
         .await
         .map_err(|e| format!("LLM summarization failed: {e}"))?;
+        eprintln!("LLM: {:.1}s", t.elapsed().as_secs_f64());
 
         println!("{summary}");
     }
@@ -2004,6 +2010,7 @@ async fn run_batch_llm(
         let text = &extraction.content.plain_text;
 
         // Run the appropriate LLM operation
+        let llm_start = std::time::Instant::now();
         let llm_result = if let Some(ref schema) = schema {
             noxa_llm::extract::extract_json(text, schema, provider.as_ref(), model)
                 .await
@@ -2019,6 +2026,7 @@ async fn run_batch_llm(
         } else {
             unreachable!("run_batch_llm called without LLM flags")
         };
+        let llm_elapsed = llm_start.elapsed();
 
         match llm_result {
             Ok(output) => {
@@ -2048,7 +2056,7 @@ async fn run_batch_llm(
                         format!("{words} words")
                     }
                 };
-                eprintln!("-> extracted {detail}");
+                eprintln!("-> extracted {detail} ({:.1}s)", llm_elapsed.as_secs_f64());
 
                 if let Some(ref dir) = cli.output_dir {
                     let filename = custom_names

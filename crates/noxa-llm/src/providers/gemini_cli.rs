@@ -1,12 +1,11 @@
 /// Gemini CLI provider — shells out to `gemini -p` for completions.
 /// Primary provider in the default chain; requires the `gemini` binary on PATH.
-/// Prompts are passed exclusively via stdin (never as CLI arguments) to prevent
-/// command injection from web-scraped content.
+/// Prompts are passed via the `-p` flag (not as a positional or via stdin) to prevent
+/// command injection from web-scraped content. Output is parsed from `--output-format json`.
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
@@ -19,7 +18,7 @@ use crate::provider::{CompletionRequest, LlmProvider};
 /// Maximum concurrent Gemini subprocess calls (MCP server protection).
 const MAX_CONCURRENT: usize = 6;
 /// Subprocess deadline — prevents hung `gemini` processes from blocking the chain.
-const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct GeminiCliProvider {
     default_model: String,
@@ -67,65 +66,43 @@ impl LlmProvider for GeminiCliProvider {
             .map_err(|_| LlmError::ProviderError("gemini semaphore closed".into()))?;
 
         let mut cmd = Command::new("gemini");
-        cmd.arg("-p");
+        // -p STRING: headless mode with prompt as the flag value (never positional arg).
+        // Passing via -p prevents command injection; the value is never interpreted as a shell command.
+        cmd.arg("-p").arg(&prompt);
         cmd.arg("--model").arg(model);
+        // Always request structured JSON output so we can extract the `response` field
+        // and skip any preceding noise lines (e.g. MCP status warnings).
+        cmd.arg("--output-format").arg("json");
+        // --yolo suppresses any interactive confirmation prompts in headless mode.
+        cmd.arg("--yolo");
 
-        if request.json_mode {
-            cmd.arg("--json");
-        }
-
-        if let Some(max) = request.max_tokens {
-            cmd.arg("--max-output-tokens").arg(max.to_string());
-        }
-
-        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
         debug!(model, "spawning gemini subprocess");
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| LlmError::Subprocess(e))?;
-
-        // Write prompt to stdin then close it.
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(prompt.as_bytes())
-                .await
-                .map_err(LlmError::Subprocess)?;
-            // drop closes the pipe, signalling EOF to gemini
-        }
+        let mut child = cmd.spawn().map_err(LlmError::Subprocess)?;
 
         // Bounded wait — prevents indefinite hangs on auth expiry or network stall.
         let output = match timeout(SUBPROCESS_TIMEOUT, child.wait_with_output()).await {
             Ok(Ok(out)) => out,
-            Ok(Err(e)) => {
-                return Err(LlmError::Subprocess(e));
-            }
-            Err(_elapsed) => {
-                // Process is still running; kill it to avoid a zombie.
-                // We can't easily kill after wait_with_output, but the child handle
-                // is consumed. In the happy path this branch is never reached.
-                return Err(LlmError::Timeout);
-            }
+            Ok(Err(e)) => return Err(LlmError::Subprocess(e)),
+            Err(_elapsed) => return Err(LlmError::Timeout),
         };
 
         if !output.status.success() {
             let stderr_preview = String::from_utf8_lossy(&output.stderr);
-            let preview = if stderr_preview.len() > 500 {
-                &stderr_preview[..500]
-            } else {
-                &stderr_preview
-            };
+            let preview = &stderr_preview[..stderr_preview.len().min(500)];
             return Err(LlmError::ProviderError(format!(
                 "gemini exited with {}: {preview}",
                 output.status
             )));
         }
 
-        let raw = String::from_utf8_lossy(&output.stdout).into_owned();
-        let cleaned = strip_code_fences(strip_thinking_tags(&raw).trim());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let response = extract_response_from_output(&stdout)?;
+        let cleaned = strip_code_fences(strip_thinking_tags(&response).trim());
         Ok(cleaned)
     }
 
@@ -145,6 +122,34 @@ impl LlmProvider for GeminiCliProvider {
     fn name(&self) -> &str {
         "gemini"
     }
+}
+
+/// Parse the `response` field from gemini's `--output-format json` output.
+///
+/// The CLI emits lines before the JSON object (e.g. MCP status warnings).
+/// We find the first `{` to locate the JSON, parse it, and extract `.response`.
+fn extract_response_from_output(stdout: &str) -> Result<String, LlmError> {
+    let json_start = stdout.find('{').ok_or_else(|| {
+        let preview = &stdout[..stdout.len().min(300)];
+        LlmError::ProviderError(format!("gemini produced no JSON output: {preview}"))
+    })?;
+
+    let json_str = &stdout[json_start..];
+    let outer: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
+        let preview = &json_str[..json_str.len().min(300)];
+        LlmError::ProviderError(format!("failed to parse gemini JSON output: {e} — {preview}"))
+    })?;
+
+    // `response` holds the model's actual text output.
+    outer["response"]
+        .as_str()
+        .ok_or_else(|| {
+            LlmError::ProviderError(format!(
+                "gemini JSON output missing 'response' field: {}",
+                &json_str[..json_str.len().min(300)]
+            ))
+        })
+        .map(|s| s.to_string())
 }
 
 /// Concatenate all messages into a single prompt string for the CLI.
@@ -242,6 +247,37 @@ mod tests {
         assert!(result.contains("Tell me something."));
     }
 
+    // ── extract_response_from_output ──────────────────────────────────────────
+
+    #[test]
+    fn extracts_response_from_clean_json() {
+        let stdout = r#"{"session_id":"abc","response":"Hello world","stats":{}}"#;
+        assert_eq!(extract_response_from_output(stdout).unwrap(), "Hello world");
+    }
+
+    #[test]
+    fn extracts_response_skipping_mcp_noise() {
+        // MCP warning line appears before the JSON object in real gemini output.
+        let stdout = "MCP issues detected. Run /mcp list for status.\n{\"session_id\":\"abc\",\"response\":\"the answer\",\"stats\":{}}";
+        assert_eq!(
+            extract_response_from_output(stdout).unwrap(),
+            "the answer"
+        );
+    }
+
+    #[test]
+    fn error_when_no_json_in_output() {
+        let result = extract_response_from_output("MCP issues detected. No JSON follows.");
+        assert!(matches!(result, Err(LlmError::ProviderError(_))));
+    }
+
+    #[test]
+    fn error_when_response_field_missing() {
+        let stdout = r#"{"session_id":"abc","stats":{}}"#;
+        let result = extract_response_from_output(stdout);
+        assert!(matches!(result, Err(LlmError::ProviderError(_))));
+    }
+
     // ── strip_code_fences ─────────────────────────────────────────────────────
 
     #[test]
@@ -266,9 +302,6 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable_when_binary_missing() {
-        // Use a clearly nonexistent binary name to test the false path.
-        // We can't swap the binary name in GeminiCliProvider without extracting it,
-        // but we CAN verify the logic by calling Command directly the same way.
         let result = tokio::process::Command::new("__noxa_nonexistent_binary_xyz__")
             .arg("--version")
             .stdout(std::process::Stdio::null())
@@ -282,7 +315,6 @@ mod tests {
 
     #[test]
     fn strips_thinking_tags_from_output() {
-        // Verify the pipeline: strip_thinking_tags → strip_code_fences
         let raw = "<think>internal reasoning</think>{\"result\": true}";
         let after_thinking = strip_thinking_tags(raw);
         let after_fences = strip_code_fences(after_thinking.trim());

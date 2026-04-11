@@ -2,7 +2,7 @@
 /// Default order: Ollama (local, free) -> OpenAI -> Anthropic.
 /// Only includes providers that are actually configured/available.
 use async_trait::async_trait;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::error::LlmError;
 use crate::provider::{CompletionRequest, LlmProvider};
@@ -91,9 +91,10 @@ impl LlmProvider for ProviderChain {
         for provider in &self.providers {
             debug!(provider = provider.name(), "attempting completion");
 
+            let t = std::time::Instant::now();
             match provider.complete(request).await {
                 Ok(response) => {
-                    debug!(provider = provider.name(), "completion succeeded");
+                    info!(provider = provider.name(), elapsed_ms = t.elapsed().as_millis(), "completion succeeded");
                     return Ok(response);
                 }
                 Err(e) => {

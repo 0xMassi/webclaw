@@ -54,13 +54,23 @@ impl NoxaConfig {
     /// Returns an empty (all-None) config if the file doesn't exist.
     /// Prints an error and exits if the file exists but is invalid JSON.
     pub fn load(explicit_path: Option<&str>) -> Self {
+        let noxa_config_env = std::env::var("NOXA_CONFIG").ok();
+        let was_explicit = explicit_path.is_some() || noxa_config_env.is_some();
+
         let path_str = explicit_path
             .map(String::from)
-            .or_else(|| std::env::var("NOXA_CONFIG").ok())
+            .or(noxa_config_env)
             .unwrap_or_else(|| "config.json".to_string());
 
         let path = Path::new(&path_str);
         if !path.exists() {
+            if was_explicit {
+                let display_name = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&path_str);
+                eprintln!("error: config file not found: {display_name}");
+                std::process::exit(1);
+            }
             return Self::default();
         }
 
@@ -292,8 +302,14 @@ mod tests {
     }
 
     #[test]
-    fn test_load_missing_file_returns_default() {
-        let cfg = NoxaConfig::load(Some("/nonexistent/path/config.json"));
+    fn test_load_implicit_missing_file_returns_default() {
+        // When no explicit path and ./config.json doesn't exist, silently return default.
+        // The simplest test: call with None and rely on ./config.json not existing in test env.
+        // If CWD has config.json this test is skipped to avoid flakiness.
+        if std::path::Path::new("config.json").exists() {
+            return; // skip: CWD has config.json
+        }
+        let cfg = NoxaConfig::load(None);
         assert!(cfg.format.is_none());
     }
 }

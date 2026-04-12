@@ -13,6 +13,7 @@ noxa-core = { path = "crates/noxa-core" }
 noxa-fetch = { path = "crates/noxa-fetch" }
 noxa-llm = { path = "crates/noxa-llm" }
 noxa-pdf = { path = "crates/noxa-pdf" }
+noxa-mcp = { path = "crates/noxa-mcp" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -21,3 +22,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
+rmcp = { version = "1.2", features = ["server", "macros", "transport-io", "schemars"] }
+schemars = "1.0"
+dirs = "6.0.0"

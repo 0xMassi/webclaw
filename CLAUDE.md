@@ -15,8 +15,8 @@ noxa/
                       # + proxy pool rotation (per-request)
                       # + PDF content-type detection
                       # + document parsing (DOCX, XLSX, CSV)
-    noxa-llm/      # LLM provider chain (Ollama -> OpenAI -> Anthropic)
-                      # + JSON schema extraction, prompt extraction, summarization
+    noxa-llm/      # LLM provider chain (Gemini CLI -> OpenAI -> Ollama -> Anthropic)
+                      # + JSON schema extraction (validated + retry), prompt extraction, summarization
     noxa-pdf/      # PDF text extraction via pdf-extract
     noxa-mcp/      # MCP server (Model Context Protocol) for AI agents
     noxa/      # CLI binary
@@ -48,8 +48,10 @@ Two binaries: `noxa` (CLI), `noxa-mcp` (MCP server).
 - `search.rs` — Web search via Serper.dev with parallel result scraping
 
 ### LLM Modules (`noxa-llm`)
-- Provider chain: Ollama (local-first) -> OpenAI -> Anthropic
-- JSON schema extraction, prompt-based extraction, summarization
+- Provider chain: Gemini CLI (primary) -> OpenAI -> Ollama -> Anthropic
+- Gemini CLI requires the `gemini` binary on PATH; `GEMINI_MODEL` env var controls model (default: `gemini-2.5-pro`)
+- JSON schema extraction with jsonschema validation; parse failures retry once; schema mismatches fail immediately
+- Prompt-based extraction, summarization
 
 ### PDF Modules (`noxa-pdf`)
 - PDF text extraction via pdf-extract crate
@@ -105,10 +107,14 @@ noxa https://example.com --diff-with snap.json
 # Brand extraction
 noxa https://example.com --brand
 
-# LLM features (Ollama local-first)
+# LLM features (Gemini CLI primary; requires `gemini` on PATH)
 noxa https://example.com --summarize
 noxa https://example.com --extract-prompt "Get all pricing tiers"
 noxa https://example.com --extract-json '{"type":"object","properties":{"title":{"type":"string"}}}'
+
+# Force a specific LLM provider
+noxa https://example.com --llm-provider gemini --summarize
+noxa https://example.com --llm-provider openai --summarize
 
 # PDF (auto-detected via Content-Type)
 noxa https://example.com/report.pdf

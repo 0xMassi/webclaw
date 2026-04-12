@@ -1,5 +1,21 @@
 target/
 .DS_Store
 .env
+config.json
 proxies.txt
 .claude/skills/
+.omc
+.lavra
+.beads
+.cache
+docs/plans
+docs/superpowers
+docs/reports
+docs/sessions
+benchmarks
+docs
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

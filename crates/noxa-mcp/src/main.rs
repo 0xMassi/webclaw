@@ -1,15 +1,6 @@
 /// noxa-mcp: MCP (Model Context Protocol) server for noxa.
 /// Exposes web extraction tools over stdio transport for AI agents
 /// like Claude Desktop, Claude Code, and other MCP clients.
-mod cloud;
-mod server;
-mod tools;
-
-use rmcp::ServiceExt;
-use rmcp::transport::stdio;
-
-use server::NoxaMcp;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
@@ -21,8 +12,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_ansi(false)
         .init();
 
-    let service = NoxaMcp::new().await.serve(stdio()).await?;
-
-    service.waiting().await?;
-    Ok(())
+    noxa_mcp::run().await
 }

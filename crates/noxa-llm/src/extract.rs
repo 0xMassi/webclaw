@@ -1,11 +1,45 @@
 /// Schema-based and prompt-based LLM extraction.
 /// Both functions build a system prompt, send content to the LLM, and parse JSON back.
+use jsonschema;
+
 use crate::clean::strip_thinking_tags;
 use crate::error::LlmError;
 use crate::provider::{CompletionRequest, LlmProvider, Message};
 
+/// Validate a JSON value against a schema. Returns Ok(()) on success or
+/// Err(LlmError::InvalidJson) with a concise error message on failure.
+fn validate_schema(
+    value: &serde_json::Value,
+    schema: &serde_json::Value,
+) -> Result<(), LlmError> {
+    let compiled = jsonschema::validator_for(schema).map_err(|e| {
+        LlmError::InvalidJson(format!("invalid schema: {e}"))
+    })?;
+
+    let errors: Vec<String> = compiled
+        .iter_errors(value)
+        .map(|e| format!("{} at {}", e, e.instance_path()))
+        .collect();
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(LlmError::InvalidJson(format!(
+            "schema validation failed: {}",
+            errors.join("; ")
+        )))
+    }
+}
+
 /// Extract structured JSON from content using a JSON schema.
 /// The schema tells the LLM exactly what fields to extract and their types.
+///
+/// Retry policy:
+/// - If the response cannot be parsed as JSON at all: retry once with the
+///   identical request (handles transient formatting issues).
+/// - If the response is valid JSON but fails schema validation: return
+///   `LlmError::InvalidJson` immediately — the schema is likely unsatisfiable
+///   for this content, so retrying would produce the same result.
 pub async fn extract_json(
     content: &str,
     schema: &serde_json::Value,
@@ -37,7 +71,22 @@ pub async fn extract_json(
     };
 
     let response = provider.complete(&request).await?;
-    parse_json_response(&response)
+
+    match parse_json_response(&response) {
+        Ok(value) => {
+            // Valid JSON — now validate against the schema.
+            // Schema mismatches do not retry (unsatisfiable → same result).
+            validate_schema(&value, schema)?;
+            Ok(value)
+        }
+        Err(_parse_err) => {
+            // Unparseable JSON — retry once with the identical request.
+            let retry_response = provider.complete(&request).await?;
+            let value = parse_json_response(&retry_response)?;
+            validate_schema(&value, schema)?;
+            Ok(value)
+        }
+    }
 }
 
 /// Extract information using a natural language prompt.
@@ -183,5 +232,131 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["emails"][0], "test@example.com");
+    }
+
+    // ── Schema validation ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn schema_validation_passes_for_matching_json() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["price"],
+            "properties": {
+                "price": { "type": "number" }
+            }
+        });
+        let mock = MockProvider::ok(r#"{"price": 9.99}"#);
+        let result = extract_json("content", &schema, &mock, None).await.unwrap();
+        assert_eq!(result["price"], 9.99);
+    }
+
+    #[tokio::test]
+    async fn schema_validation_fails_for_wrong_type() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["price"],
+            "properties": {
+                "price": { "type": "number" }
+            }
+        });
+        // Model returns valid JSON but wrong type ("string" instead of number).
+        // Should NOT retry (schema mismatch ≠ parse failure) — returns InvalidJson immediately.
+        let mock = MockProvider::ok(r#"{"price": "not-a-number"}"#);
+        let result = extract_json("content", &schema, &mock, None).await;
+        assert!(
+            matches!(result, Err(LlmError::InvalidJson(_))),
+            "expected InvalidJson for schema mismatch, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn schema_validation_fails_for_missing_required_field() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["title"],
+            "properties": {
+                "title": { "type": "string" }
+            }
+        });
+        let mock = MockProvider::ok(r#"{"other": "value"}"#);
+        let result = extract_json("content", &schema, &mock, None).await;
+        assert!(matches!(result, Err(LlmError::InvalidJson(_))));
+    }
+
+    #[tokio::test]
+    async fn parse_failure_triggers_one_retry() {
+        use crate::testing::mock::SequenceMockProvider;
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "title": { "type": "string" } }
+        });
+
+        // First call: unparseable JSON. Second call: valid JSON matching schema.
+        let mock = SequenceMockProvider::new(
+            "mock-seq",
+            vec![
+                Ok("this is not json at all".to_string()),
+                Ok(r#"{"title": "Retry succeeded"}"#.to_string()),
+            ],
+        );
+
+        let result = extract_json("content", &schema, &mock, None)
+            .await
+            .unwrap();
+        assert_eq!(result["title"], "Retry succeeded");
+    }
+
+    #[tokio::test]
+    async fn both_attempts_fail_returns_invalid_json() {
+        use crate::testing::mock::SequenceMockProvider;
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "title": { "type": "string" } }
+        });
+
+        let mock = SequenceMockProvider::new(
+            "mock-seq",
+            vec![
+                Ok("not json".to_string()),
+                Ok("also not json".to_string()),
+            ],
+        );
+
+        let result = extract_json("content", &schema, &mock, None).await;
+        assert!(
+            matches!(result, Err(LlmError::InvalidJson(_))),
+            "expected InvalidJson after both attempts fail"
+        );
+    }
+
+    #[tokio::test]
+    async fn schema_mismatch_does_not_retry() {
+        use crate::testing::mock::SequenceMockProvider;
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["price"],
+            "properties": {
+                "price": { "type": "number" }
+            }
+        });
+
+        // Both calls return valid JSON with wrong schema — but only one call should happen.
+        let mock = SequenceMockProvider::new(
+            "mock-seq",
+            vec![
+                Ok(r#"{"price": "wrong-type"}"#.to_string()),
+                Ok(r#"{"price": 9.99}"#.to_string()), // would succeed — but shouldn't be called
+            ],
+        );
+
+        // Should return InvalidJson without calling second response.
+        let result = extract_json("content", &schema, &mock, None).await;
+        assert!(
+            matches!(result, Err(LlmError::InvalidJson(_))),
+            "schema mismatch should not trigger retry"
+        );
     }
 }

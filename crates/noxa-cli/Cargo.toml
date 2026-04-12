@@ -14,9 +14,11 @@ noxa-core = { workspace = true }
 noxa-fetch = { workspace = true }
 noxa-llm = { workspace = true }
 noxa-pdf = { workspace = true }
+noxa-mcp = { workspace = true }
 dotenvy = { workspace = true }
 rand = "0.8"
 serde_json = { workspace = true }
+serde = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }

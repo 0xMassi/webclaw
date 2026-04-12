@@ -89,7 +89,7 @@ impl NoxaMcp {
 
         let chain = noxa_llm::ProviderChain::default().await;
         let llm_chain = if chain.is_empty() {
-            warn!("no LLM providers available -- extract/summarize tools will fail");
+            warn!("no LLM providers available (gemini CLI, OPENAI_API_KEY, ANTHROPIC_API_KEY) -- extract/summarize tools will fail");
             None
         } else {
             info!(providers = chain.len(), "LLM provider chain ready");
@@ -334,7 +334,7 @@ impl NoxaMcp {
         // No local LLM — fall back to cloud API directly
         if self.llm_chain.is_none() {
             let cloud = self.cloud.as_ref().ok_or(
-                "No LLM providers available. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or NOXA_API_KEY for cloud fallback.",
+                "No LLM providers available. Install the gemini CLI, set OPENAI_API_KEY, ANTHROPIC_API_KEY, or NOXA_API_KEY for cloud fallback.",
             )?;
             let mut body = json!({"url": params.url});
             if let Some(ref schema) = params.schema {
@@ -387,7 +387,7 @@ impl NoxaMcp {
         // No local LLM — fall back to cloud API directly
         if self.llm_chain.is_none() {
             let cloud = self.cloud.as_ref().ok_or(
-                "No LLM providers available. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or NOXA_API_KEY for cloud fallback.",
+                "No LLM providers available. Install the gemini CLI, set OPENAI_API_KEY, ANTHROPIC_API_KEY, or NOXA_API_KEY for cloud fallback.",
             )?;
             let mut body = json!({"url": params.url});
             if let Some(sentences) = params.max_sentences {

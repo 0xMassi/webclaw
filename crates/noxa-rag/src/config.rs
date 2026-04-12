@@ -58,7 +58,7 @@ pub enum EmbedProviderConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum VectorStoreConfig {
     Qdrant {
-        /// REST URL — port 6333, NOT 6334 (gRPC).
+        /// gRPC URL — port 6334. qdrant-client v1.x uses gRPC (tonic), NOT REST.
         url: String,
         collection: String,
         /// Optional API key. Override with NOXA_RAG_QDRANT_API_KEY env var.

@@ -1,7 +1,23 @@
 /// Gemini CLI provider — shells out to `gemini -p` for completions.
 /// Primary provider in the default chain; requires the `gemini` binary on PATH.
-/// Prompts are passed via the `-p` flag (not as a positional or via stdin) to prevent
+///
+/// Prompts are passed via the `-p` flag (not via stdin or as a positional) to prevent
 /// command injection from web-scraped content. Output is parsed from `--output-format json`.
+///
+/// # Startup optimizations
+///
+/// The gemini CLI is an agentic Node.js application that connects to every configured MCP
+/// server at startup (the user has 6). Without mitigation this can add 10-60+ seconds per
+/// call as those servers spin up and time out.
+///
+/// Two flags reduce this:
+/// - `--extensions ""` — skips extension loading (~3 s saved)
+/// - `current_dir` set to a temp workdir containing `.gemini/settings.json` with
+///   `{"mcpServers":{}}` — workspace settings override user settings, so all 6 MCP
+///   servers are skipped at subprocess startup (major speedup).
+///
+/// The workdir is created once at construction and reused for every call.
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,14 +31,20 @@ use crate::clean::strip_thinking_tags;
 use crate::error::LlmError;
 use crate::provider::{CompletionRequest, LlmProvider};
 
-/// Maximum concurrent Gemini subprocess calls (MCP server protection).
+/// Maximum concurrent Gemini subprocess calls.
 const MAX_CONCURRENT: usize = 6;
-/// Subprocess deadline — prevents hung `gemini` processes from blocking the chain.
+/// Subprocess deadline — prevents hung `gemini` processes blocking the chain.
 const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Fixed workdir used for every subprocess call.
+/// A workspace-level `.gemini/settings.json` here overrides the user's MCP server config.
+const NOXA_GEMINI_WORKDIR: &str = "/tmp/noxa-gemini";
 
 pub struct GeminiCliProvider {
     default_model: String,
     semaphore: Arc<Semaphore>,
+    /// Workdir with a minimal `.gemini/settings.json` that disables MCP servers.
+    workdir: PathBuf,
 }
 
 impl GeminiCliProvider {
@@ -34,9 +56,13 @@ impl GeminiCliProvider {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "gemini-2.5-pro".into());
 
+        let workdir = PathBuf::from(NOXA_GEMINI_WORKDIR);
+        ensure_gemini_workdir(&workdir);
+
         Self {
             default_model,
             semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT)),
+            workdir,
         }
     }
 
@@ -75,14 +101,20 @@ impl LlmProvider for GeminiCliProvider {
         cmd.arg("--output-format").arg("json");
         // --yolo suppresses any interactive confirmation prompts in headless mode.
         cmd.arg("--yolo");
+        // --extensions "" skips loading user extensions (~3 s startup savings).
+        cmd.arg("--extensions").arg("");
+        // Workspace settings in self.workdir override the user's ~/.gemini/settings.json,
+        // replacing the user's MCP server list with {} so none are spawned at startup.
+        // Without this, each of the user's MCP servers adds latency to every call.
+        cmd.current_dir(&self.workdir);
 
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        debug!(model, "spawning gemini subprocess");
+        debug!(model, workdir = %self.workdir.display(), "spawning gemini subprocess");
 
-        let mut child = cmd.spawn().map_err(LlmError::Subprocess)?;
+        let child = cmd.spawn().map_err(LlmError::Subprocess)?;
 
         // Bounded wait — prevents indefinite hangs on auth expiry or network stall.
         let output = match timeout(SUBPROCESS_TIMEOUT, child.wait_with_output()).await {
@@ -150,6 +182,35 @@ fn extract_response_from_output(stdout: &str) -> Result<String, LlmError> {
             ))
         })
         .map(|s| s.to_string())
+}
+
+/// Create the noxa gemini workdir with a minimal workspace settings file.
+///
+/// The `.gemini/settings.json` written here overrides the user's `~/.gemini/settings.json`
+/// for any `gemini` subprocess run from this directory. Setting `mcpServers` to `{}` prevents
+/// the CLI from spawning the user's configured MCP servers on every headless call.
+///
+/// Errors are intentionally ignored — if the write fails, the subprocess still works,
+/// just without the startup optimization (and with a warning in the logs).
+fn ensure_gemini_workdir(workdir: &std::path::Path) {
+    let settings_dir = workdir.join(".gemini");
+    let settings_path = settings_dir.join("settings.json");
+
+    if settings_path.exists() {
+        return;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(&settings_dir) {
+        tracing::warn!(path = %settings_dir.display(), error = %e, "failed to create gemini workdir");
+        return;
+    }
+
+    // Minimal workspace settings: disable all MCP servers.
+    // Workspace settings override ~/.gemini/settings.json per gemini CLI docs.
+    let content = r#"{"mcpServers":{}}"#;
+    if let Err(e) = std::fs::write(&settings_path, content) {
+        tracing::warn!(path = %settings_path.display(), error = %e, "failed to write gemini workspace settings");
+    }
 }
 
 /// Concatenate all messages into a single prompt string for the CLI.

@@ -11,8 +11,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
-use serde::Deserialize;
-use tracing_subscriber::EnvFilter;
 use noxa_core::{
     ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options,
     to_llm_text,
@@ -22,7 +20,10 @@ use noxa_fetch::{
     FetchConfig, FetchResult, PageResult, SitemapEntry,
 };
 use noxa_llm::LlmProvider;
+use noxa_mcp;
 use noxa_pdf::PdfMode;
+use serde::Deserialize;
+use tracing_subscriber::EnvFilter;
 
 /// Known anti-bot challenge page titles (case-insensitive prefix match).
 const ANTIBOT_TITLES: &[&str] = &[
@@ -347,6 +348,15 @@ fn init_logging(verbose: bool) {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
+fn init_mcp_logging() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .try_init()
+        .ok();
+}
+
 /// Build FetchConfig from CLI flags.
 ///
 /// `--proxy` sets a single static proxy (no rotation).
@@ -655,8 +665,7 @@ async fn fetch_and_extract(
 
     // --cloud: skip local, go straight to cloud API
     if cli.cloud {
-        let c =
-            cloud_client.ok_or("--cloud requires NOXA_API_KEY (set via env or --api-key)")?;
+        let c = cloud_client.ok_or("--cloud requires NOXA_API_KEY (set via env or --api-key)")?;
         let options = build_extraction_options(resolved);
         let format_str = match resolved.format {
             OutputFormat::Markdown => "markdown",
@@ -2253,6 +2262,16 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
 async fn main() {
     dotenvy::dotenv().ok();
 
+    if matches!(std::env::args().nth(1).as_deref(), Some("mcp")) {
+        init_mcp_logging();
+
+        if let Err(e) = noxa_mcp::run().await {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
     // Use low-level API to get both typed Cli and ArgMatches for ValueSource detection.
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
@@ -2358,7 +2377,10 @@ async fn main() {
     }
 
     // --raw-html: skip extraction, dump the fetched HTML
-    if resolved.raw_html && resolved.include_selectors.is_empty() && resolved.exclude_selectors.is_empty() {
+    if resolved.raw_html
+        && resolved.include_selectors.is_empty()
+        && resolved.exclude_selectors.is_empty()
+    {
         match fetch_html(&cli, &resolved).await {
             Ok(r) => println!("{}", r.html),
             Err(e) => {

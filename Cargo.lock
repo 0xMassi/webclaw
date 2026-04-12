@@ -1753,6 +1753,7 @@ dependencies = [
  "noxa-core",
  "noxa-fetch",
  "noxa-llm",
+ "noxa-mcp",
  "noxa-pdf",
  "rand 0.8.5",
  "regex",

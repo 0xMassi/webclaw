@@ -2,6 +2,7 @@
 /// First choice in the provider chain: free, private, fast on Apple Silicon.
 use async_trait::async_trait;
 use serde_json::json;
+use std::time::Duration;
 
 use crate::clean::strip_thinking_tags;
 use crate::error::LlmError;
@@ -96,7 +97,10 @@ impl LlmProvider for OllamaProvider {
 
     async fn is_available(&self) -> bool {
         let url = format!("{}/api/tags", self.base_url);
-        matches!(self.client.get(&url).send().await, Ok(r) if r.status().is_success())
+        matches!(
+            tokio::time::timeout(Duration::from_millis(500), self.client.get(&url).send()).await,
+            Ok(Ok(r)) if r.status().is_success()
+        )
     }
 
     fn name(&self) -> &str {

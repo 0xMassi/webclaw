@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.12] — 2026-04-10
+
+### Added
+- **Crawl scope control**: new `allow_subdomains` and `allow_external_links` fields on `CrawlConfig`. By default crawls stay same-origin. Enable `allow_subdomains` to follow sibling/child subdomains (e.g. blog.example.com from example.com), or `allow_external_links` for full cross-origin crawling. Root domain extraction uses a heuristic that handles two-part TLDs (co.uk, com.au).
+
+---
+
 ## [0.3.11] — 2026-04-10
 
 ### Added

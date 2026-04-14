@@ -1,6 +1,6 @@
 {
   "name": "create-webclaw",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "mcpName": "io.github.0xMassi/webclaw",
   "description": "Set up webclaw MCP server for AI agents (Claude, Cursor, Windsurf, OpenCode, Codex, Antigravity)",
   "bin": {

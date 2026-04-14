@@ -3,3 +3,4 @@ target/
 .env
 proxies.txt
 .claude/skills/
+*.json

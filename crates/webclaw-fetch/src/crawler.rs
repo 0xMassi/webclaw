@@ -1,8 +1,12 @@
-/// Recursive same-origin web crawler built on top of [`FetchClient`].
+/// Recursive web crawler built on top of [`FetchClient`].
 ///
 /// Starts from a seed URL, extracts content, discovers links, and follows
 /// them breadth-first up to a configurable depth/page limit. Uses a semaphore
 /// for bounded concurrency and per-request delays for politeness.
+///
+/// Scope control: by default only same-origin links are followed. Enable
+/// `allow_subdomains` to include sibling/child subdomains of the seed host,
+/// or `allow_external_links` to follow links to any domain.
 ///
 /// When `use_sitemap` is enabled, the crawler first discovers URLs from the
 /// site's sitemaps and seeds the BFS frontier before crawling.
@@ -39,11 +43,17 @@ pub struct CrawlConfig {
     /// Seed BFS frontier from sitemap discovery before crawling.
     pub use_sitemap: bool,
     /// Glob patterns for paths to include. If non-empty, only matching URLs are crawled.
-    /// E.g. `["/api/*", "/guides/*"]` — matched against the URL path.
+    /// E.g. `["/api/*", "/guides/*"]` -- matched against the URL path.
     pub include_patterns: Vec<String>,
     /// Glob patterns for paths to exclude. Checked after include_patterns.
-    /// E.g. `["/changelog/*", "/blog/*"]` — matching URLs are skipped.
+    /// E.g. `["/changelog/*", "/blog/*"]` -- matching URLs are skipped.
     pub exclude_patterns: Vec<String>,
+    /// Follow links on subdomains of the seed domain (e.g. blog.example.com
+    /// when crawling example.com). Default: false (same-origin only).
+    pub allow_subdomains: bool,
+    /// Follow links to entirely different domains. Default: false.
+    /// When true, the crawler becomes cross-origin. Use with caution.
+    pub allow_external_links: bool,
     /// Optional channel sender for streaming per-page results as they complete.
     /// When set, each `PageResult` is sent on this channel immediately after extraction.
     pub progress_tx: Option<tokio::sync::broadcast::Sender<PageResult>>,
@@ -64,6 +74,8 @@ impl Default for CrawlConfig {
             use_sitemap: false,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
+            allow_subdomains: false,
+            allow_external_links: false,
             progress_tx: None,
             cancel_flag: None,
         }
@@ -113,6 +125,8 @@ pub struct Crawler {
     client: Arc<FetchClient>,
     config: CrawlConfig,
     seed_origin: String,
+    /// Root domain of the seed URL for subdomain matching (e.g. "example.com").
+    seed_root_domain: String,
 }
 
 impl Crawler {
@@ -121,6 +135,7 @@ impl Crawler {
     pub fn new(seed_url: &str, config: CrawlConfig) -> Result<Self, FetchError> {
         let seed = Url::parse(seed_url).map_err(|_| FetchError::InvalidUrl(seed_url.into()))?;
         let seed_origin = origin_key(&seed);
+        let seed_root_domain = root_domain(&seed);
 
         let client = FetchClient::new(config.fetch.clone())?;
 
@@ -128,6 +143,7 @@ impl Crawler {
             client: Arc::new(client),
             config,
             seed_origin,
+            seed_root_domain,
         })
     }
 
@@ -278,7 +294,7 @@ impl Crawler {
                 let delay = self.config.delay;
 
                 handles.push(tokio::spawn(async move {
-                    // Acquire permit — blocks if concurrency limit reached
+                    // Acquire permit -- blocks if concurrency limit reached
                     let _permit = permit.acquire().await.expect("semaphore closed");
                     tokio::time::sleep(delay).await;
 
@@ -392,9 +408,20 @@ impl Crawler {
             _ => return None,
         }
 
-        // Same-origin check (scheme + host + port)
-        if origin_key(&parsed) != self.seed_origin {
-            return None;
+        // Scope check: same-origin, subdomain, or external
+        if !self.config.allow_external_links {
+            let link_origin = origin_key(&parsed);
+            if link_origin != self.seed_origin {
+                // Not same-origin. Check if subdomain crawling is allowed.
+                if self.config.allow_subdomains {
+                    let link_root = root_domain(&parsed);
+                    if link_root != self.seed_root_domain {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            }
         }
 
         // Path prefix filter
@@ -457,6 +484,29 @@ fn origin_key(url: &Url) -> String {
     format!("{}://{}{}", url.scheme(), host, port_suffix)
 }
 
+/// Extract the root domain from a URL for subdomain comparison.
+/// "blog.docs.example.com" -> "example.com", "example.co.uk" -> "example.co.uk" (best-effort).
+///
+/// Uses a simple heuristic: take the last two labels, or three if the second-to-last
+/// is short (<=3 chars, likely a country SLD like "co.uk", "com.au").
+fn root_domain(url: &Url) -> String {
+    let host = url.host_str().unwrap_or("");
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    let labels: Vec<&str> = host.split('.').collect();
+
+    if labels.len() <= 2 {
+        return host.to_ascii_lowercase();
+    }
+
+    // Heuristic for two-part TLDs (co.uk, com.au, org.br, etc.)
+    let sld = labels[labels.len() - 2];
+    if labels.len() >= 3 && sld.len() <= 3 {
+        labels[labels.len() - 3..].join(".").to_ascii_lowercase()
+    } else {
+        labels[labels.len() - 2..].join(".").to_ascii_lowercase()
+    }
+}
+
 /// Normalize a URL for dedup: strip fragment, remove trailing slash (except root "/"),
 /// lowercase scheme + host. Preserves query params and path case.
 fn normalize(url: &Url) -> String {
@@ -502,7 +552,7 @@ fn glob_match_inner(pat: &[u8], text: &[u8]) -> bool {
 
     while ti < text.len() {
         if pi < pat.len() && pat[pi] == b'*' && pi + 1 < pat.len() && pat[pi + 1] == b'*' {
-            // `**` — match everything including slashes
+            // `**` -- match everything including slashes
             // Skip all consecutive `*`
             while pi < pat.len() && pat[pi] == b'*' {
                 pi += 1;
@@ -522,7 +572,7 @@ fn glob_match_inner(pat: &[u8], text: &[u8]) -> bool {
             }
             return false;
         } else if pi < pat.len() && pat[pi] == b'*' {
-            // `*` — match any chars except `/`
+            // `*` -- match any chars except `/`
             star_pi = pi;
             star_ti = ti;
             pi += 1;
@@ -601,6 +651,38 @@ mod tests {
         let http = Url::parse("http://example.com/").unwrap();
         let https = Url::parse("https://example.com/").unwrap();
         assert_ne!(origin_key(&http), origin_key(&https));
+    }
+
+    // -- root_domain tests --
+
+    #[test]
+    fn root_domain_simple() {
+        let url = Url::parse("https://example.com/page").unwrap();
+        assert_eq!(root_domain(&url), "example.com");
+    }
+
+    #[test]
+    fn root_domain_subdomain() {
+        let url = Url::parse("https://blog.example.com/page").unwrap();
+        assert_eq!(root_domain(&url), "example.com");
+    }
+
+    #[test]
+    fn root_domain_deep_subdomain() {
+        let url = Url::parse("https://a.b.c.example.com/").unwrap();
+        assert_eq!(root_domain(&url), "example.com");
+    }
+
+    #[test]
+    fn root_domain_country_tld() {
+        let url = Url::parse("https://blog.example.co.uk/").unwrap();
+        assert_eq!(root_domain(&url), "example.co.uk");
+    }
+
+    #[test]
+    fn root_domain_strips_www() {
+        let url = Url::parse("https://www.example.com/").unwrap();
+        assert_eq!(root_domain(&url), "example.com");
     }
 
     // -- glob_match tests --

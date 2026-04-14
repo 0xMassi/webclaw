@@ -1218,6 +1218,8 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         exclude_patterns,
         progress_tx: Some(progress_tx),
         cancel_flag: Some(Arc::clone(&cancel_flag)),
+        allow_subdomains: false,
+        allow_external_links: false,
     };
 
     // Load resume state if --crawl-state file exists

@@ -190,11 +190,17 @@ impl Crawler {
     }
 
     /// Returns true if the cancel flag has been set.
+    ///
+    /// Uses `Acquire` load to pair with a `Release` store on the cancel
+    /// path. `Relaxed` was technically fine in practice (x86/arm64 give
+    /// release semantics for free on single-word stores) but `Acquire`
+    /// makes the ordering explicit so the compiler and future readers
+    /// don't need to reason about the memory model.
     fn is_cancelled(&self) -> bool {
         self.config
             .cancel_flag
             .as_ref()
-            .is_some_and(|f| f.load(Ordering::Relaxed))
+            .is_some_and(|f| f.load(Ordering::Acquire))
     }
 
     /// Crawl starting from `start_url`, returning results for every page visited.

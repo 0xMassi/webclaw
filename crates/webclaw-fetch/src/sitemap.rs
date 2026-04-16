@@ -152,18 +152,34 @@ async fn fetch_sitemaps(
 // ---------------------------------------------------------------------------
 
 /// Extract `Sitemap:` directive URLs from robots.txt content.
+///
+/// Handles case-insensitive directive names, optional whitespace before
+/// the colon, and strips inline `# ...` comments. Rejects values without
+/// a URL scheme (`://`) so a malformed directive doesn't turn an empty
+/// or garbage string into a "sitemap URL".
 pub fn parse_robots_txt(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|line| {
+            // Strip inline `#...` comments (robots.txt convention).
+            let line = match line.split_once('#') {
+                Some((before, _)) => before,
+                None => line,
+            };
             let trimmed = line.trim();
-            // Case-insensitive match for "Sitemap:" prefix
-            if trimmed.len() > 8 && trimmed[..8].eq_ignore_ascii_case("sitemap:") {
-                let url = trimmed[8..].trim();
-                if !url.is_empty() {
-                    return Some(url.to_string());
-                }
+            // Find the colon that terminates the directive name; reject
+            // lines that don't have one. Anything between the start and
+            // the colon that matches "sitemap" case-insensitively is a hit.
+            let colon = trimmed.find(':')?;
+            let (name, rest) = trimmed.split_at(colon);
+            if !name.trim().eq_ignore_ascii_case("sitemap") {
+                return None;
             }
-            None
+            // Skip the colon itself, then trim.
+            let url = rest[1..].trim();
+            if url.is_empty() || !url.contains("://") {
+                return None;
+            }
+            Some(url.to_string())
         })
         .collect()
 }
@@ -362,6 +378,62 @@ fn parse_sitemap_index(xml: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn robots_txt_basic() {
+        let t = "User-agent: *\nSitemap: https://example.com/sitemap.xml\n";
+        assert_eq!(
+            parse_robots_txt(t),
+            vec!["https://example.com/sitemap.xml".to_string()]
+        );
+    }
+
+    #[test]
+    fn robots_txt_case_insensitive() {
+        let t = "SITEMAP: https://a.example.com/s.xml\nsitemap: https://b.example.com/s.xml\n";
+        let got = parse_robots_txt(t);
+        assert_eq!(got.len(), 2);
+        assert!(got.contains(&"https://a.example.com/s.xml".to_string()));
+        assert!(got.contains(&"https://b.example.com/s.xml".to_string()));
+    }
+
+    #[test]
+    fn robots_txt_tolerates_space_before_colon() {
+        // Some malformed generators emit `Sitemap :` with a space.
+        let t = "Sitemap : https://example.com/sitemap.xml\n";
+        assert_eq!(
+            parse_robots_txt(t),
+            vec!["https://example.com/sitemap.xml".to_string()]
+        );
+    }
+
+    #[test]
+    fn robots_txt_strips_inline_comments() {
+        let t = "Sitemap: https://example.com/s.xml # main sitemap\n";
+        assert_eq!(
+            parse_robots_txt(t),
+            vec!["https://example.com/s.xml".to_string()]
+        );
+    }
+
+    #[test]
+    fn robots_txt_rejects_empty_value() {
+        let t = "Sitemap:\nSitemap:   \n";
+        assert!(parse_robots_txt(t).is_empty());
+    }
+
+    #[test]
+    fn robots_txt_rejects_non_url_value() {
+        // "Sitemap: /relative/path" has no scheme; don't blindly accept.
+        let t = "Sitemap: /sitemap.xml\nSitemap: junk text\n";
+        assert!(parse_robots_txt(t).is_empty());
+    }
+
+    #[test]
+    fn robots_txt_ignores_non_sitemap_directives() {
+        let t = "User-agent: *\nDisallow: /admin\nAllow: /\n";
+        assert!(parse_robots_txt(t).is_empty());
+    }
 
     #[test]
     fn test_parse_urlset() {

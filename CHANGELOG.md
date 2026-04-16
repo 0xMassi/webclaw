@@ -3,6 +3,17 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.17] — 2026-04-16
+
+### Changed
+- **`webclaw-fetch::sitemap::parse_robots_txt` now does proper directive parsing.** The previous `trimmed[..8].eq_ignore_ascii_case("sitemap:")` slice couldn't handle "Sitemap :" (space before colon) from bad generators, didn't strip inline `# ...` comments, and would have returned empty/garbage values if a directive line had no URL. Now splits on the first colon, matches any-case `sitemap` as the directive name, strips comments, and requires the value to contain `://` before accepting it. Eight new unit tests cover case variants, space-before-colon, inline comments, non-URL values, and non-sitemap directives.
+- **`webclaw-fetch::crawler::is_cancelled` uses `Ordering::Acquire`** (was `Relaxed`). Technically equivalent on x86/arm64 for single-word loads, but the explicit ordering documents the synchronization intent for readers and the compiler.
+
+### Added
+- **`webclaw-mcp` caches the Firefox FetchClient lazily.** Tool calls that repeatedly request the Firefox profile without cookies used to build a fresh reqwest pool + TLS stack per call; a single `OnceLock` keeps the client alive for the life of the server. Chrome (default) and Random (by design per-call) are unaffected.
+
+---
+
 ## [0.3.16] — 2026-04-16
 
 ### Hardened

@@ -4,7 +4,7 @@
 /// Uses a local-first architecture: fetches pages directly, then falls back
 /// to the webclaw cloud API (api.webclaw.io) when bot protection or
 /// JS rendering is detected. Set WEBCLAW_API_KEY for automatic fallback.
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -21,6 +21,17 @@ use crate::tools::*;
 pub struct WebclawMcp {
     tool_router: ToolRouter<Self>,
     fetch_client: Arc<webclaw_fetch::FetchClient>,
+    /// Lazily-initialized Firefox client, reused across all tool calls that
+    /// request the Firefox profile with no cookies. Building a FetchClient
+    /// allocates a reqwest pool + TLS state, so tools that repeatedly hit
+    /// the same profile used to pay that cost per call.
+    ///
+    /// We don't cache the default Chrome client (already lives at
+    /// `fetch_client`), we don't cache Random (by design rotates per call),
+    /// and we don't cache cookie-bearing clients (the cookie header is
+    /// part of the shape and varies per call). So a single OnceLock for
+    /// Firefox covers the one real cacheable case without a full LRU.
+    firefox_client: OnceLock<Arc<webclaw_fetch::FetchClient>>,
     llm_chain: Option<webclaw_llm::ProviderChain>,
     cloud: Option<CloudClient>,
 }
@@ -109,9 +120,31 @@ impl WebclawMcp {
         Self {
             tool_router: Self::tool_router(),
             fetch_client: Arc::new(fetch_client),
+            firefox_client: OnceLock::new(),
             llm_chain,
             cloud,
         }
+    }
+
+    /// Return the cached Firefox client, building it on first use. Any
+    /// subsequent call with the same profile (and no cookies) reuses the
+    /// pool instead of allocating a fresh reqwest + TLS stack.
+    fn firefox_or_build(&self) -> Result<Arc<webclaw_fetch::FetchClient>, String> {
+        if let Some(c) = self.firefox_client.get() {
+            return Ok(c.clone());
+        }
+        let config = webclaw_fetch::FetchConfig {
+            browser: webclaw_fetch::BrowserProfile::Firefox,
+            ..Default::default()
+        };
+        let client = Arc::new(
+            webclaw_fetch::FetchClient::new(config)
+                .map_err(|e| format!("Failed to build firefox client: {e}"))?,
+        );
+        // If a concurrent call raced us here, OnceLock keeps the first
+        // winner and drops ours — that's fine, the ref-count just cleans up.
+        let _ = self.firefox_client.set(client.clone());
+        Ok(self.firefox_client.get().cloned().unwrap_or(client))
     }
 
     /// Helper: smart fetch with LLM format for extract/summarize tools.
@@ -147,10 +180,23 @@ impl WebclawMcp {
             .map(|c| c.join("; "));
 
         // Use a custom client if non-default browser or cookies are provided
+        // Pick the cheapest route to a FetchClient for this request:
+        //   1. Default Chrome + no cookies → reuse the long-lived self.fetch_client
+        //   2. Firefox + no cookies        → reuse the lazily-cached self.firefox_client
+        //   3. Anything with cookies, or Random                       → build ad-hoc
         let is_default_browser = matches!(browser, webclaw_fetch::BrowserProfile::Chrome);
-        let needs_custom = !is_default_browser || cookie_header.is_some();
         let custom_client;
-        let client: &webclaw_fetch::FetchClient = if needs_custom {
+        let cached_firefox;
+        let client: &webclaw_fetch::FetchClient = if cookie_header.is_none() && is_default_browser {
+            &self.fetch_client
+        } else if cookie_header.is_none()
+            && matches!(browser, webclaw_fetch::BrowserProfile::Firefox)
+        {
+            cached_firefox = self.firefox_or_build()?;
+            // cached_firefox lives to end of function; auto-deref gives
+            // us &FetchClient here.
+            &cached_firefox
+        } else {
             let mut headers = std::collections::HashMap::new();
             headers.insert("Accept-Language".to_string(), "en-US,en;q=0.9".to_string());
             if let Some(ref cookies) = cookie_header {
@@ -164,8 +210,6 @@ impl WebclawMcp {
             custom_client = webclaw_fetch::FetchClient::new(config)
                 .map_err(|e| format!("Failed to build client: {e}"))?;
             &custom_client
-        } else {
-            &self.fetch_client
         };
 
         let formats = [format];

@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.14] — 2026-04-16
+
+### Security
+- **`--on-change` command injection closed (P0).** The `--on-change` flag on `webclaw watch` and its multi-URL variant used to pipe the whole user-supplied string through `sh -c`. Anyone (or any LLM driving the MCP surface, or any config file parsed on the user's behalf) that could influence the flag value could execute arbitrary shell. The command is now tokenized with `shlex` and executed directly via `Command::new(prog).args(args)`, so metacharacters like `;`, `&&`, `|`, `$()`, `<(...)`, and env expansion no longer fire. A `WEBCLAW_ALLOW_SHELL=1` escape hatch is available for users who genuinely need pipelines; it logs a warning on every invocation so it can't slip in silently. Surfaced by the 2026-04-16 workspace audit.
+
+---
+
 ## [0.3.13] — 2026-04-10
 
 ### Fixed

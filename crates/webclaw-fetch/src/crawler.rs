@@ -294,12 +294,27 @@ impl Crawler {
                 let delay = self.config.delay;
 
                 handles.push(tokio::spawn(async move {
-                    // Acquire permit -- blocks if concurrency limit reached
-                    let _permit = permit.acquire().await.expect("semaphore closed");
-                    tokio::time::sleep(delay).await;
-
+                    // Acquire permit -- blocks if concurrency limit reached.
+                    // Surface semaphore-closed as a failed PageResult rather
+                    // than panicking the spawned task and silently dropping
+                    // it from the batch.
                     let page_start = Instant::now();
-                    let result = client.fetch_and_extract(&url).await;
+                    let result = match permit.acquire().await {
+                        Ok(_permit) => {
+                            tokio::time::sleep(delay).await;
+                            client.fetch_and_extract(&url).await
+                        }
+                        Err(_) => {
+                            warn!(url = %url, depth, "semaphore closed before acquire");
+                            return PageResult {
+                                url,
+                                depth,
+                                extraction: None,
+                                error: Some("semaphore closed before acquire".into()),
+                                elapsed: page_start.elapsed(),
+                            };
+                        }
+                    };
                     let elapsed = page_start.elapsed();
 
                     match result {

@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.15] — 2026-04-16
+
+### Fixed
+- **Batch/crawl no longer panics on semaphore close (P1).** Three `permit.acquire().await.expect("semaphore closed")` call sites in `webclaw-fetch` (`client::fetch_batch`, `client::fetch_and_extract_batch_with_options`, `crawler` inner loop) now surface a typed `FetchError::Build("semaphore closed before acquire")` or a failed `PageResult` instead of panicking the spawned task. Under normal operation nothing changes; under shutdown-race or adversarial runtime state, the caller sees one failed entry in the batch instead of losing the task silently to the runtime's panic handler. Surfaced by the 2026-04-16 workspace audit.
+
+---
+
 ## [0.3.14] — 2026-04-16
 
 ### Security

@@ -390,8 +390,14 @@ impl FetchClient {
             let url = url.to_string();
 
             handles.push(tokio::spawn(async move {
-                let _permit = permit.acquire().await.expect("semaphore closed");
-                let result = client.fetch(&url).await;
+                // Don't panic if the semaphore has been closed under us
+                // (adversarial runtime state or shutdown race). Surface a
+                // typed error instead so the caller sees one failed URL in
+                // the batch instead of a silently-dropped task.
+                let result = match permit.acquire().await {
+                    Ok(_permit) => client.fetch(&url).await,
+                    Err(_) => Err(FetchError::Build("semaphore closed before acquire".into())),
+                };
                 (idx, BatchResult { url, result })
             }));
         }
@@ -430,8 +436,10 @@ impl FetchClient {
             let opts = options.clone();
 
             handles.push(tokio::spawn(async move {
-                let _permit = permit.acquire().await.expect("semaphore closed");
-                let result = client.fetch_and_extract_with_options(&url, &opts).await;
+                let result = match permit.acquire().await {
+                    Ok(_permit) => client.fetch_and_extract_with_options(&url, &opts).await,
+                    Err(_) => Err(FetchError::Build("semaphore closed before acquire".into())),
+                };
                 (idx, BatchExtractResult { url, result })
             }));
         }

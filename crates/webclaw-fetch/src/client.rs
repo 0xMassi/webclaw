@@ -87,9 +87,27 @@ struct Response {
     body: bytes::Bytes,
 }
 
+/// Maximum fetched body size. A single 50 MB HTML document is already
+/// several orders of magnitude past any realistic page; larger responses
+/// are either malicious (log bomb, zip-bomb decompressed) or streaming
+/// bugs. Caps the blast radius of the HTML → markdown conversion
+/// downstream (which could otherwise allocate multiple full-size Strings
+/// per page in collapse_whitespace + strip_markdown).
+const MAX_BODY_BYTES: u64 = 50 * 1024 * 1024;
+
 impl Response {
-    /// Buffer a wreq response into an owned Response.
+    /// Buffer a wreq response into an owned Response. Rejects bodies that
+    /// advertise a Content-Length beyond [`MAX_BODY_BYTES`] before we pay
+    /// the allocation, and truncates after the fact as a belt-and-braces
+    /// check against a lying server.
     async fn from_wreq(resp: wreq::Response) -> Result<Self, FetchError> {
+        if let Some(len) = resp.content_length()
+            && len > MAX_BODY_BYTES
+        {
+            return Err(FetchError::BodyDecode(format!(
+                "response body {len} bytes exceeds cap {MAX_BODY_BYTES}"
+            )));
+        }
         let status = resp.status().as_u16();
         let url = resp.uri().to_string();
         let headers = resp.headers().clone();
@@ -97,6 +115,12 @@ impl Response {
             .bytes()
             .await
             .map_err(|e| FetchError::BodyDecode(e.to_string()))?;
+        if body.len() as u64 > MAX_BODY_BYTES {
+            return Err(FetchError::BodyDecode(format!(
+                "response body {} bytes exceeds cap {MAX_BODY_BYTES}",
+                body.len()
+            )));
+        }
         Ok(Self {
             status,
             url,

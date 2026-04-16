@@ -91,7 +91,8 @@ impl LlmProvider for OpenAiProvider {
             )));
         }
 
-        let json: serde_json::Value = resp.json().await?;
+        // Cap response body size to defend against adversarial payloads.
+        let json = super::response_json_capped(resp).await?;
 
         let raw = json["choices"][0]["message"]["content"]
             .as_str()

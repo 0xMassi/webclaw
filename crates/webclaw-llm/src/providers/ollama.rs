@@ -80,7 +80,9 @@ impl LlmProvider for OllamaProvider {
             )));
         }
 
-        let json: serde_json::Value = resp.json().await?;
+        // Cap response body size to defend against adversarial payloads
+        // or a runaway local model streaming gigabytes.
+        let json = super::response_json_capped(resp).await?;
 
         let raw = json["message"]["content"]
             .as_str()

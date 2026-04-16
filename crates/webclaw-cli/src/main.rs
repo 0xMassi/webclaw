@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 /// CLI entry point -- wires webclaw-core and webclaw-fetch into a single command.
 /// All extraction and fetching logic lives in sibling crates; this is pure plumbing.
 mod cloud;

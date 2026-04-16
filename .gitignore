@@ -1,6 +1,11 @@
 target/
 .DS_Store
 .env
+.env.*
 proxies.txt
 .claude/skills/
-*.json
+# Scratch / local artifacts (previously covered by overbroad `*.json`,
+# which would have also swallowed package.json, components.json,
+# .smithery/*.json if they were ever modified).
+*.local.json
+local-test-results.json

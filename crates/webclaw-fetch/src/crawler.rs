@@ -137,6 +137,19 @@ impl Crawler {
         let seed_origin = origin_key(&seed);
         let seed_root_domain = root_domain(&seed);
 
+        // Reject pathological user-supplied glob patterns before they can
+        // exercise the recursive `**` handler in glob_match_inner. The
+        // matcher is a straight backtracking implementation; a deeply
+        // nested `**/**/**/...` pattern against a long path can degrade
+        // to exponential time per link checked, per page crawled.
+        for pat in config
+            .include_patterns
+            .iter()
+            .chain(config.exclude_patterns.iter())
+        {
+            validate_glob(pat)?;
+        }
+
         let client = FetchClient::new(config.fetch.clone())?;
 
         Ok(Self {
@@ -387,6 +400,26 @@ impl Crawler {
                 }
             }
 
+            // Cap frontier size independently of max_pages. Pages like
+            // search-result listings or tag clouds can emit thousands of
+            // links per page; without this a single dense page could push
+            // the frontier into the tens of thousands of entries and keep
+            // String allocations alive even after max_pages halts crawling.
+            // Trim aggressively once we exceed 10× max_pages, keeping the
+            // most recently discovered entries which are still on-topic
+            // (breadth-first = siblings of the last page we saw).
+            let frontier_cap = self.config.max_pages.saturating_mul(10).max(100);
+            if next_frontier.len() > frontier_cap {
+                let keep = self.config.max_pages.saturating_mul(5).max(50);
+                warn!(
+                    frontier = next_frontier.len(),
+                    cap = frontier_cap,
+                    trimmed_to = keep,
+                    "frontier exceeded cap, truncating"
+                );
+                next_frontier.truncate(keep);
+            }
+
             frontier = next_frontier;
         }
 
@@ -546,6 +579,49 @@ fn normalize(url: &Url) -> String {
     format!("{scheme}://{host}{port_suffix}{path}{query}")
 }
 
+/// Maximum number of `**` wildcards allowed in a single user glob. Each
+/// additional `**` multiplies the backtracking fan-out of `glob_match_inner`
+/// against adversarial paths; 4 is a practical ceiling for legitimate
+/// nested include/exclude patterns and still keeps the matcher linear-ish.
+const MAX_GLOB_DOUBLESTAR: usize = 4;
+
+/// Maximum glob pattern length. Keeps a single pattern from taking
+/// megabytes of RAM if someone copy-pastes garbage into --include.
+const MAX_GLOB_LEN: usize = 1024;
+
+/// Validate a user-supplied glob pattern before it hits the matcher.
+/// Rejects patterns that would drive `glob_match_inner` into pathological
+/// backtracking (too many `**`, excessive length).
+fn validate_glob(pat: &str) -> Result<(), FetchError> {
+    if pat.len() > MAX_GLOB_LEN {
+        return Err(FetchError::Build(format!(
+            "glob pattern exceeds {MAX_GLOB_LEN} chars ({} given)",
+            pat.len()
+        )));
+    }
+    // Count non-overlapping occurrences of `**`.
+    let bytes = pat.as_bytes();
+    let mut count = 0usize;
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'*' && bytes[i + 1] == b'*' {
+            count += 1;
+            // Skip run of consecutive `*` so `***` counts as one.
+            while i < bytes.len() && bytes[i] == b'*' {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    if count > MAX_GLOB_DOUBLESTAR {
+        return Err(FetchError::Build(format!(
+            "glob pattern has {count} `**` wildcards (max {MAX_GLOB_DOUBLESTAR})"
+        )));
+    }
+    Ok(())
+}
+
 /// Simple glob matching for URL paths. Supports:
 /// - `*` matches any characters within a single path segment (no `/`)
 /// - `**` matches any characters including `/` (any number of segments)
@@ -698,6 +774,37 @@ mod tests {
     fn root_domain_strips_www() {
         let url = Url::parse("https://www.example.com/").unwrap();
         assert_eq!(root_domain(&url), "example.com");
+    }
+
+    // -- validate_glob tests --
+
+    #[test]
+    fn validate_glob_accepts_reasonable_patterns() {
+        assert!(validate_glob("/api/*").is_ok());
+        assert!(validate_glob("/api/**").is_ok());
+        assert!(validate_glob("/docs/**/page-*.html").is_ok());
+        assert!(validate_glob("/a/**/b/**/c/**/d/**").is_ok());
+    }
+
+    #[test]
+    fn validate_glob_rejects_too_many_doublestars() {
+        // 5 `**` exceeds MAX_GLOB_DOUBLESTAR = 4.
+        let pat = "/a/**/b/**/c/**/d/**/e/**";
+        let err = validate_glob(pat).unwrap_err();
+        assert!(matches!(err, FetchError::Build(ref m) if m.contains("`**` wildcards")));
+    }
+
+    #[test]
+    fn validate_glob_treats_triple_star_as_one() {
+        // `***` is still one run, should not count as 2.
+        assert!(validate_glob("/a/***/b/***/c/***/d/***").is_ok());
+    }
+
+    #[test]
+    fn validate_glob_rejects_oversized_pattern() {
+        let giant = "x".repeat(2048);
+        let err = validate_glob(&giant).unwrap_err();
+        assert!(matches!(err, FetchError::Build(ref m) if m.contains("exceeds")));
     }
 
     // -- glob_match tests --

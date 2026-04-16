@@ -9,3 +9,7 @@ proxies.txt
 # .smithery/*.json if they were ever modified).
 *.local.json
 local-test-results.json
+# CLI research command dumps JSON output keyed on the query; they're
+# not code and shouldn't live in git. Track deliberately-saved research
+# output under a different name.
+research-*.json

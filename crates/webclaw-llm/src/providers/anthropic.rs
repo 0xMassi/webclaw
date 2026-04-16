@@ -95,7 +95,9 @@ impl LlmProvider for AnthropicProvider {
             )));
         }
 
-        let json: serde_json::Value = resp.json().await?;
+        // Read body with a size cap so a malicious or misbehaving
+        // endpoint can't allocate unbounded memory via resp.json().
+        let json = super::response_json_capped(resp).await?;
 
         // Anthropic response: {"content": [{"type": "text", "text": "..."}]}
         let raw = json["content"][0]["text"]

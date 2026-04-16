@@ -3,6 +3,19 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.16] — 2026-04-16
+
+### Hardened
+- **Response body caps across fetch + LLM providers (P2).** Every HTTP response buffered from the network is now rejected if it exceeds a hard size cap. `webclaw-fetch::Response::from_wreq` caps HTML/doc responses at 50 MB (before the allocation pays for anything and as a belt-and-braces check after `bytes().await`); `webclaw-llm` providers (anthropic / openai / ollama) cap JSON responses at 5 MB via a shared `response_json_capped` helper. Previously an adversarial or runaway upstream could push unbounded memory into the process. Closes the DoS-via-giant-body class of bugs noted in the audit.
+- **Crawler frontier cap (P2).** After each depth level the frontier is truncated to `max(max_pages × 10, 100)` entries, keeping the most recently discovered links. Dense pages (tag clouds, search results) used to push the frontier into the tens of thousands even after `max_pages` halted new fetches, keeping string allocations alive long after the crawl was effectively done.
+- **Glob pattern validation (P2).** User-supplied `include_patterns` / `exclude_patterns` passed to the crawler are now rejected if they contain more than 4 `**` wildcards or exceed 1024 chars. The backtracking matcher degrades exponentially on deeply-nested `**` against long paths; this keeps adversarial config files from weaponising it.
+
+### Cleanup
+- **Removed blanket `#![allow(dead_code)]` in `webclaw-cli/src/main.rs`.** No dead code surfaced; the suppression was obsolete.
+- **`.gitignore`: replaced overbroad `*.json` with specific local-artifact patterns.** The previous rule would have swallowed `package.json` / `components.json` / `.smithery/*.json` if they were ever modified.
+
+---
+
 ## [0.3.15] — 2026-04-16
 
 ### Fixed

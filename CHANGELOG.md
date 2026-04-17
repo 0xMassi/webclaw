@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.19] — 2026-04-17
+
+### Fixed
+- **Docker image can be used as a FROM base again.** v0.3.13 switched the Docker `CMD` to `ENTRYPOINT ["webclaw"]` so that `docker run IMAGE https://example.com` would pass the URL through as expected. That change trapped a different use case: downstream Dockerfiles that `FROM ghcr.io/0xmassi/webclaw` and set their own `CMD ["./setup.sh"]` — the child's `./setup.sh` became the first arg to `webclaw`, which tried to fetch it as a URL and failed with `error sending request for uri (https://./setup.sh)`. Both `Dockerfile` and `Dockerfile.ci` now use a small `docker-entrypoint.sh` shim that forwards flags (`-*`) and URLs (`http://`, `https://`) to `webclaw`, but `exec`s anything else directly. All four use cases now work: `docker run IMAGE https://example.com`, `docker run IMAGE --help`, child-image `CMD ["./setup.sh"]`, and `docker run IMAGE bash` for debugging. Default `CMD` is `["webclaw", "--help"]`.
+
+---
+
 ## [0.3.18] — 2026-04-16
 
 ### Fixed

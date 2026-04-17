@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.18] — 2026-04-16
+
+### Fixed
+- **UTF-8 char boundary panic in `webclaw-core::extractor::find_content_position` (#16).** After rejecting a match that fell inside image syntax (`![...](...)`), the scan advanced `search_from` by a single byte. If the rejected match started on a multi-byte character (Cyrillic, CJK, accented Latin, emoji), the next `markdown[search_from..]` slice landed mid-char and panicked with `byte index N is not a char boundary; it is inside 'X'`. Repro was `webclaw https://bruler.ru/about_brand -f json`. Now advances by `needle.len()` — always a valid char boundary, and faster because it skips the whole rejected match instead of re-scanning inside it. Two regression tests cover multi-byte rejected matches and all-rejected cycles in Cyrillic text.
+
+---
+
 ## [0.3.17] — 2026-04-16
 
 ### Changed

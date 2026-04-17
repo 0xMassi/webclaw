@@ -684,7 +684,11 @@ fn find_content_position(markdown: &str, needle: &str) -> Option<usize> {
         if !is_inside_image_syntax(markdown, abs_pos) {
             return Some(abs_pos);
         }
-        search_from = abs_pos + 1;
+        // Advance past the rejected match. `abs_pos + needle.len()` is always a
+        // valid UTF-8 char boundary (end of the matched substring); `abs_pos + 1`
+        // is not, and panics on the next slice when the match starts on a
+        // multi-byte char (Cyrillic, CJK, accented Latin, emoji). See issue #16.
+        search_from = abs_pos + needle.len();
     }
     None
 }
@@ -857,6 +861,36 @@ mod tests {
 
     fn parse(html: &str) -> Html {
         Html::parse_document(html)
+    }
+
+    /// Regression: issue #16 — `find_content_position` used to advance
+    /// `search_from` by 1 byte after an image-syntax rejection, which landed
+    /// mid-char on multi-byte UTF-8 input (Cyrillic, CJK, accented Latin, emoji)
+    /// and panicked on the next `markdown[search_from..]` slice.
+    #[test]
+    fn find_content_position_does_not_panic_on_multibyte_rejected_match() {
+        // `needle` appears first inside image syntax (must be rejected), then
+        // again as plain content after a block of Cyrillic prose. The bump
+        // from the rejected match used to land inside 'Ч'.
+        let markdown =
+            "![alt needle text](/img.png) Наша история Brûler d'Amour. needle text appears here.";
+        let pos = find_content_position(markdown, "needle text");
+        assert!(pos.is_some(), "second occurrence should be found");
+        assert!(
+            markdown.is_char_boundary(pos.unwrap()),
+            "returned offset must be a char boundary"
+        );
+    }
+
+    #[test]
+    fn find_content_position_survives_all_rejected_in_cyrillic() {
+        // Every occurrence of `needle` sits inside image syntax, so the
+        // function must walk the whole string rejecting each one. With the
+        // `+1` bug this panicked the first time `search_from` crossed a
+        // 2-byte char. With the fix it should return None cleanly.
+        let markdown =
+            "Наша история ![foo needle bar](a.png) Ещё текст ![needle](b.png) Конец 'Ч'";
+        assert_eq!(find_content_position(markdown, "needle"), None);
     }
 
     /// Helper: extract with default options (backward-compatible).

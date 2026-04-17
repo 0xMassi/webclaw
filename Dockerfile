@@ -58,5 +58,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /build/target/release/webclaw /usr/local/bin/webclaw
 COPY --from=builder /build/target/release/webclaw-mcp /usr/local/bin/webclaw-mcp
 
-# Default: run the CLI (ENTRYPOINT so args pass through)
-ENTRYPOINT ["webclaw"]
+# Entrypoint shim: forwards webclaw args/URL to the binary, but exec's other
+# commands directly so this image can be used as a FROM base with custom CMD.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["webclaw", "--help"]

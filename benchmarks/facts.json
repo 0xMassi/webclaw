@@ -1,0 +1,23 @@
+{
+  "_comment": "Hand-curated 'visible facts' per site. Inspected from live pages on 2026-04-17. PRs welcome to add sites or adjust facts — keep facts specific (customer names, headline stats, product names), not generic words.",
+  "facts": {
+    "https://openai.com":                                         ["ChatGPT", "Sora", "API", "Enterprise", "research"],
+    "https://vercel.com":                                         ["Next.js", "Hobby", "Pro", "Enterprise", "deploy"],
+    "https://anthropic.com":                                      ["Opus", "Claude", "Glasswing", "Perseverance", "NASA"],
+    "https://www.notion.com":                                     ["agents", "Forbes", "Figma", "Ramp", "Cursor"],
+    "https://stripe.com":                                         ["Hertz", "URBN", "Instacart", "99.999", "1.9"],
+    "https://tavily.com":                                         ["search", "extract", "crawl", "research", "developers"],
+    "https://www.shopify.com":                                    ["Plus", "merchants", "retail", "brands", "checkout"],
+    "https://docs.python.org/3/":                                 ["tutorial", "library", "reference", "setup", "distribution"],
+    "https://react.dev":                                          ["Components", "JSX", "Hooks", "Learn", "Reference"],
+    "https://tailwindcss.com/docs/installation":                  ["Vite", "PostCSS", "CLI", "install", "Next.js"],
+    "https://nextjs.org/docs":                                    ["App Router", "Pages Router", "getting-started", "deploying", "Server"],
+    "https://github.com":                                         ["Copilot", "Actions", "millions", "developers", "Enterprise"],
+    "https://en.wikipedia.org/wiki/Rust_(programming_language)":  ["Graydon", "Mozilla", "borrow", "Cargo", "2015"],
+    "https://simonwillison.net/2026/Mar/15/latent-reasoning/":    ["latent", "reasoning", "Willison", "model", "Simon"],
+    "https://paulgraham.com/essays.html":                         ["Graham", "essay", "startup", "Lisp", "founders"],
+    "https://techcrunch.com":                                     ["TechCrunch", "startup", "news", "events", "latest"],
+    "https://www.databricks.com":                                 ["Lakehouse", "platform", "data", "MLflow", "AI"],
+    "https://www.hashicorp.com":                                  ["Terraform", "Vault", "Consul", "infrastructure", "enterprise"]
+  }
+}

@@ -1,0 +1,31 @@
+# One URL per line. Comments (#) and blank lines ignored.
+# Sites chosen to span: SPA marketing, enterprise SaaS, documentation,
+# long-form content, news, and aggregator pages.
+
+# --- SPA marketing ---
+https://openai.com
+https://vercel.com
+https://anthropic.com
+https://www.notion.com
+https://stripe.com
+https://tavily.com
+https://www.shopify.com
+
+# --- Documentation ---
+https://docs.python.org/3/
+https://react.dev
+https://tailwindcss.com/docs/installation
+https://nextjs.org/docs
+https://github.com
+
+# --- Long-form content ---
+https://en.wikipedia.org/wiki/Rust_(programming_language)
+https://simonwillison.net/2026/Mar/15/latent-reasoning/
+https://paulgraham.com/essays.html
+
+# --- News / commerce ---
+https://techcrunch.com
+
+# --- Enterprise SaaS ---
+https://www.databricks.com
+https://www.hashicorp.com

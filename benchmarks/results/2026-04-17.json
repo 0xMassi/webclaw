@@ -1,0 +1,397 @@
+{
+  "timestamp": "2026-04-17 14:28:42",
+  "webclaw_version": "0.3.18",
+  "trafilatura_version": "2.0.0",
+  "tokenizer": "cl100k_base",
+  "runs_per_site": 3,
+  "site_count": 18,
+  "total_facts": 90,
+  "aggregates": {
+    "webclaw": {
+      "reduction_mean": 92.5,
+      "reduction_median": 97.8,
+      "facts_preserved": 76,
+      "total_facts": 90,
+      "fidelity_pct": 84.4,
+      "latency_mean": 0.41
+    },
+    "trafilatura": {
+      "reduction_mean": 97.8,
+      "reduction_median": 99.7,
+      "facts_preserved": 45,
+      "total_facts": 90,
+      "fidelity_pct": 50.0,
+      "latency_mean": 0.2
+    },
+    "firecrawl": {
+      "reduction_mean": 92.4,
+      "reduction_median": 96.2,
+      "facts_preserved": 70,
+      "total_facts": 90,
+      "fidelity_pct": 77.8,
+      "latency_mean": 0.99
+    }
+  },
+  "per_site": [
+    {
+      "url": "https://openai.com",
+      "facts_count": 5,
+      "raw_tokens": 170510,
+      "webclaw": {
+        "tokens_med": 1238,
+        "facts_med": 3,
+        "seconds_med": 0.49
+      },
+      "trafilatura": {
+        "tokens_med": 0,
+        "facts_med": 0,
+        "seconds_med": 0.12
+      },
+      "firecrawl": {
+        "tokens_med": 3139,
+        "facts_med": 2,
+        "seconds_med": 1.14
+      }
+    },
+    {
+      "url": "https://vercel.com",
+      "facts_count": 5,
+      "raw_tokens": 380172,
+      "webclaw": {
+        "tokens_med": 1076,
+        "facts_med": 3,
+        "seconds_med": 0.31
+      },
+      "trafilatura": {
+        "tokens_med": 585,
+        "facts_med": 3,
+        "seconds_med": 0.23
+      },
+      "firecrawl": {
+        "tokens_med": 4029,
+        "facts_med": 3,
+        "seconds_med": 0.99
+      }
+    },
+    {
+      "url": "https://anthropic.com",
+      "facts_count": 5,
+      "raw_tokens": 102911,
+      "webclaw": {
+        "tokens_med": 672,
+        "facts_med": 5,
+        "seconds_med": 0.31
+      },
+      "trafilatura": {
+        "tokens_med": 96,
+        "facts_med": 4,
+        "seconds_med": 0.21
+      },
+      "firecrawl": {
+        "tokens_med": 560,
+        "facts_med": 5,
+        "seconds_med": 0.81
+      }
+    },
+    {
+      "url": "https://www.notion.com",
+      "facts_count": 5,
+      "raw_tokens": 109312,
+      "webclaw": {
+        "tokens_med": 13416,
+        "facts_med": 5,
+        "seconds_med": 0.93
+      },
+      "trafilatura": {
+        "tokens_med": 91,
+        "facts_med": 2,
+        "seconds_med": 0.65
+      },
+      "firecrawl": {
+        "tokens_med": 5261,
+        "facts_med": 5,
+        "seconds_med": 0.99
+      }
+    },
+    {
+      "url": "https://stripe.com",
+      "facts_count": 5,
+      "raw_tokens": 243465,
+      "webclaw": {
+        "tokens_med": 81974,
+        "facts_med": 5,
+        "seconds_med": 0.71
+      },
+      "trafilatura": {
+        "tokens_med": 2418,
+        "facts_med": 0,
+        "seconds_med": 0.39
+      },
+      "firecrawl": {
+        "tokens_med": 8922,
+        "facts_med": 5,
+        "seconds_med": 1.04
+      }
+    },
+    {
+      "url": "https://tavily.com",
+      "facts_count": 5,
+      "raw_tokens": 29964,
+      "webclaw": {
+        "tokens_med": 1361,
+        "facts_med": 5,
+        "seconds_med": 0.33
+      },
+      "trafilatura": {
+        "tokens_med": 182,
+        "facts_med": 3,
+        "seconds_med": 0.18
+      },
+      "firecrawl": {
+        "tokens_med": 1969,
+        "facts_med": 4,
+        "seconds_med": 0.75
+      }
+    },
+    {
+      "url": "https://www.shopify.com",
+      "facts_count": 5,
+      "raw_tokens": 183738,
+      "webclaw": {
+        "tokens_med": 1939,
+        "facts_med": 3,
+        "seconds_med": 0.29
+      },
+      "trafilatura": {
+        "tokens_med": 595,
+        "facts_med": 3,
+        "seconds_med": 0.22
+      },
+      "firecrawl": {
+        "tokens_med": 5384,
+        "facts_med": 3,
+        "seconds_med": 0.98
+      }
+    },
+    {
+      "url": "https://docs.python.org/3/",
+      "facts_count": 5,
+      "raw_tokens": 5275,
+      "webclaw": {
+        "tokens_med": 689,
+        "facts_med": 4,
+        "seconds_med": 0.12
+      },
+      "trafilatura": {
+        "tokens_med": 347,
+        "facts_med": 4,
+        "seconds_med": 0.04
+      },
+      "firecrawl": {
+        "tokens_med": 1623,
+        "facts_med": 4,
+        "seconds_med": 0.79
+      }
+    },
+    {
+      "url": "https://react.dev",
+      "facts_count": 5,
+      "raw_tokens": 107406,
+      "webclaw": {
+        "tokens_med": 3332,
+        "facts_med": 5,
+        "seconds_med": 0.23
+      },
+      "trafilatura": {
+        "tokens_med": 763,
+        "facts_med": 3,
+        "seconds_med": 0.17
+      },
+      "firecrawl": {
+        "tokens_med": 4959,
+        "facts_med": 5,
+        "seconds_med": 0.92
+      }
+    },
+    {
+      "url": "https://tailwindcss.com/docs/installation",
+      "facts_count": 5,
+      "raw_tokens": 113258,
+      "webclaw": {
+        "tokens_med": 779,
+        "facts_med": 4,
+        "seconds_med": 0.27
+      },
+      "trafilatura": {
+        "tokens_med": 430,
+        "facts_med": 2,
+        "seconds_med": 0.2
+      },
+      "firecrawl": {
+        "tokens_med": 813,
+        "facts_med": 4,
+        "seconds_med": 1.02
+      }
+    },
+    {
+      "url": "https://nextjs.org/docs",
+      "facts_count": 5,
+      "raw_tokens": 228196,
+      "webclaw": {
+        "tokens_med": 968,
+        "facts_med": 4,
+        "seconds_med": 0.24
+      },
+      "trafilatura": {
+        "tokens_med": 631,
+        "facts_med": 4,
+        "seconds_med": 0.17
+      },
+      "firecrawl": {
+        "tokens_med": 885,
+        "facts_med": 4,
+        "seconds_med": 0.88
+      }
+    },
+    {
+      "url": "https://github.com",
+      "facts_count": 5,
+      "raw_tokens": 234232,
+      "webclaw": {
+        "tokens_med": 1438,
+        "facts_med": 5,
+        "seconds_med": 0.33
+      },
+      "trafilatura": {
+        "tokens_med": 486,
+        "facts_med": 3,
+        "seconds_med": 0.09
+      },
+      "firecrawl": {
+        "tokens_med": 3058,
+        "facts_med": 4,
+        "seconds_med": 0.92
+      }
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+      "facts_count": 5,
+      "raw_tokens": 189406,
+      "webclaw": {
+        "tokens_med": 47823,
+        "facts_med": 5,
+        "seconds_med": 0.36
+      },
+      "trafilatura": {
+        "tokens_med": 37427,
+        "facts_med": 5,
+        "seconds_med": 0.28
+      },
+      "firecrawl": {
+        "tokens_med": 59326,
+        "facts_med": 5,
+        "seconds_med": 1.49
+      }
+    },
+    {
+      "url": "https://simonwillison.net/2026/Mar/15/latent-reasoning/",
+      "facts_count": 5,
+      "raw_tokens": 3212,
+      "webclaw": {
+        "tokens_med": 724,
+        "facts_med": 4,
+        "seconds_med": 0.12
+      },
+      "trafilatura": {
+        "tokens_med": 0,
+        "facts_med": 0,
+        "seconds_med": 0.03
+      },
+      "firecrawl": {
+        "tokens_med": 525,
+        "facts_med": 2,
+        "seconds_med": 0.89
+      }
+    },
+    {
+      "url": "https://paulgraham.com/essays.html",
+      "facts_count": 5,
+      "raw_tokens": 1786,
+      "webclaw": {
+        "tokens_med": 169,
+        "facts_med": 2,
+        "seconds_med": 0.9
+      },
+      "trafilatura": {
+        "tokens_med": 0,
+        "facts_med": 0,
+        "seconds_med": 0.22
+      },
+      "firecrawl": {
+        "tokens_med": 295,
+        "facts_med": 1,
+        "seconds_med": 0.71
+      }
+    },
+    {
+      "url": "https://techcrunch.com",
+      "facts_count": 5,
+      "raw_tokens": 143309,
+      "webclaw": {
+        "tokens_med": 7265,
+        "facts_med": 5,
+        "seconds_med": 0.25
+      },
+      "trafilatura": {
+        "tokens_med": 397,
+        "facts_med": 5,
+        "seconds_med": 0.2
+      },
+      "firecrawl": {
+        "tokens_med": 11408,
+        "facts_med": 5,
+        "seconds_med": 1.21
+      }
+    },
+    {
+      "url": "https://www.databricks.com",
+      "facts_count": 5,
+      "raw_tokens": 274051,
+      "webclaw": {
+        "tokens_med": 2001,
+        "facts_med": 4,
+        "seconds_med": 0.31
+      },
+      "trafilatura": {
+        "tokens_med": 311,
+        "facts_med": 4,
+        "seconds_med": 0.2
+      },
+      "firecrawl": {
+        "tokens_med": 5471,
+        "facts_med": 4,
+        "seconds_med": 1.34
+      }
+    },
+    {
+      "url": "https://www.hashicorp.com",
+      "facts_count": 5,
+      "raw_tokens": 108510,
+      "webclaw": {
+        "tokens_med": 1501,
+        "facts_med": 5,
+        "seconds_med": 0.91
+      },
+      "trafilatura": {
+        "tokens_med": 0,
+        "facts_med": 0,
+        "seconds_med": 0.03
+      },
+      "firecrawl": {
+        "tokens_med": 4289,
+        "facts_med": 5,
+        "seconds_med": 0.91
+      }
+    }
+  ]
+}

@@ -1,130 +1,94 @@
 # Benchmarks
 
-Extraction quality and performance benchmarks comparing webclaw against popular alternatives.
+Reproducible benchmarks comparing `webclaw` against open-source and commercial
+web extraction tools. Every number here ships with the script that produced it.
+Run `./run.sh` to regenerate.
 
-## Quick Run
+## Headline
 
-```bash
-# Run all benchmarks
-cargo run --release -p webclaw-bench
+**webclaw preserves more page content than any other tool tested, at 2.4× the
+speed of the closest competitor.**
 
-# Run specific benchmark
-cargo run --release -p webclaw-bench -- --filter quality
-cargo run --release -p webclaw-bench -- --filter speed
-```
+Across 18 production sites (SPAs, documentation, long-form articles, news,
+enterprise marketing), measured over 3 runs per site with OpenAI's
+`cl100k_base` tokenizer. Last run: 2026-04-17, webclaw v0.3.18.
 
-## Extraction Quality
+| Tool | Fidelity (facts preserved) | Token reduction vs raw HTML | Mean latency |
+|---|---:|---:|---:|
+| **webclaw `--format llm`** | **76 / 90  (84.4 %)** | 92.5 % | **0.41 s** |
+| Firecrawl API (v2, hosted) | 70 / 90  (77.8 %) | 92.4 % | 0.99 s |
+| Trafilatura 2.0 | 45 / 90  (50.0 %) | 97.8 % (by dropping content) | 0.21 s |
 
-Tested against 50 diverse web pages (news articles, documentation, blogs, SPAs, e-commerce).
-Each page scored on: content completeness, noise removal, link preservation, metadata accuracy.
+**webclaw matches or beats both competitors on fidelity on all 18 sites.**
 
-| Extractor | Accuracy | Noise Removal | Links | Metadata | Avg Score |
-|-----------|----------|---------------|-------|----------|-----------|
-| **webclaw** | **94.2%** | **96.1%** | **98.3%** | **91.7%** | **95.1%** |
-| mozilla/readability | 87.3% | 89.4% | 85.1% | 72.3% | 83.5% |
-| trafilatura | 82.1% | 91.2% | 68.4% | 80.5% | 80.6% |
-| newspaper3k | 71.4% | 76.8% | 52.3% | 65.2% | 66.4% |
+## Why webclaw wins
 
-### Scoring Methodology
+- **Speed.** 2.4× faster than Firecrawl's hosted API. Firecrawl defaults to
+  browser rendering for everything; webclaw's in-process TLS-fingerprinted
+  fetch plus deterministic extractor reaches comparable-or-better content
+  without that overhead.
+- **Fidelity.** Trafilatura's higher token reduction comes from dropping
+  content. On the 18 sites tested it missed 45 of 90 key facts — entire
+  customer-story sections, release dates, product names. webclaw keeps them.
+- **Deterministic.** Same URL → same output. No LLM post-processing, no
+  paraphrasing, no hallucination risk.
 
-- **Accuracy**: Percentage of main content extracted vs human-annotated ground truth
-- **Noise Removal**: Percentage of navigation, ads, footers, and boilerplate correctly excluded
-- **Links**: Percentage of meaningful content links preserved with correct text and href
-- **Metadata**: Correct extraction of title, author, date, description, and language
+## Per-site results
 
-### Why webclaw scores higher
+Numbers are median of 3 runs. `raw` = raw fetched HTML token count.
+`facts` = hand-curated visible facts preserved out of 5 per site.
 
-1. **Multi-signal scoring**: Combines text density, semantic HTML tags, link density penalty, and DOM depth analysis
-2. **Data island extraction**: Catches React/Next.js JSON payloads that DOM-only extractors miss
-3. **Domain-specific heuristics**: Auto-detects site type (news, docs, e-commerce, social) and adapts strategy
-4. **Noise filter**: Shared filter using ARIA roles, class/ID patterns, and structural analysis (Tailwind-safe)
+| Site | raw HTML | webclaw | Firecrawl | Trafilatura | wc facts | fc facts | tr facts |
+|---|---:|---:|---:|---:|:---:|:---:|:---:|
+| openai.com | 170 K | 1,238 | 3,139 | 0 | **3/5** | 2/5 | 0/5 |
+| vercel.com | 380 K | 1,076 | 4,029 | 585 | **3/5** | 3/5 | 3/5 |
+| anthropic.com | 103 K | 672 | 560 | 96 | **5/5** | 5/5 | 4/5 |
+| notion.com | 109 K | 13,416 | 5,261 | 91 | **5/5** | 5/5 | 2/5 |
+| stripe.com | 243 K | 81,974 | 8,922 | 2,418 | **5/5** | 5/5 | 0/5 |
+| tavily.com | 30 K | 1,361 | 1,969 | 182 | **5/5** | 4/5 | 3/5 |
+| shopify.com | 184 K | 1,939 | 5,384 | 595 | **3/5** | 3/5 | 3/5 |
+| docs.python.org | 5 K | 689 | 1,623 | 347 | **4/5** | 4/5 | 4/5 |
+| react.dev | 107 K | 3,332 | 4,959 | 763 | **5/5** | 5/5 | 3/5 |
+| tailwindcss.com/docs/installation | 113 K | 779 | 813 | 430 | **4/5** | 4/5 | 2/5 |
+| nextjs.org/docs | 228 K | 968 | 885 | 631 | **4/5** | 4/5 | 4/5 |
+| github.com | 234 K | 1,438 | 3,058 | 486 | **5/5** | 4/5 | 3/5 |
+| en.wikipedia.org/wiki/Rust | 189 K | 47,823 | 59,326 | 37,427 | **5/5** | 5/5 | 5/5 |
+| simonwillison.net/…/latent-reasoning | 3 K | 724 | 525 | 0 | **4/5** | 2/5 | 0/5 |
+| paulgraham.com/essays.html | 2 K | 169 | 295 | 0 | **2/5** | 1/5 | 0/5 |
+| techcrunch.com | 143 K | 7,265 | 11,408 | 397 | **5/5** | 5/5 | 5/5 |
+| databricks.com | 274 K | 2,001 | 5,471 | 311 | **4/5** | 4/5 | 4/5 |
+| hashicorp.com | 109 K | 1,501 | 4,289 | 0 | **5/5** | 5/5 | 0/5 |
 
-## Extraction Speed
-
-Single-page extraction time (parsing + extraction, no network). Measured on M4 Pro, averaged over 1000 runs.
-
-| Page Size | webclaw | readability | trafilatura |
-|-----------|---------|-------------|-------------|
-| Small (10KB) | **0.8ms** | 2.1ms | 4.3ms |
-| Medium (100KB) | **3.2ms** | 8.7ms | 18.4ms |
-| Large (500KB) | **12.1ms** | 34.2ms | 72.8ms |
-| Huge (2MB) | **41.3ms** | 112ms | 284ms |
-
-### Why webclaw is faster
-
-1. **Rust**: No garbage collection, zero-cost abstractions, SIMD-optimized string operations
-2. **Single-pass scoring**: Content scoring happens during DOM traversal, not as a separate pass
-3. **Lazy allocation**: Markdown conversion streams output instead of building intermediate structures
-
-## LLM Token Efficiency
-
-Tokens used when feeding extraction output to Claude/GPT. Lower is better (same information, fewer tokens = cheaper).
-
-| Format | Tokens (avg) | vs Raw HTML |
-|--------|-------------|-------------|
-| Raw HTML | 4,820 | baseline |
-| webclaw markdown | 1,840 | **-62%** |
-| webclaw text | 1,620 | **-66%** |
-| **webclaw llm** | **1,590** | **-67%** |
-| readability markdown | 2,340 | -51% |
-| trafilatura text | 2,180 | -55% |
-
-The `llm` format applies a 9-step optimization pipeline: image strip, emphasis strip, link dedup, stat merge, whitespace collapse, and more.
-
-## Crawl Performance
-
-Crawling speed with concurrent extraction. Target: example documentation site (~200 pages).
-
-| Concurrency | webclaw | Crawl4AI | Scrapy |
-|-------------|---------|----------|--------|
-| 1 | 2.1 pages/s | 1.4 pages/s | 1.8 pages/s |
-| 5 | **9.8 pages/s** | 5.2 pages/s | 7.1 pages/s |
-| 10 | **18.4 pages/s** | 8.7 pages/s | 12.3 pages/s |
-| 20 | **32.1 pages/s** | 14.2 pages/s | 21.8 pages/s |
-
-## Bot Protection Bypass
-
-Success rate against common anti-bot systems (100 attempts each, via Cloud API with antibot sidecar).
-
-| Protection | webclaw | Firecrawl | Bright Data |
-|------------|---------|-----------|-------------|
-| Cloudflare Turnstile | **97%** | 62% | 94% |
-| DataDome | **91%** | 41% | 88% |
-| AWS WAF | **95%** | 78% | 92% |
-| hCaptcha | **89%** | 35% | 85% |
-| No protection | 100% | 100% | 100% |
-
-Note: Bot protection bypass requires the Cloud API with antibot sidecar. The open-source CLI detects protection and suggests using `--cloud` mode.
-
-## Running Benchmarks Yourself
+## Reproducing this benchmark
 
 ```bash
-# Clone the repo
-git clone https://github.com/0xMassi/webclaw.git
-cd webclaw
-
-# Run quality benchmarks (downloads test pages on first run)
-cargo run --release -p webclaw-bench -- --filter quality
-
-# Run speed benchmarks
-cargo run --release -p webclaw-bench -- --filter speed
-
-# Run token efficiency benchmarks (requires tiktoken)
-cargo run --release -p webclaw-bench -- --filter tokens
-
-# Full benchmark suite with HTML report
-cargo run --release -p webclaw-bench -- --report html
+cd benchmarks/
+./run.sh
 ```
 
-## Reproducing Results
+Requirements:
+- Python 3.9+
+- `pip install tiktoken trafilatura firecrawl-py`
+- `webclaw` release binary at `../target/release/webclaw` (or set `$WEBCLAW`)
+- Firecrawl API key (free tier: 500 credits/month, enough for many runs) —
+  export as `FIRECRAWL_API_KEY`. If omitted, the benchmark runs with webclaw
+  and Trafilatura only.
 
-All benchmark test pages are cached in `benchmarks/fixtures/` after first download. The fixture set includes:
+One run of the full suite burns ~60 Firecrawl credits (18 sites × 3 runs,
+plus Firecrawl's scrape costs 1 credit each).
 
-- 10 news articles (NYT, BBC, Reuters, TechCrunch, etc.)
-- 10 documentation pages (Rust docs, MDN, React docs, etc.)
-- 10 blog posts (personal blogs, Medium, Substack)
-- 10 e-commerce pages (Amazon, Shopify stores)
-- 5 SPA/React pages (Next.js, Remix apps)
-- 5 edge cases (minimal HTML, huge pages, heavy JavaScript)
+## Methodology
 
-Ground truth annotations are in `benchmarks/ground-truth/` as JSON files with manually verified content boundaries.
+See [methodology.md](methodology.md) for:
+- Tokenizer rationale (`cl100k_base` → covers GPT-4 / GPT-3.5 /
+  `text-embedding-3-*`)
+- Fact selection procedure and how to propose additions
+- Why median of 3 runs (CDN / cache / network noise)
+- Raw data schema (`results/*.json`)
+- Notes on site churn (news aggregators, release pages)
+
+## Raw data
+
+Per-run results are committed as JSON at `results/YYYY-MM-DD.json` so the
+history of measurements is auditable. Diff two runs to see regressions or
+improvements across webclaw versions.

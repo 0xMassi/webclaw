@@ -11,7 +11,7 @@ webclaw/
                       # + ExtractionOptions (include/exclude CSS selectors)
                       # + diff engine (change tracking)
                       # + brand extraction (DOM/CSS analysis)
-    webclaw-fetch/    # HTTP client via primp. Crawler. Sitemap discovery. Batch ops.
+    webclaw-fetch/    # HTTP client via wreq (BoringSSL). Crawler. Sitemap discovery. Batch ops.
                       # + proxy pool rotation (per-request)
                       # + PDF content-type detection
                       # + document parsing (DOCX, XLSX, CSV)
@@ -40,7 +40,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - `brand.rs` — Brand identity extraction from DOM structure and CSS
 
 ### Fetch Modules (`webclaw-fetch`)
-- `client.rs` — FetchClient with primp TLS impersonation
+- `client.rs` — FetchClient with wreq BoringSSL TLS impersonation; implements the public `Fetcher` trait so callers (including server adapters) can swap in alternative implementations
 - `browser.rs` — Browser profiles: Chrome (142/136/133/131), Firefox (144/135/133/128)
 - `crawler.rs` — BFS same-origin crawler with configurable depth/concurrency/delay
 - `sitemap.rs` — Sitemap discovery and parsing (sitemap.xml, robots.txt)
@@ -76,9 +76,10 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 ## Hard Rules
 
 - **Core has ZERO network dependencies** — takes `&str` HTML, returns structured output. Keep it WASM-compatible.
-- **primp requires `[patch.crates-io]`** for patched rustls/h2 forks at workspace level.
-- **RUSTFLAGS are set in `.cargo/config.toml`** — no need to pass manually.
-- **webclaw-llm uses plain reqwest** (NOT primp-patched). LLM APIs don't need TLS fingerprinting.
+- **webclaw-fetch uses wreq 6.x** (BoringSSL). No `[patch.crates-io]` forks needed; wreq handles TLS internally.
+- **No special RUSTFLAGS** — `.cargo/config.toml` is currently empty of build flags. Don't add any.
+- **webclaw-llm uses plain reqwest**. LLM APIs don't need TLS fingerprinting, so no wreq dep.
+- **Vertical extractors take `&dyn Fetcher`**, not `&FetchClient`. This lets the production server plug in a `TlsSidecarFetcher` that routes through the Go tls-sidecar instead of in-process wreq.
 - **qwen3 thinking tags** (`<think>`) are stripped at both provider and consumer levels.
 
 ## Build & Test

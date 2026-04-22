@@ -25,8 +25,8 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "youtube_video",
@@ -45,7 +45,7 @@ pub fn matches(url: &str) -> bool {
         || url.contains("youtube-nocookie.com/embed/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let video_id = parse_video_id(url).ok_or_else(|| {
         FetchError::Build(format!("youtube_video: cannot parse video id from '{url}'"))
     })?;

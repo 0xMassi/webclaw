@@ -9,8 +9,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "reddit",
@@ -32,7 +32,7 @@ pub fn matches(url: &str) -> bool {
     is_reddit_host && url.contains("/comments/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let json_url = build_json_url(url);
     let resp = client.fetch(&json_url).await?;
     if resp.status != 200 {

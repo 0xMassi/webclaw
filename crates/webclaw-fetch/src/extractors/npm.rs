@@ -13,8 +13,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "npm",
@@ -31,7 +31,7 @@ pub fn matches(url: &str) -> bool {
     url.contains("/package/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let name = parse_name(url)
         .ok_or_else(|| FetchError::Build(format!("npm: cannot parse name from '{url}'")))?;
 
@@ -94,7 +94,7 @@ pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchErro
     }))
 }
 
-async fn fetch_weekly_downloads(client: &FetchClient, name: &str) -> Result<i64, FetchError> {
+async fn fetch_weekly_downloads(client: &dyn Fetcher, name: &str) -> Result<i64, FetchError> {
     let url = format!(
         "https://api.npmjs.org/downloads/point/last-week/{}",
         urlencode_segment(name)

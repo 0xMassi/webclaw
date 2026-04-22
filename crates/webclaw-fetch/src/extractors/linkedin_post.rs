@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use std::sync::OnceLock;
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "linkedin_post",
@@ -36,7 +36,7 @@ pub fn matches(url: &str) -> bool {
     url.contains("/feed/update/urn:li:") || url.contains("/posts/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let urn = extract_urn(url).ok_or_else(|| {
         FetchError::Build(format!(
             "linkedin_post: cannot extract URN from '{url}' (expected /feed/update/urn:li:... or /posts/{{slug}}-{{id}})"

@@ -8,8 +8,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "dev_to",
@@ -61,7 +61,7 @@ const RESERVED_FIRST_SEGS: &[&str] = &[
     "t",
 ];
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (username, slug) = parse_username_slug(url).ok_or_else(|| {
         FetchError::Build(format!("dev_to: cannot parse username/slug from '{url}'"))
     })?;

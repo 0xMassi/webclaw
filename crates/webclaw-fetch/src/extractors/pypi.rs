@@ -9,8 +9,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "pypi",
@@ -30,7 +30,7 @@ pub fn matches(url: &str) -> bool {
     url.contains("/project/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (name, version) = parse_project(url).ok_or_else(|| {
         FetchError::Build(format!("pypi: cannot parse package name from '{url}'"))
     })?;

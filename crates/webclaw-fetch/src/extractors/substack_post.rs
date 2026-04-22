@@ -28,9 +28,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "substack_post",
@@ -49,7 +49,7 @@ pub fn matches(url: &str) -> bool {
     url.contains("/p/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let slug = parse_slug(url).ok_or_else(|| {
         FetchError::Build(format!("substack_post: cannot parse slug from '{url}'"))
     })?;
@@ -149,7 +149,7 @@ fn build_api_payload(url: &str, api_url: &str, slug: &str, p: Post) -> Value {
 // ---------------------------------------------------------------------------
 
 async fn html_fallback(
-    client: &FetchClient,
+    client: &dyn Fetcher,
     url: &str,
     api_url: &str,
     slug: &str,

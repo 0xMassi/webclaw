@@ -66,7 +66,9 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-use crate::client::FetchClient;
+// Client type isn't needed here anymore now that smart_fetch* takes
+// `&dyn Fetcher`. Kept as a comment for historical context: this
+// module used to import FetchClient directly before v0.5.1.
 
 // ---------------------------------------------------------------------------
 // URLs + defaults — keep in one place so "change the signup link" is a
@@ -506,7 +508,7 @@ pub enum SmartFetchResult {
 /// Prefer [`smart_fetch_html`] for new callers — it surfaces the typed
 /// [`CloudError`] so you can render precise UX.
 pub async fn smart_fetch(
-    client: &FetchClient,
+    client: &dyn crate::fetcher::Fetcher,
     cloud: Option<&CloudClient>,
     url: &str,
     include_selectors: &[String],
@@ -613,7 +615,7 @@ pub struct FetchedHtml {
 /// Designed for the vertical-extractor pattern where the caller has
 /// its own parser and just needs bytes.
 pub async fn smart_fetch_html(
-    client: &FetchClient,
+    client: &dyn crate::fetcher::Fetcher,
     cloud: Option<&CloudClient>,
     url: &str,
 ) -> Result<FetchedHtml, CloudError> {

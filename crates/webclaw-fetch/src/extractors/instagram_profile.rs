@@ -23,8 +23,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "instagram_profile",
@@ -80,7 +80,7 @@ const RESERVED: &[&str] = &[
     "signup",
 ];
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let username = parse_username(url).ok_or_else(|| {
         FetchError::Build(format!(
             "instagram_profile: cannot parse username from '{url}'"
@@ -198,7 +198,7 @@ fn classify(n: &MediaNode) -> &'static str {
 /// pull whatever OG tags we can. Returns less data and explicitly
 /// flags `data_completeness: "og_only"` so callers know.
 async fn og_fallback(
-    client: &FetchClient,
+    client: &dyn Fetcher,
     username: &str,
     original_url: &str,
     api_status: u16,

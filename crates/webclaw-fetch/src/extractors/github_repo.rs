@@ -10,8 +10,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "github_repo",
@@ -70,7 +70,7 @@ const RESERVED_OWNERS: &[&str] = &[
     "about",
 ];
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (owner, repo) = parse_owner_repo(url).ok_or_else(|| {
         FetchError::Build(format!("github_repo: cannot parse owner/repo from '{url}'"))
     })?;

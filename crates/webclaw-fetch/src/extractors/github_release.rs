@@ -8,8 +8,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "github_release",
@@ -32,7 +32,7 @@ pub fn matches(url: &str) -> bool {
     parse_release(url).is_some()
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (owner, repo, tag) = parse_release(url).ok_or_else(|| {
         FetchError::Build(format!("github_release: cannot parse release URL '{url}'"))
     })?;

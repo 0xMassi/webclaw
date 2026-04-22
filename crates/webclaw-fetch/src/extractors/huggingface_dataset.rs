@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "huggingface_dataset",
@@ -38,7 +38,7 @@ pub fn matches(url: &str) -> bool {
     segs.first().copied() == Some("datasets") && (segs.len() == 2 || segs.len() == 3)
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let dataset_path = parse_dataset_path(url).ok_or_else(|| {
         FetchError::Build(format!(
             "hf_dataset: cannot parse dataset path from '{url}'"

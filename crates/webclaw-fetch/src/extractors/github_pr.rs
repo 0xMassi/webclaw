@@ -9,8 +9,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "github_pr",
@@ -33,7 +33,7 @@ pub fn matches(url: &str) -> bool {
     parse_pr(url).is_some()
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (owner, repo, number) = parse_pr(url).ok_or_else(|| {
         FetchError::Build(format!("github_pr: cannot parse pull-request URL '{url}'"))
     })?;

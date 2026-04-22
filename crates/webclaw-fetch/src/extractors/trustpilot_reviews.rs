@@ -32,9 +32,9 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "trustpilot_reviews",
@@ -51,7 +51,7 @@ pub fn matches(url: &str) -> bool {
     url.contains("/review/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let fetched = cloud::smart_fetch_html(client, client.cloud(), url)
         .await
         .map_err(cloud_to_fetch_err)?;

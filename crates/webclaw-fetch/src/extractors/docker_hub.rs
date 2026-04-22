@@ -8,8 +8,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "docker_hub",
@@ -29,7 +29,7 @@ pub fn matches(url: &str) -> bool {
     url.contains("/_/") || url.contains("/r/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (namespace, name) = parse_repo(url)
         .ok_or_else(|| FetchError::Build(format!("docker_hub: cannot parse repo from '{url}'")))?;
 

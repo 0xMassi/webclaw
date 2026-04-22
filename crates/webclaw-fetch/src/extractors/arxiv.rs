@@ -10,8 +10,8 @@ use quick_xml::events::Event;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "arxiv",
@@ -32,7 +32,7 @@ pub fn matches(url: &str) -> bool {
     url.contains("/abs/") || url.contains("/pdf/")
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let id = parse_id(url)
         .ok_or_else(|| FetchError::Build(format!("arxiv: cannot parse id from '{url}'")))?;
 

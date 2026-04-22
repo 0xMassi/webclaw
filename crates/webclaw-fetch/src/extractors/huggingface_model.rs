@@ -9,8 +9,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "huggingface_model",
@@ -61,7 +61,7 @@ const RESERVED_NAMESPACES: &[&str] = &[
     "search",
 ];
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (owner, name) = parse_owner_name(url).ok_or_else(|| {
         FetchError::Build(format!("hf model: cannot parse owner/name from '{url}'"))
     })?;

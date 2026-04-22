@@ -46,8 +46,8 @@ pub mod youtube_video;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 /// Public catalog entry for `/v1/extractors`. Stable shape — clients
 /// rely on `name` to pick the right `/v1/scrape/{name}` route.
@@ -102,7 +102,7 @@ pub fn list() -> Vec<ExtractorInfo> {
 /// one that claims the URL. Used by `/v1/scrape` when the caller doesn't
 /// pick a vertical explicitly.
 pub async fn dispatch_by_url(
-    client: &FetchClient,
+    client: &dyn Fetcher,
     url: &str,
 ) -> Option<Result<(&'static str, Value), FetchError>> {
     if reddit::matches(url) {
@@ -281,7 +281,7 @@ pub async fn dispatch_by_url(
 /// users get a clear "wrong route" error instead of a confusing parse
 /// failure deep in the extractor.
 pub async fn dispatch_by_name(
-    client: &FetchClient,
+    client: &dyn Fetcher,
     name: &str,
     url: &str,
 ) -> Result<Value, ExtractorDispatchError> {

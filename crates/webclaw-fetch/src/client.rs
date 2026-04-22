@@ -599,6 +599,36 @@ impl FetchClient {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Fetcher trait implementation
+//
+// Vertical extractors consume the [`crate::fetcher::Fetcher`] trait
+// rather than `FetchClient` directly, which is what lets the production
+// API server swap in a tls-sidecar-backed implementation without
+// pulling wreq into its dependency graph. For everyone else (CLI, MCP,
+// self-hosted OSS server) this impl means "pass the FetchClient you
+// already have; nothing changes".
+// ---------------------------------------------------------------------------
+
+#[async_trait::async_trait]
+impl crate::fetcher::Fetcher for FetchClient {
+    async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
+        FetchClient::fetch(self, url).await
+    }
+
+    async fn fetch_with_headers(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        FetchClient::fetch_with_headers(self, url, headers).await
+    }
+
+    fn cloud(&self) -> Option<&crate::cloud::CloudClient> {
+        FetchClient::cloud(self)
+    }
+}
+
 /// Collect the browser variants to use based on the browser profile.
 fn collect_variants(profile: &BrowserProfile) -> Vec<BrowserVariant> {
     match profile {

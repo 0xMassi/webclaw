@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 use std::sync::OnceLock;
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "instagram_post",
@@ -33,7 +33,7 @@ pub fn matches(url: &str) -> bool {
     parse_shortcode(url).is_some()
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (kind, shortcode) = parse_shortcode(url).ok_or_else(|| {
         FetchError::Build(format!(
             "instagram_post: cannot parse shortcode from '{url}'"

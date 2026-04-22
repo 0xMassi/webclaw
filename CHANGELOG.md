@@ -3,6 +3,20 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.1] — 2026-04-22
+
+### Added
+- **`webclaw_fetch::Fetcher` trait.** Vertical extractors now consume `&dyn Fetcher` instead of `&FetchClient` directly. The trait exposes three methods (`fetch`, `fetch_with_headers`, `cloud`) covering everything extractors need. Callers that already held a `FetchClient` keep working unchanged: `FetchClient` implements `Fetcher`, blanket impls cover `&T` and `Arc<T>`, so `&client` coerces to `&dyn Fetcher` automatically.
+
+  The motivation is the split between OSS (wreq-backed, in-process TLS fingerprinting) and the production API server at api.webclaw.io (which cannot use in-process fingerprinting per the architecture rule, and must delegate HTTP through the Go tls-sidecar). Before this trait, adding vertical routes to the production server would have required importing wreq into its dependency graph, violating the separation. Now the production server can provide its own `TlsSidecarFetcher` implementation and pass it to the same extractor dispatcher the OSS server uses.
+
+  Backwards compatible. No behavior change for CLI, MCP, or OSS self-host.
+
+### Changed
+- All 28 extractor `extract()` signatures migrated from `client: &FetchClient` to `client: &dyn Fetcher`. The dispatcher functions (`extractors::dispatch_by_url`, `extractors::dispatch_by_name`) and the cloud escalation helpers (`cloud::smart_fetch`, `cloud::smart_fetch_html`) follow the same change. Tests and call sites are unchanged because `&FetchClient` auto-coerces.
+
+---
+
 ## [0.5.0] — 2026-04-22
 
 ### Added

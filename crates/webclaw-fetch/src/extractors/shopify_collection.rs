@@ -15,8 +15,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "shopify_collection",
@@ -49,7 +49,7 @@ const NON_SHOPIFY_HOSTS: &[&str] = &[
     "github.com",
 ];
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let (coll_meta_url, coll_products_url) = build_json_urls(url);
 
     // Step 1: collection metadata. Shopify returns 200 on missing

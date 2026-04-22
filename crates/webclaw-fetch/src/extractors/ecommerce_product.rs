@@ -42,8 +42,8 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "ecommerce_product",
@@ -69,7 +69,7 @@ pub fn matches(url: &str) -> bool {
     !host_of(url).is_empty()
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let resp = client.fetch(url).await?;
     if !(200..300).contains(&resp.status) {
         return Err(FetchError::Build(format!(

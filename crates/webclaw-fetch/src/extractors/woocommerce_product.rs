@@ -15,8 +15,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use crate::client::FetchClient;
 use crate::error::FetchError;
+use crate::fetcher::Fetcher;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "woocommerce_product",
@@ -42,7 +42,7 @@ pub fn matches(url: &str) -> bool {
         || url.contains("/produit/") // common fr locale
 }
 
-pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
+pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
     let slug = parse_slug(url).ok_or_else(|| {
         FetchError::Build(format!(
             "woocommerce_product: cannot parse slug from '{url}'"

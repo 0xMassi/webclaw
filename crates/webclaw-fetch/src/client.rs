@@ -177,6 +177,11 @@ enum ClientPool {
 pub struct FetchClient {
     pool: ClientPool,
     pdf_mode: PdfMode,
+    /// Optional cloud-fallback client. Extractors that need to
+    /// escalate past bot protection call `client.cloud()` to get this
+    /// out. Stored as `Arc` so cloning a `FetchClient` (common in
+    /// axum state) doesn't clone the underlying reqwest pool.
+    cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
 }
 
 impl FetchClient {
@@ -225,7 +230,35 @@ impl FetchClient {
             ClientPool::Rotating { clients }
         };
 
-        Ok(Self { pool, pdf_mode })
+        Ok(Self {
+            pool,
+            pdf_mode,
+            cloud: None,
+        })
+    }
+
+    /// Attach a cloud-fallback client. Returns `self` so it composes in
+    /// a builder-ish way:
+    ///
+    /// ```ignore
+    /// let client = FetchClient::new(config)?
+    ///     .with_cloud(CloudClient::from_env()?);
+    /// ```
+    ///
+    /// Extractors that can escalate past bot protection will call
+    /// `client.cloud()` internally. Sets the field regardless of
+    /// whether `cloud` is configured to bypass anything specific —
+    /// attachment is cheap (just wraps in `Arc`).
+    pub fn with_cloud(mut self, cloud: crate::cloud::CloudClient) -> Self {
+        self.cloud = Some(std::sync::Arc::new(cloud));
+        self
+    }
+
+    /// Optional cloud-fallback client, if one was attached via
+    /// [`Self::with_cloud`]. Extractors that handle antibot sites
+    /// pass this into `cloud::smart_fetch_html`.
+    pub fn cloud(&self) -> Option<&crate::cloud::CloudClient> {
+        self.cloud.as_deref()
     }
 
     /// Fetch a URL and return the raw HTML + response metadata.

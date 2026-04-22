@@ -1,16 +1,18 @@
 //! Trustpilot company reviews extractor.
 //!
-//! Trustpilot pages at `trustpilot.com/review/{domain}` embed a rich
-//! JSON-LD `LocalBusiness` / `Organization` block with aggregate
-//! rating + up to 20 recent reviews. No auth, no antibot for the
-//! page HTML itself.
-//!
-//! Auto-dispatch safe because the host is unique.
+//! `trustpilot.com/review/{domain}` pages embed a JSON-LD
+//! `Organization` / `LocalBusiness` block with aggregate rating + up
+//! to 20 recent reviews. The page HTML itself is usually behind AWS
+//! WAF's "Verifying Connection" interstitial — so this extractor
+//! always uses [`cloud::smart_fetch_html`] and only returns data when
+//! the caller has `WEBCLAW_API_KEY` set (cloud handles the bypass).
+//! OSS users without a key get a clear error pointing at signup.
 
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
 use crate::client::FetchClient;
+use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
 
 pub const INFO: ExtractorInfo = ExtractorInfo {
@@ -29,15 +31,22 @@ pub fn matches(url: &str) -> bool {
 }
 
 pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchError> {
-    let resp = client.fetch(url).await?;
-    if !(200..300).contains(&resp.status) {
-        return Err(FetchError::Build(format!(
-            "trustpilot_reviews: status {} for {url}",
-            resp.status
-        )));
-    }
+    // Trustpilot is always behind AWS WAF, so we go through smart_fetch
+    // which tries local first (which will hit the challenge interstitial),
+    // detects it, and escalates to cloud /v1/scrape for the real HTML.
+    let fetched = cloud::smart_fetch_html(client, client.cloud(), url)
+        .await
+        .map_err(cloud_to_fetch_err)?;
 
-    let blocks = webclaw_core::structured_data::extract_json_ld(&resp.html);
+    let html = parse(&fetched.html, url)?;
+    Ok(html_with_source(html, fetched.source))
+}
+
+/// Run the pure parser on already-fetched HTML. Split out so the cloud
+/// pipeline can call it directly after its own antibot-aware fetch
+/// without going through [`extract`].
+pub fn parse(html: &str, url: &str) -> Result<Value, FetchError> {
+    let blocks = webclaw_core::structured_data::extract_json_ld(html);
     let business = find_business(&blocks).ok_or_else(|| {
         FetchError::BodyDecode(format!(
             "trustpilot_reviews: no Organization/LocalBusiness JSON-LD on {url}"
@@ -92,6 +101,26 @@ pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchErro
         "reviews":          reviews,
         "business_schema":  business.get("@type").cloned(),
     }))
+}
+
+fn cloud_to_fetch_err(e: CloudError) -> FetchError {
+    FetchError::Build(e.to_string())
+}
+
+/// Stamp `data_source` onto the parser output so callers can tell at a
+/// glance whether this row came from local or cloud. Useful for UX and
+/// for pricing-aware pipelines.
+fn html_with_source(mut v: Value, source: cloud::FetchSource) -> Value {
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert(
+            "data_source".into(),
+            match source {
+                cloud::FetchSource::Local => json!("local"),
+                cloud::FetchSource::Cloud => json!("cloud"),
+            },
+        );
+    }
+    v
 }
 
 // ---------------------------------------------------------------------------

@@ -14,10 +14,12 @@
 //! exists (Reddit, HN/Algolia, PyPI, npm, GitHub, HuggingFace all have
 //! one). HTML extraction is the fallback for sites that don't.
 
+pub mod amazon_product;
 pub mod arxiv;
 pub mod crates_io;
 pub mod dev_to;
 pub mod docker_hub;
+pub mod ebay_listing;
 pub mod ecommerce_product;
 pub mod github_pr;
 pub mod github_release;
@@ -33,12 +35,6 @@ pub mod pypi;
 pub mod reddit;
 pub mod shopify_product;
 pub mod stackoverflow;
-// `trustpilot_reviews` code lives in the tree but is not wired into the
-// catalog or dispatch: Cloudflare turnstile blocks our client at the TLS
-// layer (all browser profiles tried, all UAs, mobile + desktop). Shipping
-// it would return 403 more often than not — bad UX. When the cloud tier
-// has residential proxies or a CDP renderer, flip this back on.
-#[allow(dead_code)]
 pub mod trustpilot_reviews;
 
 use serde::Serialize;
@@ -84,6 +80,9 @@ pub fn list() -> Vec<ExtractorInfo> {
         instagram_profile::INFO,
         shopify_product::INFO,
         ecommerce_product::INFO,
+        amazon_product::INFO,
+        ebay_listing::INFO,
+        trustpilot_reviews::INFO,
     ]
 }
 
@@ -209,6 +208,31 @@ pub async fn dispatch_by_url(
                 .map(|v| (instagram_profile::INFO.name, v)),
         );
     }
+    // Antibot-gated verticals with unique hosts: safe to auto-dispatch
+    // because the matcher can't confuse the URL for anything else. The
+    // extractor's smart_fetch_html path handles the blocked-without-
+    // API-key case with a clear actionable error.
+    if amazon_product::matches(url) {
+        return Some(
+            amazon_product::extract(client, url)
+                .await
+                .map(|v| (amazon_product::INFO.name, v)),
+        );
+    }
+    if ebay_listing::matches(url) {
+        return Some(
+            ebay_listing::extract(client, url)
+                .await
+                .map(|v| (ebay_listing::INFO.name, v)),
+        );
+    }
+    if trustpilot_reviews::matches(url) {
+        return Some(
+            trustpilot_reviews::extract(client, url)
+                .await
+                .map(|v| (trustpilot_reviews::INFO.name, v)),
+        );
+    }
     // NOTE: shopify_product and ecommerce_product are intentionally NOT
     // in auto-dispatch. Their `matches()` functions are permissive
     // (any URL with `/products/`, `/product/`, `/p/`, etc.) and
@@ -330,6 +354,24 @@ pub async fn dispatch_by_name(
         n if n == ecommerce_product::INFO.name => {
             run_or_mismatch(ecommerce_product::matches(url), n, url, || {
                 ecommerce_product::extract(client, url)
+            })
+            .await
+        }
+        n if n == amazon_product::INFO.name => {
+            run_or_mismatch(amazon_product::matches(url), n, url, || {
+                amazon_product::extract(client, url)
+            })
+            .await
+        }
+        n if n == ebay_listing::INFO.name => {
+            run_or_mismatch(ebay_listing::matches(url), n, url, || {
+                ebay_listing::extract(client, url)
+            })
+            .await
+        }
+        n if n == trustpilot_reviews::INFO.name => {
+            run_or_mismatch(trustpilot_reviews::matches(url), n, url, || {
+                trustpilot_reviews::extract(client, url)
             })
             .await
         }

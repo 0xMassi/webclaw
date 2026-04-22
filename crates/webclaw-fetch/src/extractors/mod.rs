@@ -21,6 +21,7 @@ pub mod dev_to;
 pub mod docker_hub;
 pub mod ebay_listing;
 pub mod ecommerce_product;
+pub mod github_issue;
 pub mod github_pr;
 pub mod github_release;
 pub mod github_repo;
@@ -33,9 +34,13 @@ pub mod linkedin_post;
 pub mod npm;
 pub mod pypi;
 pub mod reddit;
+pub mod shopify_collection;
 pub mod shopify_product;
 pub mod stackoverflow;
+pub mod substack_post;
 pub mod trustpilot_reviews;
+pub mod woocommerce_product;
+pub mod youtube_video;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -65,6 +70,7 @@ pub fn list() -> Vec<ExtractorInfo> {
         hackernews::INFO,
         github_repo::INFO,
         github_pr::INFO,
+        github_issue::INFO,
         github_release::INFO,
         pypi::INFO,
         npm::INFO,
@@ -75,11 +81,15 @@ pub fn list() -> Vec<ExtractorInfo> {
         docker_hub::INFO,
         dev_to::INFO,
         stackoverflow::INFO,
+        substack_post::INFO,
+        youtube_video::INFO,
         linkedin_post::INFO,
         instagram_post::INFO,
         instagram_profile::INFO,
         shopify_product::INFO,
+        shopify_collection::INFO,
         ecommerce_product::INFO,
+        woocommerce_product::INFO,
         amazon_product::INFO,
         ebay_listing::INFO,
         trustpilot_reviews::INFO,
@@ -129,6 +139,13 @@ pub async fn dispatch_by_url(
             github_pr::extract(client, url)
                 .await
                 .map(|v| (github_pr::INFO.name, v)),
+        );
+    }
+    if github_issue::matches(url) {
+        return Some(
+            github_issue::extract(client, url)
+                .await
+                .map(|v| (github_issue::INFO.name, v)),
         );
     }
     if github_release::matches(url) {
@@ -233,7 +250,15 @@ pub async fn dispatch_by_url(
                 .map(|v| (trustpilot_reviews::INFO.name, v)),
         );
     }
-    // NOTE: shopify_product and ecommerce_product are intentionally NOT
+    if youtube_video::matches(url) {
+        return Some(
+            youtube_video::extract(client, url)
+                .await
+                .map(|v| (youtube_video::INFO.name, v)),
+        );
+    }
+    // NOTE: shopify_product, shopify_collection, ecommerce_product,
+    // woocommerce_product, and substack_post are intentionally NOT
     // in auto-dispatch. Their `matches()` functions are permissive
     // (any URL with `/products/`, `/product/`, `/p/`, etc.) and
     // claiming those generically would steal URLs from the default
@@ -279,6 +304,12 @@ pub async fn dispatch_by_name(
         n if n == github_pr::INFO.name => {
             run_or_mismatch(github_pr::matches(url), n, url, || {
                 github_pr::extract(client, url)
+            })
+            .await
+        }
+        n if n == github_issue::INFO.name => {
+            run_or_mismatch(github_issue::matches(url), n, url, || {
+                github_issue::extract(client, url)
             })
             .await
         }
@@ -372,6 +403,30 @@ pub async fn dispatch_by_name(
         n if n == trustpilot_reviews::INFO.name => {
             run_or_mismatch(trustpilot_reviews::matches(url), n, url, || {
                 trustpilot_reviews::extract(client, url)
+            })
+            .await
+        }
+        n if n == youtube_video::INFO.name => {
+            run_or_mismatch(youtube_video::matches(url), n, url, || {
+                youtube_video::extract(client, url)
+            })
+            .await
+        }
+        n if n == substack_post::INFO.name => {
+            run_or_mismatch(substack_post::matches(url), n, url, || {
+                substack_post::extract(client, url)
+            })
+            .await
+        }
+        n if n == shopify_collection::INFO.name => {
+            run_or_mismatch(shopify_collection::matches(url), n, url, || {
+                shopify_collection::extract(client, url)
+            })
+            .await
+        }
+        n if n == woocommerce_product::INFO.name => {
+            run_or_mismatch(woocommerce_product::matches(url), n, url, || {
+                woocommerce_product::extract(client, url)
             })
             .await
         }

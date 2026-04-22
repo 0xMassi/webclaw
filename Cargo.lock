@@ -3245,6 +3245,7 @@ dependencies = [
  "http",
  "quick-xml 0.37.5",
  "rand 0.8.5",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

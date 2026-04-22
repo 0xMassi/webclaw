@@ -18,6 +18,7 @@ bytes = "1"
 url = "2"
 rand = "0.8"
 quick-xml = { version = "0.37", features = ["serde"] }
+regex = "1"
 serde_json.workspace = true
 calamine = "0.34"
 zip = "2"

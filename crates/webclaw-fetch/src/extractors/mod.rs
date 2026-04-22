@@ -24,6 +24,9 @@ pub mod github_repo;
 pub mod hackernews;
 pub mod huggingface_dataset;
 pub mod huggingface_model;
+pub mod instagram_post;
+pub mod instagram_profile;
+pub mod linkedin_post;
 pub mod npm;
 pub mod pypi;
 pub mod reddit;
@@ -67,6 +70,9 @@ pub fn list() -> Vec<ExtractorInfo> {
         docker_hub::INFO,
         dev_to::INFO,
         stackoverflow::INFO,
+        linkedin_post::INFO,
+        instagram_post::INFO,
+        instagram_profile::INFO,
     ]
 }
 
@@ -171,6 +177,27 @@ pub async fn dispatch_by_url(
                 .map(|v| (stackoverflow::INFO.name, v)),
         );
     }
+    if linkedin_post::matches(url) {
+        return Some(
+            linkedin_post::extract(client, url)
+                .await
+                .map(|v| (linkedin_post::INFO.name, v)),
+        );
+    }
+    if instagram_post::matches(url) {
+        return Some(
+            instagram_post::extract(client, url)
+                .await
+                .map(|v| (instagram_post::INFO.name, v)),
+        );
+    }
+    if instagram_profile::matches(url) {
+        return Some(
+            instagram_profile::extract(client, url)
+                .await
+                .map(|v| (instagram_profile::INFO.name, v)),
+        );
+    }
     None
 }
 
@@ -256,6 +283,24 @@ pub async fn dispatch_by_name(
         n if n == stackoverflow::INFO.name => {
             run_or_mismatch(stackoverflow::matches(url), n, url, || {
                 stackoverflow::extract(client, url)
+            })
+            .await
+        }
+        n if n == linkedin_post::INFO.name => {
+            run_or_mismatch(linkedin_post::matches(url), n, url, || {
+                linkedin_post::extract(client, url)
+            })
+            .await
+        }
+        n if n == instagram_post::INFO.name => {
+            run_or_mismatch(instagram_post::matches(url), n, url, || {
+                instagram_post::extract(client, url)
+            })
+            .await
+        }
+        n if n == instagram_profile::INFO.name => {
+            run_or_mismatch(instagram_profile::matches(url), n, url, || {
+                instagram_profile::extract(client, url)
             })
             .await
         }

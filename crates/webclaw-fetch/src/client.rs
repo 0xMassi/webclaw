@@ -279,12 +279,83 @@ impl FetchClient {
 
     /// Single fetch attempt.
     async fn fetch_once(&self, url: &str) -> Result<FetchResult, FetchError> {
+        self.fetch_once_with_headers(url, &[]).await
+    }
+
+    /// Single fetch attempt with optional per-request headers appended
+    /// after the profile defaults. Used by extractors that need to
+    /// satisfy site-specific headers (e.g. `x-ig-app-id` for Instagram's
+    /// internal API).
+    async fn fetch_once_with_headers(
+        &self,
+        url: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
         let start = Instant::now();
         let client = self.pick_client(url);
 
-        let resp = client.get(url).send().await?;
+        let mut req = client.get(url);
+        for (k, v) in extra {
+            req = req.header(*k, *v);
+        }
+        let resp = req.send().await?;
         let response = Response::from_wreq(resp).await?;
         response_to_result(response, start)
+    }
+
+    /// Fetch a URL with extra per-request headers appended after the
+    /// browser-profile defaults. Same retry semantics as `fetch`.
+    ///
+    /// Use this when an upstream API requires a header the global
+    /// `FetchConfig.headers` shouldn't carry to other hosts (Instagram's
+    /// `x-ig-app-id`, GitHub's `Authorization` once we wire `GITHUB_TOKEN`,
+    /// Reddit's compliant UA when we add OAuth, etc.).
+    #[instrument(skip(self, extra), fields(url = %url, extra_count = extra.len()))]
+    pub async fn fetch_with_headers(
+        &self,
+        url: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        let delays = [Duration::ZERO, Duration::from_secs(1)];
+        let mut last_err = None;
+
+        for (attempt, delay) in delays.iter().enumerate() {
+            if attempt > 0 {
+                tokio::time::sleep(*delay).await;
+            }
+            match self.fetch_once_with_headers(url, extra).await {
+                Ok(result) => {
+                    if is_retryable_status(result.status) && attempt < delays.len() - 1 {
+                        warn!(
+                            url,
+                            status = result.status,
+                            attempt = attempt + 1,
+                            "retryable status, will retry"
+                        );
+                        last_err = Some(FetchError::Build(format!("HTTP {}", result.status)));
+                        continue;
+                    }
+                    if attempt > 0 {
+                        debug!(url, attempt = attempt + 1, "retry succeeded");
+                    }
+                    return Ok(result);
+                }
+                Err(e) => {
+                    if !is_retryable_error(&e) || attempt == delays.len() - 1 {
+                        return Err(e);
+                    }
+                    warn!(
+                        url,
+                        error = %e,
+                        attempt = attempt + 1,
+                        "transient error, will retry"
+                    );
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
     }
 
     /// Fetch a URL then extract structured content.

@@ -66,8 +66,14 @@ jobs:
           tag="${GITHUB_REF#refs/tags/}"
           staging="webclaw-${tag}-${{ matrix.target }}"
           mkdir "$staging"
-          cp target/${{ matrix.target }}/release/webclaw "$staging/" 2>/dev/null || true
-          cp target/${{ matrix.target }}/release/webclaw-mcp "$staging/" 2>/dev/null || true
+          # Fail loud if any binary is missing. A silent `|| true` on the
+          # copy was how v0.4.0 shipped tarballs that lacked webclaw-server —
+          # don't repeat that mistake. If a future binary gets renamed or
+          # removed, this step should scream, not quietly publish an
+          # incomplete release.
+          cp target/${{ matrix.target }}/release/webclaw "$staging/"
+          cp target/${{ matrix.target }}/release/webclaw-mcp "$staging/"
+          cp target/${{ matrix.target }}/release/webclaw-server "$staging/"
           cp README.md LICENSE "$staging/"
           tar czf "$staging.tar.gz" "$staging"
           echo "ASSET=$staging.tar.gz" >> $GITHUB_ENV
@@ -134,6 +140,7 @@ jobs:
             mkdir -p "binaries-${target}"
             cp "${dir}/webclaw" "binaries-${target}/webclaw"
             cp "${dir}/webclaw-mcp" "binaries-${target}/webclaw-mcp"
+            cp "${dir}/webclaw-server" "binaries-${target}/webclaw-server"
             chmod +x "binaries-${target}"/*
           done
           ls -laR binaries-*/
@@ -220,6 +227,7 @@ jobs:
             def install
               bin.install "webclaw"
               bin.install "webclaw-mcp"
+              bin.install "webclaw-server"
             end
 
             test do

@@ -19,6 +19,12 @@ use crate::cloud::{self, CloudClient, SmartFetchResult};
 use crate::tools::*;
 
 pub struct WebclawMcp {
+    /// Holds the registered MCP tools. `rmcp >= 1.3` reads this through a
+    /// derived trait impl (not by name), so rustc's dead-code lint can't
+    /// see the usage and fires a spurious `field tool_router is never
+    /// read` on `cargo install`. The field is essential — dropping it
+    /// would unregister every tool. See issue #30.
+    #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     fetch_client: Arc<webclaw_fetch::FetchClient>,
     /// Lazily-initialized Firefox client, reused across all tool calls that

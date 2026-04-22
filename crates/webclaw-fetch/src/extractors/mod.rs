@@ -14,12 +14,20 @@
 //! exists (Reddit, HN/Algolia, PyPI, npm, GitHub, HuggingFace all have
 //! one). HTML extraction is the fallback for sites that don't.
 
+pub mod arxiv;
+pub mod crates_io;
+pub mod dev_to;
+pub mod docker_hub;
+pub mod github_pr;
+pub mod github_release;
 pub mod github_repo;
 pub mod hackernews;
+pub mod huggingface_dataset;
 pub mod huggingface_model;
 pub mod npm;
 pub mod pypi;
 pub mod reddit;
+pub mod stackoverflow;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -48,9 +56,17 @@ pub fn list() -> Vec<ExtractorInfo> {
         reddit::INFO,
         hackernews::INFO,
         github_repo::INFO,
+        github_pr::INFO,
+        github_release::INFO,
         pypi::INFO,
         npm::INFO,
+        crates_io::INFO,
         huggingface_model::INFO,
+        huggingface_dataset::INFO,
+        arxiv::INFO,
+        docker_hub::INFO,
+        dev_to::INFO,
+        stackoverflow::INFO,
     ]
 }
 
@@ -92,11 +108,67 @@ pub async fn dispatch_by_url(
     if npm::matches(url) {
         return Some(npm::extract(client, url).await.map(|v| (npm::INFO.name, v)));
     }
+    if github_pr::matches(url) {
+        return Some(
+            github_pr::extract(client, url)
+                .await
+                .map(|v| (github_pr::INFO.name, v)),
+        );
+    }
+    if github_release::matches(url) {
+        return Some(
+            github_release::extract(client, url)
+                .await
+                .map(|v| (github_release::INFO.name, v)),
+        );
+    }
+    if crates_io::matches(url) {
+        return Some(
+            crates_io::extract(client, url)
+                .await
+                .map(|v| (crates_io::INFO.name, v)),
+        );
+    }
     if huggingface_model::matches(url) {
         return Some(
             huggingface_model::extract(client, url)
                 .await
                 .map(|v| (huggingface_model::INFO.name, v)),
+        );
+    }
+    if huggingface_dataset::matches(url) {
+        return Some(
+            huggingface_dataset::extract(client, url)
+                .await
+                .map(|v| (huggingface_dataset::INFO.name, v)),
+        );
+    }
+    if arxiv::matches(url) {
+        return Some(
+            arxiv::extract(client, url)
+                .await
+                .map(|v| (arxiv::INFO.name, v)),
+        );
+    }
+    if docker_hub::matches(url) {
+        return Some(
+            docker_hub::extract(client, url)
+                .await
+                .map(|v| (docker_hub::INFO.name, v)),
+        );
+    }
+    if dev_to::matches(url) {
+        return Some(
+            dev_to::extract(client, url)
+                .await
+                .map(|v| (dev_to::INFO.name, v)),
+        );
+    }
+    if stackoverflow::matches(url) {
+        return Some(
+            stackoverflow::extract(client, url)
+                .await
+                .map(|v| (stackoverflow::INFO.name, v)),
         );
     }
     None
@@ -136,9 +208,54 @@ pub async fn dispatch_by_name(
         n if n == npm::INFO.name => {
             run_or_mismatch(npm::matches(url), n, url, || npm::extract(client, url)).await
         }
+        n if n == github_pr::INFO.name => {
+            run_or_mismatch(github_pr::matches(url), n, url, || {
+                github_pr::extract(client, url)
+            })
+            .await
+        }
+        n if n == github_release::INFO.name => {
+            run_or_mismatch(github_release::matches(url), n, url, || {
+                github_release::extract(client, url)
+            })
+            .await
+        }
+        n if n == crates_io::INFO.name => {
+            run_or_mismatch(crates_io::matches(url), n, url, || {
+                crates_io::extract(client, url)
+            })
+            .await
+        }
         n if n == huggingface_model::INFO.name => {
             run_or_mismatch(huggingface_model::matches(url), n, url, || {
                 huggingface_model::extract(client, url)
+            })
+            .await
+        }
+        n if n == huggingface_dataset::INFO.name => {
+            run_or_mismatch(huggingface_dataset::matches(url), n, url, || {
+                huggingface_dataset::extract(client, url)
+            })
+            .await
+        }
+        n if n == arxiv::INFO.name => {
+            run_or_mismatch(arxiv::matches(url), n, url, || arxiv::extract(client, url)).await
+        }
+        n if n == docker_hub::INFO.name => {
+            run_or_mismatch(docker_hub::matches(url), n, url, || {
+                docker_hub::extract(client, url)
+            })
+            .await
+        }
+        n if n == dev_to::INFO.name => {
+            run_or_mismatch(dev_to::matches(url), n, url, || {
+                dev_to::extract(client, url)
+            })
+            .await
+        }
+        n if n == stackoverflow::INFO.name => {
+            run_or_mismatch(stackoverflow::matches(url), n, url, || {
+                stackoverflow::extract(client, url)
             })
             .await
         }

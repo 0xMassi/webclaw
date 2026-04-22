@@ -9,7 +9,19 @@
 //!
 //! Auto-dispatched: YouTube host is unique and the `v=` or `/shorts/`
 //! shape is stable.
+//!
+//! ## Fallback
+//!
+//! `ytInitialPlayerResponse` is missing on EU-consent interstitials,
+//! some live-stream pre-show pages, and age-gated videos. In those
+//! cases we drop down to OG tags for `title`, `description`,
+//! `thumbnail`, and `channel`, and return a `data_source:
+//! "og_fallback"` payload so the caller can tell they got a degraded
+//! shape (no view count, duration, captions).
 
+use std::sync::OnceLock;
+
+use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
@@ -19,7 +31,7 @@ use crate::error::FetchError;
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "youtube_video",
     label: "YouTube video",
-    description: "Returns video id, title, channel, view count, duration, upload date, thumbnails, keywords, and caption-track URLs.",
+    description: "Returns video id, title, channel, view count, duration, upload date, thumbnails, keywords, and caption-track URLs. Falls back to OG metadata on consent / age-gate pages.",
     url_patterns: &[
         "https://www.youtube.com/watch?v={id}",
         "https://youtu.be/{id}",
@@ -49,12 +61,28 @@ pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchErro
         )));
     }
 
-    let player = extract_player_response(&resp.html).ok_or_else(|| {
-        FetchError::BodyDecode(format!(
-            "youtube_video: no ytInitialPlayerResponse on {canonical} (video may be private, region-blocked, or removed)"
-        ))
-    })?;
+    if let Some(player) = extract_player_response(&resp.html) {
+        return Ok(build_player_payload(
+            &player, &resp.html, url, &canonical, &video_id,
+        ));
+    }
 
+    // No player blob. Fall back to OG tags so the call still returns
+    // something useful for consent / age-gate pages.
+    Ok(build_og_fallback(&resp.html, url, &canonical, &video_id))
+}
+
+// ---------------------------------------------------------------------------
+// Player-blob path (rich payload)
+// ---------------------------------------------------------------------------
+
+fn build_player_payload(
+    player: &Value,
+    html: &str,
+    url: &str,
+    canonical: &str,
+    video_id: &str,
+) -> Value {
     let video_details = player.get("videoDetails");
     let microformat = player
         .get("microformat")
@@ -73,7 +101,7 @@ pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchErro
         .cloned()
         .unwrap_or_default();
 
-    let caption_tracks = webclaw_core::youtube::extract_caption_tracks(&resp.html);
+    let caption_tracks = webclaw_core::youtube::extract_caption_tracks(html);
     let captions: Vec<Value> = caption_tracks
         .iter()
         .map(|c| {
@@ -85,9 +113,10 @@ pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchErro
         })
         .collect();
 
-    Ok(json!({
+    json!({
         "url":          url,
         "canonical_url":canonical,
+        "data_source":  "player_response",
         "video_id":     video_id,
         "title":        get_str(video_details, "title"),
         "description":  get_str(video_details, "shortDescription"),
@@ -106,7 +135,46 @@ pub async fn extract(client: &FetchClient, url: &str) -> Result<Value, FetchErro
         "keywords":     keywords,
         "thumbnails":   thumbnails,
         "caption_tracks": captions,
-    }))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// OG fallback path (degraded payload)
+// ---------------------------------------------------------------------------
+
+fn build_og_fallback(html: &str, url: &str, canonical: &str, video_id: &str) -> Value {
+    let title = og(html, "title");
+    let description = og(html, "description");
+    let thumbnail = og(html, "image");
+    // YouTube sets `<meta name="channel_name" ...>` on some pages but
+    // OG-only pages reliably carry `og:video:tag` and the channel in
+    // `<link itemprop="name">`. We keep this lean: just what's stable.
+    let channel = meta_name(html, "author");
+
+    json!({
+        "url":          url,
+        "canonical_url":canonical,
+        "data_source":  "og_fallback",
+        "video_id":     video_id,
+        "title":        title,
+        "description":  description,
+        "author":       channel,
+        // OG path: these are null so the caller doesn't have to guess.
+        "channel_id":   None::<String>,
+        "channel_url":  None::<String>,
+        "view_count":   None::<i64>,
+        "length_seconds": None::<i64>,
+        "is_live":      None::<bool>,
+        "is_private":   None::<bool>,
+        "is_unlisted":  None::<bool>,
+        "allow_ratings":None::<bool>,
+        "category":     None::<String>,
+        "upload_date":  None::<String>,
+        "publish_date": None::<String>,
+        "keywords":     Vec::<Value>::new(),
+        "thumbnails":   thumbnail.as_ref().map(|t| vec![json!({"url": t})]).unwrap_or_default(),
+        "caption_tracks": Vec::<Value>::new(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -166,8 +234,6 @@ fn parse_video_id(url: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn extract_player_response(html: &str) -> Option<Value> {
-    use regex::Regex;
-    use std::sync::OnceLock;
     // Same regex as webclaw_core::youtube. Duplicated here because
     // core's regex is module-private. Kept in lockstep; changes are
     // rare and we cover with tests in both places.
@@ -176,6 +242,36 @@ fn extract_player_response(html: &str) -> Option<Value> {
         .get_or_init(|| Regex::new(r"var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;").unwrap());
     let json_str = re.captures(html)?.get(1)?.as_str();
     serde_json::from_str(json_str).ok()
+}
+
+// ---------------------------------------------------------------------------
+// Meta-tag helpers (for OG fallback)
+// ---------------------------------------------------------------------------
+
+fn og(html: &str, prop: &str) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#).unwrap()
+    });
+    for c in re.captures_iter(html) {
+        if c.get(1).is_some_and(|m| m.as_str() == prop) {
+            return c.get(2).map(|m| m.as_str().to_string());
+        }
+    }
+    None
+}
+
+fn meta_name(html: &str, name: &str) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"(?i)<meta[^>]+name="([^"]+)"[^>]+content="([^"]+)""#).unwrap()
+    });
+    for c in re.captures_iter(html) {
+        if c.get(1).is_some_and(|m| m.as_str() == name) {
+            return c.get(2).map(|m| m.as_str().to_string());
+        }
+    }
+    None
 }
 
 fn get_str(v: Option<&Value>, key: &str) -> Option<String> {
@@ -251,5 +347,32 @@ var ytInitialPlayerResponse = {"videoDetails":{"videoId":"abc","title":"T","auth
         let v = extract_player_response(html).unwrap();
         let vd = v.get("videoDetails").unwrap();
         assert_eq!(vd.get("title").unwrap().as_str(), Some("T"));
+    }
+
+    #[test]
+    fn og_fallback_extracts_basics_from_meta_tags() {
+        let html = r##"
+<html><head>
+<meta property="og:title" content="Example Video Title">
+<meta property="og:description" content="A cool video description.">
+<meta property="og:image" content="https://i.ytimg.com/vi/abc/maxresdefault.jpg">
+<meta name="author" content="Example Channel">
+</head></html>"##;
+        let v = build_og_fallback(
+            html,
+            "https://www.youtube.com/watch?v=abc",
+            "https://www.youtube.com/watch?v=abc",
+            "abc",
+        );
+        assert_eq!(v["data_source"], "og_fallback");
+        assert_eq!(v["title"], "Example Video Title");
+        assert_eq!(v["description"], "A cool video description.");
+        assert_eq!(v["author"], "Example Channel");
+        assert_eq!(
+            v["thumbnails"][0]["url"],
+            "https://i.ytimg.com/vi/abc/maxresdefault.jpg"
+        );
+        assert!(v["view_count"].is_null());
+        assert!(v["caption_tracks"].as_array().unwrap().is_empty());
     }
 }

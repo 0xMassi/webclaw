@@ -21,6 +21,7 @@ pub mod dev_to;
 pub mod docker_hub;
 pub mod ebay_listing;
 pub mod ecommerce_product;
+pub mod etsy_listing;
 pub mod github_issue;
 pub mod github_pr;
 pub mod github_release;
@@ -92,6 +93,7 @@ pub fn list() -> Vec<ExtractorInfo> {
         woocommerce_product::INFO,
         amazon_product::INFO,
         ebay_listing::INFO,
+        etsy_listing::INFO,
         trustpilot_reviews::INFO,
     ]
 }
@@ -241,6 +243,13 @@ pub async fn dispatch_by_url(
             ebay_listing::extract(client, url)
                 .await
                 .map(|v| (ebay_listing::INFO.name, v)),
+        );
+    }
+    if etsy_listing::matches(url) {
+        return Some(
+            etsy_listing::extract(client, url)
+                .await
+                .map(|v| (etsy_listing::INFO.name, v)),
         );
     }
     if trustpilot_reviews::matches(url) {
@@ -397,6 +406,12 @@ pub async fn dispatch_by_name(
         n if n == ebay_listing::INFO.name => {
             run_or_mismatch(ebay_listing::matches(url), n, url, || {
                 ebay_listing::extract(client, url)
+            })
+            .await
+        }
+        n if n == etsy_listing::INFO.name => {
+            run_or_mismatch(etsy_listing::matches(url), n, url, || {
+                etsy_listing::extract(client, url)
             })
             .await
         }

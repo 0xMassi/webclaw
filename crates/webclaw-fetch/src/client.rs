@@ -261,10 +261,52 @@ impl FetchClient {
         self.cloud.as_deref()
     }
 
+    /// Fetch a URL with per-site rescue paths: Reddit URLs redirect to the
+    /// `.json` API, and Akamai-style challenge responses trigger a homepage
+    /// cookie warmup and a retry. Returns the same `FetchResult` shape as
+    /// [`Self::fetch`] so every caller (CLI, MCP, OSS server, production
+    /// server) benefits without shape churn.
+    ///
+    /// This is the method most callers want. Use plain [`Self::fetch`] only
+    /// when you need literal no-rescue behavior (e.g. inside the rescue
+    /// logic itself to avoid recursion).
+    pub async fn fetch_smart(&self, url: &str) -> Result<FetchResult, FetchError> {
+        // Reddit: the HTML page shows a verification interstitial for most
+        // client IPs, but appending `.json` returns the post + comment tree
+        // publicly. `parse_reddit_json` in downstream code knows how to read
+        // the result; here we just do the URL swap at the fetch layer.
+        if crate::reddit::is_reddit_url(url) {
+            let json_url = crate::reddit::json_url(url);
+            if let Ok(resp) = self.fetch(&json_url).await {
+                if resp.status == 200 && !resp.html.is_empty() {
+                    return Ok(resp);
+                }
+            }
+            // If the .json fetch failed, fall through to the HTML path.
+        }
+
+        let resp = self.fetch(url).await?;
+
+        // Akamai / bazadebezolkohpepadr challenge: visit the homepage to
+        // collect warmup cookies (_abck, bm_sz, etc.), then retry.
+        if is_challenge_html(&resp.html)
+            && let Some(homepage) = extract_homepage(url)
+        {
+            debug!("challenge detected, warming cookies via {homepage}");
+            let _ = self.fetch(&homepage).await;
+            if let Ok(retry) = self.fetch(url).await {
+                return Ok(retry);
+            }
+        }
+
+        Ok(resp)
+    }
+
     /// Fetch a URL and return the raw HTML + response metadata.
     ///
     /// Automatically retries on transient failures (network errors, 5xx, 429)
-    /// with exponential backoff: 0s, 1s (2 attempts total).
+    /// with exponential backoff: 0s, 1s (2 attempts total). No per-site
+    /// rescue logic; use [`Self::fetch_smart`] for that.
     #[instrument(skip(self), fields(url = %url))]
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
         let delays = [Duration::ZERO, Duration::from_secs(1)];
@@ -713,22 +755,23 @@ fn is_pdf_content_type(headers: &http::HeaderMap) -> bool {
 
 /// Detect if a response looks like a bot protection challenge page.
 fn is_challenge_response(response: &Response) -> bool {
-    let len = response.body().len();
+    is_challenge_html(response.text().as_ref())
+}
+
+/// Same as `is_challenge_response`, operating on a body string directly
+/// so callers holding a `FetchResult` can reuse the heuristic.
+fn is_challenge_html(html: &str) -> bool {
+    let len = html.len();
     if len > 15_000 || len == 0 {
         return false;
     }
-
-    let text = response.text();
-    let lower = text.to_lowercase();
-
+    let lower = html.to_lowercase();
     if lower.contains("<title>challenge page</title>") {
         return true;
     }
-
     if lower.contains("bazadebezolkohpepadr") && len < 5_000 {
         return true;
     }
-
     false
 }
 

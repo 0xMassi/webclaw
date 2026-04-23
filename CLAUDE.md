@@ -79,7 +79,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - **webclaw-fetch uses wreq 6.x** (BoringSSL). No `[patch.crates-io]` forks needed; wreq handles TLS internally.
 - **No special RUSTFLAGS** — `.cargo/config.toml` is currently empty of build flags. Don't add any.
 - **webclaw-llm uses plain reqwest**. LLM APIs don't need TLS fingerprinting, so no wreq dep.
-- **Vertical extractors take `&dyn Fetcher`**, not `&FetchClient`. This lets the production server plug in a `TlsSidecarFetcher` that routes through the Go tls-sidecar instead of in-process wreq.
+- **Vertical extractors take `&dyn Fetcher`**, not `&FetchClient`. This lets the production server plug in a `ProductionFetcher` that adds domain_hints routing and antibot escalation on top of the same wreq client.
 - **qwen3 thinking tags** (`<think>`) are stripped at both provider and consumer levels.
 
 ## Build & Test

@@ -3,6 +3,20 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.4] — 2026-04-23
+
+### Added
+- **`BrowserProfile::SafariIos`** variant, mapped to a new `BrowserVariant::SafariIos26`. Built on top of `wreq_util::Emulation::SafariIos26` with four targeted overrides that close the gap against DataDome's immobiliare.it / target.com / bestbuy.com / sephora.com rulesets: TLS extension order pinned to bogdanfinn's `safari_ios_26_0` wire format, HTTP/2 HEADERS priority flag set (weight 256, exclusive, depends_on=0) while preserving wreq-util's SETTINGS + WINDOW_UPDATE, Safari iOS 26 header set without Chromium leaks, accept-encoding limited to `gzip, deflate, br` (no zstd). Empirically 9/10 on immobiliare with `country-it` residential, 2/2 on target/bestbuy/sephora with `country-us` residential. Matches bogdanfinn's JA3 `8d909525bd5bbb79f133d11cc05159fe` exactly.
+
+- **`accept_language_for_url(url)` and `accept_language_for_tld(tld)` helpers** in a new `locale` module. TLD to `Accept-Language` mapping (`.it` to `it-IT,it;q=0.9`, `.fr` to `fr-FR,fr;q=0.9`, etc.). Unknown TLDs fall back to `en-US,en;q=0.9`. DataDome rules that cross-check geo vs locale (Italian IP + English `accept-language` = bot) are now trivially satisfiable by callers that plumb the target URL through this helper before building a `FetchConfig`.
+
+### Changed
+- **`BrowserProfile::Chrome` fingerprint aligned to bogdanfinn `chrome_133`.** Three wire-level fixes: removed `MAX_CONCURRENT_STREAMS` from the HTTP/2 SETTINGS frame (real Chrome 133 does not send this setting), priority weight on the HEADERS frame changed from 220 to 256, TLS extension order pinned via `extension_permutation` to match bogdanfinn's stable JA3 `43067709b025da334de1279a120f8e14`. `alpn_protocols` extended to `[HTTP3, HTTP2, HTTP1]` and `alps_protocols` to `[HTTP3, HTTP2]` so Cloudflare's bot management sees the h3 advertisement real Chrome 133+ emits. Fixes indeed.com and other Cloudflare-protected sites that were serving the previous fingerprint a 403 "Security Check" challenge. Full matrix result (12 Chrome rows): 11/12 clean, the one failure is shared with bogdanfinn from the same proxy (IP reputation, not fingerprint).
+
+- **Bumped `wreq-util` from `2.2.6` to `3.0.0-rc.10`** to pick up `Emulation::SafariIos26`, which didn't ship until rc.10.
+
+---
+
 ## [0.5.2] — 2026-04-22
 
 ### Added

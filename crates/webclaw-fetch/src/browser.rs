@@ -7,6 +7,10 @@ pub enum BrowserProfile {
     #[default]
     Chrome,
     Firefox,
+    /// Safari iOS 26 (iPhone). The one profile proven to defeat
+    /// DataDome's immobiliare.it / idealista.it / target.com-class
+    /// rules when paired with a country-scoped residential proxy.
+    SafariIos,
     /// Randomly pick from all available profiles on each request.
     Random,
 }
@@ -18,6 +22,7 @@ pub enum BrowserVariant {
     ChromeMacos,
     Firefox,
     Safari,
+    SafariIos26,
     Edge,
 }
 

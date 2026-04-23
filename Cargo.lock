@@ -2968,6 +2968,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "typed-builder"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31aa81521b70f94402501d848ccc0ecaa8f93c8eb6999eb9747e72287757ffda"
+dependencies = [
+ "typed-builder-macro",
+]
+
+[[package]]
+name = "typed-builder-macro"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "076a02dc54dd46795c2e9c8282ed40bcfb1e22747e955de9389a1de28190fb26"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "typed-path"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3258,6 +3278,7 @@ dependencies = [
  "webclaw-core",
  "webclaw-pdf",
  "wreq",
+ "wreq-util",
  "zip 2.4.2",
 ]
 
@@ -3707,6 +3728,16 @@ dependencies = [
  "want",
  "webpki-root-certs",
  "zstd",
+]
+
+[[package]]
+name = "wreq-util"
+version = "3.0.0-rc.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c6bbe24d28beb9ceb58b514bd6a613c759d3b706f768b9d2950d5d35b543c04"
+dependencies = [
+ "typed-builder",
+ "wreq",
 ]
 
 [[package]]

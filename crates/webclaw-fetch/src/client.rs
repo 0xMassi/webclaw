@@ -277,12 +277,18 @@ impl FetchClient {
         // the result; here we just do the URL swap at the fetch layer.
         if crate::reddit::is_reddit_url(url) {
             let json_url = crate::reddit::json_url(url);
-            if let Ok(resp) = self.fetch(&json_url).await {
-                if resp.status == 200 && !resp.html.is_empty() {
+            if let Ok(resp) = self.fetch(&json_url).await
+                && resp.status == 200
+            {
+                // Reddit will serve an HTML verification page at the .json
+                // URL too when the IP is flagged. Only return if the body
+                // actually starts with a JSON payload.
+                let first = resp.html.trim_start().as_bytes().first().copied();
+                if matches!(first, Some(b'{') | Some(b'[')) {
                     return Ok(resp);
                 }
             }
-            // If the .json fetch failed, fall through to the HTML path.
+            // If the .json fetch failed or returned HTML, fall through.
         }
 
         let resp = self.fetch(url).await?;

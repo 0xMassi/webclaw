@@ -275,14 +275,21 @@ impl FetchClient {
         // client IPs, but appending `.json` returns the post + comment tree
         // publicly. `parse_reddit_json` in downstream code knows how to read
         // the result; here we just do the URL swap at the fetch layer.
-        if crate::reddit::is_reddit_url(url) {
+        if crate::reddit::is_reddit_url(url) && !url.ends_with(".json") {
             let json_url = crate::reddit::json_url(url);
-            if let Ok(resp) = self.fetch(&json_url).await
+            // Reddit's public .json API serves JSON to identifiable bot
+            // User-Agents and blocks browser UAs with a verification wall.
+            // Override our Chrome-profile UA for this specific call.
+            let ua = concat!(
+                "Webclaw/",
+                env!("CARGO_PKG_VERSION"),
+                " (+https://webclaw.io)"
+            );
+            if let Ok(resp) = self
+                .fetch_with_headers(&json_url, &[("user-agent", ua)])
+                .await
                 && resp.status == 200
             {
-                // Reddit will serve an HTML verification page at the .json
-                // URL too when the IP is flagged. Only return if the body
-                // actually starts with a JSON payload.
                 let first = resp.html.trim_start().as_bytes().first().copied();
                 if matches!(first, Some(b'{') | Some(b'[')) {
                     return Ok(resp);

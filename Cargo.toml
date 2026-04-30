@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.5.6"
+version = "0.5.7"
 edition = "2024"
 license = "AGPL-3.0"
 repository = "https://github.com/0xMassi/webclaw"

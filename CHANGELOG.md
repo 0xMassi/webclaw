@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.7] — 2026-04-30
+
+### Docs
+- README header now uses an `<h1>webclaw</h1>` instead of an `<h3>` slogan. The repo had no heading-level brand anchor before, only a banner image, so search engines indexing the README were missing the canonical brand signal. The new heading is what GitHub renders as the title of the page and what Google co-ranks with webclaw.io.
+
+---
+
 ## [0.5.6] — 2026-04-23
 
 ### Added

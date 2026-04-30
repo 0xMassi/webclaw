@@ -4,10 +4,12 @@
   </a>
 </p>
 
-<h3 align="center">
-  The fastest web scraper for AI agents.<br/>
+<h1 align="center">webclaw</h1>
+
+<p align="center">
+  <strong>The fastest web scraper for AI agents.</strong><br/>
   <sub>67% fewer tokens. Sub-millisecond extraction. Zero browser overhead.</sub>
-</h3>
+</p>
 
 <p align="center">
   <a href="https://github.com/0xMassi/webclaw/stargazers"><img src="https://img.shields.io/github/stars/0xMassi/webclaw?style=for-the-badge&logo=github&logoColor=white&label=Stars&color=181717" alt="Stars" /></a>
@@ -89,6 +91,21 @@ Download from [GitHub Releases](https://github.com/0xMassi/webclaw/releases) for
 cargo install --git https://github.com/0xMassi/webclaw.git webclaw-cli
 cargo install --git https://github.com/0xMassi/webclaw.git webclaw-mcp
 ```
+
+webclaw uses BoringSSL (via `boring-sys2`) for TLS fingerprinting, which
+needs a few system packages at build time. If `cargo install` panics with
+a `boring-sys2` build error or `Unable to find libclang`, install the
+prerequisites first:
+
+| OS | Install command |
+|---|---|
+| Debian / Ubuntu | `sudo apt install -y pkg-config libssl-dev cmake clang git build-essential` |
+| Fedora / RHEL | `sudo dnf install -y pkg-config openssl-devel cmake clang git make gcc` |
+| Arch | `sudo pacman -S pkg-config openssl cmake clang git base-devel` |
+| macOS | `xcode-select --install` (and Xcode CLT covers everything) |
+
+If you do not want to manage build dependencies yourself, prefer the
+**Homebrew**, **Docker**, or **Prebuilt binaries** options above.
 
 ### Docker
 

@@ -38,6 +38,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - `filter.rs` — CSS selector include/exclude filtering (ExtractionOptions)
 - `diff.rs` — Content change tracking engine (snapshot diffing)
 - `brand.rs` — Brand identity extraction from DOM structure and CSS
+- `youtube.rs` — `ytInitialPlayerResponse` parser, structured markdown for `youtube.com/watch` URLs (title, channel, views, published, duration, description). Produces the legacy markdown shape — for transcripts and a structured `YoutubeData` block see the production server's `youtube_transcript.rs` short-circuit (yt-dlp via proxy pool).
 
 ### Fetch Modules (`webclaw-fetch`)
 - `client.rs` — FetchClient with wreq BoringSSL TLS impersonation; implements the public `Fetcher` trait so callers (including server adapters) can swap in alternative implementations

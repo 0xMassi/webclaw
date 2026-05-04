@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.8] — 2026-05-04
+
+### Fixed
+- Improved brand extraction results for modern sites with large app shells. Brand colors, fonts, and logos are now less likely to be polluted by login widgets, customer-logo grids, icon fonts, or generated CSS noise.
+
+---
+
 ## [0.5.7] — 2026-04-30
 
 ### Security

@@ -12,16 +12,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/0xMassi/webclaw/stargazers"><img src="https://img.shields.io/github/stars/0xMassi/webclaw?style=for-the-badge&logo=github&logoColor=white&label=Stars&color=181717" alt="Stars" /></a>
-  <a href="https://github.com/0xMassi/webclaw/releases"><img src="https://img.shields.io/github/v/release/0xMassi/webclaw?style=for-the-badge&logo=rust&logoColor=white&label=Version&color=B7410E" alt="Version" /></a>
-  <a href="https://github.com/0xMassi/webclaw/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-10B981?style=for-the-badge" alt="License" /></a>
-  <a href="https://www.npmjs.com/package/create-webclaw"><img src="https://img.shields.io/npm/dt/create-webclaw?style=for-the-badge&logo=npm&logoColor=white&label=Installs&color=CB3837" alt="npm installs" /></a>
+  <a href="https://github.com/0xMassi/webclaw/stargazers"><img src="https://shieldcn.dev/github/stars/0xMassi/webclaw.svg?variant=branded" alt="Stars" /></a>
+  <a href="https://github.com/0xMassi/webclaw/releases"><img src="https://shieldcn.dev/github/tag/0xMassi/webclaw.svg?variant=branded&logo=rust" alt="Version" /></a>
+  <a href="https://github.com/0xMassi/webclaw/blob/main/LICENSE"><img src="https://shieldcn.dev/github/license/0xMassi/webclaw.svg?variant=branded" alt="License" /></a>
+  <a href="https://www.npmjs.com/package/create-webclaw"><img src="https://shieldcn.dev/npm/dt/create-webclaw.svg?variant=branded" alt="npm installs" /></a>
 </p>
 <p align="center">
-  <a href="https://discord.gg/KDfd48EpnW"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
-  <a href="https://x.com/webclaw_io"><img src="https://img.shields.io/badge/Follow-@webclaw__io-000000?style=for-the-badge&logo=x&logoColor=white" alt="X / Twitter" /></a>
-  <a href="https://webclaw.io"><img src="https://img.shields.io/badge/Website-webclaw.io-0A0A0A?style=for-the-badge&logo=safari&logoColor=white" alt="Website" /></a>
-  <a href="https://webclaw.io/docs"><img src="https://img.shields.io/badge/Docs-Read-3B82F6?style=for-the-badge&logo=readthedocs&logoColor=white" alt="Docs" /></a>
+  <a href="https://discord.gg/KDfd48EpnW"><img src="https://shieldcn.dev/badge/Discord-Join.svg?variant=branded&logo=discord" alt="Discord" /></a>
+  <a href="https://x.com/webclaw_io"><img src="https://shieldcn.dev/badge/Follow-@webclaw__io.svg?variant=branded&logo=x" alt="X / Twitter" /></a>
+  <a href="https://webclaw.io"><img src="https://shieldcn.dev/badge/Website-webclaw.io.svg?variant=branded&logo=safari" alt="Website" /></a>
+  <a href="https://webclaw.io/docs"><img src="https://shieldcn.dev/badge/Docs-Read.svg?variant=branded&logo=readthedocs" alt="Docs" /></a>
 </p>
 
 ---

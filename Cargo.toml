@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.5.7"
+version = "0.5.8"
 edition = "2024"
 license = "AGPL-3.0"
 repository = "https://github.com/0xMassi/webclaw"
@@ -21,4 +21,3 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
-

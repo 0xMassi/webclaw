@@ -79,9 +79,19 @@ static HSL_COLOR: Lazy<Regex> = Lazy::new(|| {
         .unwrap()
 });
 
-/// Matches font-family values
-static FONT_FAMILY: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)font-family\s*:\s*([^;}{]+)").unwrap());
+/// Matches the family tail of CSS `font:` shorthand after size/line-height.
+static FONT_SHORTHAND_FAMILY: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?ix)
+        (?:^|\s)
+        (?:xx-small|x-small|small|medium|large|x-large|xx-large|larger|smaller|\d*\.?\d+(?:px|rem|em|pt|pc|in|cm|mm|%|vw|vh|vmin|vmax))
+        (?:\s*/\s*[^\s,]+)?
+        \s+
+        (.+)$
+    "#,
+    )
+    .unwrap()
+});
 
 macro_rules! selector {
     ($s:expr) => {{
@@ -102,12 +112,12 @@ pub fn extract_brand(html: &str, url: Option<&str>) -> BrandIdentity {
     let doc = Html::parse_document(html);
     let base_url = url.and_then(|u| Url::parse(u).ok());
 
+    let name = extract_brand_name(&doc);
     let css_sources = collect_css(&doc);
-    let colors = extract_colors(&css_sources);
-    let fonts = extract_fonts(&css_sources);
+    let colors = extract_colors(&css_sources, name.as_deref());
+    let fonts = extract_fonts(&css_sources, name.as_deref());
     let logo_url = find_logo(&doc, base_url.as_ref());
     let favicon_url = find_favicon(&doc, base_url.as_ref());
-    let name = extract_brand_name(&doc);
     let logos = find_all_logos(&doc, base_url.as_ref());
     let og_image = find_og_image(&doc, base_url.as_ref());
 
@@ -390,7 +400,7 @@ fn is_boring_color(hex: &str) -> bool {
     )
 }
 
-fn extract_colors(decls: &[CssDecl]) -> Vec<BrandColor> {
+fn extract_colors(decls: &[CssDecl], brand_name: Option<&str>) -> Vec<BrandColor> {
     // Track (hex, usage) -> count
     let mut counts: HashMap<String, HashMap<ColorUsage, usize>> = HashMap::new();
 
@@ -429,6 +439,8 @@ fn extract_colors(decls: &[CssDecl]) -> Vec<BrandColor> {
     // Sort by frequency (descending)
     colors.sort_by_key(|c| std::cmp::Reverse(c.count));
 
+    demote_or_remove_oauth_palette(&mut colors, brand_name);
+
     // Promote top non-white/black to Primary/Secondary if they're still Unknown
     let mut assigned_primary = colors.iter().any(|c| c.usage == ColorUsage::Primary);
     let mut assigned_secondary = colors.iter().any(|c| c.usage == ColorUsage::Secondary);
@@ -448,6 +460,28 @@ fn extract_colors(decls: &[CssDecl]) -> Vec<BrandColor> {
 
     colors.truncate(10);
     colors
+}
+
+const GOOGLE_OAUTH_COLORS: &[&str] = &[
+    "#1A73E8", "#4285F4", "#34A853", "#FBBC05", "#EA4335", "#5F6368", "#202124", "#E8EAED",
+    "#F1F3F4",
+];
+
+fn demote_or_remove_oauth_palette(colors: &mut Vec<BrandColor>, brand_name: Option<&str>) {
+    let brand = brand_name.unwrap_or("").to_ascii_lowercase();
+    if brand.contains("google") {
+        return;
+    }
+
+    let google_hits = colors
+        .iter()
+        .filter(|c| GOOGLE_OAUTH_COLORS.contains(&c.hex.as_str()))
+        .count();
+    if google_hits < 3 {
+        return;
+    }
+
+    colors.retain(|c| !GOOGLE_OAUTH_COLORS.contains(&c.hex.as_str()));
 }
 
 fn classify_color_property(property: &str) -> ColorUsage {
@@ -584,31 +618,55 @@ const GENERIC_FONTS: &[&str] = &[
     "initial",
     "unset",
     "revert",
+    "arial",
+    "times",
+    "times new roman",
+    "courier new",
+    "georgia",
+    "menlo",
+    "monaco",
+    "consolas",
+    "liberation mono",
+    "sf mono",
+    "sfmono-regular",
+    "source code pro",
+    "apple color emoji",
+    "segoe ui",
+    "segoe ui emoji",
+    "segoe ui symbol",
+    "noto color emoji",
+    "blinkmacsystemfont",
+    "-apple-system",
 ];
 
-fn extract_fonts(decls: &[CssDecl]) -> Vec<String> {
+fn extract_fonts(decls: &[CssDecl], brand_name: Option<&str>) -> Vec<String> {
     let mut freq: HashMap<String, usize> = HashMap::new();
+    let brand = brand_name.unwrap_or("").to_ascii_lowercase();
 
     for decl in decls {
         if decl.property != "font-family" && decl.property != "font" {
             continue;
         }
 
-        // For shorthand `font:`, try to extract font-family portion
+        // For shorthand `font:`, extract only the family tail after the
+        // size/line-height token. The previous implementation treated values
+        // like `500 12px Roboto` as a font family, which polluted `/v1/brand`
+        // output with CSS declarations instead of usable family names.
         let family_str = if decl.property == "font" {
-            // font shorthand: the font-family is the last part after the size.
-            // Heuristic: take everything after a `/` or after `px`/`em`/`rem`/`%` + space
-            FONT_FAMILY
-                .captures(&format!("font-family: {}", &decl.value))
-                .map(|c| c[1].to_string())
-                .unwrap_or_else(|| decl.value.clone())
+            match parse_font_shorthand_family(&decl.value) {
+                Some(family) => family,
+                None => continue,
+            }
         } else {
             decl.value.clone()
         };
 
         for font in split_font_families(&family_str) {
             let lower = font.to_lowercase();
-            if !GENERIC_FONTS.contains(&lower.as_str()) && !is_junk_font_name(&lower) {
+            if !GENERIC_FONTS.contains(&lower.as_str())
+                && !is_junk_font_name(&lower)
+                && !is_third_party_auth_font(&lower, &brand)
+            {
                 *freq.entry(font).or_insert(0) += 1;
             }
         }
@@ -617,6 +675,32 @@ fn extract_fonts(decls: &[CssDecl]) -> Vec<String> {
     let mut fonts: Vec<(String, usize)> = freq.into_iter().collect();
     fonts.sort_by_key(|f| std::cmp::Reverse(f.1));
     fonts.into_iter().map(|(name, _)| name).collect()
+}
+
+fn is_third_party_auth_font(name: &str, brand_name: &str) -> bool {
+    !brand_name.contains("google") && name.contains("google sans")
+}
+
+fn parse_font_shorthand_family(value: &str) -> Option<String> {
+    let caps = FONT_SHORTHAND_FAMILY.captures(value)?;
+    let mut family = caps.get(1)?.as_str().trim().to_string();
+
+    // Drop the optional slash line-height residue if it was not consumed due
+    // to unusual whitespace, then leave comma-separated family names intact.
+    if let Some(stripped) = family.strip_prefix('/') {
+        family = stripped
+            .split_once(' ')
+            .map(|(_, rest)| rest)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+    }
+
+    if family.is_empty() {
+        None
+    } else {
+        Some(family)
+    }
 }
 
 /// Filter out junk font names: CSS variables, hex hashes (Next.js font optimization),
@@ -630,8 +714,41 @@ fn is_junk_font_name(name: &str) -> bool {
     if name.len() >= 8 && name.chars().all(|c| c.is_ascii_hexdigit()) {
         return true;
     }
+    if name
+        .split_whitespace()
+        .next()
+        .is_some_and(|part| part.len() >= 8 && part.chars().all(|c| c.is_ascii_hexdigit()))
+    {
+        return true;
+    }
     // Too short to be a real font name
     if name.len() < 3 {
+        return true;
+    }
+    // Third-party rendering libraries and icon fonts overwhelm app shells
+    // like claude.com/openai.com but are not product typography.
+    if name.contains("katex")
+        || name.contains("open dyslexic")
+        || name.contains("opendyslexic")
+        || name.contains("math")
+        || name.contains("fraktur")
+        || name.contains("caligraphic")
+        || name.contains("typewriter")
+        || name.contains("glyph")
+        || name.contains("icon")
+        || name.contains("emoji")
+        || name.contains("symbol")
+    {
+        return true;
+    }
+    // Malformed shorthand leftovers and CSS-internal values.
+    if name.contains(')')
+        || name.contains('!')
+        || name.contains('/')
+        || name.contains("px ")
+        || name.contains("rem ")
+        || name.contains("em ")
+    {
         return true;
     }
     // Starts with underscore or double dash (CSS internals)
@@ -662,28 +779,11 @@ fn split_font_families(value: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn find_logo(doc: &Html, base_url: Option<&Url>) -> Option<String> {
-    // Strategy 1: <img> with class/id containing "logo"
-    for el in doc.select(selector!("img")) {
-        let class = el.value().attr("class").unwrap_or("");
-        let id = el.value().attr("id").unwrap_or("");
-        if (contains_ci(class, "logo") || contains_ci(id, "logo"))
-            && let Some(src) = el.value().attr("src")
-        {
-            return Some(resolve_url(src, base_url));
-        }
+    if let Some(url) = find_logo_in_scope(doc, base_url, "header img, nav img") {
+        return Some(url);
     }
 
-    // Strategy 2: <img> with alt containing "logo"
-    for el in doc.select(selector!("img")) {
-        let alt = el.value().attr("alt").unwrap_or("");
-        if contains_ci(alt, "logo")
-            && let Some(src) = el.value().attr("src")
-        {
-            return Some(resolve_url(src, base_url));
-        }
-    }
-
-    // Strategy 3: <a href="/"> containing an <img> (homepage link with image)
+    // Strategy 2: <a href="/"> containing an <img> (homepage link with image)
     for el in doc.select(selector!("a[href='/'] img, a[href] img")) {
         // Check if parent <a> links to homepage
         if let Some(parent) = el.parent().and_then(|p| p.value().as_element()) {
@@ -696,6 +796,20 @@ fn find_logo(doc: &Html, base_url: Option<&Url>) -> Option<String> {
         }
     }
 
+    None
+}
+
+fn find_logo_in_scope(doc: &Html, base_url: Option<&Url>, selector_str: &str) -> Option<String> {
+    let selector = Selector::parse(selector_str).ok()?;
+    for el in doc.select(&selector) {
+        let class = el.value().attr("class").unwrap_or("");
+        let id = el.value().attr("id").unwrap_or("");
+        let alt = el.value().attr("alt").unwrap_or("");
+        let src = el.value().attr("src")?;
+        if contains_ci(class, "logo") || contains_ci(id, "logo") || contains_ci(alt, "logo") {
+            return Some(resolve_url(src, base_url));
+        }
+    }
     None
 }
 
@@ -829,8 +943,9 @@ fn find_all_logos(doc: &Html, base_url: Option<&Url>) -> Vec<LogoVariant> {
         }
     }
 
-    // Logo images (class/id/alt containing "logo")
-    for el in doc.select(selector!("img")) {
+    // Logo images in header/nav first. Product/customer logo grids elsewhere
+    // are common on SaaS sites and should not become the primary brand signal.
+    for el in doc.select(selector!("header img, nav img")) {
         let class = el.value().attr("class").unwrap_or("");
         let id = el.value().attr("id").unwrap_or("");
         let alt = el.value().attr("alt").unwrap_or("");
@@ -998,6 +1113,25 @@ mod tests {
     }
 
     #[test]
+    fn test_google_oauth_palette_does_not_overwhelm_non_google_brand() {
+        let html = r#"<html><head>
+            <meta property="og:site_name" content="Claude">
+            <style>
+                .google-button { color: #1A73E8; background: #4285F4; border-color: #5F6368; }
+                .google-icon { color: #202124; background: #E8EAED; }
+                :root { --brand-accent: #D97757; --brand-text: #DC6038; }
+            </style>
+        </head><body></body></html>"#;
+
+        let brand = extract_brand(html, None);
+        let hexes: Vec<&str> = brand.colors.iter().map(|c| c.hex.as_str()).collect();
+        assert!(!hexes.contains(&"#1A73E8"));
+        assert!(!hexes.contains(&"#4285F4"));
+        assert!(hexes.contains(&"#D97757"));
+        assert!(hexes.contains(&"#DC6038"));
+    }
+
+    #[test]
     fn test_font_extraction() {
         let html = r#"<html><head><style>
             body { font-family: "Inter", "Helvetica Neue", sans-serif; }
@@ -1038,6 +1172,24 @@ mod tests {
             brand.fonts[0], "Inter",
             "most frequent font should be first"
         );
+    }
+
+    #[test]
+    fn test_font_shorthand_is_normalized_and_noise_filtered() {
+        let html = r#"<html><head><style>
+            body { font: 500 12px "Roboto", Arial, sans-serif; }
+            h1 { font: 1.21em/1.2 KaTeX_Main; }
+            .hash { font-family: "9d9927955a95a20d s", "OpenAI Sans", sans-serif; }
+            .bad { font-family: "Noto Color Emoji\")", "Segoe UI Emoji"; }
+        </style></head><body></body></html>"#;
+
+        let brand = extract_brand(html, None);
+        assert!(brand.fonts.contains(&"Roboto".to_string()));
+        assert!(brand.fonts.contains(&"OpenAI Sans".to_string()));
+        assert!(!brand.fonts.iter().any(|f| f.contains("12px")));
+        assert!(!brand.fonts.iter().any(|f| f.contains("KaTeX")));
+        assert!(!brand.fonts.iter().any(|f| f.contains("Emoji")));
+        assert!(!brand.fonts.iter().any(|f| f.contains("9d9927955a95a20d")));
     }
 
     #[test]
@@ -1084,6 +1236,42 @@ mod tests {
             brand.logo_url.as_deref(),
             Some("https://acme.com/brand-logo.png")
         );
+    }
+
+    #[test]
+    fn test_body_logo_grid_does_not_become_primary_brand_logo() {
+        let html = r#"<html><body>
+            <main>
+                <section class="customers">
+                    <img class="customer-logo" src="/logos/runway.svg" alt="Runway logo">
+                    <img class="customer-logo" src="/logos/zapier.svg" alt="Zapier logo">
+                </section>
+            </main>
+        </body></html>"#;
+
+        let brand = extract_brand(html, Some("https://example.com"));
+        assert_eq!(brand.logo_url, None);
+        assert!(brand.logos.is_empty());
+    }
+
+    #[test]
+    fn test_header_logo_is_still_primary_logo() {
+        let html = r#"<html><body>
+            <header>
+                <img class="brand-logo" src="/logo.svg" alt="Acme logo">
+            </header>
+            <main>
+                <img class="customer-logo" src="/logos/customer.svg" alt="Customer logo">
+            </main>
+        </body></html>"#;
+
+        let brand = extract_brand(html, Some("https://example.com"));
+        assert_eq!(
+            brand.logo_url.as_deref(),
+            Some("https://example.com/logo.svg")
+        );
+        assert_eq!(brand.logos.len(), 1);
+        assert_eq!(brand.logos[0].url, "https://example.com/logo.svg");
     }
 
     #[test]

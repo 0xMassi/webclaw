@@ -74,7 +74,16 @@ impl From<webclaw_fetch::FetchError> for ApiError {
             webclaw_fetch::FetchError::InvalidUrl(msg) => {
                 Self::BadRequest(format!("invalid url: {msg}"))
             }
-            other => Self::Fetch(other.to_string()),
+            other => {
+                let msg = other.to_string();
+                if msg.contains("invalid url:")
+                    || msg.contains("blocked private or internal address")
+                {
+                    Self::BadRequest(msg)
+                } else {
+                    Self::Fetch(msg)
+                }
+            }
         }
     }
 }

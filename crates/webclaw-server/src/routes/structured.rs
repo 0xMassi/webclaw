@@ -25,7 +25,7 @@ impl From<ExtractorDispatchError> for ApiError {
         match e {
             ExtractorDispatchError::UnknownVertical(_) => ApiError::NotFound,
             ExtractorDispatchError::UrlMismatch { .. } => ApiError::bad_request(e.to_string()),
-            ExtractorDispatchError::Fetch(f) => ApiError::Fetch(f.to_string()),
+            ExtractorDispatchError::Fetch(f) => ApiError::from(f),
         }
     }
 }
@@ -46,7 +46,8 @@ pub async fn scrape_vertical(
     if req.url.trim().is_empty() {
         return Err(ApiError::bad_request("`url` is required"));
     }
-    let data = extractors::dispatch_by_name(state.fetch(), &vertical, &req.url).await?;
+    let url = webclaw_fetch::url_security::validate_public_http_url(&req.url).await?;
+    let data = extractors::dispatch_by_name(state.fetch(), &vertical, url.as_str()).await?;
     Ok(Json(json!({
         "vertical": vertical,
         "url": req.url,

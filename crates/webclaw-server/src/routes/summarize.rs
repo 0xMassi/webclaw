@@ -22,8 +22,9 @@ pub async fn summarize_route(
     if req.url.trim().is_empty() {
         return Err(ApiError::bad_request("`url` is required"));
     }
+    let url = webclaw_fetch::url_security::validate_public_http_url(&req.url).await?;
 
-    let extraction = state.fetch().fetch_and_extract(&req.url).await?;
+    let extraction = state.fetch().fetch_and_extract(url.as_str()).await?;
     let content = if extraction.content.markdown.trim().is_empty() {
         extraction.content.plain_text.clone()
     } else {

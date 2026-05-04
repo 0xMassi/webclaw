@@ -36,6 +36,7 @@ pub async fn crawl(
     if req.url.trim().is_empty() {
         return Err(ApiError::bad_request("`url` is required"));
     }
+    let url = webclaw_fetch::url_security::validate_public_http_url(&req.url).await?;
     let max_pages = req.max_pages.unwrap_or(50).min(HARD_MAX_PAGES);
     let max_depth = req.max_depth.unwrap_or(3);
     let concurrency = req.concurrency.unwrap_or(5).min(20);
@@ -56,8 +57,8 @@ pub async fn crawl(
         cancel_flag: None,
     };
 
-    let crawler = Crawler::new(&req.url, config).map_err(ApiError::from)?;
-    let result = crawler.crawl(&req.url, None).await;
+    let crawler = Crawler::new(url.as_str(), config).map_err(ApiError::from)?;
+    let result = crawler.crawl(url.as_str(), None).await;
 
     let pages: Vec<Value> = result
         .pages

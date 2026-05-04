@@ -43,10 +43,11 @@ pub async fn extract(
             "either `schema` or `prompt` is required",
         ));
     }
+    let url = webclaw_fetch::url_security::validate_public_http_url(&req.url).await?;
 
     // Fetch + extract first so we feed the LLM clean markdown instead of
     // raw HTML. Cheaper tokens, better signal.
-    let extraction = state.fetch().fetch_and_extract(&req.url).await?;
+    let extraction = state.fetch().fetch_and_extract(url.as_str()).await?;
     let content = if extraction.content.markdown.trim().is_empty() {
         extraction.content.plain_text.clone()
     } else {

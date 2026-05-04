@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.5.7] — 2026-04-30
 
+### Security
+- Hardened server-side URL fetching against SSRF by rejecting private/internal IP ranges and unsafe redirect targets across CLI, MCP, and the self-hosted REST server. Thanks to KairoKid / dodge1218 (vonbrubeck@gmail.com) for the responsible report.
+
 ### Docs
 - README header now uses an `<h1>webclaw</h1>` instead of an `<h3>` slogan. The repo had no heading-level brand anchor before, only a banner image, so search engines indexing the README were missing the canonical brand signal. The new heading is what GitHub renders as the title of the page and what Google co-ranks with webclaw.io.
 

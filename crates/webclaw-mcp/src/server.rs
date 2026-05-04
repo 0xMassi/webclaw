@@ -13,7 +13,6 @@ use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use serde_json::json;
 use tracing::{error, info, warn};
-use url::Url;
 
 use webclaw_fetch::cloud::{self, CloudClient, SmartFetchResult};
 
@@ -54,19 +53,9 @@ fn parse_browser(browser: Option<&str>) -> webclaw_fetch::BrowserProfile {
 
 /// Validate that a URL is non-empty and has an http or https scheme.
 fn validate_url(url: &str) -> Result<(), String> {
-    if url.is_empty() {
-        return Err("Invalid URL: must not be empty".into());
-    }
-    match Url::parse(url) {
-        Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => Ok(()),
-        Ok(parsed) => Err(format!(
-            "Invalid URL: scheme '{}' not allowed, must start with http:// or https://",
-            parsed.scheme()
-        )),
-        Err(e) => Err(format!(
-            "Invalid URL: {e}. Must start with http:// or https://"
-        )),
-    }
+    webclaw_fetch::url_security::validate_http_url(url)
+        .map(|_| ())
+        .map_err(|e| format!("Invalid URL: {e}"))
 }
 
 /// Timeout for local fetch calls (prevents hanging on tarpitting servers).

@@ -455,6 +455,8 @@ pub fn build_client(
     timeout: Duration,
     extra_headers: &std::collections::HashMap<String, String>,
     proxy: Option<&str>,
+    follow_redirects: bool,
+    max_redirects: u32,
 ) -> Result<Client, FetchError> {
     // SafariIos26 builds its Emulation on top of wreq-util's base instead
     // of from scratch. See `safari_ios_emulation` for why.
@@ -490,7 +492,10 @@ pub fn build_client(
 
     let mut builder = Client::builder()
         .emulation(emulation)
-        .redirect(wreq::redirect::Policy::limited(10))
+        .redirect(ssrf_safe_redirect_policy(
+            follow_redirects,
+            max_redirects as usize,
+        ))
         .cookie_store(true)
         .timeout(timeout);
 
@@ -503,4 +508,27 @@ pub fn build_client(
     builder
         .build()
         .map_err(|e| FetchError::Build(e.to_string()))
+}
+
+fn ssrf_safe_redirect_policy(
+    follow_redirects: bool,
+    max_redirects: usize,
+) -> wreq::redirect::Policy {
+    if !follow_redirects {
+        return wreq::redirect::Policy::none();
+    }
+
+    wreq::redirect::Policy::custom(move |attempt| {
+        if attempt.previous.len() > max_redirects {
+            return attempt.error("too many redirects");
+        }
+
+        attempt.pending(|attempt| async move {
+            let next_url = attempt.uri.to_string();
+            match crate::url_security::validate_public_http_url(&next_url).await {
+                Ok(_) => attempt.follow(),
+                Err(e) => attempt.error(e.to_string()),
+            }
+        })
+    })
 }

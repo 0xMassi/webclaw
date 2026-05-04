@@ -75,6 +75,15 @@ async fn main() -> anyhow::Result<()> {
         .compact()
         .init();
 
+    if is_unspecified_addr(args.host)
+        && args.api_key.is_none()
+        && std::env::var_os("WEBCLAW_ALLOW_OPEN_PUBLIC").is_none()
+    {
+        anyhow::bail!(
+            "refusing to bind 0.0.0.0/[::] without WEBCLAW_API_KEY; set WEBCLAW_API_KEY or WEBCLAW_ALLOW_OPEN_PUBLIC=1 to override"
+        );
+    }
+
     let state = AppState::new(args.api_key.clone())?;
 
     let v1 = Router::new()
@@ -120,4 +129,11 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn is_unspecified_addr(addr: IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(ip) => ip.is_unspecified(),
+        IpAddr::V6(ip) => ip.is_unspecified(),
+    }
 }

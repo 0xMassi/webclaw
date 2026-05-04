@@ -52,6 +52,7 @@ pub async fn scrape(
     if req.url.trim().is_empty() {
         return Err(ApiError::bad_request("`url` is required"));
     }
+    let url = webclaw_fetch::url_security::validate_public_http_url(&req.url).await?;
     let formats = req.formats.as_vec();
 
     let options = ExtractionOptions {
@@ -63,11 +64,11 @@ pub async fn scrape(
 
     let extraction = state
         .fetch()
-        .fetch_and_extract_with_options(&req.url, &options)
+        .fetch_and_extract_with_options(url.as_str(), &options)
         .await?;
 
     let mut body = json!({
-        "url": extraction.metadata.url.clone().unwrap_or_else(|| req.url.clone()),
+        "url": extraction.metadata.url.clone().unwrap_or_else(|| url.to_string()),
         "metadata": extraction.metadata,
     });
     let obj = body.as_object_mut().expect("json::object");

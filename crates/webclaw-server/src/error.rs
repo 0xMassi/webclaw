@@ -70,7 +70,12 @@ impl IntoResponse for ApiError {
 
 impl From<webclaw_fetch::FetchError> for ApiError {
     fn from(e: webclaw_fetch::FetchError) -> Self {
-        Self::Fetch(e.to_string())
+        match e {
+            webclaw_fetch::FetchError::InvalidUrl(msg) => {
+                Self::BadRequest(format!("invalid url: {msg}"))
+            }
+            other => Self::Fetch(other.to_string()),
+        }
     }
 }
 

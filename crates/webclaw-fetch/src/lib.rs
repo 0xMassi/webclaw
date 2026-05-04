@@ -15,6 +15,7 @@ pub mod proxy;
 pub mod reddit;
 pub mod sitemap;
 pub mod tls;
+pub mod url_security;
 
 pub use browser::BrowserProfile;
 pub use client::{BatchExtractResult, BatchResult, FetchClient, FetchConfig, FetchResult};

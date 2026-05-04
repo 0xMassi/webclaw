@@ -73,11 +73,9 @@ COPY --from=builder /build/target/release/webclaw-server /usr/local/bin/webclaw-
 # as documentation; callers still need `-p 3000:3000` on `docker run`.
 EXPOSE 3000
 
-# Container default: bind all interfaces so `-p 3000:3000` works. The binary
-# itself defaults to 127.0.0.1 (safe for `cargo run` on a laptop); inside
-# Docker that would make the server unreachable, so we flip it here.
-# Override with -e WEBCLAW_HOST=127.0.0.1 if you front this with another
-# process in the same container.
+# Container default: bind all interfaces so `-p 3000:3000` works. Public
+# binding requires WEBCLAW_API_KEY; the binary refuses open-auth 0.0.0.0
+# unless WEBCLAW_ALLOW_OPEN_PUBLIC=1 is set explicitly for local testing.
 ENV WEBCLAW_HOST=0.0.0.0
 
 # Entrypoint shim: forwards webclaw args/URL to the binary, but exec's other

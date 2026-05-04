@@ -37,6 +37,14 @@ pub async fn batch(
             req.urls.len()
         )));
     }
+    let mut safe_urls = Vec::with_capacity(req.urls.len());
+    for url in &req.urls {
+        safe_urls.push(
+            webclaw_fetch::url_security::validate_public_http_url(url)
+                .await?
+                .to_string(),
+        );
+    }
 
     let concurrency = req.concurrency.unwrap_or(5).clamp(1, HARD_MAX_CONCURRENCY);
 
@@ -47,7 +55,7 @@ pub async fn batch(
         include_raw_html: false,
     };
 
-    let url_refs: Vec<&str> = req.urls.iter().map(|s| s.as_str()).collect();
+    let url_refs: Vec<&str> = safe_urls.iter().map(|s| s.as_str()).collect();
     let results = state
         .fetch()
         .fetch_and_extract_batch_with_options(&url_refs, concurrency, &options)

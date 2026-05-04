@@ -199,6 +199,8 @@ impl FetchClient {
                         config.timeout,
                         &config.headers,
                         config.proxy.as_deref(),
+                        config.follow_redirects,
+                        config.max_redirects,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -218,7 +220,14 @@ impl FetchClient {
                 .iter()
                 .map(|proxy| {
                     let v = *variants.choose(&mut rng).unwrap();
-                    crate::tls::build_client(v, config.timeout, &config.headers, Some(proxy))
+                    crate::tls::build_client(
+                        v,
+                        config.timeout,
+                        &config.headers,
+                        Some(proxy),
+                        config.follow_redirects,
+                        config.max_redirects,
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
@@ -379,6 +388,8 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
+        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
+        let url = parsed_url.as_str();
         let start = Instant::now();
         let client = self.pick_client(url);
 
@@ -463,13 +474,17 @@ impl FetchClient {
         url: &str,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
+        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
+        let url = parsed_url.as_str();
+
         // Reddit fallback: use their JSON API to get post + full comment tree.
         if crate::reddit::is_reddit_url(url) {
             let json_url = crate::reddit::json_url(url);
+            let json_url = crate::url_security::validate_public_http_url(&json_url).await?;
             debug!("reddit detected, fetching {json_url}");
 
             let client = self.pick_client(url);
-            let resp = client.get(&json_url).send().await?;
+            let resp = client.get(json_url.as_str()).send().await?;
             let response = Response::from_wreq(resp).await?;
             if response.is_success() {
                 let bytes = response.body();
@@ -491,7 +506,7 @@ impl FetchClient {
             && let Some(homepage) = extract_homepage(url)
         {
             debug!("challenge detected, warming cookies via {homepage}");
-            let _ = client.get(&homepage).send().await;
+            let _ = self.fetch(&homepage).await;
             let resp = client.get(url).send().await?;
             response = Response::from_wreq(resp).await?;
             debug!("retried after cookie warmup: status={}", response.status());

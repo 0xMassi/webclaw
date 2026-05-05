@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 - Improved brand extraction results for modern sites with large app shells. Brand colors, fonts, and logos are now less likely to be polluted by login widgets, customer-logo grids, icon fonts, or generated CSS noise.
 
+### Docs
+- Refreshed the README badges with a cleaner shieldcn style. Thanks to Justin Levine (`@jal-co`) for the contribution, and shout-out to his open-source [shieldcn](https://github.com/jal-co/shieldcn) project.
+
 ---
 
 ## [0.5.7] — 2026-04-30

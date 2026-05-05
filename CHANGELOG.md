@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.5.8] — 2026-05-04
 
 ### Added
-- GitHub Releases now include a Windows x86_64 `.zip` with `webclaw.exe`, `webclaw-mcp.exe`, and `webclaw-server.exe`.
+- GitHub Releases now include a Windows x86_64 `.zip` with `webclaw.exe`, `webclaw-mcp.exe`, and `webclaw-server.exe`. Thanks to Suryansh Mishra (`@notrealsuryansh`) for the contribution.
 
 ### Fixed
 - Improved brand extraction results for modern sites with large app shells. Brand colors, fonts, and logos are now less likely to be polluted by login widgets, customer-logo grids, icon fonts, or generated CSS noise.

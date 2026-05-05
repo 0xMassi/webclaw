@@ -1,6 +1,7 @@
 name: PR34 Windows Smoke
 
 on:
+  pull_request:
   workflow_dispatch:
 
 env:

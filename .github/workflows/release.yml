@@ -79,7 +79,7 @@ jobs:
           # don't repeat that mistake. If a future binary gets renamed or
           # removed, this step should scream, not quietly publish an
           # incomplete release.
-          
+
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             cp target/${{ matrix.target }}/release/webclaw.exe "$staging/"
             cp target/${{ matrix.target }}/release/webclaw-mcp.exe "$staging/"

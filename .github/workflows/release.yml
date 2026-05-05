@@ -27,6 +27,8 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +59,12 @@ jobs:
         if: matrix.target != 'aarch64-unknown-linux-gnu' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake
 
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install nasm -y
+          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -71,12 +79,22 @@ jobs:
           # don't repeat that mistake. If a future binary gets renamed or
           # removed, this step should scream, not quietly publish an
           # incomplete release.
-          cp target/${{ matrix.target }}/release/webclaw "$staging/"
-          cp target/${{ matrix.target }}/release/webclaw-mcp "$staging/"
-          cp target/${{ matrix.target }}/release/webclaw-server "$staging/"
-          cp README.md LICENSE "$staging/"
-          tar czf "$staging.tar.gz" "$staging"
-          echo "ASSET=$staging.tar.gz" >> $GITHUB_ENV
+          
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp target/${{ matrix.target }}/release/webclaw.exe "$staging/"
+            cp target/${{ matrix.target }}/release/webclaw-mcp.exe "$staging/"
+            cp target/${{ matrix.target }}/release/webclaw-server.exe "$staging/"
+            cp README.md LICENSE "$staging/"
+            7z a -tzip "$staging.zip" "$staging"
+            echo "ASSET=$staging.zip" >> $GITHUB_ENV
+          else
+            cp target/${{ matrix.target }}/release/webclaw "$staging/"
+            cp target/${{ matrix.target }}/release/webclaw-mcp "$staging/"
+            cp target/${{ matrix.target }}/release/webclaw-server "$staging/"
+            cp README.md LICENSE "$staging/"
+            tar czf "$staging.tar.gz" "$staging"
+            echo "ASSET=$staging.tar.gz" >> $GITHUB_ENV
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -99,7 +117,8 @@ jobs:
         run: |
           cd artifacts
           find . -name '*.tar.gz' -exec mv {} . \;
-          sha256sum *.tar.gz > SHA256SUMS
+          find . -name '*.zip' -exec mv {} . \;
+          sha256sum *.tar.gz *.zip > SHA256SUMS 2>/dev/null || sha256sum * > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create GitHub Release
@@ -108,6 +127,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/*.tar.gz
+            artifacts/*.zip
             artifacts/SHA256SUMS
 
   docker:
@@ -181,7 +201,7 @@ jobs:
           tag="${GITHUB_REF#refs/tags/}"
           base="https://github.com/0xMassi/webclaw/releases/download/${tag}"
 
-          # Download all 4 tarballs and compute SHAs
+          # Download all tarballs (Linux + macOS) and compute SHAs
           for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
             curl -sSL "${base}/webclaw-${tag}-${target}.tar.gz" -o "${target}.tar.gz"
           done

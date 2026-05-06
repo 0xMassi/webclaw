@@ -60,7 +60,7 @@ It extracts clean, structured content from any URL using Chrome-level TLS finger
 
 **Self-host.** Free, AGPL-3.0, runs locally. Get the CLI, MCP server, or REST API in one command. Ships with the 8 core extraction tools: scrape, crawl, map, batch, extract, summarize, diff, brand.
 
-**Hosted API** at **[webclaw.io](https://webclaw.io)**. 500 pages/month free, no card. Adds what self-hosting can't do alone: antibot bypass (Cloudflare, DataDome, WAF), JS rendering, async crawl/research jobs, web search, watches. For when you want it to *just work*.
+**Hosted API** at **[webclaw.io](https://webclaw.io)**. Start with a 7-day Starter trial, card required. Adds what self-hosting can't do alone: antibot bypass (Cloudflare, DataDome, WAF), JS rendering, async crawl/research jobs, web search, watches. For when you want it to *just work*.
 
 ---
 

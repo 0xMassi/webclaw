@@ -34,7 +34,7 @@ impl ProviderChain {
             providers.push(Box::new(openai));
         }
 
-        if let Some(anthropic) = AnthropicProvider::new(None, None) {
+        if let Some(anthropic) = AnthropicProvider::with_base_url(None, None, None) {
             debug!("anthropic configured, adding to chain");
             providers.push(Box::new(anthropic));
         }

@@ -260,7 +260,7 @@ struct Cli {
     #[arg(long, env = "WEBCLAW_LLM_MODEL")]
     llm_model: Option<String>,
 
-    /// Override the LLM base URL (Ollama or OpenAI-compatible)
+    /// Override the LLM base URL (Ollama, OpenAI-compatible, or Anthropic-compatible)
     #[arg(long, env = "WEBCLAW_LLM_BASE_URL")]
     llm_base_url: Option<String>,
 
@@ -1919,8 +1919,9 @@ async fn build_llm_provider(cli: &Cli) -> Result<Box<dyn LlmProvider>, String> {
                 Ok(Box::new(provider))
             }
             "anthropic" => {
-                let provider = webclaw_llm::providers::anthropic::AnthropicProvider::new(
+                let provider = webclaw_llm::providers::anthropic::AnthropicProvider::with_base_url(
                     None,
+                    cli.llm_base_url.clone(),
                     cli.llm_model.clone(),
                 )
                 .ok_or("ANTHROPIC_API_KEY not set")?;

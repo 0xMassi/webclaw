@@ -13,6 +13,50 @@ pub struct OpenAiProvider {
     key: String,
     base_url: String,
     default_model: String,
+    response_format: OpenAiResponseFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAiResponseFormat {
+    JsonObject,
+    JsonSchema,
+    Text,
+}
+
+impl OpenAiResponseFormat {
+    fn from_env() -> Self {
+        std::env::var("OPENAI_RESPONSE_FORMAT_TYPE")
+            .ok()
+            .and_then(|value| Self::parse(&value))
+            .unwrap_or(Self::JsonObject)
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" | "json_object" => Some(Self::JsonObject),
+            "json_schema" => Some(Self::JsonSchema),
+            "text" => Some(Self::Text),
+            _ => None,
+        }
+    }
+
+    fn as_response_format(self) -> serde_json::Value {
+        match self {
+            Self::JsonObject => json!({ "type": "json_object" }),
+            Self::JsonSchema => json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "webclaw_response",
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": true
+                    },
+                    "strict": false
+                }
+            }),
+            Self::Text => json!({ "type": "text" }),
+        }
+    }
 }
 
 impl OpenAiProvider {
@@ -31,23 +75,15 @@ impl OpenAiProvider {
                 .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
                 .unwrap_or_else(|| "https://api.openai.com/v1".into()),
             default_model: model.unwrap_or_else(|| "gpt-4o-mini".into()),
+            response_format: OpenAiResponseFormat::from_env(),
         })
     }
 
     pub fn default_model(&self) -> &str {
         &self.default_model
     }
-}
 
-#[async_trait]
-impl LlmProvider for OpenAiProvider {
-    async fn complete(&self, request: &CompletionRequest) -> Result<String, LlmError> {
-        let model = if request.model.is_empty() {
-            &self.default_model
-        } else {
-            &request.model
-        };
-
+    fn request_body(&self, request: &CompletionRequest, model: &str) -> serde_json::Value {
         let messages: Vec<serde_json::Value> = request
             .messages
             .iter()
@@ -60,7 +96,7 @@ impl LlmProvider for OpenAiProvider {
         });
 
         if request.json_mode {
-            body["response_format"] = json!({ "type": "json_object" });
+            body["response_format"] = self.response_format.as_response_format();
         }
         if let Some(temp) = request.temperature {
             body["temperature"] = json!(temp);
@@ -68,6 +104,21 @@ impl LlmProvider for OpenAiProvider {
         if let Some(max) = request.max_tokens {
             body["max_tokens"] = json!(max);
         }
+
+        body
+    }
+}
+
+#[async_trait]
+impl LlmProvider for OpenAiProvider {
+    async fn complete(&self, request: &CompletionRequest) -> Result<String, LlmError> {
+        let model = if request.model.is_empty() {
+            &self.default_model
+        } else {
+            &request.model
+        };
+
+        let body = self.request_body(request, model);
 
         let url = format!("{}/chat/completions", self.base_url);
         let resp = self
@@ -136,6 +187,7 @@ mod tests {
         assert_eq!(provider.default_model, "gpt-4o-mini");
         assert_eq!(provider.base_url, "https://api.openai.com/v1");
         assert_eq!(provider.key, "test-key-123");
+        assert_eq!(provider.response_format, OpenAiResponseFormat::JsonObject);
     }
 
     #[test]
@@ -159,6 +211,69 @@ mod tests {
         )
         .unwrap();
         assert_eq!(provider.default_model(), "gpt-4o-mini");
+    }
+
+    #[test]
+    fn json_mode_defaults_to_openai_json_object() {
+        let provider = OpenAiProvider::new(
+            Some("test-key".into()),
+            Some("https://api.openai.com/v1".into()),
+            None,
+        )
+        .unwrap();
+        let req = CompletionRequest {
+            model: String::new(),
+            messages: vec![],
+            temperature: None,
+            max_tokens: None,
+            json_mode: true,
+        };
+        let body = provider.request_body(&req, provider.default_model());
+        assert_eq!(body["response_format"], json!({ "type": "json_object" }));
+    }
+
+    #[test]
+    fn json_schema_response_format_for_compatible_backends() {
+        let mut provider = OpenAiProvider::new(
+            Some("test-key".into()),
+            Some("http://localhost:1234/v1".into()),
+            Some("local-model".into()),
+        )
+        .unwrap();
+        provider.response_format = OpenAiResponseFormat::JsonSchema;
+        let req = CompletionRequest {
+            model: String::new(),
+            messages: vec![],
+            temperature: None,
+            max_tokens: None,
+            json_mode: true,
+        };
+        let body = provider.request_body(&req, provider.default_model());
+        assert_eq!(body["response_format"]["type"], "json_schema");
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"]["type"],
+            "object"
+        );
+    }
+
+    #[test]
+    fn text_response_format_for_lm_studio() {
+        let mut provider = OpenAiProvider::new(
+            Some("test-key".into()),
+            Some("http://localhost:1234/v1".into()),
+            Some("local-model".into()),
+        )
+        .unwrap();
+        provider.response_format = OpenAiResponseFormat::Text;
+        let req = CompletionRequest {
+            model: String::new(),
+            messages: vec![],
+            temperature: None,
+            max_tokens: None,
+            json_mode: true,
+        };
+        let body = provider.request_body(&req, provider.default_model());
+        assert_eq!(body["response_format"], json!({ "type": "text" }));
     }
 
     // Env var fallback tests mutate process-global state and race with parallel tests.

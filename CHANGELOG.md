@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - GitHub Releases now include a Windows x86_64 `.zip` with `webclaw.exe`, `webclaw-mcp.exe`, and `webclaw-server.exe`. Thanks to Suryansh Mishra (`@notrealsuryansh`) for the contribution.
+- LLM providers now support `ANTHROPIC_BASE_URL` for Anthropic-compatible proxies, plus an `OPENAI_RESPONSE_FORMAT_TYPE` override for OpenAI-compatible backends such as LM Studio. Thanks to Toti (`@Toti330`) for the report.
 
 ### Fixed
 - Improved brand extraction results for modern sites with large app shells. Brand colors, fonts, and logos are now less likely to be polluted by login widgets, customer-logo grids, icon fonts, or generated CSS noise.

@@ -10,29 +10,52 @@ use crate::provider::{CompletionRequest, LlmProvider};
 
 use super::load_api_key;
 
-const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
+const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 pub struct AnthropicProvider {
     client: reqwest::Client,
     key: String,
+    base_url: String,
     default_model: String,
 }
 
 impl AnthropicProvider {
     /// Returns `None` if no API key is available (param or env).
     pub fn new(key_override: Option<String>, model: Option<String>) -> Option<Self> {
+        Self::with_base_url(key_override, None, model)
+    }
+
+    /// Returns `None` if no API key is available (param or env).
+    pub fn with_base_url(
+        key_override: Option<String>,
+        base_url: Option<String>,
+        model: Option<String>,
+    ) -> Option<Self> {
         let key = load_api_key(key_override, "ANTHROPIC_API_KEY")?;
 
         Some(Self {
             client: reqwest::Client::new(),
             key,
+            base_url: base_url
+                .or_else(|| std::env::var("ANTHROPIC_BASE_URL").ok())
+                .unwrap_or_else(|| DEFAULT_ANTHROPIC_BASE_URL.into())
+                .trim_end_matches('/')
+                .to_string(),
             default_model: model.unwrap_or_else(|| "claude-sonnet-4-20250514".into()),
         })
     }
 
     pub fn default_model(&self) -> &str {
         &self.default_model
+    }
+
+    fn messages_url(&self) -> String {
+        if self.base_url.ends_with("/messages") {
+            self.base_url.clone()
+        } else {
+            format!("{}/messages", self.base_url)
+        }
     }
 }
 
@@ -74,7 +97,7 @@ impl LlmProvider for AnthropicProvider {
 
         let resp = self
             .client
-            .post(ANTHROPIC_API_URL)
+            .post(self.messages_url())
             .header("x-api-key", &self.key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json")
@@ -135,6 +158,11 @@ mod tests {
         assert_eq!(provider.name(), "anthropic");
         assert_eq!(provider.default_model, "claude-sonnet-4-20250514");
         assert_eq!(provider.key, "sk-ant-test");
+        assert_eq!(provider.base_url, "https://api.anthropic.com/v1");
+        assert_eq!(
+            provider.messages_url(),
+            "https://api.anthropic.com/v1/messages"
+        );
     }
 
     #[test]
@@ -149,6 +177,35 @@ mod tests {
     fn default_model_accessor() {
         let provider = AnthropicProvider::new(Some("sk-ant-test".into()), None).unwrap();
         assert_eq!(provider.default_model(), "claude-sonnet-4-20250514");
+    }
+
+    #[test]
+    fn custom_base_url_appends_messages_path() {
+        let provider = AnthropicProvider::with_base_url(
+            Some("sk-ant-test".into()),
+            Some("https://proxy.example.test/anthropic/v1/".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(provider.base_url, "https://proxy.example.test/anthropic/v1");
+        assert_eq!(
+            provider.messages_url(),
+            "https://proxy.example.test/anthropic/v1/messages"
+        );
+    }
+
+    #[test]
+    fn custom_full_messages_url_is_not_doubled() {
+        let provider = AnthropicProvider::with_base_url(
+            Some("sk-ant-test".into()),
+            Some("https://proxy.example.test/v1/messages".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            provider.messages_url(),
+            "https://proxy.example.test/v1/messages"
+        );
     }
 
     // Env var fallback tests mutate process-global state and race with parallel tests.

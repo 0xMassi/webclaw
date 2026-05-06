@@ -358,7 +358,10 @@ webclaw/
 | `WEBCLAW_API_KEY` | Cloud API key (enables bot bypass, JS rendering, search, research) |
 | `OLLAMA_HOST` | Ollama URL for local LLM features (default: `http://localhost:11434`) |
 | `OPENAI_API_KEY` | OpenAI API key for LLM features |
+| `OPENAI_BASE_URL` | OpenAI-compatible base URL (default: `https://api.openai.com/v1`) |
+| `OPENAI_RESPONSE_FORMAT_TYPE` | JSON-mode response format for OpenAI-compatible backends: `json_object` (default), `json_schema`, or `text`. Use `text` or `json_schema` for LM Studio. |
 | `ANTHROPIC_API_KEY` | Anthropic API key for LLM features |
+| `ANTHROPIC_BASE_URL` | Anthropic-compatible base URL (default: `https://api.anthropic.com/v1`) |
 | `WEBCLAW_PROXY` | Single proxy URL |
 | `WEBCLAW_PROXY_FILE` | Path to proxy pool file |
 

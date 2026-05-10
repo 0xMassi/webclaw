@@ -80,26 +80,32 @@ pub fn to_llm_text(result: &ExtractionResult, url: Option<&str>) -> String {
 /// hydration state.
 fn is_useful_structured_data(v: &serde_json::Value) -> bool {
     let Some(obj) = v.as_object() else {
+        // SvelteKit can emit compact arrays of page data. Keep those if they
+        // are small enough to be useful, while still dropping giant hydration
+        // arrays under the same budget as untyped objects.
+        if v.is_array() {
+            let serialized = serde_json::to_string(v).unwrap_or_default();
+            return serialized.len() <= 4 * 1024;
+        }
         return false;
     };
     // JSON-LD: @type drives the decision.
     if let Some(t) = obj.get("@type") {
-        let type_str = match t {
-            serde_json::Value::String(s) => s.clone(),
+        let types: Vec<String> = match t {
+            serde_json::Value::String(s) => vec![s.to_ascii_lowercase()],
             serde_json::Value::Array(a) => a
                 .iter()
                 .filter_map(|x| x.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-            _ => String::new(),
+                .map(str::to_ascii_lowercase)
+                .collect(),
+            _ => Vec::new(),
         };
-        let lower = type_str.to_ascii_lowercase();
-        // Drop low-info chrome types.
-        const DROP_TYPES: &[&str] = &["website", "webpage", "sitenavigationelement"];
-        if DROP_TYPES.iter().any(|d| lower == *d) {
+        if types.is_empty() {
             return false;
         }
-        return !lower.is_empty();
+        // Drop low-info chrome types.
+        const DROP_TYPES: &[&str] = &["website", "webpage", "sitenavigationelement"];
+        return types.iter().any(|t| !DROP_TYPES.iter().any(|d| t == d));
     }
     // Next.js pageProps / SvelteKit data without @type: keep only if compact.
     // Anything over ~4KB is almost certainly hydration state, not content.
@@ -819,6 +825,19 @@ mod tests {
         assert!(
             out.contains("## Structured Data"),
             "Compact untyped dropped: {out}"
+        );
+    }
+
+    #[test]
+    fn structured_data_keeps_compact_untyped_array() {
+        // SvelteKit can emit compact arrays rather than objects.
+        let r = make_result_with_structured(vec![serde_json::json!([
+            { "title": "Hi", "body": "small array item" }
+        ])]);
+        let out = to_llm_text(&r, None);
+        assert!(
+            out.contains("small array item"),
+            "Compact untyped array dropped: {out}"
         );
     }
 }

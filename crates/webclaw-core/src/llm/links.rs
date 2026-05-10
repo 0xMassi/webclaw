@@ -90,7 +90,7 @@ static MD_MARKERS_RE: Lazy<Regex> =
 
 static A11Y_LABEL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"(?i)\s*,?\s*\b(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\b\.?",
+        r"(?i)(?:\s*,?\s*(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website))\b\.?|\s*,\s*external link\b\.?|\s+external link\b\.?$)",
     )
     .unwrap()
 });
@@ -189,5 +189,21 @@ mod tests {
         assert!(is_noise_link("5 minutes ago", "https://example.com"));
         assert!(is_noise_link("user", "https://hn.com/user?id=foo"));
         assert!(!is_noise_link("Rust docs", "https://rust-lang.org"));
+    }
+
+    #[test]
+    fn link_label_preserves_external_link_prose() {
+        assert_eq!(
+            clean_link_label("Research found an external link between incidents"),
+            "Research found an external link between incidents"
+        );
+    }
+
+    #[test]
+    fn link_label_strips_terminal_external_link_chrome() {
+        assert_eq!(
+            clean_link_label("Reuters story external link"),
+            "Reuters story"
+        );
     }
 }

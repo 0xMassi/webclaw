@@ -3,6 +3,15 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.0] — 2026-05-10
+
+### Fixed
+- Improved `--format llm` output quality on modern news and documentation pages. Framework hydration blobs and low-value page chrome structured-data records are now filtered out before they can flood the LLM context, while content-bearing Schema.org records are preserved. Thanks and congrats to Nenad Oric (`@devnen`) for the contribution in PR #37.
+- Fixed element-to-text spacing so adjacent inline nodes no longer smash words together, while punctuation stays attached on real pages such as docs, forums, and reference sites.
+- Removed common screen-reader-only link chrome such as "opens new tab" from LLM body text and link labels without stripping ordinary prose that happens to mention external links.
+
+---
+
 ## [0.5.9] — 2026-05-06
 
 ### Fixed

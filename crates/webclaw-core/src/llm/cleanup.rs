@@ -160,7 +160,7 @@ pub(crate) fn strip_leaked_js(input: &str) -> String {
 pub(crate) fn strip_a11y_link_chrome(input: &str) -> String {
     static A11Y_PATTERN: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
-            r"(?i)\s*,?\s*\b(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\b\.?",
+            r"(?i)(?:\s*,\s*(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\b\.?|\s+\((?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\)\.?|\s+external link\b\.?$)",
         )
         .unwrap()
     });
@@ -1424,13 +1424,19 @@ mod tests {
 
     #[test]
     fn a11y_preserves_code_blocks() {
-        let input = "```\nopens new tab is a function\n```\nopens new tab here";
+        let input = "```\nopens new tab is a function\n```\nDownload, opens new tab";
         let out = strip_a11y_link_chrome(input);
         assert!(
             out.contains("opens new tab is a function"),
             "code stripped: {out}"
         );
         // Outside the fence, the chrome is removed.
-        assert!(!out.ends_with("opens new tab here"));
+        assert!(!out.to_lowercase().contains("download, opens new tab"));
+    }
+
+    #[test]
+    fn a11y_preserves_external_link_prose() {
+        let input = "Researchers found an external link between the two incidents.";
+        assert_eq!(strip_a11y_link_chrome(input), input);
     }
 }

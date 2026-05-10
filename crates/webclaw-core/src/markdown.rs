@@ -320,6 +320,9 @@ fn children_to_md(
                 }
             }
             Node::Text(text) => {
+                if !text.is_empty() && !out.is_empty() && needs_separator(&out, text) {
+                    out.push(' ');
+                }
                 out.push_str(text);
             }
             _ => {}
@@ -350,6 +353,9 @@ fn inline_text(
                 }
             }
             Node::Text(text) => {
+                if !text.is_empty() && !out.is_empty() && needs_separator(&out, text) {
+                    out.push(' ');
+                }
                 out.push_str(text);
             }
             _ => {}
@@ -361,11 +367,65 @@ fn inline_text(
 
 /// Check whether a space is needed between two adjacent chunks of output.
 /// Returns true when the left side doesn't end with whitespace and the right
-/// side doesn't start with whitespace — i.e., two words would be mashed together.
+/// side doesn't start with whitespace, except around punctuation that should
+/// bind to the adjacent token.
 fn needs_separator(left: &str, right: &str) -> bool {
-    let l = left.as_bytes().last().copied().unwrap_or(b' ');
-    let r = right.as_bytes().first().copied().unwrap_or(b' ');
-    !l.is_ascii_whitespace() && !r.is_ascii_whitespace()
+    let l = left.chars().next_back().unwrap_or(' ');
+    let r = right.chars().next().unwrap_or(' ');
+
+    if l.is_whitespace() || r.is_whitespace() {
+        return false;
+    }
+
+    // Do not create "word ," / "word )" / "word 's" artifacts.
+    if is_closing_punctuation(r) {
+        return false;
+    }
+
+    // Do not create "( word" / "[ 1" artifacts.
+    if is_opening_punctuation(l) {
+        return false;
+    }
+
+    // Common inline-code suffixes: `Option`s, `x`'s. Treat them like a
+    // single token rather than separating the text node.
+    if matches!(l, '`' | ')') && starts_with_inline_code_suffix(right) {
+        return false;
+    }
+
+    true
+}
+
+fn starts_with_inline_code_suffix(s: &str) -> bool {
+    let trimmed = s.trim_start_matches(['*', '_']);
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    if matches!(first, '\'' | '’') {
+        return true;
+    }
+
+    if !matches!(first, 's' | 'S') {
+        return false;
+    }
+
+    match chars.next() {
+        None => true,
+        Some(c) => c.is_whitespace() || is_closing_punctuation(c) || matches!(c, '*' | '_'),
+    }
+}
+
+fn is_closing_punctuation(c: char) -> bool {
+    matches!(
+        c,
+        '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '%' | '\'' | '’' | '"' | '”'
+    )
+}
+
+fn is_opening_punctuation(c: char) -> bool {
+    matches!(c, '(' | '[' | '{' | '"' | '“')
 }
 
 /// Collect raw text content (no markdown formatting).
@@ -1604,6 +1664,41 @@ mod tests {
         assert!(
             output.contains("      return;"),
             "collapse_whitespace stripped 6-space indent: {output}"
+        );
+    }
+
+    #[test]
+    fn text_after_inline_element_keeps_separator() {
+        // Reuters-style markup: <a><time>3h</time>ago</a><a>Tanker crosses...</a>
+        // The "ago" text node sits between two element children. Without a
+        // separator check on the Text branch, "ago" + "Tanker" would smash
+        // together as "agoTanker".
+        let html = r#"<div><span>3h</span>ago<span>Tanker crosses Strait</span></div>"#;
+        let (md, _, _) = convert_html(html, None);
+        assert!(
+            !md.contains("agoTanker"),
+            "Element->Text->Element smashed together: {md}"
+        );
+    }
+
+    #[test]
+    fn punctuation_after_inline_element_stays_attached() {
+        let html = r#"<p><span>Hello</span>, world. Use <code>package.json</code>.</p>"#;
+        let (md, _, _) = convert_html(html, None);
+        assert!(md.contains("Hello, world"), "punctuation detached: {md}");
+        assert!(
+            md.contains("`package.json`."),
+            "code punctuation detached: {md}"
+        );
+    }
+
+    #[test]
+    fn inline_code_suffix_stays_attached() {
+        let html = r#"<p><a href="https://example.com"><code>NullPointerException</code></a><em>s</em> are common.</p>"#;
+        let (md, _, _) = convert_html(html, None);
+        assert!(
+            md.contains("[`NullPointerException`](https://example.com)*s* are common"),
+            "code suffix detached: {md}"
         );
     }
 }

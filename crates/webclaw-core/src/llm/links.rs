@@ -88,10 +88,19 @@ fn is_noise_link(text: &str, href: &str) -> bool {
 static MD_MARKERS_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"#{1,6}\s+|\*{1,2}|_{1,2}|`").unwrap());
 
+static A11Y_LABEL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)(?:\s*,?\s*(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website))\b\.?|\s*,\s*external link\b\.?|\s+external link\b\.?$)",
+    )
+    .unwrap()
+});
+
 /// Clean a link label: strip markdown, dedup repeated phrases, truncate.
 pub(crate) fn clean_link_label(raw: &str) -> String {
     // Strip markdown markers
     let label = MD_MARKERS_RE.replace_all(raw, "").to_string();
+    // Strip a11y link chrome ("opens new tab", etc.)
+    let label = A11Y_LABEL_RE.replace_all(&label, "").to_string();
     let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
 
     // Dedup repeated phrases in label
@@ -180,5 +189,21 @@ mod tests {
         assert!(is_noise_link("5 minutes ago", "https://example.com"));
         assert!(is_noise_link("user", "https://hn.com/user?id=foo"));
         assert!(!is_noise_link("Rust docs", "https://rust-lang.org"));
+    }
+
+    #[test]
+    fn link_label_preserves_external_link_prose() {
+        assert_eq!(
+            clean_link_label("Research found an external link between incidents"),
+            "Research found an external link between incidents"
+        );
+    }
+
+    #[test]
+    fn link_label_strips_terminal_external_link_chrome() {
+        assert_eq!(
+            clean_link_label("Reuters story external link"),
+            "Reuters story"
+        );
     }
 }

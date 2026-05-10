@@ -46,13 +46,71 @@ pub fn to_llm_text(result: &ExtractionResult, url: Option<&str>) -> String {
     }
 
     // -- 4. Structured data (NEXT_DATA, SvelteKit, JSON-LD) --
-    if !result.structured_data.is_empty() {
-        out.push_str("\n\n## Structured Data\n\n```json\n");
-        out.push_str(&serde_json::to_string_pretty(&result.structured_data).unwrap_or_default());
-        out.push_str("\n```");
+    // Only emit useful items: Schema.org records with a meaningful @type,
+    // and only if the total serialized size stays under a budget. Framework
+    // hydration blobs (Next.js pageProps full of ad-targeting flags, build
+    // IDs, schedule paths) explode to hundreds of KB and drown the LLM in
+    // noise — drop them rather than ship them.
+    let useful: Vec<_> = result
+        .structured_data
+        .iter()
+        .filter(|v| is_useful_structured_data(v))
+        .cloned()
+        .collect();
+    if !useful.is_empty() {
+        let serialized = serde_json::to_string_pretty(&useful).unwrap_or_default();
+        const STRUCTURED_DATA_MAX_BYTES: usize = 16 * 1024;
+        if serialized.len() <= STRUCTURED_DATA_MAX_BYTES {
+            out.push_str("\n\n## Structured Data\n\n```json\n");
+            out.push_str(&serialized);
+            out.push_str("\n```");
+        }
     }
 
     out.trim().to_string()
+}
+
+/// Decide whether a structured-data value carries content worth emitting.
+///
+/// Schema.org records with a recognizable content `@type` (Article, NewsArticle,
+/// Product, Recipe, FAQPage, HowTo, Event, Person, Organization, BreadcrumbList,
+/// VideoObject, JobPosting, etc.) are kept. Generic `WebSite` / `WebPage` /
+/// `ItemList` records and Next.js `pageProps`-style blobs without a useful
+/// `@type` are dropped — they're almost always navigation chrome or framework
+/// hydration state.
+fn is_useful_structured_data(v: &serde_json::Value) -> bool {
+    let Some(obj) = v.as_object() else {
+        // SvelteKit can emit compact arrays of page data. Keep those if they
+        // are small enough to be useful, while still dropping giant hydration
+        // arrays under the same budget as untyped objects.
+        if v.is_array() {
+            let serialized = serde_json::to_string(v).unwrap_or_default();
+            return serialized.len() <= 4 * 1024;
+        }
+        return false;
+    };
+    // JSON-LD: @type drives the decision.
+    if let Some(t) = obj.get("@type") {
+        let types: Vec<String> = match t {
+            serde_json::Value::String(s) => vec![s.to_ascii_lowercase()],
+            serde_json::Value::Array(a) => a
+                .iter()
+                .filter_map(|x| x.as_str())
+                .map(str::to_ascii_lowercase)
+                .collect(),
+            _ => Vec::new(),
+        };
+        if types.is_empty() {
+            return false;
+        }
+        // Drop low-info chrome types.
+        const DROP_TYPES: &[&str] = &["website", "webpage", "sitenavigationelement"];
+        return types.iter().any(|t| !DROP_TYPES.iter().any(|d| t == d));
+    }
+    // Next.js pageProps / SvelteKit data without @type: keep only if compact.
+    // Anything over ~4KB is almost certainly hydration state, not content.
+    let serialized = serde_json::to_string(v).unwrap_or_default();
+    serialized.len() <= 4 * 1024
 }
 
 // ---------------------------------------------------------------------------
@@ -699,5 +757,87 @@ mod tests {
         );
         assert!(out.contains("Some content"), "Content before lost: {out}");
         assert!(out.contains("More content"), "Content after lost: {out}");
+    }
+
+    // -- Structured-data gating tests --
+
+    fn make_result_with_structured(values: Vec<serde_json::Value>) -> ExtractionResult {
+        let mut r = make_result("# Body");
+        r.structured_data = values;
+        r
+    }
+
+    #[test]
+    fn structured_data_drops_chrome_types() {
+        // WebSite/WebPage records are framework chrome — should be dropped.
+        let r = make_result_with_structured(vec![serde_json::json!({
+            "@type": "WebSite",
+            "name": "Example",
+            "url": "https://example.com"
+        })]);
+        let out = to_llm_text(&r, None);
+        assert!(
+            !out.contains("## Structured Data"),
+            "WebSite chrome leaked into output: {out}"
+        );
+    }
+
+    #[test]
+    fn structured_data_keeps_article_types() {
+        let r = make_result_with_structured(vec![serde_json::json!({
+            "@type": "NewsArticle",
+            "headline": "Big news",
+            "datePublished": "2026-05-10"
+        })]);
+        let out = to_llm_text(&r, None);
+        assert!(
+            out.contains("## Structured Data"),
+            "NewsArticle dropped: {out}"
+        );
+        assert!(out.contains("Big news"));
+    }
+
+    #[test]
+    fn structured_data_drops_oversized_blob() {
+        // 32KB pageProps-style blob with no @type — should be dropped.
+        let big = "x".repeat(32 * 1024);
+        let r = make_result_with_structured(vec![serde_json::json!({
+            "buildId": "abc",
+            "isFallback": false,
+            "noise": big
+        })]);
+        let out = to_llm_text(&r, None);
+        assert!(
+            !out.contains("## Structured Data"),
+            "Oversized untyped blob leaked: len={}",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn structured_data_keeps_compact_untyped() {
+        // Small untyped record (e.g. a parsed pageProps with real content) — keep.
+        let r = make_result_with_structured(vec![serde_json::json!({
+            "title": "Hi",
+            "body": "small enough to keep"
+        })]);
+        let out = to_llm_text(&r, None);
+        assert!(
+            out.contains("## Structured Data"),
+            "Compact untyped dropped: {out}"
+        );
+    }
+
+    #[test]
+    fn structured_data_keeps_compact_untyped_array() {
+        // SvelteKit can emit compact arrays rather than objects.
+        let r = make_result_with_structured(vec![serde_json::json!([
+            { "title": "Hi", "body": "small array item" }
+        ])]);
+        let out = to_llm_text(&r, None);
+        assert!(
+            out.contains("small array item"),
+            "Compact untyped array dropped: {out}"
+        );
     }
 }

@@ -147,6 +147,45 @@ pub(crate) fn strip_leaked_js(input: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Accessibility link chrome ("opens new tab", "external link")
+// ---------------------------------------------------------------------------
+
+/// Strip screen-reader-only link chrome that bleeds into rendered text.
+///
+/// Sites like Reuters wrap external/new-window links with hidden spans
+/// like `<span class="visually-hidden">, opens new tab</span>`. The noise
+/// filter can't reliably catch these (no consistent class hook across
+/// sites), so they end up duplicated all over the body text. This is a
+/// targeted text-level scrub of the most common phrasings.
+pub(crate) fn strip_a11y_link_chrome(input: &str) -> String {
+    static A11Y_PATTERN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)(?:\s*,\s*(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\b\.?|\s+\((?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\)\.?|\s+external link\b\.?$)",
+        )
+        .unwrap()
+    });
+
+    let mut out = String::with_capacity(input.len());
+    let mut in_code_fence = false;
+    for (i, line) in input.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if line.trim().starts_with("```") {
+            in_code_fence = !in_code_fence;
+            out.push_str(line);
+            continue;
+        }
+        if in_code_fence {
+            out.push_str(line);
+            continue;
+        }
+        out.push_str(&A11Y_PATTERN.replace_all(line, ""));
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Spaced-out text collapsing (CSS animation artifacts)
 // ---------------------------------------------------------------------------
 
@@ -1355,5 +1394,49 @@ mod tests {
     fn alt_text_code_block_preserved() {
         let input = "```\nImage of something in code\n```";
         assert_eq!(strip_alt_text_noise(input), input);
+    }
+
+    #[test]
+    fn a11y_strips_opens_new_tab() {
+        let input = "Download the App, opens new tab and Subscribe, opens new tab.";
+        let out = strip_a11y_link_chrome(input);
+        assert!(!out.to_lowercase().contains("opens new tab"), "leak: {out}");
+        assert!(out.contains("Download the App"));
+        assert!(out.contains("Subscribe"));
+    }
+
+    #[test]
+    fn a11y_strips_external_link_variants() {
+        let cases = [
+            ("Visit our docs, opens external link", "Visit our docs"),
+            ("Click here, opens in a new window.", "Click here"),
+            ("More info external link", "More info"),
+        ];
+        for (input, expected_prefix) in cases {
+            let out = strip_a11y_link_chrome(input);
+            assert!(
+                out.starts_with(expected_prefix),
+                "input={input:?} got={out:?}"
+            );
+            assert!(!out.to_lowercase().contains("opens"), "leak: {out}");
+        }
+    }
+
+    #[test]
+    fn a11y_preserves_code_blocks() {
+        let input = "```\nopens new tab is a function\n```\nDownload, opens new tab";
+        let out = strip_a11y_link_chrome(input);
+        assert!(
+            out.contains("opens new tab is a function"),
+            "code stripped: {out}"
+        );
+        // Outside the fence, the chrome is removed.
+        assert!(!out.to_lowercase().contains("download, opens new tab"));
+    }
+
+    #[test]
+    fn a11y_preserves_external_link_prose() {
+        let input = "Researchers found an external link between the two incidents.";
+        assert_eq!(strip_a11y_link_chrome(input), input);
     }
 }

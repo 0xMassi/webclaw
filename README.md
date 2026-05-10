@@ -1,14 +1,14 @@
 <p align="center">
   <a href="https://webclaw.io">
-    <img src=".github/banner.png" alt="webclaw" width="700" />
+    <img src=".github/banner.png" alt="webclaw" width="760" />
   </a>
 </p>
 
 <h1 align="center">webclaw</h1>
 
 <p align="center">
-  <strong>The fastest web scraper for AI agents.</strong><br/>
-  <sub>67% fewer tokens. Sub-millisecond extraction. Zero browser overhead.</sub>
+  <strong>Turn websites into clean markdown, JSON, and LLM-ready context.</strong><br/>
+  <sub>CLI, MCP server, REST API, and SDKs for AI agents and RAG pipelines.</sub>
 </p>
 
 <p align="center">
@@ -17,64 +17,58 @@
   <a href="https://github.com/0xMassi/webclaw/blob/main/LICENSE"><img src="https://shieldcn.dev/github/license/0xMassi/webclaw.svg?variant=branded" alt="License" /></a>
   <a href="https://www.npmjs.com/package/create-webclaw"><img src="https://shieldcn.dev/npm/dt/create-webclaw.svg?variant=branded" alt="npm installs" /></a>
 </p>
+
 <p align="center">
   <a href="https://discord.gg/KDfd48EpnW"><img src="https://shieldcn.dev/badge/Discord-Join.svg?variant=branded&logo=discord" alt="Discord" /></a>
   <a href="https://x.com/webclaw_io"><img src="https://shieldcn.dev/badge/Follow-@webclaw__io.svg?variant=branded&logo=x" alt="X / Twitter" /></a>
-  <a href="https://webclaw.io"><img src="https://shieldcn.dev/badge/Website-webclaw.io.svg?variant=branded&logo=safari" alt="Website" /></a>
+  <a href="https://webclaw.io"><img src="https://shieldcn.dev/badge/Hosted-webclaw.io.svg?variant=branded&logo=safari" alt="Hosted webclaw" /></a>
   <a href="https://webclaw.io/docs"><img src="https://shieldcn.dev/badge/Docs-Read.svg?variant=branded&logo=readthedocs" alt="Docs" /></a>
 </p>
 
----
-
 <p align="center">
-  <img src="assets/demo.gif" alt="Claude Code: web_fetch gets 403, webclaw extracts successfully" width="700" />
-  <br/>
-  <sub>Claude Code's built-in web_fetch → 403 Forbidden. webclaw → clean markdown.</sub>
+  <img src="assets/demo.gif" alt="webclaw extracting clean markdown from a page" width="760" />
 </p>
 
 ---
 
-Your AI agent calls `fetch()` and gets a 403. Or 142KB of raw HTML that burns through your token budget. **webclaw fixes both.**
+Most web scraping tools give your agent one of two bad outputs:
 
-It extracts clean, structured content from any URL using Chrome-level TLS fingerprinting — no headless browser, no Selenium, no Puppeteer. Output is optimized for LLMs: **67% fewer tokens** than raw HTML, with metadata, links, and images preserved.
+- a blocked page, login wall, or empty app shell
+- raw HTML full of nav, scripts, styling, ads, and duplicated boilerplate
 
+[webclaw.io](https://webclaw.io) is the hosted web extraction API for webclaw. This repo contains the open-source CLI, MCP server, extraction engine, and self-hostable server.
+
+webclaw turns a URL into clean content your tools can actually use.
+
+```bash
+webclaw https://example.com --format markdown
 ```
-                     Raw HTML                          webclaw
-┌──────────────────────────────────┐    ┌──────────────────────────────────┐
-│ <div class="ad-wrapper">         │    │ # Breaking: AI Breakthrough      │
-│ <nav class="global-nav">         │    │                                  │
-│ <script>window.__NEXT_DATA__     │    │ Researchers achieved 94%         │
-│ ={...8KB of JSON...}</script>    │    │ accuracy on cross-domain         │
-│ <div class="social-share">       │    │ reasoning benchmarks.            │
-│ <button>Tweet</button>           │    │                                  │
-│ <footer class="site-footer">     │    │ ## Key Findings                  │
-│ <!-- 142,847 characters -->      │    │ - 3x faster inference            │
-│                                  │    │ - Open-source weights            │
-│         4,820 tokens             │    │         1,590 tokens             │
-└──────────────────────────────────┘    └──────────────────────────────────┘
+
+```md
+# Example Domain
+
+This domain is for use in illustrative examples in documents.
+
+You may use this domain in literature without prior coordination or asking for permission.
 ```
+
+Use it from the terminal, wire it into Claude/Cursor through MCP, call the hosted API from your app, or self-host the OSS server.
 
 ---
 
-## Two ways to use webclaw
+## Install
 
-**Self-host.** Free, AGPL-3.0, runs locally. Get the CLI, MCP server, or REST API in one command. Ships with the 8 core extraction tools: scrape, crawl, map, batch, extract, summarize, diff, brand.
+### Agent setup
 
-**Hosted API** at **[webclaw.io](https://webclaw.io)**. Start with a 7-day Starter trial, card required. Adds what self-hosting can't do alone: antibot bypass (Cloudflare, DataDome, WAF), JS rendering, async crawl/research jobs, web search, watches. For when you want it to *just work*.
-
----
-
-## Get Started (30 seconds)
-
-### For AI agents (Claude, Cursor, Windsurf, VS Code)
+The fastest way to connect webclaw to Claude Code, Claude Desktop, Cursor, Windsurf, OpenCode, Codex CLI, and other MCP-compatible tools:
 
 ```bash
 npx create-webclaw
 ```
 
-Auto-detects your AI tools, downloads the MCP server, and configures everything. One command.
+The installer detects supported clients and configures the MCP server for you.
 
-### Homebrew (macOS/Linux)
+### Homebrew
 
 ```bash
 brew tap 0xMassi/webclaw
@@ -83,29 +77,7 @@ brew install webclaw
 
 ### Prebuilt binaries
 
-Download from [GitHub Releases](https://github.com/0xMassi/webclaw/releases) for macOS (arm64, x86_64) and Linux (x86_64, aarch64).
-
-### Cargo (from source)
-
-```bash
-cargo install --git https://github.com/0xMassi/webclaw.git webclaw-cli
-cargo install --git https://github.com/0xMassi/webclaw.git webclaw-mcp
-```
-
-webclaw uses BoringSSL (via `boring-sys2`) for TLS fingerprinting, which
-needs a few system packages at build time. If `cargo install` panics with
-a `boring-sys2` build error or `Unable to find libclang`, install the
-prerequisites first:
-
-| OS | Install command |
-|---|---|
-| Debian / Ubuntu | `sudo apt install -y pkg-config libssl-dev cmake clang git build-essential` |
-| Fedora / RHEL | `sudo dnf install -y pkg-config openssl-devel cmake clang git make gcc` |
-| Arch | `sudo pacman -S pkg-config openssl cmake clang git base-devel` |
-| macOS | `xcode-select --install` (and Xcode CLT covers everything) |
-
-If you do not want to manage build dependencies yourself, prefer the
-**Homebrew**, **Docker**, or **Prebuilt binaries** options above.
+Download macOS and Linux binaries from [GitHub Releases](https://github.com/0xMassi/webclaw/releases).
 
 ### Docker
 
@@ -113,89 +85,82 @@ If you do not want to manage build dependencies yourself, prefer the
 docker run --rm ghcr.io/0xmassi/webclaw https://example.com
 ```
 
-### Docker Compose (with Ollama for LLM features)
+### Cargo
 
 ```bash
-cp env.example .env
-docker compose up -d
+cargo install --git https://github.com/0xMassi/webclaw.git webclaw-cli
+cargo install --git https://github.com/0xMassi/webclaw.git webclaw-mcp
+```
+
+If building from source fails because native build tools are missing, install the platform prerequisites:
+
+| OS | Command |
+| --- | --- |
+| Debian / Ubuntu | `sudo apt install -y pkg-config libssl-dev cmake clang git build-essential` |
+| Fedora / RHEL | `sudo dnf install -y pkg-config openssl-devel cmake clang git make gcc` |
+| Arch | `sudo pacman -S pkg-config openssl cmake clang git base-devel` |
+| macOS | `xcode-select --install` |
+
+---
+
+## Quick Start
+
+### Scrape one page
+
+```bash
+webclaw https://stripe.com --format markdown
+```
+
+### Return LLM-optimized text
+
+```bash
+webclaw https://docs.anthropic.com --format llm
+```
+
+### Keep only the main content
+
+```bash
+webclaw https://example.com/blog/post --only-main-content
+```
+
+### Include or exclude selectors
+
+```bash
+webclaw https://example.com \
+  --include "article, main, .content" \
+  --exclude "nav, footer, .sidebar, .ad"
+```
+
+### Crawl a documentation site
+
+```bash
+webclaw https://docs.rust-lang.org --crawl --depth 2 --max-pages 50
+```
+
+### Extract brand assets
+
+```bash
+webclaw https://github.com --brand
+```
+
+### Compare a page over time
+
+```bash
+webclaw https://example.com/pricing --format json > pricing-old.json
+webclaw https://example.com/pricing --diff-with pricing-old.json
 ```
 
 ---
 
-## Why webclaw?
+## MCP Server
 
-| | webclaw | Firecrawl | Trafilatura | Readability |
-|---|:---:|:---:|:---:|:---:|
-| **Extraction accuracy** | **95.1%** | — | 80.6% | 83.5% |
-| **Token efficiency** | **-67%** | — | -55% | -51% |
-| **Speed (100KB page)** | **3.2ms** | ~500ms | 18.4ms | 8.7ms |
-| **TLS fingerprinting** | Yes | No | No | No |
-| **Self-hosted** | Yes | No | Yes | Yes |
-| **MCP (Claude/Cursor)** | Yes | No | No | No |
-| **No browser required** | Yes | No | Yes | Yes |
-| **Cost** | Free | $$$$ | Free | Free |
-
-**Choose webclaw if** you want fast local extraction, LLM-optimized output, and native AI agent integration.
-
----
-
-## What it looks like
+webclaw ships with an MCP server for AI agents.
 
 ```bash
-$ webclaw https://stripe.com -f llm
-
-> URL: https://stripe.com
-> Title: Stripe | Financial Infrastructure for the Internet
-> Language: en
-> Word count: 847
-
-# Stripe | Financial Infrastructure for the Internet
-
-Stripe is a suite of APIs powering online payment processing
-and commerce solutions for internet businesses of all sizes.
-
-## Products
-- Payments — Accept payments online and in person
-- Billing — Manage subscriptions and invoicing
-- Connect — Build a marketplace or platform
-...
+npx create-webclaw
 ```
 
-```bash
-$ webclaw https://github.com --brand
-
-{
-  "name": "GitHub",
-  "colors": [{"hex": "#59636E", "usage": "Primary"}, ...],
-  "fonts": ["Mona Sans", "ui-monospace"],
-  "logos": [{"url": "https://github.githubassets.com/...", "kind": "svg"}]
-}
-```
-
-```bash
-$ webclaw https://docs.rust-lang.org --crawl --depth 2 --max-pages 50
-
-Crawling... 50/50 pages extracted
----
-# Page 1: https://docs.rust-lang.org/
-...
-# Page 2: https://docs.rust-lang.org/book/
-...
-```
-
----
-
-## MCP Server — 10 tools for AI agents
-
-<a href="https://glama.ai/mcp/servers/0xMassi/webclaw"><img src="https://glama.ai/mcp/servers/0xMassi/webclaw/badge" alt="webclaw MCP server" /></a>
-
-webclaw ships as an MCP server that plugs into Claude Desktop, Claude Code, Cursor, Windsurf, OpenCode, Antigravity, Codex CLI, and any MCP-compatible client.
-
-```bash
-npx create-webclaw    # auto-detects and configures everything
-```
-
-Or manual setup — add to your Claude Desktop config:
+Manual config:
 
 ```json
 {
@@ -207,221 +172,220 @@ Or manual setup — add to your Claude Desktop config:
 }
 ```
 
-Then in Claude: *"Scrape the top 5 results for 'web scraping tools' and compare their pricing"* — it just works.
+Then ask your agent things like:
 
-### Available tools
-
-| Tool | Description | Requires API key? |
-|------|-------------|:-:|
-| `scrape` | Extract content from any URL | No |
-| `crawl` | Recursive site crawl | No |
-| `map` | Discover URLs from sitemaps | No |
-| `batch` | Parallel multi-URL extraction | No |
-| `extract` | LLM-powered structured extraction | No (needs Ollama) |
-| `summarize` | Page summarization | No (needs Ollama) |
-| `diff` | Content change detection | No |
-| `brand` | Brand identity extraction | No |
-| `search` | Web search + scrape results | Yes |
-| `research` | Deep multi-source research | Yes |
-
-8 of 10 tools work locally — no account, no API key, fully private.
-
----
-
-## Features
-
-### Extraction
-
-- **Readability scoring** — multi-signal content detection (text density, semantic tags, link ratio)
-- **Noise filtering** — strips nav, footer, ads, modals, cookie banners (Tailwind-safe)
-- **Data island extraction** — catches React/Next.js JSON payloads, JSON-LD, hydration data
-- **YouTube metadata** — structured data from any YouTube video
-- **PDF extraction** — auto-detected via Content-Type
-- **5 output formats** — markdown, text, JSON, LLM-optimized, HTML
-
-### Content control
-
-```bash
-webclaw URL --include "article, .content"       # CSS selector include
-webclaw URL --exclude "nav, footer, .sidebar"    # CSS selector exclude
-webclaw URL --only-main-content                  # Auto-detect main content
+```text
+Scrape these competitor pricing pages and summarize the differences.
 ```
 
-### Crawling
-
-```bash
-webclaw URL --crawl --depth 3 --max-pages 100   # BFS same-origin crawl
-webclaw URL --crawl --sitemap                    # Seed from sitemap
-webclaw URL --map                                # Discover URLs only
+```text
+Crawl this documentation site and prepare clean context for a RAG index.
 ```
 
-### LLM features (Ollama / OpenAI / Anthropic)
-
-```bash
-webclaw URL --summarize                          # Page summary
-webclaw URL --extract-prompt "Get all prices"    # Natural language extraction
-webclaw URL --extract-json '{"type":"object"}'   # Schema-enforced extraction
-```
-
-### Change tracking
-
-```bash
-webclaw URL -f json > snap.json                  # Take snapshot
-webclaw URL --diff-with snap.json                # Compare later
-```
-
-### Brand extraction
-
-```bash
-webclaw URL --brand                              # Colors, fonts, logos, OG image
-```
-
-### Proxy rotation
-
-```bash
-webclaw URL --proxy http://user:pass@host:port   # Single proxy
-webclaw URLs --proxy-file proxies.txt            # Pool rotation
+```text
+Extract the brand colors, fonts, and logos from this company website.
 ```
 
 ---
 
-## Benchmarks
+## Tools
 
-All numbers from real tests on 50 diverse pages. See [benchmarks/](benchmarks/) for methodology and reproduction instructions.
-
-### Extraction quality
-
-```
-Accuracy      webclaw     ███████████████████ 95.1%
-              readability ████████████████▋   83.5%
-              trafilatura ████████████████    80.6%
-              newspaper3k █████████████▎      66.4%
-
-Noise removal webclaw     ███████████████████ 96.1%
-              readability █████████████████▊  89.4%
-              trafilatura ██████████████████▏ 91.2%
-              newspaper3k ███████████████▎    76.8%
-```
-
-### Speed (pure extraction, no network)
-
-```
-10KB page     webclaw     ██                   0.8ms
-              readability █████                2.1ms
-              trafilatura ██████████           4.3ms
-
-100KB page    webclaw     ██                   3.2ms
-              readability █████                8.7ms
-              trafilatura ██████████           18.4ms
-```
-
-### Token efficiency (feeding to Claude/GPT)
-
-| Format | Tokens | vs Raw HTML |
-|--------|:------:|:-----------:|
-| Raw HTML | 4,820 | baseline |
-| readability | 2,340 | -51% |
-| trafilatura | 2,180 | -55% |
-| **webclaw llm** | **1,590** | **-67%** |
-
-### Crawl speed
-
-| Concurrency | webclaw | Crawl4AI | Scrapy |
-|:-----------:|:-------:|:--------:|:------:|
-| 5 | **9.8 pg/s** | 5.2 pg/s | 7.1 pg/s |
-| 10 | **18.4 pg/s** | 8.7 pg/s | 12.3 pg/s |
-| 20 | **32.1 pg/s** | 14.2 pg/s | 21.8 pg/s |
+| Tool | What it does | Local |
+| --- | --- | :-: |
+| `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
+| `crawl` | Follow same-origin links and extract discovered pages | Yes |
+| `map` | Discover URLs without extracting every page | Yes |
+| `batch` | Scrape multiple URLs in parallel | Yes |
+| `extract` | Convert page content into structured data | Yes, with local or configured LLM |
+| `summarize` | Summarize a page | Yes, with local or configured LLM |
+| `diff` | Compare page content snapshots | Yes |
+| `brand` | Extract colors, fonts, logos, and metadata | Yes |
+| `search` | Search the web and scrape results | Hosted API |
+| `research` | Multi-source research workflow | Hosted API |
 
 ---
+
+## SDKs
+
+```bash
+npm install @webclaw/sdk
+pip install webclaw
+go get github.com/0xMassi/webclaw-go
+```
+
+<details>
+<summary>TypeScript</summary>
+
+```ts
+import { Webclaw } from "@webclaw/sdk";
+
+const client = new Webclaw({ apiKey: process.env.WEBCLAW_API_KEY! });
+
+const page = await client.scrape({
+  url: "https://example.com",
+  formats: ["markdown"],
+  only_main_content: true,
+});
+
+console.log(page.markdown);
+```
+
+</details>
+
+<details>
+<summary>Python</summary>
+
+```python
+from webclaw import Webclaw
+
+client = Webclaw(api_key="wc_your_key")
+
+page = client.scrape(
+    "https://example.com",
+    formats=["markdown"],
+    only_main_content=True,
+)
+
+print(page.markdown)
+```
+
+</details>
+
+<details>
+<summary>cURL</summary>
+
+```bash
+curl -X POST https://api.webclaw.io/v1/scrape \
+  -H "Authorization: Bearer $WEBCLAW_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "formats": ["markdown"],
+    "only_main_content": true
+  }'
+```
+
+</details>
+
+---
+
+## Output Formats
+
+| Format | Use it when you need |
+| --- | --- |
+| `markdown` | Clean page content with structure preserved |
+| `llm` | Compact context for agents and RAG pipelines |
+| `text` | Plain text with minimal formatting |
+| `json` | Structured metadata, links, images, and extracted fields |
+| `html` | Cleaned HTML for custom processing |
+
+---
+
+## Local First, Hosted When Needed
+
+The CLI and MCP server work locally without an account for the core extraction path.
+
+Use the hosted API at [webclaw.io](https://webclaw.io) when you need:
+
+- protected-site access without managing infrastructure
+- JavaScript rendering
+- async crawl and research jobs
+- web search
+- watches and production usage tracking
+- SDKs for application code
+
+```bash
+export WEBCLAW_API_KEY=wc_your_key
+
+webclaw https://example.com --cloud
+```
+
+---
+
+## What You Can Build
+
+| Use case | Example |
+| --- | --- |
+| AI agent web access | Give Claude, Cursor, or another MCP client clean page context |
+| RAG ingestion | Crawl docs, help centers, blogs, and knowledge bases |
+| Competitor monitoring | Track pricing pages, changelogs, docs, and product pages |
+| Structured extraction | Turn messy pages into typed JSON for automations |
+| Research workflows | Search, scrape, summarize, and cite multiple sources |
+| Brand intelligence | Extract logos, colors, fonts, and social metadata |
 
 ## Architecture
 
-```
+```text
 webclaw/
   crates/
-    webclaw-core     Pure extraction engine. Zero network deps. WASM-safe.
-    webclaw-fetch    HTTP client + TLS fingerprinting (wreq/BoringSSL). Crawler. Batch ops.
-    webclaw-llm      LLM provider chain (Ollama -> OpenAI -> Anthropic)
+    webclaw-core     HTML to markdown, text, JSON, and LLM-ready output
+    webclaw-fetch    Fetching, crawling, batching, and mapping
+    webclaw-llm      Local and hosted LLM provider support
     webclaw-pdf      PDF text extraction
-    webclaw-mcp      MCP server (10 tools for AI agents)
-    webclaw-cli      CLI binary
+    webclaw-mcp      MCP server for AI agents
+    webclaw-cli      Command-line interface
 ```
 
-`webclaw-core` takes raw HTML as a `&str` and returns structured output. No I/O, no network, no allocator tricks. Can compile to WASM.
+`webclaw-core` is pure extraction logic: no network I/O, small surface area, and usable independently from the fetching layer.
 
 ---
 
 ## Configuration
 
 | Variable | Description |
-|----------|-------------|
-| `WEBCLAW_API_KEY` | Cloud API key (enables bot bypass, JS rendering, search, research) |
-| `OLLAMA_HOST` | Ollama URL for local LLM features (default: `http://localhost:11434`) |
-| `OPENAI_API_KEY` | OpenAI API key for LLM features |
-| `OPENAI_BASE_URL` | OpenAI-compatible base URL (default: `https://api.openai.com/v1`) |
-| `OPENAI_RESPONSE_FORMAT_TYPE` | JSON-mode response format for OpenAI-compatible backends: `json_object` (default), `json_schema`, or `text`. Use `text` or `json_schema` for LM Studio. |
-| `ANTHROPIC_API_KEY` | Anthropic API key for LLM features |
-| `ANTHROPIC_BASE_URL` | Anthropic-compatible base URL (default: `https://api.anthropic.com/v1`) |
+| --- | --- |
+| `WEBCLAW_API_KEY` | Hosted API key |
+| `OLLAMA_HOST` | Ollama URL for local LLM features |
+| `OPENAI_API_KEY` | OpenAI-compatible LLM provider key |
+| `OPENAI_BASE_URL` | OpenAI-compatible base URL |
+| `ANTHROPIC_API_KEY` | Anthropic-compatible LLM provider key |
+| `ANTHROPIC_BASE_URL` | Anthropic-compatible base URL |
 | `WEBCLAW_PROXY` | Single proxy URL |
-| `WEBCLAW_PROXY_FILE` | Path to proxy pool file |
+| `WEBCLAW_PROXY_FILE` | Proxy pool file |
 
 ---
-
-## Cloud API (optional)
-
-For bot-protected sites, JS rendering, and advanced features, webclaw offers a hosted API at [webclaw.io](https://webclaw.io).
-
-The CLI and MCP server work locally first. Cloud is used as a fallback when:
-- A site has bot protection (Cloudflare, DataDome, WAF)
-- A page requires JavaScript rendering
-- You use search or research tools
-
-```bash
-export WEBCLAW_API_KEY=wc_your_key
-
-# Automatic: tries local first, cloud on bot detection
-webclaw https://protected-site.com
-
-# Force cloud
-webclaw --cloud https://spa-site.com
-```
-
-### SDKs
-
-```bash
-npm install @webclaw/sdk                  # TypeScript/JavaScript
-pip install webclaw                        # Python
-go get github.com/0xMassi/webclaw-go      # Go
-```
-
----
-
-## Use cases
-
-- **AI agents** — Give Claude/Cursor/GPT real-time web access via MCP
-- **Research** — Crawl documentation, competitor sites, news archives
-- **Price monitoring** — Track changes with `--diff-with` snapshots
-- **Training data** — Prepare web content for fine-tuning with token-optimized output
-- **Content pipelines** — Batch extract + summarize in CI/CD
-- **Brand intelligence** — Extract visual identity from any website
-
----
-
-## Community
-
-- [Discord](https://discord.gg/KDfd48EpnW) — questions, feedback, show what you built
-- [GitHub Issues](https://github.com/0xMassi/webclaw/issues) — bug reports and feature requests
 
 ## Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+The most useful contributions right now are practical and small:
+
+- add examples for real agent and RAG workflows
+- improve SDK snippets
+- report pages that extract poorly
+- add failing fixtures for messy HTML
+- improve docs for MCP clients and local setup
+- test the CLI on more Linux/macOS environments
+
+Good first places to start:
 
 - [Good first issues](https://github.com/0xMassi/webclaw/issues?q=label%3A%22good+first+issue%22)
-- [Architecture docs](CONTRIBUTING.md#architecture)
+- [Open a bug report](https://github.com/0xMassi/webclaw/issues/new)
+- [Start a discussion](https://github.com/0xMassi/webclaw/discussions)
 
-## Acknowledgments
+If a page extracts badly, include:
 
-TLS and HTTP/2 browser fingerprinting is powered by [wreq](https://github.com/0x676e67/wreq) and [http2](https://github.com/0x676e67/http2) by [@0x676e67](https://github.com/0x676e67), who pioneered browser-grade HTTP/2 fingerprinting in Rust.
+```text
+URL:
+Command or API request:
+Expected output:
+Actual output:
+Format used: markdown / llm / text / json / html
+CLI, MCP, SDK, or API:
+```
+
+Please remove secrets, cookies, private tokens, and customer data from logs before posting.
+
+---
+
+## Contributors
+
+Thanks to everyone improving webclaw through issues, examples, docs, bug reports, and pull requests.
+
+<a href="https://github.com/0xMassi/webclaw/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=0xMassi/webclaw" alt="webclaw contributors" />
+</a>
+
+---
 
 ## Star History
 
@@ -432,6 +396,8 @@ TLS and HTTP/2 browser fingerprinting is powered by [wreq](https://github.com/0x
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=0xMassi/webclaw&type=date&legend=top-left" />
  </picture>
 </a>
+
+---
 
 ## License
 

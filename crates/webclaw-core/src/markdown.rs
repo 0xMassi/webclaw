@@ -320,6 +320,9 @@ fn children_to_md(
                 }
             }
             Node::Text(text) => {
+                if !text.is_empty() && !out.is_empty() && needs_separator(&out, text) {
+                    out.push(' ');
+                }
                 out.push_str(text);
             }
             _ => {}
@@ -350,6 +353,9 @@ fn inline_text(
                 }
             }
             Node::Text(text) => {
+                if !text.is_empty() && !out.is_empty() && needs_separator(&out, text) {
+                    out.push(' ');
+                }
                 out.push_str(text);
             }
             _ => {}
@@ -1604,6 +1610,20 @@ mod tests {
         assert!(
             output.contains("      return;"),
             "collapse_whitespace stripped 6-space indent: {output}"
+        );
+    }
+
+    #[test]
+    fn text_after_inline_element_keeps_separator() {
+        // Reuters-style markup: <a><time>3h</time>ago</a><a>Tanker crosses...</a>
+        // The "ago" text node sits between two element children. Without a
+        // separator check on the Text branch, "ago" + "Tanker" would smash
+        // together as "agoTanker".
+        let html = r#"<div><span>3h</span>ago<span>Tanker crosses Strait</span></div>"#;
+        let (md, _, _) = convert_html(html, None);
+        assert!(
+            !md.contains("agoTanker"),
+            "Element->Text->Element smashed together: {md}"
         );
     }
 }

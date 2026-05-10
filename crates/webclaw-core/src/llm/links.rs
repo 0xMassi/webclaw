@@ -88,10 +88,19 @@ fn is_noise_link(text: &str, href: &str) -> bool {
 static MD_MARKERS_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"#{1,6}\s+|\*{1,2}|_{1,2}|`").unwrap());
 
+static A11Y_LABEL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\s*,?\s*\b(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\b\.?",
+    )
+    .unwrap()
+});
+
 /// Clean a link label: strip markdown, dedup repeated phrases, truncate.
 pub(crate) fn clean_link_label(raw: &str) -> String {
     // Strip markdown markers
     let label = MD_MARKERS_RE.replace_all(raw, "").to_string();
+    // Strip a11y link chrome ("opens new tab", etc.)
+    let label = A11Y_LABEL_RE.replace_all(&label, "").to_string();
     let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
 
     // Dedup repeated phrases in label

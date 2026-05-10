@@ -29,6 +29,9 @@ pub(crate) fn process_body(markdown: &str) -> ProcessedBody {
     // 0c. Strip leaked JavaScript (framework hydration, self.__wrap_n, etc.)
     let text = cleanup::strip_leaked_js(&text);
 
+    // 0c2. Strip a11y link chrome ("opens new tab", external link hints)
+    let text = cleanup::strip_a11y_link_chrome(&text);
+
     // 0d. Collapse spaced-out text (CSS animation artifacts like "S t a r t")
     // Must run before any dedup -- spaced text confuses word-based dedup.
     let text = cleanup::collapse_spaced_text(&text);

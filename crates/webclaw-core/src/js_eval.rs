@@ -9,10 +9,12 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use rquickjs::{Context, Runtime};
 use scraper::{Html, Selector};
+use std::time::{Duration, Instant};
 use tracing::debug;
 
 static SCRIPT_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("script").unwrap());
 static HTML_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
+const JS_EVAL_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// A blob of data extracted from JS execution.
 pub struct JsDataBlob {
@@ -49,6 +51,8 @@ pub fn extract_js_data(html: &str) -> Vec<JsDataBlob> {
     let rt = Runtime::new().expect("QuickJS runtime creation failed");
     rt.set_memory_limit(64 * 1024 * 1024); // 64 MB
     rt.set_max_stack_size(1024 * 1024); // 1 MB
+    let deadline = Instant::now() + JS_EVAL_TIMEOUT;
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
 
     let ctx = Context::full(&rt).expect("QuickJS context creation failed");
 
@@ -464,6 +468,8 @@ fn walk_rsc_tree(value: &serde_json::Value, out: &mut Vec<String>, depth: usize)
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
 
     #[test]
@@ -490,6 +496,29 @@ mod tests {
         assert!(
             text.contains("This is a longer paragraph"),
             "should extract readable text from blob"
+        );
+    }
+
+    #[test]
+    fn js_eval_interrupts_infinite_loops() {
+        let html = r#"
+            <html>
+              <head>
+                <script>
+                  while (true) {}
+                </script>
+              </head>
+              <body>hello</body>
+            </html>
+        "#;
+
+        let start = Instant::now();
+        let blobs = extract_js_data(html);
+
+        assert!(blobs.is_empty());
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "QuickJS execution should be interrupted quickly"
         );
     }
 

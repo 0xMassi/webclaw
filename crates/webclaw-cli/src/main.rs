@@ -849,11 +849,18 @@ async fn enrich_html_with_stylesheets(html: &str, base_url: &str) -> String {
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_default();
 
     let mut extra_css = String::new();
     for href in &hrefs {
+        if webclaw_fetch::url_security::validate_public_http_url(href)
+            .await
+            .is_err()
+        {
+            continue;
+        }
         if let Ok(resp) = client.get(href).send().await
             && resp.status().is_success()
             && let Ok(body) = resp.text().await

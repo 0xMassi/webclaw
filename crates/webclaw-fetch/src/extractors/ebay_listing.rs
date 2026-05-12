@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
+use url::Url;
 
 use super::ExtractorInfo;
 use crate::cloud::{self, CloudError};
@@ -32,8 +33,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !is_ebay_host(host) {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !is_ebay_host(&host) {
         return false;
     }
     parse_item_id(url).is_some()
@@ -120,17 +123,37 @@ pub fn parse(html: &str, url: &str, item_id: &str) -> Value {
 // URL helpers
 // ---------------------------------------------------------------------------
 
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
+fn host_of(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    parsed.host_str().map(|host| host.to_ascii_lowercase())
 }
 
 fn is_ebay_host(host: &str) -> bool {
-    host.starts_with("www.ebay.") || host.starts_with("ebay.")
+    const EBAY_HOSTS: &[&str] = &[
+        "ebay.at",
+        "ebay.be",
+        "ebay.ca",
+        "ebay.ch",
+        "ebay.co.uk",
+        "ebay.com",
+        "ebay.com.au",
+        "ebay.com.hk",
+        "ebay.com.my",
+        "ebay.com.sg",
+        "ebay.de",
+        "ebay.es",
+        "ebay.fr",
+        "ebay.ie",
+        "ebay.it",
+        "ebay.nl",
+        "ebay.ph",
+        "ebay.pl",
+    ];
+    let normalized = host.strip_prefix("www.").unwrap_or(host);
+    EBAY_HOSTS.contains(&normalized)
 }
 
 /// Pull the numeric item id out of `/itm/{id}` or `/itm/{slug}/{id}`
@@ -273,9 +296,14 @@ mod tests {
             "https://www.ebay.com/itm/vintage-typewriter/325478156234"
         ));
         assert!(matches("https://www.ebay.co.uk/itm/325478156234"));
+        assert!(matches("https://www.ebay.ca/itm/325478156234"));
+        assert!(matches("https://www.ebay.com.au/itm/325478156234"));
+        assert!(matches("https://www.ebay.es/itm/325478156234"));
         assert!(!matches("https://www.ebay.com/"));
         assert!(!matches("https://www.ebay.com/sch/foo"));
         assert!(!matches("https://example.com/itm/325478156234"));
+        assert!(!matches("https://www.ebay.com@127.0.0.1/itm/325478156234"));
+        assert!(!matches("https://www.ebay.attacker.com/itm/325478156234"));
     }
 
     #[test]

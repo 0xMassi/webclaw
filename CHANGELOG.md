@@ -3,6 +3,17 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.1] — 2026-05-12
+
+### Fixed
+- Hardened URL safety across the CLI, MCP server, and self-hosted API paths so local and private network targets are rejected more consistently, including after DNS resolution and redirects.
+- Added a timeout around inline JavaScript data extraction so hostile pages cannot keep the extractor busy forever.
+- Tightened Amazon and eBay URL recognition so deceptive hosts are rejected while common international marketplaces still work.
+- Avoided unnecessary decoding work on large responses during bot-challenge detection.
+- Reduced release workflow token permissions so build jobs run with narrower GitHub access.
+
+---
+
 ## [0.6.0] — 2026-05-10
 
 ### Fixed

@@ -163,7 +163,9 @@ mod tests {
             Ipv4Addr::new(169, 254, 169, 254),
             Ipv4Addr::new(172, 16, 0, 1),
             Ipv4Addr::new(192, 168, 0, 1),
+            Ipv4Addr::new(192, 0, 0, 8),
             Ipv4Addr::new(198, 18, 0, 1),
+            Ipv4Addr::new(255, 255, 255, 255),
         ] {
             let url = format!("http://{ip}/");
             assert!(validate_public_http_url(&url).await.is_err(), "{ip}");
@@ -192,5 +194,10 @@ mod tests {
                 .is_ok()
         );
         assert!(is_blocked_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))) == false);
+    }
+
+    #[tokio::test]
+    async fn blocks_localhost_domains_after_resolution() {
+        assert!(validate_public_http_url("http://localhost/").await.is_err());
     }
 }

@@ -51,9 +51,10 @@ fn parse_browser(browser: Option<&str>) -> webclaw_fetch::BrowserProfile {
     }
 }
 
-/// Validate that a URL is non-empty and has an http or https scheme.
-fn validate_url(url: &str) -> Result<(), String> {
-    webclaw_fetch::url_security::validate_http_url(url)
+/// Validate that a URL is public HTTP(S), matching the fetch-layer SSRF guard.
+async fn validate_url(url: &str) -> Result<(), String> {
+    webclaw_fetch::url_security::validate_public_http_url(url)
+        .await
         .map(|_| ())
         .map_err(|e| format!("Invalid URL: {e}"))
 }
@@ -161,7 +162,7 @@ impl WebclawMcp {
     /// Automatically falls back to the webclaw cloud API when bot protection or JS rendering is detected.
     #[tool]
     async fn scrape(&self, Parameters(params): Parameters<ScrapeParams>) -> Result<String, String> {
-        validate_url(&params.url)?;
+        validate_url(&params.url).await?;
         let format = params.format.as_deref().unwrap_or("markdown");
         let browser = parse_browser(params.browser.as_deref());
         let include = params.include_selectors.unwrap_or_default();
@@ -251,7 +252,7 @@ impl WebclawMcp {
     /// Crawl a website starting from a seed URL, following links breadth-first up to a configurable depth and page limit.
     #[tool]
     async fn crawl(&self, Parameters(params): Parameters<CrawlParams>) -> Result<String, String> {
-        validate_url(&params.url)?;
+        validate_url(&params.url).await?;
 
         if let Some(max) = params.max_pages
             && max > 500
@@ -300,7 +301,7 @@ impl WebclawMcp {
     /// Discover URLs from a website's sitemaps (robots.txt + sitemap.xml).
     #[tool]
     async fn map(&self, Parameters(params): Parameters<MapParams>) -> Result<String, String> {
-        validate_url(&params.url)?;
+        validate_url(&params.url).await?;
         let entries = webclaw_fetch::sitemap::discover(&self.fetch_client, &params.url)
             .await
             .map_err(|e| format!("Sitemap discovery failed: {e}"))?;
@@ -323,7 +324,7 @@ impl WebclawMcp {
             return Err("batch is limited to 100 URLs per request".into());
         }
         for u in &params.urls {
-            validate_url(u)?;
+            validate_url(u).await?;
         }
 
         let format = params.format.as_deref().unwrap_or("markdown");
@@ -365,7 +366,7 @@ impl WebclawMcp {
         &self,
         Parameters(params): Parameters<ExtractParams>,
     ) -> Result<String, String> {
-        validate_url(&params.url)?;
+        validate_url(&params.url).await?;
 
         if params.schema.is_none() && params.prompt.is_none() {
             return Err("Either 'schema' or 'prompt' is required for extraction.".into());
@@ -422,7 +423,7 @@ impl WebclawMcp {
         &self,
         Parameters(params): Parameters<SummarizeParams>,
     ) -> Result<String, String> {
-        validate_url(&params.url)?;
+        validate_url(&params.url).await?;
 
         // No local LLM — fall back to cloud API directly
         if self.llm_chain.is_none() {
@@ -464,7 +465,7 @@ impl WebclawMcp {
     /// Automatically falls back to the webclaw cloud API when bot protection is detected.
     #[tool]
     async fn diff(&self, Parameters(params): Parameters<DiffParams>) -> Result<String, String> {
-        validate_url(&params.url)?;
+        validate_url(&params.url).await?;
         let previous: webclaw_core::ExtractionResult =
             serde_json::from_str(&params.previous_snapshot)
                 .map_err(|e| format!("Failed to parse previous_snapshot JSON: {e}"))?;
@@ -532,7 +533,7 @@ impl WebclawMcp {
     /// Automatically falls back to the webclaw cloud API when bot protection is detected.
     #[tool]
     async fn brand(&self, Parameters(params): Parameters<BrandParams>) -> Result<String, String> {
-        validate_url(&params.url)?;
+        validate_url(&params.url).await?;
         let fetch_result =
             tokio::time::timeout(LOCAL_FETCH_TIMEOUT, self.fetch_client.fetch(&params.url))
                 .await
@@ -737,7 +738,7 @@ impl WebclawMcp {
         &self,
         Parameters(params): Parameters<VerticalParams>,
     ) -> Result<String, String> {
-        validate_url(&params.url)?;
+        validate_url(&params.url).await?;
         // Use the cached Firefox client, not the default Chrome one.
         // Reddit's `.json` endpoint rejects the wreq-Chrome TLS
         // fingerprint with a 403 even from residential IPs (they

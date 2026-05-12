@@ -5,9 +5,7 @@
 //! PSK, ECH GREASE) and HTTP/2 options (SETTINGS order, pseudo-header order,
 //! stream dependency, priorities) to match real browser fingerprints.
 
-use std::time::Duration;
-
-use std::borrow::Cow;
+use std::{borrow::Cow, io, time::Duration};
 
 use wreq::http2::{
     Http2Options, PseudoId, PseudoOrder, SettingId, SettingsOrder, StreamDependency, StreamId,
@@ -20,6 +18,41 @@ use wreq::{Client, Emulation};
 
 use crate::browser::BrowserVariant;
 use crate::error::FetchError;
+
+#[derive(Clone, Default)]
+struct PublicDnsResolver;
+
+impl wreq::dns::Resolve for PublicDnsResolver {
+    fn resolve(&self, name: wreq::dns::Name) -> wreq::dns::Resolving {
+        Box::pin(async move {
+            let addrs = tokio::net::lookup_host((name.as_str(), 0))
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            let mut public = Vec::new();
+
+            for addr in addrs {
+                if crate::url_security::is_blocked_ip(addr.ip()) {
+                    let err: Box<dyn std::error::Error + Send + Sync> = Box::new(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "DNS resolved to a blocked private or internal address",
+                    ));
+                    return Err(err);
+                }
+                public.push(addr);
+            }
+
+            if public.is_empty() {
+                let err: Box<dyn std::error::Error + Send + Sync> = Box::new(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "host did not resolve to any addresses",
+                ));
+                return Err(err);
+            }
+
+            Ok(Box::new(public.into_iter()) as wreq::dns::Addrs)
+        })
+    }
+}
 
 /// Chrome cipher list (TLS 1.3 + TLS 1.2 in Chrome's exact order).
 const CHROME_CIPHERS: &str = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256:TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256:TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:TLS_RSA_WITH_AES_128_GCM_SHA256:TLS_RSA_WITH_AES_256_GCM_SHA384:TLS_RSA_WITH_AES_128_CBC_SHA:TLS_RSA_WITH_AES_256_CBC_SHA";
@@ -503,6 +536,8 @@ pub fn build_client(
         let proxy =
             wreq::Proxy::all(proxy_url).map_err(|e| FetchError::Build(format!("proxy: {e}")))?;
         builder = builder.proxy(proxy);
+    } else {
+        builder = builder.dns_resolver(PublicDnsResolver::default());
     }
 
     builder

@@ -30,6 +30,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
+use url::Url;
 
 use super::ExtractorInfo;
 use crate::cloud::{self, CloudError};
@@ -52,8 +53,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !is_amazon_host(host) {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !is_amazon_host(&host) {
         return false;
     }
     parse_asin(url).is_some()
@@ -162,17 +165,32 @@ pub fn parse(html: &str, url: &str, asin: &str) -> Value {
 // URL helpers
 // ---------------------------------------------------------------------------
 
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
+fn host_of(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    parsed.host_str().map(str::to_string)
 }
 
 fn is_amazon_host(host: &str) -> bool {
-    host.starts_with("www.amazon.") || host.starts_with("amazon.")
+    matches!(
+        host,
+        "amazon.com"
+            | "www.amazon.com"
+            | "amazon.co.uk"
+            | "www.amazon.co.uk"
+            | "amazon.de"
+            | "www.amazon.de"
+            | "amazon.fr"
+            | "www.amazon.fr"
+            | "amazon.it"
+            | "www.amazon.it"
+            | "amazon.es"
+            | "www.amazon.es"
+            | "amazon.co.jp"
+            | "www.amazon.co.jp"
+    )
 }
 
 /// Pull a 10-char ASIN out of any recognised Amazon URL shape:
@@ -357,6 +375,8 @@ mod tests {
         assert!(!matches("https://www.amazon.com/"));
         assert!(!matches("https://www.amazon.com/gp/cart"));
         assert!(!matches("https://example.com/dp/B0CHX1W1XY"));
+        assert!(!matches("https://www.amazon.com@127.0.0.1/dp/B0CHX1W1XY"));
+        assert!(!matches("https://www.amazon.evil.com/dp/B0CHX1W1XY"));
     }
 
     #[test]

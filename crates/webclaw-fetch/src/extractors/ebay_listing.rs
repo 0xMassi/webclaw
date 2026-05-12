@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
+use url::Url;
 
 use super::ExtractorInfo;
 use crate::cloud::{self, CloudError};
@@ -32,8 +33,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !is_ebay_host(host) {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !is_ebay_host(&host) {
         return false;
     }
     parse_item_id(url).is_some()
@@ -120,17 +123,28 @@ pub fn parse(html: &str, url: &str, item_id: &str) -> Value {
 // URL helpers
 // ---------------------------------------------------------------------------
 
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
+fn host_of(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    parsed.host_str().map(str::to_string)
 }
 
 fn is_ebay_host(host: &str) -> bool {
-    host.starts_with("www.ebay.") || host.starts_with("ebay.")
+    matches!(
+        host,
+        "ebay.com"
+            | "www.ebay.com"
+            | "ebay.co.uk"
+            | "www.ebay.co.uk"
+            | "ebay.de"
+            | "www.ebay.de"
+            | "ebay.fr"
+            | "www.ebay.fr"
+            | "ebay.it"
+            | "www.ebay.it"
+    )
 }
 
 /// Pull the numeric item id out of `/itm/{id}` or `/itm/{slug}/{id}`
@@ -276,6 +290,8 @@ mod tests {
         assert!(!matches("https://www.ebay.com/"));
         assert!(!matches("https://www.ebay.com/sch/foo"));
         assert!(!matches("https://example.com/itm/325478156234"));
+        assert!(!matches("https://www.ebay.com@127.0.0.1/itm/325478156234"));
+        assert!(!matches("https://www.ebay.attacker.com/itm/325478156234"));
     }
 
     #[test]

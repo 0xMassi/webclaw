@@ -783,6 +783,10 @@ fn is_pdf_content_type(headers: &http::HeaderMap) -> bool {
 
 /// Detect if a response looks like a bot protection challenge page.
 fn is_challenge_response(response: &Response) -> bool {
+    let body_len = response.body().len();
+    if body_len > 15_000 || body_len == 0 {
+        return false;
+    }
     is_challenge_html(response.text().as_ref())
 }
 

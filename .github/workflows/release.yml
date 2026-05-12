@@ -131,6 +131,7 @@ jobs:
             artifacts/*.tar.gz \
             artifacts/*.zip \
             artifacts/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
             --generate-notes
 
   docker:

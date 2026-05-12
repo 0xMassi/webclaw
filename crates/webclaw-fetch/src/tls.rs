@@ -537,7 +537,7 @@ pub fn build_client(
             wreq::Proxy::all(proxy_url).map_err(|e| FetchError::Build(format!("proxy: {e}")))?;
         builder = builder.proxy(proxy);
     } else {
-        builder = builder.dns_resolver(PublicDnsResolver::default());
+        builder = builder.dns_resolver(PublicDnsResolver);
     }
 
     builder

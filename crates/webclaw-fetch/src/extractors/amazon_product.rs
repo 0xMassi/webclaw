@@ -30,6 +30,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
+use url::Url;
 
 use super::ExtractorInfo;
 use crate::cloud::{self, CloudError};
@@ -52,8 +53,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !is_amazon_host(host) {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !is_amazon_host(&host) {
         return false;
     }
     parse_asin(url).is_some()
@@ -162,17 +165,41 @@ pub fn parse(html: &str, url: &str, asin: &str) -> Value {
 // URL helpers
 // ---------------------------------------------------------------------------
 
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
+fn host_of(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    parsed.host_str().map(|host| host.to_ascii_lowercase())
 }
 
 fn is_amazon_host(host: &str) -> bool {
-    host.starts_with("www.amazon.") || host.starts_with("amazon.")
+    const AMAZON_HOSTS: &[&str] = &[
+        "amazon.ae",
+        "amazon.ca",
+        "amazon.cn",
+        "amazon.co.jp",
+        "amazon.co.uk",
+        "amazon.com",
+        "amazon.com.au",
+        "amazon.com.be",
+        "amazon.com.br",
+        "amazon.com.mx",
+        "amazon.com.tr",
+        "amazon.de",
+        "amazon.eg",
+        "amazon.es",
+        "amazon.fr",
+        "amazon.in",
+        "amazon.it",
+        "amazon.nl",
+        "amazon.pl",
+        "amazon.sa",
+        "amazon.se",
+        "amazon.sg",
+    ];
+    let normalized = host.strip_prefix("www.").unwrap_or(host);
+    AMAZON_HOSTS.contains(&normalized)
 }
 
 /// Pull a 10-char ASIN out of any recognised Amazon URL shape:
@@ -347,6 +374,9 @@ mod tests {
         assert!(matches("https://www.amazon.com/dp/B0CHX1W1XY"));
         assert!(matches("https://www.amazon.co.uk/dp/B0CHX1W1XY/"));
         assert!(matches("https://www.amazon.de/dp/B0CHX1W1XY?psc=1"));
+        assert!(matches("https://www.amazon.ca/dp/B0CHX1W1XY"));
+        assert!(matches("https://www.amazon.com.au/dp/B0CHX1W1XY"));
+        assert!(matches("https://www.amazon.in/dp/B0CHX1W1XY"));
         assert!(matches(
             "https://www.amazon.com/gp/product/B0CHX1W1XY/ref=foo"
         ));
@@ -357,6 +387,8 @@ mod tests {
         assert!(!matches("https://www.amazon.com/"));
         assert!(!matches("https://www.amazon.com/gp/cart"));
         assert!(!matches("https://example.com/dp/B0CHX1W1XY"));
+        assert!(!matches("https://www.amazon.com@127.0.0.1/dp/B0CHX1W1XY"));
+        assert!(!matches("https://www.amazon.evil.com/dp/B0CHX1W1XY"));
     }
 
     #[test]

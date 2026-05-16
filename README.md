@@ -383,8 +383,8 @@ Third-party plugins that integrate webclaw with AI agent platforms:
 
 | Plugin | Platform | What it does |
 |---|---|---|
-| [openclaw-webclaw](https://github.com/jal-co/openclaw-webclaw) | [OpenClaw](https://openclaw.ai) | Replaces the bundled Firecrawl plugin with native WebClaw v1 API — 9 tools: scrape, search, crawl, extract, summarize, diff, map, batch, brand |
-| [hermes-webclaw](https://github.com/jal-co/hermes-webclaw) | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Web search provider + 9 dedicated tools for the full v1 API surface. Install with `hermes plugins install jal-co/hermes-webclaw` |
+| [openclaw-webclaw](https://github.com/jal-co/openclaw-webclaw) | [OpenClaw](https://openclaw.ai) | Native webclaw v1 API plugin with 9 tools: scrape, search, crawl, extract, summarize, diff, map, batch, brand |
+| [hermes-webclaw](https://github.com/jal-co/hermes-webclaw) | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Web search provider and 9 dedicated tools for the full v1 API surface. Install with `hermes plugins install jal-co/hermes-webclaw` |
 
 Built a webclaw integration? [Open a PR](https://github.com/0xMassi/webclaw/pulls) to add it here.
 

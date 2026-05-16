@@ -69,6 +69,21 @@ fn is_noise_link(text: &str, href: &str) -> bool {
         return true;
     }
 
+    // Bare-integer labels (comment counts, vote counts, page numbers). Always
+    // noise; the number alone tells the LLM nothing. Capped at 4 digits so a
+    // legitimately useful year-style label (`1999`) isn't dropped — but in
+    // practice bare 4-digit labels in a links section are page anchors, not
+    // articles, so this stays safe.
+    if !text.is_empty() && text.len() <= 4 && text.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+
+    // In-page comment/discussion fragments that survived the bare-fragment check
+    // because the href is a full URL with `#comment-stream` (or similar) tail.
+    if href.contains("#comment-stream") || href.contains("#comments") || href.contains("#disqus") {
+        return true;
+    }
+
     // Internal user profile / action URLs (HN-style)
     if href.contains("/user?id=")
         || href.contains("/hide?id=")

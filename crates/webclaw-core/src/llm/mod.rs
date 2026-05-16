@@ -51,12 +51,17 @@ pub fn to_llm_text(result: &ExtractionResult, url: Option<&str>) -> String {
     // hydration blobs (Next.js pageProps full of ad-targeting flags, build
     // IDs, schedule paths) explode to hundreds of KB and drown the LLM in
     // noise — drop them rather than ship them.
-    let useful: Vec<_> = result
+    let mut useful: Vec<_> = result
         .structured_data
         .iter()
         .filter(|v| is_useful_structured_data(v))
         .cloned()
         .collect();
+    // Scrub body-duplicating fields so the article body doesn't ship twice
+    // (once as rendered markdown, again inside JSON-LD `articleBody`).
+    for v in &mut useful {
+        scrub_body_fields(v);
+    }
     if !useful.is_empty() {
         let serialized = serde_json::to_string_pretty(&useful).unwrap_or_default();
         const STRUCTURED_DATA_MAX_BYTES: usize = 16 * 1024;
@@ -111,6 +116,46 @@ fn is_useful_structured_data(v: &serde_json::Value) -> bool {
     // Anything over ~4KB is almost certainly hydration state, not content.
     let serialized = serde_json::to_string(v).unwrap_or_default();
     serialized.len() <= 4 * 1024
+}
+
+/// Recursively remove fields whose value is a long body string already
+/// rendered as markdown in the main output.
+///
+/// Schema.org `NewsArticle` / `Article` records often embed the full article
+/// body inside `articleBody`. Emitting that alongside the rendered markdown
+/// ships the same content twice and wastes the LLM's context budget. We
+/// always strip `articleBody`, and additionally strip `body` / `text` /
+/// `description` when their value is ≥ 500 chars (short blurbs are kept
+/// because they carry signal that may not be in the rendered body).
+fn scrub_body_fields(v: &mut serde_json::Value) {
+    const BODY_KEYS: &[&str] = &["articleBody"];
+    const LONG_BODY_KEYS: &[&str] = &["body", "text", "description"];
+    const LONG_THRESHOLD: usize = 500;
+    match v {
+        serde_json::Value::Object(map) => {
+            map.retain(|k, val| {
+                if BODY_KEYS.contains(&k.as_str()) {
+                    return false;
+                }
+                if LONG_BODY_KEYS.contains(&k.as_str())
+                    && let Some(s) = val.as_str()
+                    && s.len() >= LONG_THRESHOLD
+                {
+                    return false;
+                }
+                true
+            });
+            for child in map.values_mut() {
+                scrub_body_fields(child);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for child in arr.iter_mut() {
+                scrub_body_fields(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 // ---------------------------------------------------------------------------

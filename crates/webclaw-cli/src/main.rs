@@ -35,10 +35,38 @@ const ANTIBOT_TITLES: &[&str] = &[
     "ddos protection",
 ];
 
-/// Detect why a page returned empty content.
+/// URL host/path fragments that indicate a GDPR/cookie consent redirect.
+/// Yahoo, Google, and several EU news sites redirect to a `consent.*` host
+/// (or `/consent/` path) when the client is detected as being in the EU/EEA.
+/// The resulting page has near-zero usable content and a locale-specific
+/// title, so URL-shape detection is the most reliable signal.
+const CONSENT_URL_FRAGMENTS: &[&str] = &[
+    "://consent.",
+    "/consent?",
+    "/consent/",
+    "collectconsent",
+    "consentcheck",
+    "/cmp/",
+    "guce.advertising.com",
+];
+
+/// English consent-wall title prefixes. Many providers localise the page,
+/// so this is a best-effort secondary signal — primary detection is the URL.
+const CONSENT_TITLES: &[&str] = &[
+    "before you continue",
+    "your privacy choices",
+    "we value your privacy",
+    "we care about your privacy",
+    "cookie consent",
+    "consent required",
+];
+
+/// Detect why a page returned empty (or near-empty) content.
 enum EmptyReason {
     /// Anti-bot challenge page (Cloudflare, Akamai, etc.)
     Antibot,
+    /// GDPR/cookie consent redirect — content is gated behind a consent form
+    ConsentWall,
     /// JS-only SPA that returns an empty shell without a browser
     JsRequired,
     /// Page has content — not empty
@@ -46,6 +74,13 @@ enum EmptyReason {
 }
 
 fn detect_empty(result: &ExtractionResult) -> EmptyReason {
+    // Consent walls come back with a non-empty (but tiny) markdown body and a
+    // post-redirect URL pointing at a consent host. Check before the
+    // word-count short-circuit so the Yahoo / Google / EU case is caught.
+    if is_consent_wall(result) {
+        return EmptyReason::ConsentWall;
+    }
+
     // Has real content — nothing to warn about
     if result.metadata.word_count > 50 || !result.content.markdown.is_empty() {
         return EmptyReason::None;
@@ -67,12 +102,39 @@ fn detect_empty(result: &ExtractionResult) -> EmptyReason {
     EmptyReason::None
 }
 
+/// A consent wall is identified by either:
+/// 1. The final (post-redirect) URL pointing at a known consent host/path, OR
+/// 2. A consent-wall title prefix, AND the body being very short (<= 50 words)
+fn is_consent_wall(result: &ExtractionResult) -> bool {
+    if let Some(ref url) = result.metadata.url {
+        let lower = url.to_ascii_lowercase();
+        if CONSENT_URL_FRAGMENTS.iter().any(|f| lower.contains(f)) {
+            return true;
+        }
+    }
+    if result.metadata.word_count <= 50
+        && let Some(ref title) = result.metadata.title
+    {
+        let lower = title.to_lowercase();
+        if CONSENT_TITLES.iter().any(|t| lower.starts_with(t)) {
+            return true;
+        }
+    }
+    false
+}
+
 fn warn_empty(url: &str, reason: &EmptyReason) {
     match reason {
         EmptyReason::Antibot => eprintln!(
             "\x1b[33mwarning:\x1b[0m Anti-bot protection detected on {url}\n\
              This site requires CAPTCHA solving or browser rendering.\n\
              Use the webclaw Cloud API for automatic bypass: https://webclaw.io/pricing"
+        ),
+        EmptyReason::ConsentWall => eprintln!(
+            "\x1b[33mwarning:\x1b[0m GDPR/cookie consent wall detected on {url}\n\
+             The site redirected to a consent page and returned no usable content.\n\
+             Try a non-EU proxy via --proxy, or pass a pre-accepted consent cookie\n\
+             via --cookie / --cookie-file."
         ),
         EmptyReason::JsRequired => eprintln!(
             "\x1b[33mwarning:\x1b[0m No content extracted from {url}\n\
@@ -387,10 +449,15 @@ impl From<Browser> for BrowserProfile {
 }
 
 fn init_logging(verbose: bool) {
+    // html5ever / markup5ever / selectors emit WARN on every page with real-world
+    // HTML quirks (foster-parenting, malformed tables). They are not actionable
+    // and pollute stderr with dozens of lines per fetch. Silence by default; users
+    // who need them can override via WEBCLAW_LOG.
+    let default = "warn,html5ever=error,markup5ever=error,selectors=error";
     let filter = if verbose {
-        EnvFilter::new("webclaw=debug")
+        EnvFilter::new("webclaw=debug,html5ever=error,markup5ever=error,selectors=error")
     } else {
-        EnvFilter::try_from_env("WEBCLAW_LOG").unwrap_or_else(|_| EnvFilter::new("warn"))
+        EnvFilter::try_from_env("WEBCLAW_LOG").unwrap_or_else(|_| EnvFilter::new(default))
     };
 
     tracing_subscriber::fmt().with_env_filter(filter).init();

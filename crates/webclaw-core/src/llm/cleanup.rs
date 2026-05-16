@@ -395,6 +395,9 @@ pub(crate) fn is_ui_control_line(line: &str) -> bool {
 
 /// Known UI control tokens from Material Icons ligatures, icon fonts, and
 /// common navigation elements that leak into text extraction.
+///
+/// Match is case-insensitive: `Next`, `next`, and `NEXT` are all treated as
+/// pagination chrome when alone on a line.
 fn is_ui_control_token(token: &str) -> bool {
     const UI_CONTROLS: &[&str] = &[
         // Material Icons ligatures
@@ -428,6 +431,12 @@ fn is_ui_control_token(token: &str) -> bool {
         "search",
         "menu",
         "share",
+        // Pagination chrome left over from rendered "Next | Previous" links
+        "next",
+        "previous",
+        "prev",
+        "older",
+        "newer",
         // Arrow/nav characters
         "\u{2190}",
         "\u{2192}",
@@ -444,7 +453,64 @@ fn is_ui_control_token(token: &str) -> bool {
         "\u{00BB}",
         "\u{00AB}",
     ];
-    UI_CONTROLS.contains(&token)
+    let lowered = token.to_ascii_lowercase();
+    if UI_CONTROLS.contains(&lowered.as_str()) {
+        return true;
+    }
+    // Bare short integers (≤4 digits) on a line of otherwise pure control
+    // tokens are comment counts / page numbers glued to pagination chrome
+    // (e.g. "0 Next" at the bottom of news index pages). Counting these as
+    // controls lets `is_ui_control_line` strip the whole line. A legitimate
+    // line like "5 minutes" stays because "minutes" is not a control.
+    !token.is_empty() && token.len() <= 4 && token.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Remove lines that are a bare short integer alone in their paragraph.
+///
+/// News index pages often render comment counts (`0`, `42`) and pagination
+/// page numbers (`1`, `2`) as standalone paragraphs after each article. These
+/// add zero signal and confuse downstream readers, but they are real numbers
+/// not control tokens, so [`strip_ui_control_text`] doesn't catch them.
+///
+/// To stay safe, we only drop a line if BOTH conditions hold:
+/// 1. The trimmed line parses cleanly as a non-negative integer ≤ 9999.
+/// 2. The line is alone in its paragraph (surrounded by blank lines, or at
+///    document edges). A `1.` or `- 1` list marker has different trim text and
+///    is not affected.
+pub(crate) fn strip_bare_number_lines(input: &str) -> String {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut in_code = false;
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_code = !in_code;
+            out.push(line);
+            continue;
+        }
+        if in_code {
+            out.push(line);
+            continue;
+        }
+        if is_bare_short_integer(trimmed) && is_isolated_in_paragraph(&lines, i) {
+            continue;
+        }
+        out.push(line);
+    }
+    out.join("\n")
+}
+
+fn is_bare_short_integer(s: &str) -> bool {
+    if s.is_empty() || s.len() > 4 {
+        return false;
+    }
+    s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn is_isolated_in_paragraph(lines: &[&str], i: usize) -> bool {
+    let prev_blank = i == 0 || lines[i - 1].trim().is_empty();
+    let next_blank = i + 1 == lines.len() || lines[i + 1].trim().is_empty();
+    prev_blank && next_blank
 }
 
 // ---------------------------------------------------------------------------

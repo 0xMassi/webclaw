@@ -73,6 +73,18 @@ pub(crate) fn process_body(markdown: &str) -> ProcessedBody {
     // d. Extract links, replace inline `[text](url)` with just `text`
     let (text, extracted_links) = links::extract_and_strip_links(&text);
 
+    // d1b. Strip bare-integer paragraphs (news-index comment counts, page
+    //      numbers). Must run AFTER link extraction so [0](#comment) collapses
+    //      to "0" first, and BEFORE dedup so identical 0 lines don't muddle
+    //      fingerprint dedup.
+    let text = cleanup::strip_bare_number_lines(&text);
+
+    // d1c. Second UI-control pass: after link extraction, lines that were
+    //      previously `[0](url) Next` now read as `0 Next` -- a pure control
+    //      line that the pre-link c3 pass couldn't see through the link
+    //      syntax.
+    let text = cleanup::strip_ui_control_text(&text);
+
     // d2. Collapse repeated adjacent phrases on the same line
     // (responsive variants: "Read more Read more Read more" -> "Read more")
     let text = dedup_repeated_phrases(&text);

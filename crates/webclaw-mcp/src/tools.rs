@@ -104,6 +104,63 @@ pub struct SearchParams {
     pub num_results: Option<u32>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)]
+pub struct CaptureNetworkParams {
+    /// URL to open in Chromium and capture network traffic from.
+    pub url: String,
+    /// Optional natural-language purpose for the capture.
+    pub intent: Option<String>,
+    /// Milliseconds to wait after navigation while collecting network events.
+    pub wait_ms: Option<u64>,
+    /// Run the browser in headed mode for debugging.
+    pub headed: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)]
+pub struct DiscoverEndpointsParams {
+    /// Saved capture id, for example `example.com/2026-05-16T12-00-00Z`.
+    pub capture_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)]
+pub struct ShowEndpointParams {
+    /// Learned endpoint id to load from saved captures.
+    pub endpoint_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)]
+pub struct ReplayEndpointParams {
+    /// Learned endpoint id to replay or preview.
+    pub endpoint_id: String,
+    /// Path/query parameter values to substitute into the learned endpoint.
+    pub params_json: Option<serde_json::Value>,
+    /// Preview the replay request without sending network traffic.
+    pub dry_run: Option<bool>,
+    /// Allow mutating methods such as POST, PUT, PATCH, and DELETE to execute.
+    pub confirm_unsafe: Option<bool>,
+    /// Additional non-secret request headers to include in the replay.
+    pub headers: Option<std::collections::BTreeMap<String, String>>,
+    /// JSON request body override for replay.
+    pub body_json: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)]
+pub struct ExportOpenApiParams {
+    /// Saved capture id whose learned endpoints should be exported.
+    pub capture_id: String,
+}
+
+/// `list_captures` takes no arguments but uses a struct so rmcp can generate
+/// a schema and parse the empty JSON-RPC params.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)]
+pub struct ListCapturesParams {}
+
 /// Parameters for `vertical_scrape`: run a site-specific extractor by name.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct VerticalParams {

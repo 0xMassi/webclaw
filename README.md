@@ -150,6 +150,19 @@ webclaw https://example.com/pricing --format json > pricing-old.json
 webclaw https://example.com/pricing --diff-with pricing-old.json
 ```
 
+### Capture and replay learned APIs
+
+Capture browser network traffic from a public or authorized page, store the learned endpoints locally, and reuse them from the CLI. Captures are written under `%USERPROFILE%\.webclaw\api-captures` by default, or under `WEBCLAW_CAPTURE_DIR` when that environment variable is set.
+
+```powershell
+webclaw capture-network https://example.com --intent "discover product listing API" --wait-ms 3000
+webclaw endpoints example.com/2026-05-16T12-00-00Z
+webclaw replay-endpoint "GET https://example.com/api/products" --dry-run
+webclaw export-openapi example.com/2026-05-16T12-00-00Z
+```
+
+Use `webclaw show-endpoint "<endpoint-id>"` to inspect one learned endpoint before replay. `GET`, `HEAD`, and `OPTIONS` endpoints can be replayed directly; `POST`, `PUT`, `PATCH`, and `DELETE` stay in dry-run preview unless you pass `--confirm-unsafe`.
+
 ---
 
 ## MCP Server
@@ -186,6 +199,21 @@ Crawl this documentation site and prepare clean context for a RAG index.
 Extract the brand colors, fonts, and logos from this company website.
 ```
 
+### Network capture tools
+
+MCP clients can use the learned API workflow directly through these tools:
+
+| Tool | Parameters | What it does |
+| --- | --- | --- |
+| `capture_network` | `url`, optional `intent`, `wait_ms`, `headed` | Opens a public or authorized HTTP(S) page in Chromium, captures browser network traffic, redacts secrets, infers API endpoints, and saves the capture locally. |
+| `discover_endpoints` | `capture_id` | Returns the learned endpoint definitions for a saved capture. |
+| `show_endpoint` | `endpoint_id` | Returns one learned endpoint so an agent can inspect method, path, examples, schemas, and safety metadata before reuse. |
+| `replay_endpoint` | `endpoint_id`, optional `params_json`, `dry_run`, `confirm_unsafe`, `headers`, `body_json` | Previews or replays a learned endpoint. `GET`, `HEAD`, and `OPTIONS` can execute when `dry_run` is false; `POST`, `PUT`, `PATCH`, and `DELETE` stay as dry-run previews unless `confirm_unsafe` is true. Redacted headers are never sent. |
+| `export_openapi` | `capture_id` | Writes `openapi.json` beside a saved capture's `endpoints.json`. |
+| `list_captures` | `{}` | Lists saved captures from the configured capture root. |
+
+Captured artifacts are stored under `%USERPROFILE%\.webclaw\api-captures` by default, or `WEBCLAW_CAPTURE_DIR` when set. Only capture pages and sessions you are authorized to inspect; webclaw does not use these tools to bypass CAPTCHAs, paywalls, login walls, rate limits, or access controls.
+
 ---
 
 ## Tools
@@ -202,6 +230,12 @@ Extract the brand colors, fonts, and logos from this company website.
 | `brand` | Extract colors, fonts, logos, and metadata | Yes |
 | `search` | Search the web and scrape results | Hosted API |
 | `research` | Multi-source research workflow | Hosted API |
+| `capture_network` | Capture browser network traffic and save learned API endpoints | Yes |
+| `discover_endpoints` | Return learned endpoints for a saved capture | Yes |
+| `show_endpoint` | Inspect one learned endpoint by id | Yes |
+| `replay_endpoint` | Preview or safely replay a learned endpoint | Yes |
+| `export_openapi` | Export learned endpoints as OpenAPI 3.1 JSON | Yes |
+| `list_captures` | List saved network captures | Yes |
 
 ---
 

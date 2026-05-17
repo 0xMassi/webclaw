@@ -1,0 +1,139 @@
+{
+  "log": {
+    "version": "1.2",
+    "creator": {
+      "name": "webclaw-capture-test",
+      "version": "0.1.0"
+    },
+    "entries": [
+      {
+        "startedDateTime": "2026-05-16T12:00:00Z",
+        "time": 42,
+        "_resourceType": "fetch",
+        "request": {
+          "method": "GET",
+          "url": "https://example.test/api/products?category=tools&page=2",
+          "headers": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer example-token"
+            }
+          ]
+        },
+        "response": {
+          "status": 200,
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ],
+          "content": {
+            "mimeType": "application/json",
+            "text": "{\"items\":[{\"id\":12345,\"name\":\"Hammer\",\"price\":12.5,\"inStock\":true}],\"page\":2,\"hasMore\":false}"
+          }
+        }
+      },
+      {
+        "startedDateTime": "2026-05-16T12:00:01Z",
+        "time": 31,
+        "_resourceType": "xhr",
+        "request": {
+          "method": "GET",
+          "url": "https://example.test/api/products/12345",
+          "headers": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Cookie",
+              "value": "session_id=example-session"
+            }
+          ]
+        },
+        "response": {
+          "status": 200,
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "content": {
+            "mimeType": "application/json",
+            "text": "{\"id\":12345,\"name\":\"Hammer\",\"category\":\"tools\",\"tags\":[\"hand-tool\",\"steel\"]}"
+          }
+        }
+      },
+      {
+        "startedDateTime": "2026-05-16T12:00:02Z",
+        "time": 57,
+        "_resourceType": "fetch",
+        "request": {
+          "method": "POST",
+          "url": "https://example.test/graphql",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-CSRF-Token",
+              "value": "example-csrf"
+            }
+          ],
+          "postData": {
+            "mimeType": "application/json",
+            "text": "{\"operationName\":\"CreateProduct\",\"query\":\"mutation CreateProduct($name: String!) { createProduct(input: { name: $name }) { id name } }\",\"variables\":{\"name\":\"Hammer\"}}"
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "content": {
+            "mimeType": "application/json",
+            "text": "{\"data\":{\"createProduct\":{\"id\":\"gid://example/Product/12345\",\"name\":\"Hammer\"}}}"
+          }
+        }
+      },
+      {
+        "startedDateTime": "2026-05-16T12:00:03Z",
+        "time": 8,
+        "_resourceType": "script",
+        "request": {
+          "method": "GET",
+          "url": "https://example.test/static/app.js",
+          "headers": [
+            {
+              "name": "Accept",
+              "value": "application/javascript"
+            }
+          ]
+        },
+        "response": {
+          "status": 200,
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "application/javascript"
+            }
+          ],
+          "content": {
+            "mimeType": "application/javascript",
+            "text": "fetch('/api/products?category=tools')"
+          }
+        }
+      }
+    ]
+  }
+}

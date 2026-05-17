@@ -95,8 +95,18 @@ async fn main() -> anyhow::Result<()> {
         .route("/crawl", post(routes::crawl::crawl))
         .route("/map", post(routes::map::map))
         .route("/batch", post(routes::batch::batch))
+        .route("/capture-network", post(routes::capture::capture_network))
+        .route(
+            "/captures/{domain}/{timestamp}/endpoints",
+            get(routes::capture::endpoints),
+        )
+        .route(
+            "/captures/{domain}/{timestamp}/openapi",
+            post(routes::capture::export_openapi),
+        )
         .route("/extract", post(routes::extract::extract))
         .route("/extractors", get(routes::structured::list_extractors))
+        .route("/replay-endpoint", post(routes::capture::replay_endpoint))
         .route("/summarize", post(routes::summarize::summarize_route))
         .route("/diff", post(routes::diff::diff_route))
         .route("/brand", post(routes::brand::brand))

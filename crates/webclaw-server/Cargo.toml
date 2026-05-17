@@ -15,6 +15,7 @@ webclaw-core   = { workspace = true }
 webclaw-fetch  = { workspace = true }
 webclaw-llm    = { workspace = true }
 webclaw-pdf    = { workspace = true }
+webclaw-capture = { path = "../webclaw-capture" }
 
 axum           = { version = "0.8", features = ["macros"] }
 tokio          = { workspace = true }

@@ -10,6 +10,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
+use webclaw_capture::cdp::{CaptureOptions, capture_network};
+use webclaw_capture::openapi::write_openapi;
+use webclaw_capture::replay::replay_endpoint;
+use webclaw_capture::store::{find_endpoint, load_endpoints};
+use webclaw_capture::types::{EndpointDefinition, ReplayOptions};
 use webclaw_core::{
     ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options,
     to_llm_text,
@@ -335,6 +340,61 @@ enum Commands {
         /// Emit compact JSON (single line). Default is pretty-printed.
         #[arg(long)]
         raw: bool,
+    },
+
+    /// Capture browser network traffic and learn reusable API endpoints.
+    CaptureNetwork {
+        /// Page URL to inspect.
+        url: String,
+
+        /// Capture intent, stored with the capture metadata.
+        #[arg(long)]
+        intent: Option<String>,
+
+        /// Milliseconds to wait after page navigation before saving the capture.
+        #[arg(long, default_value_t = 3000)]
+        wait_ms: u64,
+
+        /// Run Chromium with a visible window instead of headless mode.
+        #[arg(long)]
+        headed: bool,
+    },
+
+    /// Print learned endpoints for a saved capture id.
+    Endpoints {
+        /// Capture id, for example `example.com/2026-05-16T12-00-00Z`.
+        capture_id: String,
+    },
+
+    /// Print one learned endpoint by endpoint id.
+    ShowEndpoint {
+        /// Endpoint id, for example `get_example_test_api_products`.
+        endpoint_id: String,
+    },
+
+    /// Replay or preview a learned endpoint.
+    ReplayEndpoint {
+        /// Endpoint id to replay.
+        endpoint_id: String,
+
+        /// JSON object with path/query parameter overrides.
+        #[arg(long, default_value = "{}")]
+        params_json: String,
+
+        /// Preview the replay request without network access.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Allow unsafe methods such as POST, PUT, PATCH, and DELETE to execute.
+        #[arg(long)]
+        confirm_unsafe: bool,
+    },
+
+    /// Export a saved capture's learned endpoints as OpenAPI 3.1 JSON.
+    #[command(name = "export-openapi")]
+    ExportOpenapi {
+        /// Capture id, for example `example.com/2026-05-16T12-00-00Z`.
+        capture_id: String,
     },
 }
 
@@ -2169,6 +2229,121 @@ fn has_llm_flags(cli: &Cli) -> bool {
     cli.extract_json.is_some() || cli.extract_prompt.is_some() || cli.summarize.is_some()
 }
 
+async fn run_capture_network_command(
+    url: &str,
+    intent: Option<String>,
+    wait_ms: u64,
+    headed: bool,
+) -> Result<(), String> {
+    let saved = capture_network(CaptureOptions {
+        url: normalize_url(url),
+        intent,
+        wait_ms,
+        headed,
+    })
+    .await
+    .map_err(|e| format!("capture-network failed: {e}"))?;
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&saved).map_err(|e| format!("JSON encode failed: {e}"))?
+    );
+
+    Ok(())
+}
+
+fn run_endpoints_command(capture_id: &str) -> Result<(), String> {
+    let endpoints = load_endpoints(capture_id)
+        .map_err(|e| format!("could not load endpoints for capture id {capture_id}: {e}"))?;
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&endpoints).map_err(|e| format!("JSON encode failed: {e}"))?
+    );
+
+    Ok(())
+}
+
+fn run_show_endpoint_command(endpoint_id: &str) -> Result<(), String> {
+    let endpoint = find_endpoint(endpoint_id)
+        .map_err(|e| format!("could not find endpoint id {endpoint_id}: {e}"))?;
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&endpoint).map_err(|e| format!("JSON encode failed: {e}"))?
+    );
+
+    Ok(())
+}
+
+async fn run_replay_endpoint_command(
+    endpoint_id: &str,
+    params_json: &str,
+    dry_run: bool,
+    confirm_unsafe: bool,
+) -> Result<(), String> {
+    let endpoint = find_endpoint(endpoint_id)
+        .map_err(|e| format!("could not find endpoint id {endpoint_id}: {e}"))?;
+    let params_json = parse_params_json(params_json)?;
+    let default_dry_run = endpoint_defaults_to_dry_run(&endpoint) && !confirm_unsafe;
+
+    if default_dry_run && !dry_run {
+        eprintln!(
+            "Unsafe endpoint replay defaults to dry-run. Re-run with --confirm-unsafe to execute."
+        );
+    }
+
+    let options = ReplayOptions {
+        dry_run: dry_run || default_dry_run,
+        confirm_unsafe,
+        params_json,
+        headers: serde_json::Map::new(),
+        body_json: None,
+    };
+
+    let result = replay_endpoint(&endpoint, options)
+        .await
+        .map_err(|e| format!("replay-endpoint failed: {e}"))?;
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&result).map_err(|e| format!("JSON encode failed: {e}"))?
+    );
+
+    Ok(())
+}
+
+fn run_export_openapi_command(capture_id: &str) -> Result<(), String> {
+    let path = write_openapi(capture_id)
+        .map_err(|e| format!("could not export OpenAPI for capture id {capture_id}: {e}"))?;
+    println!("{}", path.display());
+    Ok(())
+}
+
+fn parse_params_json(params_json: &str) -> Result<Option<serde_json::Value>, String> {
+    let trimmed = params_json.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let value: serde_json::Value = serde_json::from_str(trimmed)
+        .map_err(|e| format!("--params-json must be valid JSON: {e}"))?;
+    if !value.is_object() {
+        return Err("--params-json must be a JSON object".to_owned());
+    }
+
+    Ok(Some(value))
+}
+
+fn endpoint_defaults_to_dry_run(endpoint: &EndpointDefinition) -> bool {
+    endpoint.safety.requires_confirmation
+        || !endpoint.safety.safe_to_replay
+        || !matches!(
+            endpoint.method.to_ascii_uppercase().as_str(),
+            "GET" | "HEAD" | "OPTIONS"
+        )
+}
+
 async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
     let api_key = cli
         .api_key
@@ -2402,6 +2577,56 @@ async fn main() {
                         eprintln!("error: {e}");
                         process::exit(1);
                     }
+                }
+                return;
+            }
+            Commands::CaptureNetwork {
+                url,
+                intent,
+                wait_ms,
+                headed,
+            } => {
+                if let Err(e) =
+                    run_capture_network_command(url, intent.clone(), *wait_ms, *headed).await
+                {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                return;
+            }
+            Commands::Endpoints { capture_id } => {
+                if let Err(e) = run_endpoints_command(capture_id) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                return;
+            }
+            Commands::ShowEndpoint { endpoint_id } => {
+                if let Err(e) = run_show_endpoint_command(endpoint_id) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                return;
+            }
+            Commands::ReplayEndpoint {
+                endpoint_id,
+                params_json,
+                dry_run,
+                confirm_unsafe,
+            } => {
+                if let Err(e) =
+                    run_replay_endpoint_command(endpoint_id, params_json, *dry_run, *confirm_unsafe)
+                        .await
+                {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                return;
+            }
+            Commands::ExportOpenapi { capture_id } => {
+                if let Err(e) = run_export_openapi_command(capture_id) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
                 }
                 return;
             }

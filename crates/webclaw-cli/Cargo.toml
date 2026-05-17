@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 webclaw-core = { workspace = true }
+webclaw-capture = { path = "../webclaw-capture" }
 webclaw-fetch = { workspace = true }
 webclaw-llm = { workspace = true }
 webclaw-pdf = { workspace = true }

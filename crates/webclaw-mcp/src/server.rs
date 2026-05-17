@@ -4,6 +4,8 @@
 /// Uses a local-first architecture: fetches pages directly, then falls back
 /// to the webclaw cloud API (api.webclaw.io) when bot protection or
 /// JS rendering is detected. Set WEBCLAW_API_KEY for automatic fallback.
+use std::fs;
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -11,9 +13,14 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
-use serde_json::json;
+use serde_json::{Map, Value, json};
 use tracing::{error, info, warn};
 
+use webclaw_capture::cdp::{CaptureOptions, capture_network as run_network_capture};
+use webclaw_capture::openapi::write_openapi;
+use webclaw_capture::replay::replay_endpoint as run_endpoint_replay;
+use webclaw_capture::store::{capture_root, find_endpoint, load_endpoints};
+use webclaw_capture::types::{EndpointDefinition, HeaderMap, ReplayOptions};
 use webclaw_fetch::cloud::{self, CloudClient, SmartFetchResult};
 
 use crate::tools::*;
@@ -709,6 +716,96 @@ impl WebclawMcp {
         }
     }
 
+    /// Capture browser network traffic from a page and save learned API endpoints for later replay.
+    #[tool]
+    async fn capture_network(
+        &self,
+        Parameters(params): Parameters<CaptureNetworkParams>,
+    ) -> Result<String, String> {
+        let url = normalize_capture_url(&params.url)?;
+        validate_url(&url).await?;
+
+        let saved = run_network_capture(CaptureOptions {
+            url,
+            intent: params.intent,
+            wait_ms: params.wait_ms.unwrap_or(3000),
+            headed: params.headed.unwrap_or(false),
+        })
+        .await
+        .map_err(|e| format!("capture_network failed: {e}"))?;
+
+        to_pretty_json(&saved)
+    }
+
+    /// Return learned endpoint definitions for a saved capture id.
+    #[tool]
+    async fn discover_endpoints(
+        &self,
+        Parameters(params): Parameters<DiscoverEndpointsParams>,
+    ) -> Result<String, String> {
+        let endpoints = load_endpoints(&params.capture_id).map_err(|e| {
+            format!(
+                "could not load endpoints for capture id {}: {e}",
+                params.capture_id
+            )
+        })?;
+
+        to_pretty_json(&endpoints)
+    }
+
+    /// Show one learned endpoint definition by endpoint id.
+    #[tool]
+    async fn show_endpoint(
+        &self,
+        Parameters(params): Parameters<ShowEndpointParams>,
+    ) -> Result<String, String> {
+        let endpoint = find_endpoint(&params.endpoint_id)
+            .map_err(|e| format!("could not find endpoint id {}: {e}", params.endpoint_id))?;
+
+        to_pretty_json(&endpoint)
+    }
+
+    /// Replay or preview a learned endpoint. Mutating methods default to dry-run unless confirmed.
+    #[tool]
+    async fn replay_endpoint(
+        &self,
+        Parameters(params): Parameters<ReplayEndpointParams>,
+    ) -> Result<String, String> {
+        let endpoint = find_endpoint(&params.endpoint_id)
+            .map_err(|e| format!("could not find endpoint id {}: {e}", params.endpoint_id))?;
+        let options = replay_options_from_params(&endpoint, &params)?;
+        let result = run_endpoint_replay(&endpoint, options)
+            .await
+            .map_err(|e| format!("replay_endpoint failed: {e}"))?;
+
+        to_pretty_json(&result)
+    }
+
+    /// Export a saved capture's learned endpoints as OpenAPI 3.1 JSON.
+    #[tool]
+    async fn export_openapi(
+        &self,
+        Parameters(params): Parameters<ExportOpenApiParams>,
+    ) -> Result<String, String> {
+        let path = write_openapi(&params.capture_id).map_err(|e| {
+            format!(
+                "could not export OpenAPI for capture id {}: {e}",
+                params.capture_id
+            )
+        })?;
+
+        to_pretty_json(&json!({ "path": path }))
+    }
+
+    /// List saved network captures from the configured capture root.
+    #[tool]
+    async fn list_captures(
+        &self,
+        Parameters(_params): Parameters<ListCapturesParams>,
+    ) -> Result<String, String> {
+        to_pretty_json(&list_saved_captures_from_root(&capture_root())?)
+    }
+
     /// List every vertical extractor the server knows about. Returns a
     /// JSON array of `{name, label, description, url_patterns}` entries.
     /// Call this to discover what verticals are available before using
@@ -767,9 +864,181 @@ impl ServerHandler for WebclawMcp {
             .with_instructions(String::from(
                 "Webclaw MCP server -- web content extraction for AI agents. \
                  Tools: scrape, crawl, map, batch, extract, summarize, diff, brand, research, search, \
-                 list_extractors, vertical_scrape.",
+                 capture_network, discover_endpoints, show_endpoint, replay_endpoint, export_openapi, \
+                 list_captures, list_extractors, vertical_scrape.",
             ))
     }
+}
+
+fn normalize_capture_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("url must not be empty".to_owned());
+    }
+
+    let normalized = if trimmed.contains("://") {
+        trimmed.to_owned()
+    } else {
+        format!("https://{trimmed}")
+    };
+
+    let parsed = url::Url::parse(&normalized).map_err(|e| format!("invalid URL: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(normalized),
+        scheme => Err(format!(
+            "capture_network only supports http and https URLs, got {scheme:?}"
+        )),
+    }
+}
+
+fn replay_options_from_params(
+    endpoint: &EndpointDefinition,
+    params: &ReplayEndpointParams,
+) -> Result<ReplayOptions, String> {
+    if let Some(value) = &params.params_json
+        && !value.is_object()
+    {
+        return Err("params_json must be a JSON object".to_owned());
+    }
+
+    let confirm_unsafe = params.confirm_unsafe.unwrap_or(false);
+    let default_dry_run = endpoint_defaults_to_dry_run(endpoint) && !confirm_unsafe;
+
+    Ok(ReplayOptions {
+        dry_run: params.dry_run.unwrap_or(false) || default_dry_run,
+        confirm_unsafe,
+        params_json: params.params_json.clone(),
+        headers: header_map_from_strings(params.headers.as_ref()),
+        body_json: params.body_json.clone(),
+    })
+}
+
+fn endpoint_defaults_to_dry_run(endpoint: &EndpointDefinition) -> bool {
+    endpoint.safety.requires_confirmation
+        || !endpoint.safety.safe_to_replay
+        || !matches!(
+            endpoint.method.to_ascii_uppercase().as_str(),
+            "GET" | "HEAD" | "OPTIONS"
+        )
+}
+
+fn header_map_from_strings(
+    headers: Option<&std::collections::BTreeMap<String, String>>,
+) -> HeaderMap {
+    headers
+        .into_iter()
+        .flat_map(|headers| headers.iter())
+        .map(|(name, value)| (name.clone(), Value::String(value.clone())))
+        .collect()
+}
+
+fn list_saved_captures_from_root(root: &Path) -> Result<Vec<Value>, String> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut captures = Vec::new();
+    collect_saved_captures(root, root, &mut captures)?;
+    captures.sort_by(|left, right| {
+        left.get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .cmp(right.get("id").and_then(Value::as_str).unwrap_or_default())
+    });
+
+    Ok(captures)
+}
+
+fn collect_saved_captures(
+    root: &Path,
+    current: &Path,
+    captures: &mut Vec<Value>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(current).map_err(|e| {
+        format!(
+            "could not read capture directory {}: {e}",
+            current.display()
+        )
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("could not read capture directory entry: {e}"))?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_saved_captures(root, &path, captures)?;
+            continue;
+        }
+
+        if path.file_name().and_then(|name| name.to_str()) == Some("metadata.json") {
+            captures.push(read_capture_metadata(root, &path)?);
+        }
+    }
+
+    Ok(())
+}
+
+fn read_capture_metadata(root: &Path, metadata_path: &Path) -> Result<Value, String> {
+    let contents = fs::read_to_string(metadata_path).map_err(|e| {
+        format!(
+            "could not read capture metadata {}: {e}",
+            metadata_path.display()
+        )
+    })?;
+    let mut metadata = match serde_json::from_str::<Value>(&contents).map_err(|e| {
+        format!(
+            "could not parse capture metadata {}: {e}",
+            metadata_path.display()
+        )
+    })? {
+        Value::Object(metadata) => metadata,
+        _ => Map::new(),
+    };
+
+    let capture_dir = metadata_path
+        .parent()
+        .ok_or_else(|| format!("metadata path has no parent: {}", metadata_path.display()))?;
+    let capture_id = capture_id_from_dir(root, capture_dir)?;
+
+    metadata
+        .entry("id".to_owned())
+        .or_insert_with(|| Value::String(capture_id));
+    metadata.insert(
+        "capture_dir".to_owned(),
+        Value::String(capture_dir.display().to_string()),
+    );
+
+    Ok(Value::Object(metadata))
+}
+
+fn capture_id_from_dir(root: &Path, capture_dir: &Path) -> Result<String, String> {
+    let relative = capture_dir.strip_prefix(root).map_err(|e| {
+        format!(
+            "capture directory {} is not under root {}: {e}",
+            capture_dir.display(),
+            root.display()
+        )
+    })?;
+    let parts = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        Err(format!(
+            "capture directory {} does not contain a capture id",
+            capture_dir.display()
+        ))
+    } else {
+        Ok(parts.join("/"))
+    }
+}
+
+fn to_pretty_json<T: serde::Serialize>(value: &T) -> Result<String, String> {
+    serde_json::to_string_pretty(value).map_err(|e| format!("JSON encode failed: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -855,4 +1124,128 @@ fn save_research(dir: &std::path::Path, slug: &str, data: &serde_json::Value) ->
         report_path.to_string_lossy().to_string(),
         json_path.to_string_lossy().to_string(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    use serde_json::json;
+    use webclaw_capture::types::{EndpointDefinition, EndpointSafety};
+
+    use super::*;
+
+    fn endpoint(
+        method: &str,
+        safe_to_replay: bool,
+        requires_confirmation: bool,
+    ) -> EndpointDefinition {
+        EndpointDefinition {
+            id: format!("{}_example", method.to_ascii_lowercase()),
+            method: method.to_owned(),
+            origin: "https://example.test".to_owned(),
+            path_template: "/api/items".to_owned(),
+            query_params: BTreeMap::new(),
+            request_schema: None,
+            response_schema: None,
+            auth_evidence: Vec::new(),
+            safety: EndpointSafety {
+                safe_to_replay,
+                requires_confirmation,
+                reason: "test".to_owned(),
+            },
+            examples: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn normalize_capture_url_adds_https_and_rejects_non_http_schemes() {
+        assert_eq!(
+            normalize_capture_url("example.test/path").unwrap(),
+            "https://example.test/path"
+        );
+
+        assert!(normalize_capture_url("file:///C:/secret.txt").is_err());
+    }
+
+    #[test]
+    fn replay_options_default_unsafe_methods_to_dry_run_unless_confirmed() {
+        let unsafe_endpoint = endpoint("POST", false, true);
+        let params = ReplayEndpointParams {
+            endpoint_id: unsafe_endpoint.id.clone(),
+            params_json: Some(json!({"id": "123"})),
+            dry_run: None,
+            confirm_unsafe: None,
+            headers: Some(BTreeMap::from([("X-Test".to_owned(), "ok".to_owned())])),
+            body_json: Some(json!({"name": "tool"})),
+        };
+
+        let options = replay_options_from_params(&unsafe_endpoint, &params).unwrap();
+        assert!(options.dry_run);
+        assert!(!options.confirm_unsafe);
+        assert_eq!(options.params_json, Some(json!({"id": "123"})));
+        assert_eq!(options.headers.get("X-Test"), Some(&json!("ok")));
+
+        let confirmed = ReplayEndpointParams {
+            confirm_unsafe: Some(true),
+            ..params
+        };
+        let options = replay_options_from_params(&unsafe_endpoint, &confirmed).unwrap();
+        assert!(!options.dry_run);
+        assert!(options.confirm_unsafe);
+    }
+
+    #[test]
+    fn replay_options_leave_safe_gets_executable_by_default() {
+        let safe_endpoint = endpoint("GET", true, false);
+        let params = ReplayEndpointParams {
+            endpoint_id: safe_endpoint.id.clone(),
+            params_json: None,
+            dry_run: None,
+            confirm_unsafe: None,
+            headers: None,
+            body_json: None,
+        };
+
+        let options = replay_options_from_params(&safe_endpoint, &params).unwrap();
+        assert!(!options.dry_run);
+        assert!(!options.confirm_unsafe);
+    }
+
+    #[test]
+    fn list_saved_captures_from_root_returns_metadata_with_capture_id() {
+        let root = std::env::temp_dir().join(format!(
+            "webclaw-mcp-list-captures-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let capture_dir = root.join("example.test").join("2026-05-16T12-00-00Z");
+        fs::create_dir_all(&capture_dir).unwrap();
+        fs::write(
+            capture_dir.join("metadata.json"),
+            serde_json::to_string(&json!({
+                "source_url": "https://example.test",
+                "endpoint_count": 2
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let captures = list_saved_captures_from_root(&root).unwrap();
+        fs::remove_dir_all(&root).ok();
+
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0]["id"], "example.test/2026-05-16T12-00-00Z");
+        assert_eq!(captures[0]["endpoint_count"], 2);
+        assert!(
+            captures[0]["capture_dir"]
+                .as_str()
+                .unwrap()
+                .contains("example.test")
+        );
+    }
 }

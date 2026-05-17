@@ -597,7 +597,7 @@ mod tests {
 "#;
         let entries = parse_sitemap_xml(xml);
         // Should return at least the successfully parsed entry
-        assert!(entries.len() >= 1);
+        assert!(!entries.is_empty());
         assert_eq!(entries[0].url, "https://example.com/good");
     }
 

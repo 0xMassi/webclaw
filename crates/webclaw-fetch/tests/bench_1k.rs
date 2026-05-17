@@ -71,7 +71,7 @@ fn classify(body: &str, len: usize, status: u16, kw: &[String]) -> &'static str 
         "CHALLENGE"
     } else if status == 403 || status == 429 {
         "BLOCKED"
-    } else if status >= 300 && status < 400 {
+    } else if (300..400).contains(&status) {
         "REDIRECT"
     } else if len < 1000 {
         "EMPTY"

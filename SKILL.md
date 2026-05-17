@@ -31,6 +31,34 @@ All requests go to `https://api.webclaw.io/v1/`.
 
 Authentication: `Authorization: Bearer $WEBCLAW_API_KEY`
 
+## CLI API capture
+
+Use the local CLI to capture browser network traffic from a public or authorized page, store learned endpoints locally, replay them safely, or export them as OpenAPI. Captures are written under `%USERPROFILE%\.webclaw\api-captures` by default, or under `WEBCLAW_CAPTURE_DIR` when set.
+
+```powershell
+webclaw capture-network https://example.com --intent "discover product listing API" --wait-ms 3000
+webclaw endpoints example.com/2026-05-16T12-00-00Z
+webclaw replay-endpoint "GET https://example.com/api/products" --dry-run
+webclaw export-openapi example.com/2026-05-16T12-00-00Z
+```
+
+Use `webclaw show-endpoint "<endpoint-id>"` to inspect one learned endpoint before replay. `GET`, `HEAD`, and `OPTIONS` endpoints can be replayed directly; `POST`, `PUT`, `PATCH`, and `DELETE` stay in dry-run preview unless you pass `--confirm-unsafe`.
+
+## MCP API capture tools
+
+Use the MCP server tools when an agent needs to discover and reuse API calls made by a public or authorized page:
+
+| Tool | Parameters | Use |
+|------|------------|-----|
+| `capture_network` | `url`, optional `intent`, `wait_ms`, `headed` | Open an HTTP(S) page in Chromium, capture network traffic, redact secrets, infer endpoints, and save the capture locally. |
+| `discover_endpoints` | `capture_id` | Return all learned endpoint definitions for a saved capture. |
+| `show_endpoint` | `endpoint_id` | Inspect one learned endpoint before replay or OpenAPI export. |
+| `replay_endpoint` | `endpoint_id`, optional `params_json`, `dry_run`, `confirm_unsafe`, `headers`, `body_json` | Preview or replay a learned endpoint. Read-only methods can execute when `dry_run` is false; `POST`, `PUT`, `PATCH`, and `DELETE` stay dry-run unless `confirm_unsafe` is true. Redacted headers are never sent. |
+| `export_openapi` | `capture_id` | Write `openapi.json` beside the saved capture's `endpoints.json`. |
+| `list_captures` | `{}` | List saved captures from the configured capture root. |
+
+Safety defaults: capture only pages and sessions the user is authorized to inspect, redact secrets by default, and do not use the capture tools to bypass CAPTCHAs, paywalls, login walls, rate limits, or access controls. Captures are stored under `%USERPROFILE%\.webclaw\api-captures` by default, or under `WEBCLAW_CAPTURE_DIR` when set.
+
 ## Endpoints
 
 ### 1. Scrape — extract content from a single URL

@@ -9,6 +9,7 @@
 
 pub mod batch;
 pub mod brand;
+pub mod capture;
 pub mod crawl;
 pub mod diff;
 pub mod extract;

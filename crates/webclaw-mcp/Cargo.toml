@@ -14,6 +14,7 @@ webclaw-core = { workspace = true }
 webclaw-fetch = { workspace = true }
 webclaw-llm = { workspace = true }
 webclaw-pdf = { workspace = true }
+webclaw-capture = { path = "../webclaw-capture" }
 rmcp = { version = "1.2", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1.0"
 dotenvy = { workspace = true }

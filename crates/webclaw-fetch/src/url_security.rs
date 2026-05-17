@@ -193,7 +193,7 @@ mod tests {
                 .await
                 .is_ok()
         );
-        assert!(is_blocked_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))) == false);
+        assert!(!is_blocked_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
     }
 
     #[tokio::test]

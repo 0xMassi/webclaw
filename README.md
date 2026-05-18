@@ -392,6 +392,17 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
       <a href="https://quantumproxies.net/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">quantumproxies.net</a>.
     </td>
   </tr>
+  <tr>
+    <td width="340" align="center">
+      <a href="https://proxy-seller.com/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">
+        <img src="./assets/sponsors/proxy-seller-banner.png" alt="Proxy-Seller" width="300" />
+      </a>
+    </td>
+    <td>
+      <strong>Proxy-Seller</strong> maintains a global network of residential and datacenter proxies for high-volume scraping, geographic rotation, and automated crawling pipelines.
+      <a href="https://proxy-seller.com/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">Visit proxy-seller.com</a>.
+    </td>
+  </tr>
 </table>
 
 ---

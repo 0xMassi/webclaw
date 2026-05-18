@@ -69,6 +69,18 @@ fn is_noise_link(text: &str, href: &str) -> bool {
         return true;
     }
 
+    // Bare integer labels are usually comment counts, vote counts, or page
+    // numbers. The label alone carries no useful link context for an LLM.
+    if !text.is_empty() && text.len() <= 4 && text.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+
+    // In-page comment/discussion fragments that survived the bare-fragment
+    // check because the href is a full URL with a comment fragment.
+    if href.contains("#comment-stream") || href.contains("#comments") || href.contains("#disqus") {
+        return true;
+    }
+
     // Internal user profile / action URLs (HN-style)
     if href.contains("/user?id=")
         || href.contains("/hide?id=")

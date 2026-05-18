@@ -51,12 +51,15 @@ pub fn to_llm_text(result: &ExtractionResult, url: Option<&str>) -> String {
     // hydration blobs (Next.js pageProps full of ad-targeting flags, build
     // IDs, schedule paths) explode to hundreds of KB and drown the LLM in
     // noise — drop them rather than ship them.
-    let useful: Vec<_> = result
+    let mut useful: Vec<_> = result
         .structured_data
         .iter()
         .filter(|v| is_useful_structured_data(v))
         .cloned()
         .collect();
+    for value in &mut useful {
+        scrub_body_fields(value);
+    }
     if !useful.is_empty() {
         let serialized = serde_json::to_string_pretty(&useful).unwrap_or_default();
         const STRUCTURED_DATA_MAX_BYTES: usize = 16 * 1024;
@@ -111,6 +114,38 @@ fn is_useful_structured_data(v: &serde_json::Value) -> bool {
     // Anything over ~4KB is almost certainly hydration state, not content.
     let serialized = serde_json::to_string(v).unwrap_or_default();
     serialized.len() <= 4 * 1024
+}
+
+/// Recursively remove long fields that duplicate the rendered markdown body.
+fn scrub_body_fields(v: &mut serde_json::Value) {
+    const BODY_KEYS: &[&str] = &["articleBody"];
+    const LONG_BODY_KEYS: &[&str] = &["body", "text", "description"];
+    const LONG_THRESHOLD: usize = 500;
+
+    match v {
+        serde_json::Value::Object(map) => {
+            map.retain(|key, value| {
+                if BODY_KEYS.contains(&key.as_str()) {
+                    return false;
+                }
+                if LONG_BODY_KEYS.contains(&key.as_str())
+                    && value.as_str().is_some_and(|s| s.len() >= LONG_THRESHOLD)
+                {
+                    return false;
+                }
+                true
+            });
+            for value in map.values_mut() {
+                scrub_body_fields(value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                scrub_body_fields(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -795,6 +830,39 @@ mod tests {
             "NewsArticle dropped: {out}"
         );
         assert!(out.contains("Big news"));
+    }
+
+    #[test]
+    fn structured_data_scrubs_duplicate_article_body() {
+        let body = "This is the rendered article body. ".repeat(40);
+        let r = make_result_with_structured(vec![serde_json::json!({
+            "@type": "NewsArticle",
+            "headline": "Big news",
+            "articleBody": body,
+            "description": "A short useful summary"
+        })]);
+        let out = to_llm_text(&r, None);
+        assert!(out.contains("Big news"));
+        assert!(out.contains("A short useful summary"));
+        assert!(
+            !out.contains("articleBody"),
+            "Duplicate article body leaked: {out}"
+        );
+    }
+
+    #[test]
+    fn llm_output_strips_comment_count_links_and_pagination() {
+        let md = "Lead paragraph.\n\n[0](https://example.com/#comment-stream) Next\n\n5 minutes read\n\n[Article](https://example.com/article)";
+        let result = make_result(md);
+        let out = to_llm_text(&result, None);
+        assert!(out.contains("Lead paragraph."));
+        assert!(out.contains("5 minutes read"));
+        assert!(out.contains("- Article: https://example.com/article"));
+        assert!(!out.contains("0 Next"), "Pagination leaked: {out}");
+        assert!(
+            !out.contains("comment-stream"),
+            "Comment link leaked: {out}"
+        );
     }
 
     #[test]

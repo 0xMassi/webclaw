@@ -73,7 +73,15 @@ pub(crate) fn process_body(markdown: &str) -> ProcessedBody {
     // d. Extract links, replace inline `[text](url)` with just `text`
     let (text, extracted_links) = links::extract_and_strip_links(&text);
 
-    // d2. Collapse repeated adjacent phrases on the same line
+    // d1. Strip bare-integer paragraphs after link extraction, so
+    // `[0](#comments)` collapses to `0` before the paragraph-aware check.
+    let text = cleanup::strip_bare_number_lines(&text);
+
+    // d2. Run UI-control stripping again after link extraction. Lines like
+    // `[0](url) Next` become `0 Next`, which is pure pagination chrome.
+    let text = cleanup::strip_ui_control_text(&text);
+
+    // d3. Collapse repeated adjacent phrases on the same line
     // (responsive variants: "Read more Read more Read more" -> "Read more")
     let text = dedup_repeated_phrases(&text);
 

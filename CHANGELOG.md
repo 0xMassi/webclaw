@@ -3,6 +3,17 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.2] — 2026-05-18
+
+### Fixed
+- Cleaned up `--format llm` output on noisy news and documentation pages. Comment-count links, bare page-number paragraphs, pagination leftovers such as `0 Next`, and duplicated JSON-LD article bodies are now removed before they reach the LLM context.
+- The CLI now recognizes common cookie-consent redirects and prints a clearer warning when a page returns a consent wall instead of usable content.
+- The CLI keeps noisy parser warnings from real-world malformed HTML out of stderr by default. `WEBCLAW_LOG` still lets advanced users opt into deeper parser logs.
+
+Thanks to Nenad Oric (`@devnen`) for the report and patch work in PR #43.
+
+---
+
 ## [0.6.1] — 2026-05-12
 
 ### Fixed

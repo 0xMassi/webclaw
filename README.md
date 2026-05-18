@@ -377,6 +377,25 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 
 ---
 
+## Studio Partner
+
+<table>
+  <tr>
+    <td width="250">
+      <a href="https://quantumproxies.net/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">
+        <img src="./assets/sponsors/quantum-proxies.png" alt="Quantum Proxies" width="240" />
+      </a>
+    </td>
+    <td>
+      <strong>Quantum Proxies</strong> supports webclaw and the open-source web extraction community with residential and ISP proxy infrastructure.
+      Use code <code>WEBCLAW20</code> for 20% off at
+      <a href="https://quantumproxies.net/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">quantumproxies.net</a>.
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Community Plugins
 
 Third-party plugins that integrate webclaw with AI agent platforms:

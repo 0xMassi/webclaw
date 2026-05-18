@@ -35,18 +35,49 @@ const ANTIBOT_TITLES: &[&str] = &[
     "ddos protection",
 ];
 
-/// Detect why a page returned empty content.
+/// URL host/path fragments that indicate a GDPR/cookie consent redirect.
+const CONSENT_URL_FRAGMENTS: &[&str] = &[
+    "://consent.",
+    "/consent?",
+    "/consent/",
+    "collectconsent",
+    "consentcheck",
+    "/cmp/",
+    "guce.advertising.com",
+];
+
+/// English consent-wall title prefixes. Many providers localize this page, so
+/// this is a best-effort secondary signal. URL shape is the primary signal.
+const CONSENT_TITLES: &[&str] = &[
+    "before you continue",
+    "your privacy choices",
+    "we value your privacy",
+    "we care about your privacy",
+    "cookie consent",
+    "consent required",
+];
+
+/// Detect why a page returned empty or near-empty content.
+#[derive(Debug, PartialEq, Eq)]
 enum EmptyReason {
     /// Anti-bot challenge page (Cloudflare, Akamai, etc.)
     Antibot,
+    /// GDPR/cookie consent redirect.
+    ConsentWall,
     /// JS-only SPA that returns an empty shell without a browser
     JsRequired,
-    /// Page has content — not empty
+    /// Page has content.
     None,
 }
 
 fn detect_empty(result: &ExtractionResult) -> EmptyReason {
-    // Has real content — nothing to warn about
+    // Consent walls can have a tiny body, so check before the content
+    // short-circuit.
+    if is_consent_wall(result) {
+        return EmptyReason::ConsentWall;
+    }
+
+    // Has real content. Nothing to warn about.
     if result.metadata.word_count > 50 || !result.content.markdown.is_empty() {
         return EmptyReason::None;
     }
@@ -67,12 +98,47 @@ fn detect_empty(result: &ExtractionResult) -> EmptyReason {
     EmptyReason::None
 }
 
+/// A consent wall is identified by either:
+/// 1. The final URL pointing at a known consent host/path, or
+/// 2. A consent-wall title prefix with a very small body.
+fn is_consent_wall(result: &ExtractionResult) -> bool {
+    if let Some(ref url) = result.metadata.url {
+        let lower = url.to_ascii_lowercase();
+        if CONSENT_URL_FRAGMENTS
+            .iter()
+            .any(|fragment| lower.contains(fragment))
+        {
+            return true;
+        }
+    }
+
+    if result.metadata.word_count <= 50
+        && let Some(ref title) = result.metadata.title
+    {
+        let lower = title.to_lowercase();
+        if CONSENT_TITLES
+            .iter()
+            .any(|prefix| lower.starts_with(prefix))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn warn_empty(url: &str, reason: &EmptyReason) {
     match reason {
         EmptyReason::Antibot => eprintln!(
             "\x1b[33mwarning:\x1b[0m Anti-bot protection detected on {url}\n\
              This site requires CAPTCHA solving or browser rendering.\n\
              Use the webclaw Cloud API for automatic bypass: https://webclaw.io/pricing"
+        ),
+        EmptyReason::ConsentWall => eprintln!(
+            "\x1b[33mwarning:\x1b[0m GDPR/cookie consent wall detected on {url}\n\
+             The site redirected to a consent page and returned no usable content.\n\
+             Try a different region via --proxy, or pass a pre-accepted consent cookie\n\
+             via --cookie / --cookie-file."
         ),
         EmptyReason::JsRequired => eprintln!(
             "\x1b[33mwarning:\x1b[0m No content extracted from {url}\n\
@@ -387,10 +453,14 @@ impl From<Browser> for BrowserProfile {
 }
 
 fn init_logging(verbose: bool) {
+    // html5ever / markup5ever / selectors emit WARN on common real-world HTML
+    // quirks. They are rarely actionable for CLI users, so keep them quiet by
+    // default while still allowing WEBCLAW_LOG to override the filter.
+    let default = "warn,html5ever=error,markup5ever=error,selectors=error";
     let filter = if verbose {
-        EnvFilter::new("webclaw=debug")
+        EnvFilter::new("webclaw=debug,html5ever=error,markup5ever=error,selectors=error")
     } else {
-        EnvFilter::try_from_env("WEBCLAW_LOG").unwrap_or_else(|_| EnvFilter::new("warn"))
+        EnvFilter::try_from_env("WEBCLAW_LOG").unwrap_or_else(|_| EnvFilter::new(default))
     };
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -2547,6 +2617,64 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use webclaw_core::Content;
+
+    fn empty_result(title: Option<&str>, url: Option<&str>, markdown: &str) -> ExtractionResult {
+        ExtractionResult {
+            metadata: Metadata {
+                title: title.map(str::to_string),
+                description: None,
+                author: None,
+                published_date: None,
+                language: None,
+                url: url.map(str::to_string),
+                site_name: None,
+                image: None,
+                favicon: None,
+                word_count: markdown.split_whitespace().count(),
+            },
+            content: Content {
+                markdown: markdown.to_string(),
+                plain_text: markdown.to_string(),
+                links: vec![],
+                images: vec![],
+                code_blocks: vec![],
+                raw_html: None,
+            },
+            domain_data: None,
+            structured_data: vec![],
+        }
+    }
+
+    #[test]
+    fn detect_empty_identifies_consent_redirect_url() {
+        let result = empty_result(
+            Some("Yahoo"),
+            Some("https://guce.advertising.com/collectIdentifiers?sessionId=abc"),
+            "Continue",
+        );
+        assert_eq!(detect_empty(&result), EmptyReason::ConsentWall);
+    }
+
+    #[test]
+    fn detect_empty_identifies_short_consent_title() {
+        let result = empty_result(
+            Some("Before you continue"),
+            Some("https://www.google.com/"),
+            "Review privacy options",
+        );
+        assert_eq!(detect_empty(&result), EmptyReason::ConsentWall);
+    }
+
+    #[test]
+    fn detect_empty_does_not_flag_real_content_with_consent_words() {
+        let result = empty_result(
+            Some("Cookie consent patterns explained"),
+            Some("https://example.com/blog"),
+            "This article explains cookie consent patterns for product teams with enough real body text to be useful. It covers consent banners, privacy controls, analytics configuration, regional requirements, product tradeoffs, implementation details, testing flows, debugging notes, accessibility needs, and operational lessons from real teams shipping public websites across multiple markets. It also explains measurement, rollout planning, copy review, support workflows, design constraints, release notes, and how to keep privacy choices understandable for users.",
+        );
+        assert_eq!(detect_empty(&result), EmptyReason::None);
+    }
 
     #[test]
     fn url_to_filename_root() {

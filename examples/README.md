@@ -2,6 +2,14 @@
 
 Practical examples showing what webclaw can do. Each example is a self-contained command you can run immediately.
 
+## Workflow Guides
+
+- [HTML to Markdown for RAG](./html-to-markdown-rag/) turns web pages into markdown or compact LLM text for retrieval pipelines.
+- [Firecrawl-Compatible API](./firecrawl-compatible-api/) shows the `/v2` compatibility routes for scrape, crawl, map, and search.
+- [MCP Web Scraping](./mcp-web-scraping/) connects webclaw to MCP clients such as Claude Code, Claude Desktop, Cursor, and Codex CLI.
+- [Proxy-Backed Crawling](./proxy-backed-crawling/) shows single-proxy and proxy-pool crawling from the CLI.
+- [Cloudflare Diagnostics](./cloudflare-diagnostics/) gives a reproducible checklist for blocked or empty protected-site results.
+
 ## Basic Extraction
 
 ```bash

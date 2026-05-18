@@ -137,6 +137,14 @@ webclaw https://example.com \
 webclaw https://docs.rust-lang.org --crawl --depth 2 --max-pages 50
 ```
 
+### Workflow examples
+
+- [HTML to Markdown for RAG](examples/html-to-markdown-rag/)
+- [Firecrawl-compatible API](examples/firecrawl-compatible-api/)
+- [MCP web scraping](examples/mcp-web-scraping/)
+- [Proxy-backed crawling](examples/proxy-backed-crawling/)
+- [Cloudflare diagnostics](examples/cloudflare-diagnostics/)
+
 ### Extract brand assets
 
 ```bash

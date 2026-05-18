@@ -381,9 +381,9 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 
 <table>
   <tr>
-    <td width="250">
+    <td width="150" align="center">
       <a href="https://quantumproxies.net/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">
-        <img src="./assets/sponsors/quantum-proxies.png" alt="Quantum Proxies" width="240" />
+        <img src="./assets/sponsors/quantum-proxies.png" alt="Quantum Proxies" width="128" />
       </a>
     </td>
     <td>

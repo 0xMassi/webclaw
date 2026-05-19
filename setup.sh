@@ -36,7 +36,7 @@ prompt() {
         printf "${CYAN}    %s${RESET}: " "$prompt_text"
     fi
     read -r input
-    eval "$var_name=\"${input:-$default}\""
+    printf -v "$var_name" '%s' "${input:-$default}"
 }
 
 prompt_secret() {
@@ -48,7 +48,7 @@ prompt_secret() {
     fi
     read -rs input
     echo
-    eval "$var_name=\"${input:-$default}\""
+    printf -v "$var_name" '%s' "${input:-$default}"
 }
 
 prompt_yn() {

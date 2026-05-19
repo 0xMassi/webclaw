@@ -44,6 +44,19 @@ warn()    { printf "${YELLOW}[!]${RESET} %s\n" "$*"; }
 error()   { printf "${RED}[x]${RESET} %s\n" "$*" >&2; }
 fatal()   { error "$*"; exit 1; }
 
+# Mask a secret for display: keep the last 4 chars, redact the rest.
+# Empty input renders as "(not set)".
+mask_secret() {
+    local s="$1"
+    if [[ -z "$s" ]]; then
+        printf '(not set)'
+    elif (( ${#s} <= 4 )); then
+        printf '****'
+    else
+        printf '****%s' "${s: -4}"
+    fi
+}
+
 prompt() {
     local var_name="$1" prompt_text="$2" default="${3:-}"
     if [[ -n "$default" ]]; then
@@ -52,7 +65,7 @@ prompt() {
         printf "${CYAN}    %s${RESET}: " "$prompt_text"
     fi
     read -r input
-    eval "$var_name=\"${input:-$default}\""
+    printf -v "$var_name" '%s' "${input:-$default}"
 }
 
 prompt_secret() {
@@ -64,7 +77,7 @@ prompt_secret() {
     fi
     read -rs input
     echo
-    eval "$var_name=\"${input:-$default}\""
+    printf -v "$var_name" '%s' "${input:-$default}"
 }
 
 generate_key() {
@@ -374,7 +387,7 @@ create_server() {
     printf "    Domain:       ${BOLD}%s${RESET}\n" "${DOMAIN:-none}"
     printf "    OpenAI key:   ${BOLD}%s${RESET}\n" "$([ -n "$OPENAI_KEY" ] && echo 'set' || echo 'not set')"
     printf "    Anthropic key:${BOLD}%s${RESET}\n" "$([ -n "$ANTHROPIC_KEY" ] && echo 'set' || echo 'not set')"
-    printf "    Auth key:     ${BOLD}%s${RESET}\n" "$AUTH_KEY"
+    printf "    Auth key:     ${BOLD}%s${RESET}\n" "$(mask_secret "$AUTH_KEY")"
     printf "    Ollama model: ${BOLD}%s${RESET}\n" "$OLLAMA_MODEL"
     echo
 
@@ -454,7 +467,9 @@ create_server() {
     echo
     printf "  ${BOLD}Server IP:${RESET}    %s\n" "$server_ip"
     printf "  ${BOLD}SSH:${RESET}          ssh root@%s\n" "$server_ip"
-    printf "  ${BOLD}Auth key:${RESET}     %s\n" "$AUTH_KEY"
+    printf "  ${BOLD}Auth key:${RESET}     %s\n" "$(mask_secret "$AUTH_KEY")"
+    printf "  ${DIM}(full key stored in /opt/webclaw/.env on the server:\n"
+    printf "   ssh root@%s 'grep WEBCLAW_AUTH_KEY /opt/webclaw/.env')${RESET}\n" "$server_ip"
     echo
     printf "  ${BOLD}Monitor build progress:${RESET}\n"
     printf "    ssh root@%s 'cd /opt/webclaw && docker compose logs -f'\n" "$server_ip"
@@ -465,7 +480,7 @@ create_server() {
     printf "  ${BOLD}Scrape:${RESET}\n"
     printf "    curl -X POST http://%s:3000/v1/scrape \\\\\n" "$server_ip"
     printf "      -H 'Content-Type: application/json' \\\\\n"
-    printf "      -H 'Authorization: Bearer %s' \\\\\n" "$AUTH_KEY"
+    printf "      -H 'Authorization: Bearer <YOUR_AUTH_KEY>' \\\\\n"
     printf "      -d '{\"url\": \"https://example.com\"}'\n"
     echo
 
@@ -482,7 +497,8 @@ create_server() {
     echo
 
     printf "  ${BOLD}Tear down:${RESET}\n"
-    printf "    HETZNER_TOKEN=%s ./deploy/hetzner.sh --destroy\n" "$HETZNER_TOKEN"
+    printf "    HETZNER_TOKEN=\$HETZNER_TOKEN ./deploy/hetzner.sh --destroy\n"
+    printf "    ${DIM}(re-export the same token you used to deploy)${RESET}\n"
     echo
 }
 

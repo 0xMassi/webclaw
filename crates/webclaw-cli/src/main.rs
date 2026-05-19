@@ -613,7 +613,15 @@ fn url_to_filename(raw_url: &str, format: &OutputFormat) -> String {
         Err(_) => (String::new(), String::new(), None),
     };
 
-    let mut stem = path.trim_matches('/').to_string();
+    // Drop empty / "." / ".." path segments so a URL path like
+    // `/../../etc/passwd` can't climb out of the output directory.
+    let cleaned_path: String = path
+        .split('/')
+        .filter(|seg| !seg.is_empty() && *seg != "." && *seg != "..")
+        .collect::<Vec<_>>()
+        .join("/");
+
+    let mut stem = cleaned_path;
     if stem.is_empty() {
         // Use hostname for root URLs to avoid collisions in batch mode
         let clean_host = host.strip_prefix("www.").unwrap_or(&host);
@@ -640,13 +648,59 @@ fn url_to_filename(raw_url: &str, format: &OutputFormat) -> String {
     format!("{sanitized}.{ext}")
 }
 
+/// Reject a caller-supplied (CSV `url,filename`) name that could escape the
+/// output directory: absolute paths, drive prefixes, root, or any `..`
+/// component. Returns the validated relative path on success.
+fn safe_relative_filename(filename: &str) -> Result<PathBuf, String> {
+    let candidate = Path::new(filename);
+    use std::path::Component;
+    for comp in candidate.components() {
+        match comp {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(format!("refusing path with '..' component: {filename}"));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("refusing absolute output path: {filename}"));
+            }
+        }
+    }
+    if candidate.as_os_str().is_empty() {
+        return Err("empty output filename".to_string());
+    }
+    Ok(candidate.to_path_buf())
+}
+
 /// Write extraction output to a file inside `dir`, creating parent dirs as needed.
+///
+/// `filename` may originate from an attacker-controlled `--urls-file`
+/// (`url,filename` CSV). It is validated for traversal, and the canonical
+/// destination directory is asserted to stay under the canonical output
+/// directory before any write.
 fn write_to_file(dir: &Path, filename: &str, content: &str) -> Result<(), String> {
-    let dest = dir.join(filename);
+    let rel = safe_relative_filename(filename)?;
+    let dest = dir.join(&rel);
+
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("failed to create directory {}: {e}", dir.display()))?;
+    let base = dir
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve output dir {}: {e}", dir.display()))?;
+
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create directory {}: {e}", parent.display()))?;
+        let canon_parent = parent
+            .canonicalize()
+            .map_err(|e| format!("failed to resolve {}: {e}", parent.display()))?;
+        if !canon_parent.starts_with(&base) {
+            return Err(format!(
+                "refusing to write outside output dir: {}",
+                dest.display()
+            ));
+        }
     }
+
     std::fs::write(&dest, content)
         .map_err(|e| format!("failed to write {}: {e}", dest.display()))?;
     let word_count = content.split_whitespace().count();
@@ -1679,6 +1733,13 @@ fn fire_webhook(url: &str, payload: &serde_json::Value) {
         serde_json::to_string(payload).unwrap_or_default()
     };
     tokio::spawn(async move {
+        // SSRF guard: a webhook URL is user-supplied and otherwise bypasses
+        // the fetch-layer protections, so resolve + reject private/internal
+        // destinations before sending the payload.
+        if let Err(e) = webclaw_fetch::url_security::validate_public_http_url(&url).await {
+            eprintln!("[webhook] refusing unsafe URL: {e}");
+            return;
+        }
         match reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -1750,7 +1811,9 @@ async fn run_watch_single(
     );
 
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(cli.watch_interval)).await;
+        // Clamp to >=1s: `--watch-interval 0` would otherwise spin the
+        // fetch loop with zero delay and hammer the target.
+        tokio::time::sleep(std::time::Duration::from_secs(cli.watch_interval.max(1))).await;
 
         if cancelled.load(Ordering::Relaxed) {
             eprintln!("[watch] Stopped");
@@ -1842,7 +1905,9 @@ async fn run_watch_multi(
     let mut check_number = 0u64;
 
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(cli.watch_interval)).await;
+        // Clamp to >=1s: `--watch-interval 0` would otherwise spin the
+        // fetch loop with zero delay and hammer the target.
+        tokio::time::sleep(std::time::Duration::from_secs(cli.watch_interval.max(1))).await;
 
         if cancelled.load(Ordering::Relaxed) {
             eprintln!("[watch] Stopped");
@@ -2321,7 +2386,9 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
                     .collect::<Vec<_>>()
                     .join("-")
                     .to_lowercase();
-                let slug = if slug.len() > 50 { &slug[..50] } else { &slug };
+                // char-safe truncation: byte slicing panics if char 50
+                // lands mid-codepoint (multibyte queries).
+                let slug: String = slug.chars().take(50).collect();
                 let filename = format!("research-{slug}.json");
 
                 let json = serde_json::to_string_pretty(&status_resp).unwrap_or_default();
@@ -2772,5 +2839,67 @@ mod tests {
         let content = std::fs::read_to_string(dir.join("nested/deep/file.md")).unwrap();
         assert_eq!(content, "hello");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn url_to_filename_strips_traversal_segments() {
+        // `..` / `.` / empty path segments must not survive into the path.
+        let out = url_to_filename(
+            "https://example.com/../../etc/passwd",
+            &OutputFormat::Markdown,
+        );
+        assert!(!out.contains(".."), "traversal leaked: {out}");
+        assert_eq!(out, "etc/passwd.md");
+        let out2 = url_to_filename("https://example.com/a/./b//c", &OutputFormat::Json);
+        assert_eq!(out2, "a/b/c.json");
+    }
+
+    #[test]
+    fn safe_relative_filename_rejects_escapes() {
+        assert!(safe_relative_filename("../escape.md").is_err());
+        assert!(safe_relative_filename("a/../../b.md").is_err());
+        assert!(safe_relative_filename("/etc/passwd").is_err());
+        assert!(safe_relative_filename("").is_err());
+        // Normal nested relative names stay allowed.
+        assert!(safe_relative_filename("nested/deep/file.md").is_ok());
+        assert!(safe_relative_filename("./ok.md").is_ok());
+    }
+
+    #[test]
+    fn write_to_file_refuses_traversal_filename() {
+        let dir = std::env::temp_dir().join("webclaw_test_traversal_dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        // CSV-supplied `url,filename` traversal attempt.
+        let err = write_to_file(&dir, "../../tmp/webclaw_pwned.md", "x").unwrap_err();
+        assert!(err.contains("refusing"), "unexpected error: {err}");
+        assert!(
+            !std::path::Path::new("/tmp/webclaw_pwned.md").exists(),
+            "traversal write escaped the output dir"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn research_slug_truncation_is_char_safe() {
+        // Multibyte query: byte-slicing at 50 would panic mid-codepoint.
+        let query = "日本語".repeat(40); // 120 chars, 3 bytes each
+        let slug: String = query
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == ' ' {
+                    c
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join("-")
+            .to_lowercase();
+        let slug: String = slug.chars().take(50).collect();
+        assert!(slug.chars().count() <= 50);
+        // Round-trips through formatting without panicking.
+        let _ = format!("research-{slug}.json");
     }
 }

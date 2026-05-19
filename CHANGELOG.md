@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.3] — 2026-05-19
+
+### Fixed
+- Hardened resource and path-safety limits across the CLI, MCP server, and self-hosted API: oversized or highly compressed responses are capped while streaming, deeply nested page data can no longer exhaust memory, output filenames stay inside the chosen directory, webhook URLs are validated like every other fetch, and multibyte search queries no longer crash slug generation.
+
+---
+
 ## [0.6.2] — 2026-05-18
 
 ### Fixed

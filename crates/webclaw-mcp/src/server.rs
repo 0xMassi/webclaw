@@ -800,7 +800,9 @@ fn slugify(query: &str) -> String {
         .collect::<Vec<_>>()
         .join("-")
         .to_lowercase();
-    if s.len() > 60 { s[..60].to_string() } else { s }
+    // char-safe truncation: byte slicing panics if char 60 lands
+    // mid-codepoint (multibyte queries, e.g. CJK / accented input).
+    s.chars().take(60).collect()
 }
 
 /// Check for a cached research result. Returns the compact response if found.
@@ -855,4 +857,33 @@ fn save_research(dir: &std::path::Path, slug: &str, data: &serde_json::Value) ->
         report_path.to_string_lossy().to_string(),
         json_path.to_string_lossy().to_string(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slugify;
+
+    #[test]
+    fn slugify_multibyte_query_does_not_panic() {
+        // Byte-slicing s[..60] would panic mid-codepoint on multibyte
+        // alphanumerics; char-safe truncation must not.
+        let q = "日本語のクエリ".repeat(20); // long, 3-byte chars
+        let s = slugify(&q);
+        assert!(
+            s.chars().count() <= 60,
+            "slug too long: {}",
+            s.chars().count()
+        );
+    }
+
+    #[test]
+    fn slugify_ascii_unchanged_under_limit() {
+        assert_eq!(slugify("Hello World Query"), "hello-world-query");
+    }
+
+    #[test]
+    fn slugify_caps_long_ascii_at_60_chars() {
+        let s = slugify(&"word ".repeat(40));
+        assert!(s.len() <= 60);
+    }
 }

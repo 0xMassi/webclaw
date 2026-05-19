@@ -94,6 +94,38 @@ fn is_first_party(candidate_host: &str, base_reg: &str) -> bool {
     ch == base_reg || ch.ends_with(&format!(".{base_reg}"))
 }
 
+/// Registrable domains that are spec/schema/example noise, never real API
+/// surface (minified JSON-Schema/`schema.org` refs show up constantly).
+const NOISE_HOSTS: &[&str] = &[
+    "schema.org",
+    "json-schema.org",
+    "w3.org",
+    "example.com",
+    "example.org",
+    "example.net",
+    "localhost",
+];
+
+/// A host worth reporting: multi-label with an alphabetic TLD (>=2 chars).
+/// Rejects minifier garbage like `http://f` / `http://n` and UUID-ish
+/// single labels that the URL regex otherwise picks up.
+fn is_valid_host(host: &str) -> bool {
+    let h = host.trim_end_matches('.');
+    let labels: Vec<&str> = h.split('.').collect();
+    if labels.len() < 2 || labels.iter().any(|l| l.is_empty()) {
+        return false;
+    }
+    let tld = labels[labels.len() - 1];
+    tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())
+}
+
+/// Bare/low-signal relative paths that are just the prefix, not an endpoint
+/// (e.g. `/api`, `/api/`, `/`). `/graphql`, `/gql`, `/api/x` are kept.
+fn is_noise_path(p: &str) -> bool {
+    let t = p.trim_end_matches('/');
+    t.len() < 4 || matches!(t, "/api" | "/rest")
+}
+
 /// Resolved absolute `<script src>` URLs (http/https only), deduped, capped.
 /// Inline scripts have no `src` and are scanned via [`extract_endpoints`].
 pub fn script_srcs(html: &str, base_url: &str) -> Vec<String> {
@@ -152,15 +184,31 @@ pub fn extract_endpoints(
         }
         let first_party = match Url::parse(&value) {
             Ok(u) => {
-                if let Some(h) = u.host_str() {
-                    hosts.insert(h.to_ascii_lowercase());
-                    is_first_party(h, &base_reg)
-                } else {
-                    false
+                let Some(h) = u.host_str() else {
+                    return true;
+                };
+                if !is_valid_host(h) {
+                    return true; // minifier garbage host
                 }
+                if NOISE_HOSTS.contains(&registrable_domain(h).as_str()) {
+                    return true; // schema.org / json-schema.org / example.*
+                }
+                // Absolute URL with no real path is an origin/site link,
+                // not an API endpoint (drops the page's own URL too).
+                let path = u.path();
+                if path.is_empty() || path == "/" {
+                    return true;
+                }
+                hosts.insert(h.to_ascii_lowercase());
+                is_first_party(h, &base_reg)
             }
             // Relative path: same origin as the page by definition.
-            Err(_) => true,
+            Err(_) => {
+                if is_noise_path(&value) {
+                    return true; // bare /api, /, ultra-short
+                }
+                true
+            }
         };
         if seen.insert((value.clone(), source.to_string())) {
             endpoints.push(DiscoveredEndpoint {
@@ -422,5 +470,46 @@ mod tests {
         assert!(r.endpoints.is_empty());
         assert_eq!(r.bundles_scanned, 0);
         assert!(!r.truncated);
+    }
+
+    #[test]
+    fn v1_1_noise_is_filtered() {
+        let bundles = vec![(
+            "b.js".to_string(),
+            r#"
+              "/api/search/events";
+              "/api"; "/api/";
+              "http://f"; "http://n/x";
+              "https://schema.org/Thing";
+              "http://json-schema.org/draft-07/schema";
+              "https://www.ticketmaster.co.uk/";
+              "https://pubapi.ticketmaster.co.uk/discovery/v2/events";
+              "wss://live.ticketmaster.co.uk/socket";
+            "#
+            .to_string(),
+        )];
+        let r = extract_endpoints("<html></html>", "https://www.ticketmaster.co.uk/", &bundles);
+        let vals: std::collections::BTreeSet<&str> =
+            r.endpoints.iter().map(|e| e.value.as_str()).collect();
+        assert!(vals.contains("/api/search/events"));
+        assert!(vals.contains("https://pubapi.ticketmaster.co.uk/discovery/v2/events"));
+        assert!(vals.contains("wss://live.ticketmaster.co.uk/socket"));
+        for junk in [
+            "/api",
+            "/api/",
+            "http://f",
+            "http://n/x",
+            "https://schema.org/Thing",
+            "http://json-schema.org/draft-07/schema",
+            "https://www.ticketmaster.co.uk/",
+        ] {
+            assert!(!vals.contains(junk), "noise leaked: {junk}");
+        }
+        assert!(
+            !r.hosts
+                .iter()
+                .any(|h| h == "f" || h == "n" || h == "schema.org")
+        );
+        assert!(r.hosts.iter().any(|h| h == "pubapi.ticketmaster.co.uk"));
     }
 }

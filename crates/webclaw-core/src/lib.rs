@@ -7,6 +7,7 @@ pub(crate) mod data_island;
 /// Zero network dependencies — WASM-compatible by design.
 pub mod diff;
 pub mod domain;
+pub mod endpoints;
 pub mod error;
 pub mod extractor;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]

@@ -810,13 +810,18 @@ mod tests {
 
     // --- CloudClient construction ------------------------------------------
 
+    // `WEBCLAW_API_KEY` is process-global; cargo runs tests in parallel
+    // threads. Without serialization, a test that sets the var can race a
+    // test asserting it is absent. This lock makes the env-mutating
+    // CloudClient tests mutually exclusive (poison-tolerant: a panicking
+    // test must not wedge the others).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn cloud_client_explicit_key_wins_over_env() {
-        // SAFETY: this test mutates process env. Serial tests only.
-        // Set env to something, pass an explicit key, explicit should win.
-        // (We don't actually *call* the API, just check the struct stored
-        // the right key.)
-        // rustc std::env::set_var is unsafe in newer toolchains.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: env mutation is serialized by ENV_LOCK; set_var/remove_var
+        // are unsafe on the 2024 toolchain. Explicit key must beat the env.
         unsafe {
             std::env::set_var("WEBCLAW_API_KEY", "from-env");
         }
@@ -829,6 +834,9 @@ mod tests {
 
     #[test]
     fn cloud_client_none_when_empty() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: env mutation serialized by ENV_LOCK. Clearing the var
+        // (incl. any ambient runner value) is what makes this deterministic.
         unsafe {
             std::env::remove_var("WEBCLAW_API_KEY");
         }

@@ -58,7 +58,7 @@ pub fn to_llm_text(result: &ExtractionResult, url: Option<&str>) -> String {
         .cloned()
         .collect();
     for value in &mut useful {
-        scrub_body_fields(value);
+        scrub_body_fields(value, 0);
     }
     if !useful.is_empty() {
         let serialized = serde_json::to_string_pretty(&useful).unwrap_or_default();
@@ -117,10 +117,21 @@ fn is_useful_structured_data(v: &serde_json::Value) -> bool {
 }
 
 /// Recursively remove long fields that duplicate the rendered markdown body.
-fn scrub_body_fields(v: &mut serde_json::Value) {
+///
+/// `depth` guards against stack exhaustion from attacker-controlled
+/// JSON-LD / `__NEXT_DATA__` blobs with pathological nesting: past
+/// [`MAX_SCRUB_DEPTH`] levels we stop descending and leave the subtree
+/// as-is (it is still size-capped by the `STRUCTURED_DATA_MAX_BYTES`
+/// budget in `to_llm_text`).
+fn scrub_body_fields(v: &mut serde_json::Value, depth: usize) {
     const BODY_KEYS: &[&str] = &["articleBody"];
     const LONG_BODY_KEYS: &[&str] = &["body", "text", "description"];
     const LONG_THRESHOLD: usize = 500;
+    const MAX_SCRUB_DEPTH: usize = 64;
+
+    if depth >= MAX_SCRUB_DEPTH {
+        return;
+    }
 
     match v {
         serde_json::Value::Object(map) => {
@@ -136,12 +147,12 @@ fn scrub_body_fields(v: &mut serde_json::Value) {
                 true
             });
             for value in map.values_mut() {
-                scrub_body_fields(value);
+                scrub_body_fields(value, depth + 1);
             }
         }
         serde_json::Value::Array(values) => {
             for value in values {
-                scrub_body_fields(value);
+                scrub_body_fields(value, depth + 1);
             }
         }
         _ => {}
@@ -906,6 +917,55 @@ mod tests {
         assert!(
             out.contains("small array item"),
             "Compact untyped array dropped: {out}"
+        );
+    }
+
+    /// Walk `value` down its single `"n"` child link and return the depth
+    /// at which an `articleBody` key is still present (i.e. was NOT
+    /// scrubbed). Used to observe exactly where the recursion stopped.
+    fn first_unscrubbed_article_body_depth(mut value: &serde_json::Value) -> Option<usize> {
+        let mut depth = 0;
+        loop {
+            let obj = value.as_object()?;
+            if obj.contains_key("articleBody") {
+                return Some(depth);
+            }
+            value = obj.get("n")?;
+            depth += 1;
+        }
+    }
+
+    #[test]
+    fn scrub_body_fields_bounds_recursion_on_deep_nesting() {
+        // Attacker-controlled JSON-LD / __NEXT_DATA__ with pathological
+        // nesting must not recurse without bound. Build a chain a little
+        // past the 64-level cap where every level carries a scrub-able
+        // `articleBody`. Levels within the cap get scrubbed; the first
+        // level past the cap keeps its `articleBody` because recursion
+        // stopped — that is the bound we assert. (Kept shallow on purpose:
+        // serde_json drops Values recursively, so a 10k-deep value would
+        // overflow the stack just being dropped.)
+        const DEPTH: usize = 80;
+        let mut node = serde_json::json!({ "articleBody": "x".repeat(600) });
+        for _ in 0..DEPTH {
+            node = serde_json::json!({
+                "articleBody": "x".repeat(600),
+                "n": node,
+            });
+        }
+
+        scrub_body_fields(&mut node, 0);
+
+        let stopped_at = first_unscrubbed_article_body_depth(&node)
+            .expect("recursion must stop and leave a deep articleBody intact");
+        // Top levels were scrubbed; the survivor sits right at the cap.
+        assert_eq!(
+            stopped_at, 64,
+            "recursion should stop at the depth cap, stopped at {stopped_at}"
+        );
+        assert!(
+            node.as_object().unwrap().get("articleBody").is_none(),
+            "shallow articleBody must still be scrubbed"
         );
     }
 }

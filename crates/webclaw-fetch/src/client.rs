@@ -95,12 +95,30 @@ struct Response {
 /// per page in collapse_whitespace + strip_markdown).
 const MAX_BODY_BYTES: u64 = 50 * 1024 * 1024;
 
+/// Running decompression-bomb guard: reject as soon as the bytes already
+/// buffered plus the next decompressed chunk would cross [`MAX_BODY_BYTES`].
+/// Saturating arithmetic so a huge chunk length can't wrap the sum.
+fn check_body_ceiling(buffered: usize, next_chunk: usize) -> Result<(), FetchError> {
+    let total = (buffered as u64).saturating_add(next_chunk as u64);
+    if total > MAX_BODY_BYTES {
+        return Err(FetchError::BodyDecode(format!(
+            "response body exceeds cap {MAX_BODY_BYTES} bytes (decompressed)"
+        )));
+    }
+    Ok(())
+}
+
 impl Response {
-    /// Buffer a wreq response into an owned Response. Rejects bodies that
-    /// advertise a Content-Length beyond [`MAX_BODY_BYTES`] before we pay
-    /// the allocation, and truncates after the fact as a belt-and-braces
-    /// check against a lying server.
-    async fn from_wreq(resp: wreq::Response) -> Result<Self, FetchError> {
+    /// Buffer a wreq response into an owned Response.
+    ///
+    /// Rejects bodies that advertise a Content-Length beyond
+    /// [`MAX_BODY_BYTES`] before we pay any allocation, then streams the
+    /// body chunk-by-chunk while enforcing a running ceiling. `chunk()`
+    /// yields *post-decompression* bytes (gzip/brotli/zstd/deflate are
+    /// negotiated), so a tiny compressed payload that inflates to
+    /// gigabytes is aborted as soon as the accumulated size crosses the
+    /// cap — it never gets fully buffered in memory.
+    async fn from_wreq(mut resp: wreq::Response) -> Result<Self, FetchError> {
         if let Some(len) = resp.content_length()
             && len > MAX_BODY_BYTES
         {
@@ -111,21 +129,22 @@ impl Response {
         let status = resp.status().as_u16();
         let url = resp.uri().to_string();
         let headers = resp.headers().clone();
-        let body = resp
-            .bytes()
+
+        let mut buf = bytes::BytesMut::new();
+        while let Some(chunk) = resp
+            .chunk()
             .await
-            .map_err(|e| FetchError::BodyDecode(e.to_string()))?;
-        if body.len() as u64 > MAX_BODY_BYTES {
-            return Err(FetchError::BodyDecode(format!(
-                "response body {} bytes exceeds cap {MAX_BODY_BYTES}",
-                body.len()
-            )));
+            .map_err(|e| FetchError::BodyDecode(e.to_string()))?
+        {
+            check_body_ceiling(buf.len(), chunk.len())?;
+            buf.extend_from_slice(&chunk);
         }
+
         Ok(Self {
             status,
             url,
             headers,
-            body,
+            body: buf.freeze(),
         })
     }
 
@@ -894,6 +913,28 @@ mod tests {
             result: Err(FetchError::InvalidUrl("bad url".into())),
         };
         assert!(err.result.is_err());
+    }
+
+    #[test]
+    fn body_ceiling_allows_under_cap() {
+        assert!(check_body_ceiling(0, 1024).is_ok());
+        assert!(check_body_ceiling(MAX_BODY_BYTES as usize - 1, 1).is_ok());
+    }
+
+    #[test]
+    fn body_ceiling_rejects_at_and_over_cap() {
+        // Exactly at the cap is allowed; one byte over is rejected.
+        assert!(check_body_ceiling(MAX_BODY_BYTES as usize, 1).is_err());
+        // A small buffer plus a huge inflated chunk (decompression bomb)
+        // is caught on the very first oversized chunk.
+        let err = check_body_ceiling(16, 64 * 1024 * 1024).unwrap_err();
+        assert!(matches!(err, FetchError::BodyDecode(_)));
+    }
+
+    #[test]
+    fn body_ceiling_saturates_on_overflow() {
+        // usize::MAX chunk must not wrap the running sum to a small value.
+        assert!(check_body_ceiling(usize::MAX, usize::MAX).is_err());
     }
 
     #[test]

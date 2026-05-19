@@ -31,6 +31,21 @@ jobs:
       - run: cargo fmt --check --all
       - run: cargo clippy --all -- -D warnings
 
+  wasm:
+    name: WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      # webclaw-core must stay WASM-safe (zero network deps, no threads).
+      # Check both with and without default features so the quickjs gate
+      # can't regress.
+      - run: cargo check --target wasm32-unknown-unknown -p webclaw-core
+      - run: cargo check --target wasm32-unknown-unknown -p webclaw-core --no-default-features
+
   docs:
     name: Docs
     runs-on: ubuntu-latest

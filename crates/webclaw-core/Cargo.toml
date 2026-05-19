@@ -20,6 +20,11 @@ url = { version = "2", features = ["serde"] }
 regex = "1"
 once_cell = "1"
 similar = "2"
+
+# rquickjs links a C library and cannot build for wasm32. Gating it per
+# target keeps the `quickjs` feature usable on native while leaving the
+# crate WASM-safe even with default features enabled.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rquickjs = { version = "0.9", features = ["classes", "properties"], optional = true }
 
 [dev-dependencies]

@@ -9,7 +9,7 @@ pub mod diff;
 pub mod domain;
 pub mod error;
 pub mod extractor;
-#[cfg(feature = "quickjs")]
+#[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
 pub mod js_eval;
 pub mod llm;
 pub mod markdown;
@@ -46,9 +46,13 @@ pub fn extract(html: &str, url: Option<&str>) -> Result<ExtractionResult, Extrac
 /// `url`     — optional source URL, used for resolving relative links and domain detection
 /// `options` — controls include/exclude selectors, main content mode, and raw HTML output
 ///
-/// Spawns extraction on a thread with an 8 MB stack to handle deeply nested
-/// HTML (e.g., Express.co.uk live blogs) without overflowing the default 1-2 MB
-/// main-thread stack on Windows.
+/// On native targets, spawns extraction on a thread with an 8 MB stack to
+/// handle deeply nested HTML (e.g., Express.co.uk live blogs) without
+/// overflowing the default 1-2 MB main-thread stack on Windows.
+///
+/// On `wasm32`, threads are unavailable (`std::thread::spawn` panics at
+/// runtime), so extraction runs inline on the caller's stack.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn extract_with_options(
     html: &str,
     url: Option<&str>,
@@ -68,6 +72,16 @@ pub fn extract_with_options(
         .map_err(|_| ExtractError::NoContent)?
         .join()
         .unwrap_or(Err(ExtractError::NoContent))
+}
+
+/// WASM has no threads; run extraction directly on the caller's stack.
+#[cfg(target_arch = "wasm32")]
+pub fn extract_with_options(
+    html: &str,
+    url: Option<&str>,
+    options: &ExtractionOptions,
+) -> Result<ExtractionResult, ExtractError> {
+    extract_with_options_inner(html, url, options)
 }
 
 fn extract_with_options_inner(
@@ -187,7 +201,7 @@ fn extract_with_options_inner(
     // QuickJS: execute inline <script> tags to capture JS-assigned data blobs
     // (e.g., window.__PRELOADED_STATE__, self.__next_f). This supplements the
     // static JSON data island extraction above with runtime-evaluated data.
-    #[cfg(feature = "quickjs")]
+    #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
     {
         let blobs = js_eval::extract_js_data(html);
         if !blobs.is_empty() {
@@ -601,6 +615,38 @@ mod tests {
         assert!(
             result.content.markdown.contains("Deep content"),
             "Should extract content from deep nesting"
+        );
+    }
+
+    #[test]
+    fn wasm_direct_call_path_extracts_content() {
+        // On wasm32 `extract_with_options` runs `extract_with_options_inner`
+        // inline (no thread spawn). Exercise that exact entry point here so
+        // the WASM path stays covered on native CI, and assert it produces
+        // the same content as the public threaded entry point.
+        let html = r#"
+        <html lang="en">
+        <head><title>WASM Path</title></head>
+        <body><article><h1>Heading</h1><p>WASM-safe extraction body content.</p></article></body>
+        </html>"#;
+        let opts = ExtractionOptions::default();
+
+        let inner = extract_with_options_inner(html, Some("https://example.com"), &opts)
+            .expect("inner extraction (wasm path) should succeed");
+        assert!(
+            inner
+                .content
+                .markdown
+                .contains("WASM-safe extraction body content"),
+            "wasm direct-call path should extract body, got: {}",
+            inner.content.markdown
+        );
+
+        let threaded = extract_with_options(html, Some("https://example.com"), &opts)
+            .expect("threaded extraction should succeed");
+        assert_eq!(
+            inner.content.markdown, threaded.content.markdown,
+            "wasm path and threaded path must produce identical content"
         );
     }
 }

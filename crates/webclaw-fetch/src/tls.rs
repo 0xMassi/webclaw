@@ -533,8 +533,9 @@ pub fn build_client(
         .timeout(timeout);
 
     if let Some(proxy_url) = proxy {
-        let proxy =
-            wreq::Proxy::all(proxy_url).map_err(|e| FetchError::Build(format!("proxy: {e}")))?;
+        let proxy = wreq::Proxy::all(proxy_url).map_err(|_| {
+            FetchError::Build(format!("invalid proxy {}", redact_proxy_url(proxy_url)))
+        })?;
         builder = builder.proxy(proxy);
     } else {
         builder = builder.dns_resolver(PublicDnsResolver);
@@ -543,6 +544,24 @@ pub fn build_client(
     builder
         .build()
         .map_err(|e| FetchError::Build(e.to_string()))
+}
+
+/// Render a proxy URL safe to log: drop any `user:pass@` userinfo so
+/// rotating-proxy credentials never reach error strings or tracing.
+/// Falls back to a constant placeholder when the input does not parse.
+fn redact_proxy_url(raw: &str) -> String {
+    match url::Url::parse(raw) {
+        Ok(mut u) => {
+            // Best-effort: opaque URLs (e.g. no host) reject these setters;
+            // in that case fall through to the placeholder rather than risk
+            // returning the raw string with credentials.
+            if u.set_username("").is_err() || u.set_password(None).is_err() {
+                return "<proxy redacted>".to_string();
+            }
+            u.to_string()
+        }
+        Err(_) => "<proxy redacted>".to_string(),
+    }
 }
 
 fn ssrf_safe_redirect_policy(
@@ -566,4 +585,42 @@ fn ssrf_safe_redirect_policy(
             }
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_proxy_url;
+
+    #[test]
+    fn redacts_userinfo_from_proxy_url() {
+        let red = redact_proxy_url("http://user123:s3cr3tPass@proxy.example.com:8080");
+        assert!(!red.contains("user123"), "username leaked: {red}");
+        assert!(!red.contains("s3cr3tPass"), "password leaked: {red}");
+        assert!(red.contains("proxy.example.com"), "host lost: {red}");
+        assert!(red.contains("8080"), "port lost: {red}");
+    }
+
+    #[test]
+    fn redacts_long_token_residential_proxy() {
+        // Residential-style: long structured credential with embedded
+        // tokens in the username and special chars in the password.
+        let red =
+            redact_proxy_url("http://acct-zone-resi-country-xx:p@ss-word@gw.proxy.example:12321");
+        assert!(!red.contains("acct-zone-resi"), "username leaked: {red}");
+        assert!(!red.contains("p@ss-word"), "password leaked: {red}");
+        assert!(red.contains("gw.proxy.example"));
+    }
+
+    #[test]
+    fn unparseable_proxy_does_not_echo_input() {
+        let red = redact_proxy_url("user:pass@not a url");
+        assert_eq!(red, "<proxy redacted>");
+    }
+
+    #[test]
+    fn proxy_without_credentials_is_preserved() {
+        let red = redact_proxy_url("http://proxy.example.com:3128");
+        assert!(red.contains("proxy.example.com"));
+        assert!(red.contains("3128"));
+    }
 }

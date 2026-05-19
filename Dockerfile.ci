@@ -5,9 +5,10 @@ ARG BINARY_DIR=binaries
 
 FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# CA bundle copied from a reliable multi-arch image instead of apt-installing
+# from ports.ubuntu.com — Canonical's arm64 ports mirror is unreachable from
+# CI runners and breaks the multi-arch release build. No build-time network.
+COPY --from=gcr.io/distroless/static-debian12 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 ARG BINARY_DIR
 COPY ${BINARY_DIR}/webclaw /usr/local/bin/webclaw

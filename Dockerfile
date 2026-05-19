@@ -59,9 +59,9 @@ RUN touch crates/*/src/*.rs \
 # ---------------------------------------------------------------------------
 FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# CA bundle from distroless (ships it, multi-arch, gcr.io) instead of
+# apt-installing from ports.ubuntu.com (unreachable for arm64 on CI runners).
+COPY --from=gcr.io/distroless/static-debian12 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 # Copy all three binaries
 COPY --from=builder /build/target/release/webclaw /usr/local/bin/webclaw

@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.4] — 2026-05-19
+
+### Added
+- API surface discovery: a new module extracts the API endpoints embedded in a page's inline scripts and linked JavaScript bundles. It surfaces relative REST paths, absolute URLs, GraphQL operations, and WebSocket endpoints that a sitemap alone cannot reveal. A built-in noise filter drops schema.org and json-schema.org references, bare framework paths, and other non-API matches so the result stays focused on the real surface.
+
+---
+
 ## [0.6.3] — 2026-05-19
 
 ### Fixed

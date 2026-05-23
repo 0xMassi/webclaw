@@ -2,6 +2,19 @@
 
 Rust workspace: CLI + MCP server for web content extraction into LLM-optimized formats.
 
+## MANDATORY: sync the portable Claude Code install on every webclaw release
+
+The portable Claude Code install at `C:\_projects\claude-portable\` bundles `webclaw.exe` at `C:\_projects\claude-portable\webclaw\webclaw.exe`. Several skills (`fetch`, `news`, `research`) call it via the bare-name shim `C:\_projects\claude-portable\bin\webclaw`, which exec's the bundled binary. **The bundled copy is not auto-updated** — every time `cargo build --release` produces a new `target/release/webclaw.exe`, you MUST copy it over the bundled one, or the portable install will be running stale webclaw.
+
+After any rebuild that you want to ship into the portable install, run:
+
+```bash
+cp "C:\_projects\webclaw\target\release\webclaw.exe" "C:\_projects\claude-portable\webclaw\webclaw.exe"
+"C:\_projects\claude-portable\webclaw\webclaw.exe" --version   # verify
+```
+
+If you forget this step, fixes/features you just built will not be visible to skills that go through the portable shim. Treat it as part of the release: build → test → copy to portable → verify version → commit.
+
 ## Architecture
 
 ```
@@ -88,9 +101,28 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 ```bash
 cargo build --release           # Both binaries
 cargo test --workspace          # All tests
-cargo test -p webclaw-core      # Core only
+cargo test -p webclaw-core      # Core only (no native deps; works without env setup)
 cargo test -p webclaw-llm       # LLM only
 ```
+
+### Local build environment (Windows)
+
+`webclaw-fetch` pulls in `boring-sys2` (BoringSSL via wreq), which uses bindgen against MSVC headers. Without the right env, `cargo build` panics with `'vcruntime.h' file not found`. `update.py` (`setup_build_env`) wires this up automatically. To build manually from a plain shell, export the same vars:
+
+```bash
+export PATH="/c/Program Files/NASM:$PATH"
+export LIBCLANG_PATH="C:\Program Files\LLVM\bin"
+export BINDGEN_EXTRA_CLANG_ARGS='-I"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.40.33807/include" -I"C:/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/ucrt"'
+cargo build --release -p webclaw-cli
+```
+
+`cargo test -p webclaw-core --lib` does not need these — it's pure Rust with no native deps. Use it for fast iteration on extraction/markdown/LLM logic.
+
+### Lint gate (must pass before pushing)
+
+CI runs `cargo fmt --check --all` and `cargo clippy --all -- -D warnings` on every PR. The fmt check is strict — multi-line assert macros that fit on one line in your editor often need the canonical multi-line form. Always run `cargo fmt --all` locally before committing or CI Lint will fail.
+
+Local clippy on a recent toolchain may flag pre-existing `uninlined_format_args` warnings in `crates/webclaw-core/src/brand.rs` (e.g. `format!("#{:02X}{:02X}{:02X}", r, g, b)`). CI uses an older cached toolchain that doesn't enforce this lint — main is green despite these. Don't auto-fix unrelated files just to silence local clippy; it expands PR scope into untouched code.
 
 ## CLI
 

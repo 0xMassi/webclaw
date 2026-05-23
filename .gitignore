@@ -13,3 +13,10 @@ local-test-results.json
 # not code and shouldn't live in git. Track deliberately-saved research
 # output under a different name.
 research-*.json
+
+# Local runtime/scratch — never repo content.
+__pycache__/
+.last_update_check
+.playwright-cli/
+demo_sample.html
+demo_saved.json

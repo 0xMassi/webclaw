@@ -65,6 +65,8 @@ fn empty_metadata() -> Metadata {
         image: None,
         favicon: None,
         word_count: 0,
+        word_count_article: 0,
+        word_count_chrome: 0,
         http_status: None,
     }
 }

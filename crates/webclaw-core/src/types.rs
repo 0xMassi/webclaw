@@ -27,6 +27,28 @@ pub struct Metadata {
     pub image: Option<String>,
     pub favicon: Option<String>,
     pub word_count: usize,
+    /// Article-body portion of `word_count`, computed in
+    /// `extract_with_options_inner`. Sourced from JSON-LD `articleBody`
+    /// (or `reviewBody`) via the M4 classifier when present; falls back
+    /// to the M2-style body-text heuristic (`llm::body_word_count` on the
+    /// extracted markdown) when JSON-LD body is absent. Always satisfies
+    /// `word_count_article + word_count_chrome == word_count` (M is
+    /// clamped to N if the JSON-LD body has more words than the extracted
+    /// markdown). Serialized unconditionally (parallel to `word_count`)
+    /// so callers can rely on both M12 fields being present alongside
+    /// the existing total; zero on the no-breakdown path (local-file /
+    /// --stdin / direct `extract_with_options` callers). `default = 0`
+    /// for backward-compat on incoming JSON that predates M12. M12 /
+    /// issue #7.
+    #[serde(default)]
+    pub word_count_article: usize,
+    /// Chrome portion of `word_count` (= `word_count - word_count_article`).
+    /// "Chrome" means everything not in the article body: navigation,
+    /// related-link sidebars, footers, ad slots, ticker rows, link cards,
+    /// etc. Serialized unconditionally (parallel to `word_count`); zero
+    /// on the no-breakdown path. M12 / issue #7.
+    #[serde(default)]
+    pub word_count_chrome: usize,
     /// HTTP status code from the final response (after redirects). `None`
     /// when extraction was not preceded by an HTTP fetch — e.g. `--file`,
     /// `--stdin`, or any call into `extract_with_options` directly.
@@ -42,6 +64,7 @@ pub struct Metadata {
     )]
     pub http_status: Option<u16>,
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Content {

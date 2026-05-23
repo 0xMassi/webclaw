@@ -17,6 +17,26 @@ mod thin_body;
 pub use hub_detect::{classify as classify_hub, HubClassification};
 pub use sections::{collect_section_links, to_json_sections, to_llm_sections};
 pub use thin_body::{classify as classify_thin_body, ThinBodyClassification};
+
+/// Count words in the body AFTER the same processing pipeline the LLM
+/// formatter applies (image / link-syntax / framework-blob stripping, dedup,
+/// whitespace collapse). Words inside markdown link patterns `[text](url)`
+/// are excluded by the pipeline — what's left is "real" article-body prose.
+///
+/// Used by M12 (`word_count_article` / `word_count_chrome` breakdown) as the
+/// fallback estimator when no JSON-LD `articleBody` / `reviewBody` is
+/// available. Mirrors `hub_detect::count_body_words` — same dependency on
+/// `body::process_body(...).text.split_whitespace().count()` — exposed
+/// publicly so `lib.rs::extract_with_options_inner` can populate the
+/// `Metadata.word_count_article` field without reaching across the
+/// `llm::body` `pub(crate)` boundary.
+pub fn body_word_count(markdown: &str) -> usize {
+    body::process_body(markdown)
+        .text
+        .split_whitespace()
+        .filter(|w| !w.is_empty())
+        .count()
+}
 pub use output_size::{
     to_json_summary, to_json_toc, to_llm_summary, to_llm_toc, truncate_json_with_wrapper,
     truncate_with_footer,
@@ -348,6 +368,12 @@ mod tests {
                 image: None,
                 favicon: None,
                 word_count: 42,
+                // M12: default fixture leaves breakdown unset (zero); the
+                // header formatter falls back to the legacy `Word count: N`
+                // form when article+chrome != total. Tests that need the
+                // breakdown set these explicitly.
+                word_count_article: 0,
+                word_count_chrome: 0,
                 http_status: None,
             },
             content: Content {
@@ -602,6 +628,8 @@ mod tests {
                 image: None,
                 favicon: None,
                 word_count: 0,
+                word_count_article: 0,
+                word_count_chrome: 0,
                 http_status: None,
             },
             content: Content {

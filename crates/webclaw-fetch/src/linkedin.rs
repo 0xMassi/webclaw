@@ -216,6 +216,11 @@ pub fn extract_linkedin_post(html: &str, url: &str) -> Option<ExtractionResult> 
             image: None,
             favicon: None,
             word_count,
+            // M12: LinkedIn post payload IS the article body; comments
+            // and reactions are appended below but treated as article
+            // for this extractor (no separate chrome envelope).
+            word_count_article: word_count,
+            word_count_chrome: 0,
             http_status: None,
         },
         content: Content {

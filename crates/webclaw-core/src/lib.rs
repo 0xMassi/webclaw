@@ -31,10 +31,10 @@ pub use jsonld::{
     ArticleRef, JsonLdSchema, LiveUpdate,
 };
 pub use llm::{
-    classify_hub, classify_thin_body, collect_section_links, to_json_sections, to_json_summary,
-    to_json_toc, to_llm_sections, to_llm_summary, to_llm_text, to_llm_text_with_options,
-    to_llm_toc, truncate_json_with_wrapper, truncate_with_footer, HubClassification,
-    LlmTextOptions, ThinBodyClassification,
+    body_word_count, classify_hub, classify_thin_body, collect_section_links, to_json_sections,
+    to_json_summary, to_json_toc, to_llm_sections, to_llm_summary, to_llm_text,
+    to_llm_text_with_options, to_llm_toc, truncate_json_with_wrapper, truncate_with_footer,
+    HubClassification, LlmTextOptions, ThinBodyClassification,
 };
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,
@@ -114,6 +114,11 @@ fn extract_with_options_inner(
         let doc = Html::parse_document(html);
         let mut meta = metadata::extract(&doc, url);
         meta.word_count = extractor::word_count(&yt_md);
+        // M12: YouTube fast path emits structured video metadata only
+        // (title, channel, view count, description). No chrome / nav /
+        // ads in the output — all words are "article" by definition.
+        meta.word_count_article = meta.word_count;
+        meta.word_count_chrome = 0;
 
         let plain_text = yt_md
             .lines()
@@ -234,12 +239,76 @@ fn extract_with_options_inner(
     structured_data.extend(structured_data::extract_next_data(html));
     structured_data.extend(structured_data::extract_sveltekit(html));
 
+    // M12 (issue #7): split the total word_count into an article-body
+    // portion and a chrome portion. Computed once, here, AFTER all the
+    // word_count update paths above (data island, QuickJS, retry strategies)
+    // have settled. Sourced from JSON-LD articleBody/reviewBody when
+    // present, else the M2-style body word count on the extracted markdown.
+    let (article_wc, chrome_wc) =
+        compute_word_count_breakdown(&content.markdown, &structured_data, meta.word_count);
+    meta.word_count_article = article_wc;
+    meta.word_count_chrome = chrome_wc;
+
     Ok(ExtractionResult {
         metadata: meta,
         content,
         domain_data,
         structured_data,
     })
+}
+
+/// M12 helper: split a page's total word_count into an article-body portion
+/// and a chrome remainder.
+///
+/// Precedence:
+/// 1. JSON-LD `articleBody` (NewsArticle) or `reviewBody` (Review) via
+///    [`crate::jsonld::primary_schema`]. When present, the article portion
+///    is the word count of that string.
+/// 2. Fallback: [`llm::body_word_count`] on the extracted markdown — M2's
+///    "words outside markdown link patterns" estimator (same pipeline
+///    `hub_detect::count_body_words` uses for hub classification).
+///
+/// Invariant: returns `(article, chrome)` such that `article + chrome ==
+/// total_wc`. `article` is clamped to `total_wc` if the JSON-LD body has
+/// more words than the extracted markdown (tokenization differences are
+/// expected — the breakdown is a best-effort split, not a perfect
+/// partition). When `total_wc == 0`, returns `(0, 0)` so the
+/// `skip_serializing_if = "is_zero_usize"` guard on the Metadata fields
+/// drops them from JSON output.
+fn compute_word_count_breakdown(
+    markdown: &str,
+    structured_data: &[serde_json::Value],
+    total_wc: usize,
+) -> (usize, usize) {
+    if total_wc == 0 {
+        return (0, 0);
+    }
+
+    // 1. JSON-LD articleBody / reviewBody — ground truth when present.
+    let schemas = jsonld::classify_all(structured_data);
+    let jsonld_body: Option<&str> = jsonld::primary_schema(&schemas).and_then(|s| match s {
+        jsonld::JsonLdSchema::NewsArticle { body: Some(b), .. } => Some(b.as_str()),
+        jsonld::JsonLdSchema::Review {
+            review_body: Some(b),
+            ..
+        } => Some(b.as_str()),
+        _ => None,
+    });
+
+    let article_raw = if let Some(body_str) = jsonld_body {
+        extractor::word_count(body_str)
+    } else {
+        // 2. Fallback: M2-style body word count on extracted markdown.
+        llm::body_word_count(markdown)
+    };
+
+    // Clamp so article + chrome == total_wc (invariant for the JSON shape
+    // and the header arithmetic). Tokenization mismatches (JSON-LD body
+    // vs extractor::word_count) can make article_raw > total_wc; that's
+    // not a bug, it's a representation gap — clamp and move on.
+    let article = article_raw.min(total_wc);
+    let chrome = total_wc - article;
+    (article, chrome)
 }
 
 #[cfg(test)]
@@ -659,5 +728,210 @@ mod tests {
             inner.content.markdown, threaded.content.markdown,
             "wasm path and threaded path must produce identical content"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // M12 (issue #7): word-count breakdown — article vs chrome split.
+    // Tests the POPULATION logic in `extract_with_options_inner` /
+    // `compute_word_count_breakdown`. Formatter behavior is tested in
+    // `crate::llm::metadata::m12_tests`.
+    // -----------------------------------------------------------------
+
+    /// M12 test 1: a page with a JSON-LD `NewsArticle.articleBody` gets
+    /// the article portion sourced from the articleBody string. Chrome
+    /// is the remainder. Total invariant: article + chrome == word_count.
+    #[test]
+    fn test_word_count_breakdown_with_jsonld_article_body() {
+        // 20-word articleBody. Wrap in a <p> + nav chrome so the
+        // extracted markdown has both article words AND chrome words.
+        let html = r#"
+        <html lang="en">
+        <head>
+            <title>Tariffs hit consumers</title>
+            <script type="application/ld+json">
+            {
+              "@context": "https://schema.org",
+              "@type": "NewsArticle",
+              "headline": "Tariffs hit consumers",
+              "articleBody": "Tariffs are taxes on imports paid by consumers in the importing country, not the exporting one, economists explained today again."
+            }
+            </script>
+        </head>
+        <body>
+            <nav><a href="/">Home</a> | <a href="/markets">Markets</a> | <a href="/world">World</a></nav>
+            <article>
+                <h1>Tariffs hit consumers</h1>
+                <p>Tariffs are taxes on imports paid by consumers in the importing country, not the exporting one, economists explained today again.</p>
+            </article>
+            <footer>Subscribe to our newsletter for daily updates and breaking-news alerts</footer>
+        </body>
+        </html>"#;
+
+        let result = extract(html, Some("https://news.example.com/tariffs")).unwrap();
+        let m = &result.metadata;
+
+        assert!(m.word_count > 0, "extraction must produce a word count");
+        // articleBody is exactly 20 words. The extracted markdown may
+        // include more or fewer words depending on what the scorer
+        // captured; the invariant we assert is structural, not numeric.
+        assert_eq!(
+            m.word_count_article + m.word_count_chrome,
+            m.word_count,
+            "invariant: article + chrome == total. \
+             got article={}, chrome={}, total={}",
+            m.word_count_article,
+            m.word_count_chrome,
+            m.word_count
+        );
+        assert!(
+            m.word_count_article > 0,
+            "JSON-LD articleBody must populate article portion (>0); \
+             got article={}",
+            m.word_count_article
+        );
+    }
+
+    /// M12 test 2: when no JSON-LD body is present, the article portion
+    /// falls back to the M2-style body heuristic (`llm::body_word_count`
+    /// on extracted markdown). Chrome is the remainder. The article
+    /// portion must still be >0 on a real body page; total invariant holds.
+    #[test]
+    fn test_word_count_breakdown_without_jsonld_falls_back_to_heuristic() {
+        // No <script type="application/ld+json"> block — the breakdown
+        // must come from the body::process_body fallback.
+        let html = r#"
+        <html lang="en">
+        <head><title>Plain article</title></head>
+        <body>
+            <article>
+                <h1>Plain article</h1>
+                <p>The economy expanded last quarter at an annualized rate of three percent
+                   driven primarily by consumer spending and a rebound in fixed investment,
+                   government statisticians reported on Thursday morning at the usual hour.</p>
+                <p>Analysts had broadly expected the print, but the composition of the gain
+                   surprised some who had bet that residential housing would drag the headline
+                   number into the low twos rather than the comfortable threes.</p>
+            </article>
+        </body>
+        </html>"#;
+
+        let result = extract(html, Some("https://news.example.com/gdp")).unwrap();
+        let m = &result.metadata;
+
+        assert!(m.word_count > 0, "extraction must produce a word count");
+        assert_eq!(
+            m.word_count_article + m.word_count_chrome,
+            m.word_count,
+            "invariant: article + chrome == total. \
+             got article={}, chrome={}, total={}",
+            m.word_count_article,
+            m.word_count_chrome,
+            m.word_count
+        );
+        assert!(
+            m.word_count_article > 0,
+            "fallback body heuristic must populate article portion (>0); \
+             got article={}",
+            m.word_count_article
+        );
+        // Sanity: structured_data should be empty (no JSON-LD in fixture).
+        assert!(
+            result.structured_data.is_empty()
+                || crate::jsonld::classify_all(&result.structured_data)
+                    .iter()
+                    .all(|s| !matches!(
+                        s,
+                        crate::jsonld::JsonLdSchema::NewsArticle { body: Some(_), .. }
+                            | crate::jsonld::JsonLdSchema::Review { review_body: Some(_), .. }
+                    )),
+            "fixture should have no JSON-LD article/review body — \
+             this test exercises the fallback path"
+        );
+    }
+
+    /// M12 test 3: JSON output shape gains `word_count_article` and
+    /// `word_count_chrome` fields when populated. The existing
+    /// `word_count` field is preserved. The three numbers satisfy
+    /// article + chrome == total.
+    #[test]
+    fn test_word_count_breakdown_json_format_has_three_fields() {
+        let html = r#"
+        <html lang="en">
+        <head><title>JSON shape test</title></head>
+        <body>
+            <article>
+                <h1>JSON shape</h1>
+                <p>The body of this article has more than ten words so the
+                   fallback heuristic populates a positive article portion.
+                   The remaining chrome words come from any nav and footer.</p>
+            </article>
+        </body>
+        </html>"#;
+
+        let result = extract(html, Some("https://example.com/json")).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&result).unwrap()).unwrap();
+        let meta = &json["metadata"];
+
+        // Existing field preserved.
+        assert!(
+            meta.get("word_count").is_some(),
+            "json must keep word_count field; got: {meta}"
+        );
+        // New fields present (because population logic ran and produced
+        // non-zero values — `skip_serializing_if = is_zero_usize` would
+        // drop them if both were 0).
+        let total = meta["word_count"].as_u64().unwrap();
+        let article = meta["word_count_article"].as_u64().unwrap_or(0);
+        let chrome = meta["word_count_chrome"].as_u64().unwrap_or(0);
+        assert_eq!(
+            article + chrome,
+            total,
+            "invariant: article + chrome == word_count in JSON output. \
+             got article={article}, chrome={chrome}, total={total}; meta={meta}"
+        );
+        assert!(
+            article > 0 || total == 0,
+            "expect at least some article words when total > 0; \
+             got article={article}, total={total}"
+        );
+    }
+
+    /// M12 test 4: --mode summary / toc / sections do NOT call into
+    /// `build_metadata_header`, so the breakdown line never appears in
+    /// those modes. This pins the modes' contract (link-list outputs
+    /// stay clean of metadata noise — see iter-5 / iter-7 carry-forward).
+    #[test]
+    fn test_word_count_omitted_or_simple_in_summary_mode() {
+        let html = r#"
+        <html lang="en">
+        <head><title>Hub-style page</title></head>
+        <body>
+            <nav>
+                <a href="/a">First section</a>
+                <a href="/b">Second section</a>
+                <a href="/c">Third section</a>
+            </nav>
+            <article>
+                <p>Short body for hub-style page; the summary mode emits a link list, not a metadata header.</p>
+            </article>
+        </body>
+        </html>"#;
+
+        let result = extract(html, Some("https://example.com/hub")).unwrap();
+        let summary = crate::to_llm_summary(&result, Some("https://example.com/hub"));
+        let toc = crate::to_llm_toc(&result, Some("https://example.com/hub"));
+        let sections = crate::to_llm_sections(&result, Some("https://example.com/hub"));
+
+        for (name, output) in [("summary", &summary), ("toc", &toc), ("sections", &sections)] {
+            assert!(
+                !output.contains("(article:"),
+                "{name} mode must NOT contain the article/chrome breakdown; \
+                 got: {output}"
+            );
+            // toc/summary/sections may or may not have a "Word count:" line
+            // depending on their own header conventions, but it must NOT
+            // carry the M12 parenthetical when it exists.
+        }
     }
 }

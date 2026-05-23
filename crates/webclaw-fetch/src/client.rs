@@ -899,6 +899,10 @@ fn pdf_to_extraction_result(
             image: None,
             favicon: None,
             word_count,
+            // M12: PDF text is body content end-to-end (no nav/chrome
+            // wrapper extracted around it). Treat all words as article.
+            word_count_article: word_count,
+            word_count_chrome: 0,
             http_status: None,
         },
         content: webclaw_core::Content {

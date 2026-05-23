@@ -9,6 +9,12 @@ mod cleanup;
 mod images;
 mod links;
 mod metadata;
+mod output_size;
+
+pub use output_size::{
+    to_json_summary, to_json_toc, to_llm_summary, to_llm_toc, truncate_json_with_wrapper,
+    truncate_with_footer,
+};
 
 use crate::types::ExtractionResult;
 

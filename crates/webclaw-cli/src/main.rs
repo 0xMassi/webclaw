@@ -170,6 +170,16 @@ struct Cli {
     #[arg(short, long, default_value = "markdown")]
     format: OutputFormat,
 
+    /// Output mode: full (default), summary (link list), or toc (H1/H2 outline + first paragraph).
+    /// Orthogonal to --format; e.g. `-f json --mode summary` returns a JSON link array.
+    #[arg(long, default_value = "full")]
+    mode: OutputMode,
+
+    /// Cap the final output at N bytes; on overflow truncate at a UTF-8 boundary
+    /// and append a [truncated: N more bytes ...] footer. 0 = no cap (default).
+    #[arg(long, default_value = "0")]
+    max_output_bytes: u64,
+
     /// Browser to impersonate
     #[arg(short, long, default_value = "chrome")]
     browser: Browser,
@@ -411,6 +421,17 @@ enum OutputFormat {
     Text,
     Llm,
     Html,
+}
+
+/// Output mode. `full` is the default and matches the historical
+/// behaviour; `summary` returns just the navigation/link list; `toc`
+/// returns the H1/H2 outline plus the first paragraph after each H2.
+/// Orthogonal to `--format`.
+#[derive(Clone, ValueEnum, PartialEq, Eq)]
+enum OutputMode {
+    Full,
+    Summary,
+    Toc,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -719,26 +740,80 @@ fn raw_html_or_markdown(result: &ExtractionResult) -> &str {
 
 /// Format an `ExtractionResult` into a string for the given output format.
 fn format_output(result: &ExtractionResult, format: &OutputFormat, show_metadata: bool) -> String {
+    format_output_with_mode(result, format, show_metadata, &OutputMode::Full, 0)
+}
+
+/// Format an `ExtractionResult` for the given format and mode, then apply
+/// the byte cap. Returns the final string ready for stdout / disk.
+///
+/// `mode == Full` reproduces the legacy behaviour exactly.
+/// `mode == Summary` returns just the link list (text-formats) or a JSON
+/// array of `{title, url}` (json format).
+/// `mode == Toc` returns an H1/H2 outline + first paragraph after each H2.
+///
+/// `max_output_bytes == 0` disables the cap. Otherwise the output is
+/// truncated at a UTF-8 boundary with a `[truncated: ...]` footer
+/// (or a `_truncated` wrapper for JSON, so the document stays parseable).
+fn format_output_with_mode(
+    result: &ExtractionResult,
+    format: &OutputFormat,
+    show_metadata: bool,
+    mode: &OutputMode,
+    max_output_bytes: u64,
+) -> String {
+    let body = render_body(result, format, show_metadata, mode);
+    apply_byte_cap(&body, format, max_output_bytes)
+}
+
+fn render_body(
+    result: &ExtractionResult,
+    format: &OutputFormat,
+    show_metadata: bool,
+    mode: &OutputMode,
+) -> String {
+    match mode {
+        OutputMode::Summary => match format {
+            OutputFormat::Json => webclaw_core::to_json_summary(result),
+            _ => webclaw_core::to_llm_summary(result, result.metadata.url.as_deref()),
+        },
+        OutputMode::Toc => match format {
+            OutputFormat::Json => webclaw_core::to_json_toc(result),
+            _ => webclaw_core::to_llm_toc(result, result.metadata.url.as_deref()),
+        },
+        OutputMode::Full => match format {
+            OutputFormat::Markdown => {
+                let mut out = String::new();
+                if show_metadata {
+                    out.push_str(&format_frontmatter(&result.metadata));
+                }
+                out.push_str(&result.content.markdown);
+                if !result.structured_data.is_empty() {
+                    out.push_str("\n\n## Structured Data\n\n```json\n");
+                    out.push_str(
+                        &serde_json::to_string_pretty(&result.structured_data).unwrap_or_default(),
+                    );
+                    out.push_str("\n```");
+                }
+                out
+            }
+            OutputFormat::Json => {
+                serde_json::to_string_pretty(result).expect("serialization failed")
+            }
+            OutputFormat::Text => result.content.plain_text.clone(),
+            OutputFormat::Llm => to_llm_text(result, result.metadata.url.as_deref()),
+            OutputFormat::Html => raw_html_or_markdown(result).to_string(),
+        },
+    }
+}
+
+fn apply_byte_cap(body: &str, format: &OutputFormat, cap: u64) -> String {
+    if cap == 0 {
+        return body.to_string();
+    }
+    let cap = cap as usize;
     match format {
-        OutputFormat::Markdown => {
-            let mut out = String::new();
-            if show_metadata {
-                out.push_str(&format_frontmatter(&result.metadata));
-            }
-            out.push_str(&result.content.markdown);
-            if !result.structured_data.is_empty() {
-                out.push_str("\n\n## Structured Data\n\n```json\n");
-                out.push_str(
-                    &serde_json::to_string_pretty(&result.structured_data).unwrap_or_default(),
-                );
-                out.push_str("\n```");
-            }
-            out
-        }
-        OutputFormat::Json => serde_json::to_string_pretty(result).expect("serialization failed"),
-        OutputFormat::Text => result.content.plain_text.clone(),
-        OutputFormat::Llm => to_llm_text(result, result.metadata.url.as_deref()),
-        OutputFormat::Html => raw_html_or_markdown(result).to_string(),
+        OutputFormat::Json => webclaw_core::truncate_json_with_wrapper(body, cap),
+        _ => webclaw_core::truncate_with_footer(body, cap),
     }
 }
 
@@ -1036,37 +1111,15 @@ fn format_frontmatter(meta: &Metadata) -> String {
     lines.join("\n")
 }
 
-fn print_output(result: &ExtractionResult, format: &OutputFormat, show_metadata: bool) {
-    match format {
-        OutputFormat::Markdown => {
-            if show_metadata {
-                print!("{}", format_frontmatter(&result.metadata));
-            }
-            println!("{}", result.content.markdown);
-            if !result.structured_data.is_empty() {
-                println!(
-                    "\n## Structured Data\n\n```json\n{}\n```",
-                    serde_json::to_string_pretty(&result.structured_data).unwrap_or_default()
-                );
-            }
-        }
-        OutputFormat::Json => {
-            // serde_json::to_string_pretty won't fail on our types
-            println!(
-                "{}",
-                serde_json::to_string_pretty(result).expect("serialization failed")
-            );
-        }
-        OutputFormat::Text => {
-            println!("{}", result.content.plain_text);
-        }
-        OutputFormat::Llm => {
-            println!("{}", to_llm_text(result, result.metadata.url.as_deref()));
-        }
-        OutputFormat::Html => {
-            println!("{}", raw_html_or_markdown(result));
-        }
-    }
+fn print_output_with_mode(
+    result: &ExtractionResult,
+    format: &OutputFormat,
+    show_metadata: bool,
+    mode: &OutputMode,
+    max_output_bytes: u64,
+) {
+    let out = format_output_with_mode(result, format, show_metadata, mode, max_output_bytes);
+    println!("{out}");
 }
 
 /// Print cloud API response in the requested format.
@@ -1129,6 +1182,53 @@ fn print_cloud_output(resp: &serde_json::Value, format: &OutputFormat) {
                 print_cloud_output(resp, &OutputFormat::Markdown);
             }
         }
+    }
+}
+
+/// Render the cloud response into a string per `format`, then apply
+/// `--max-output-bytes` if non-zero. Mirrors `print_cloud_output` exactly
+/// when `cap == 0`.
+fn print_cloud_output_capped(resp: &serde_json::Value, format: &OutputFormat, cap: u64) {
+    if cap == 0 {
+        print_cloud_output(resp, format);
+        return;
+    }
+    let body = render_cloud_body(resp, format);
+    println!("{}", apply_byte_cap(&body, format, cap));
+}
+
+fn render_cloud_body(resp: &serde_json::Value, format: &OutputFormat) -> String {
+    match format {
+        OutputFormat::Json => {
+            serde_json::to_string_pretty(resp).expect("serialization failed")
+        }
+        OutputFormat::Markdown => resp
+            .get("content")
+            .and_then(|c| c.get("markdown"))
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| resp.get("markdown").and_then(|m| m.as_str()).map(|s| s.to_string()))
+            .unwrap_or_else(|| {
+                serde_json::to_string_pretty(resp).expect("serialization failed")
+            }),
+        OutputFormat::Text => resp
+            .get("content")
+            .and_then(|c| c.get("plain_text"))
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| render_cloud_body(resp, &OutputFormat::Markdown)),
+        OutputFormat::Llm => resp
+            .get("content")
+            .and_then(|c| c.get("llm_text"))
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| render_cloud_body(resp, &OutputFormat::Markdown)),
+        OutputFormat::Html => resp
+            .get("content")
+            .and_then(|c| c.get("raw_html"))
+            .and_then(|h| h.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| render_cloud_body(resp, &OutputFormat::Markdown)),
     }
 }
 
@@ -2662,17 +2762,33 @@ async fn main() {
                     .unwrap_or_default();
                 let custom_name = entries.first().and_then(|(_, name)| name.clone());
                 let filename = custom_name.unwrap_or_else(|| url_to_filename(&url, &cli.format));
-                let content = format_output(&result, &cli.format, cli.metadata);
+                let content = format_output_with_mode(
+                    &result,
+                    &cli.format,
+                    cli.metadata,
+                    &cli.mode,
+                    cli.max_output_bytes,
+                );
                 if let Err(e) = write_to_file(dir, &filename, &content) {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
             } else {
-                print_output(&result, &cli.format, cli.metadata);
+                print_output_with_mode(
+                    &result,
+                    &cli.format,
+                    cli.metadata,
+                    &cli.mode,
+                    cli.max_output_bytes,
+                );
             }
         }
         Ok(FetchOutput::Cloud(resp)) => {
-            print_cloud_output(&resp, &cli.format);
+            // Cloud path does not yet have a structured ExtractionResult,
+            // so --mode summary/toc can't be applied here. We still apply
+            // the byte cap to the rendered cloud output by routing through
+            // a helper that prints to a buffer first.
+            print_cloud_output_capped(&resp, &cli.format, cli.max_output_bytes);
         }
         Err(e) => {
             eprintln!("{e}");

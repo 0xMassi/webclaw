@@ -31,9 +31,9 @@ pub use jsonld::{
     ArticleRef, JsonLdSchema, LiveUpdate,
 };
 pub use llm::{
-    classify_hub, to_json_summary, to_json_toc, to_llm_summary, to_llm_text,
+    classify_hub, classify_thin_body, to_json_summary, to_json_toc, to_llm_summary, to_llm_text,
     to_llm_text_with_options, to_llm_toc, truncate_json_with_wrapper, truncate_with_footer,
-    HubClassification, LlmTextOptions,
+    HubClassification, LlmTextOptions, ThinBodyClassification,
 };
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,

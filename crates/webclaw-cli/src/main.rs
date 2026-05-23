@@ -1260,18 +1260,43 @@ fn apply_hub_detection(
     result: &ExtractionResult,
     requested_mode: &OutputMode,
     prefer_articles: bool,
-) -> OutputMode {
+) -> (OutputMode, bool) {
     let classification = webclaw_core::classify_hub(result);
     if !classification.is_hub {
-        return requested_mode.clone();
+        return (requested_mode.clone(), false);
     }
     // Always emit the informational hint on hub detection — stderr only.
     eprintln!("# hint: {}", classification.hint_line());
-    if prefer_articles {
+    let mode = if prefer_articles {
         // Caller asked us to honor the detection: switch to summary.
         OutputMode::Summary
     } else {
         requested_mode.clone()
+    };
+    (mode, true)
+}
+
+/// M10: emit a stderr hint when the extracted body is < 500 words on a
+/// non-exempt host. Suppressed on `--mode summary` / `--mode toc` (those
+/// modes produce short outputs by design) and when the hub detector
+/// already fired its own hint (avoids double-hinting on JS-hub pages
+/// which are also thin by definition). stdout is never touched.
+fn apply_thin_body_detection(
+    result: &ExtractionResult,
+    requested_mode: &OutputMode,
+    hub_hint_already_emitted: bool,
+) {
+    // Mode-specific suppression: summary/toc are intentionally short.
+    if !matches!(requested_mode, OutputMode::Full) {
+        return;
+    }
+    // Avoid double-hinting if the hub detector already spoke up.
+    if hub_hint_already_emitted {
+        return;
+    }
+    let classification = webclaw_core::classify_thin_body(result);
+    if let Some(hint) = classification.hint_line() {
+        eprintln!("# hint: {hint}");
     }
 }
 
@@ -2922,7 +2947,9 @@ async fn main() {
                 // Fall through.
             }
 
-            let effective_mode = apply_hub_detection(&result, &cli.mode, cli.prefer_articles);
+            let (effective_mode, hub_hint_emitted) =
+                apply_hub_detection(&result, &cli.mode, cli.prefer_articles);
+            apply_thin_body_detection(&result, &cli.mode, hub_hint_emitted);
             if let Some(ref dir) = cli.output_dir {
                 let url = cli
                     .urls

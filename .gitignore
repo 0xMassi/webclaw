@@ -20,3 +20,8 @@ __pycache__/
 .playwright-cli/
 demo_sample.html
 demo_saved.json
+baselines/
+.loop-scratch/
+*-loop-progress.log
+_build-release.bat
+_build-release.log

@@ -52,6 +52,7 @@ pub fn extract(doc: &Html, url: Option<&str>) -> Metadata {
         image,
         favicon,
         word_count: 0, // filled later by the extractor
+        http_status: None, // filled by webclaw-fetch when reachable; None for local-file / --stdin
     }
 }
 

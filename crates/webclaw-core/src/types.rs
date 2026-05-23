@@ -15,7 +15,7 @@ pub struct ExtractionResult {
     pub structured_data: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Metadata {
     pub title: Option<String>,
     pub description: Option<String>,
@@ -27,6 +27,20 @@ pub struct Metadata {
     pub image: Option<String>,
     pub favicon: Option<String>,
     pub word_count: usize,
+    /// HTTP status code from the final response (after redirects). `None`
+    /// when extraction was not preceded by an HTTP fetch — e.g. `--file`,
+    /// `--stdin`, or any call into `extract_with_options` directly.
+    /// Serialized in JSON output as `"status"` (renamed for caller
+    /// ergonomics; M7 / issue #19). Surfaced in `-f llm` / `-f text` as a
+    /// `> Status: <code>` line right after `> URL:` so callers can
+    /// distinguish a real 404 from a thin-body 200 without parsing the
+    /// body.
+    #[serde(
+        rename = "status",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub http_status: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

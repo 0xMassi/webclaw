@@ -542,9 +542,13 @@ impl FetchClient {
             let resp = client.get(json_url.as_str()).send().await?;
             let response = Response::from_wreq(resp).await?;
             if response.is_success() {
+                let reddit_status = response.status();
                 let bytes = response.body();
                 match crate::reddit::parse_reddit_json(bytes, url) {
-                    Ok(result) => return Ok(result),
+                    Ok(mut result) => {
+                        result.metadata.http_status = Some(reddit_status);
+                        return Ok(result);
+                    }
                     Err(e) => warn!("reddit json fallback failed: {e}, falling back to HTML"),
                 }
             }
@@ -588,7 +592,9 @@ impl FetchClient {
             );
 
             let pdf_result = webclaw_pdf::extract_pdf(bytes, self.pdf_mode.clone())?;
-            Ok(pdf_to_extraction_result(&pdf_result, &final_url))
+            let mut result = pdf_to_extraction_result(&pdf_result, &final_url);
+            result.metadata.http_status = Some(status);
+            Ok(result)
         } else if let Some(doc_type) =
             crate::document::is_document_content_type(&headers, &final_url)
         {
@@ -606,6 +612,7 @@ impl FetchClient {
 
             let mut result = crate::document::extract_document(bytes, doc_type)?;
             result.metadata.url = Some(final_url);
+            result.metadata.http_status = Some(status);
             Ok(result)
         } else {
             let html = response.into_text();
@@ -617,12 +624,15 @@ impl FetchClient {
             if crate::linkedin::is_linkedin_post(&final_url) {
                 if let Some(result) = crate::linkedin::extract_linkedin_post(&html, &final_url) {
                     debug!("linkedin extraction succeeded");
+                    let mut result = result;
+                    result.metadata.http_status = Some(status);
                     return Ok(result);
                 }
                 debug!("linkedin extraction failed, falling back to standard");
             }
 
-            let extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
+            let mut extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
+            extraction.metadata.http_status = Some(status);
 
             Ok(extraction)
         }
@@ -889,6 +899,7 @@ fn pdf_to_extraction_result(
             image: None,
             favicon: None,
             word_count,
+            http_status: None,
         },
         content: webclaw_core::Content {
             markdown,

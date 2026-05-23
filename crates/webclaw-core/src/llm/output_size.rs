@@ -14,7 +14,7 @@ use crate::types::ExtractionResult;
 
 use super::body;
 use super::links;
-use super::metadata::build_metadata_header;
+use super::metadata::build_metadata_header_with_opts;
 
 // ---------------------------------------------------------------------------
 // Summary mode — link/title list, no body
@@ -26,7 +26,9 @@ use super::metadata::build_metadata_header;
 pub fn to_llm_summary(result: &ExtractionResult, url: Option<&str>) -> String {
     let links = collect_summary_links(result);
     let mut out = String::new();
-    build_metadata_header(&mut out, result, url);
+    // M7: suppress the `> Status:` line in summary mode — the link list
+    // is conceptually navigation, not protocol-level outcome.
+    build_metadata_header_with_opts(&mut out, result, url, false);
     if !out.is_empty() {
         out.push('\n');
     }
@@ -88,7 +90,9 @@ pub fn to_llm_toc(result: &ExtractionResult, url: Option<&str>) -> String {
     let entries = collect_toc_entries(result);
 
     let mut out = String::new();
-    build_metadata_header(&mut out, result, url);
+    // M7: suppress the `> Status:` line in toc mode — the outline is
+    // structural, not protocol-level outcome.
+    build_metadata_header_with_opts(&mut out, result, url, false);
     if !out.is_empty() {
         out.push('\n');
     }
@@ -355,6 +359,7 @@ mod tests {
                 image: None,
                 favicon: None,
                 word_count: 0,
+                http_status: None,
             },
             content: Content {
                 markdown: markdown.to_string(),

@@ -92,6 +92,7 @@ pub fn parse_reddit_json(json_bytes: &[u8], url: &str) -> Result<ExtractionResul
             image: None,
             favicon: None,
             word_count,
+            http_status: None,
         },
         content: Content {
             markdown,

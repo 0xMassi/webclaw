@@ -216,6 +216,7 @@ pub fn extract_linkedin_post(html: &str, url: &str) -> Option<ExtractionResult> 
             image: None,
             favicon: None,
             word_count,
+            http_status: None,
         },
         content: Content {
             markdown,

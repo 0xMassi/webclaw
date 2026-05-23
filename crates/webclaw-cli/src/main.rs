@@ -858,7 +858,20 @@ fn render_body(
                     serde_json::to_string_pretty(result).expect("serialization failed")
                 }
             }
-            OutputFormat::Text => result.content.plain_text.clone(),
+            OutputFormat::Text => {
+                // M7 (issue #19): prepend `Status: <code>` line so callers
+                // using `-f text` can distinguish a real 404 from a
+                // thin-body 200 without parsing the body. No `> `
+                // blockquote prefix (text format has no header section).
+                // Only emitted when populated; local-file/--stdin paths
+                // leave http_status=None and produce body-only output.
+                let body = result.content.plain_text.clone();
+                if let Some(code) = result.metadata.http_status {
+                    format!("Status: {code}\n{body}")
+                } else {
+                    body
+                }
+            }
             OutputFormat::Llm => to_llm_text_with_options(
                 result,
                 result.metadata.url.as_deref(),
@@ -2974,6 +2987,7 @@ mod tests {
                 image: None,
                 favicon: None,
                 word_count: markdown.split_whitespace().count(),
+                http_status: None,
             },
             content: Content {
                 markdown: markdown.to_string(),

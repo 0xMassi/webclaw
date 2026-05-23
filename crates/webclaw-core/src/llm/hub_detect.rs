@@ -136,6 +136,7 @@ mod tests {
                 image: None,
                 favicon: None,
                 word_count: 0,
+                http_status: None,
             },
             content: Content {
                 markdown: markdown.to_string(),

@@ -518,6 +518,7 @@ impl WebclawMcp {
                         image: None,
                         favicon: None,
                         word_count: markdown.split_whitespace().count(),
+                        http_status: None,
                     },
                     domain_data: None,
                     structured_data: Vec::new(),

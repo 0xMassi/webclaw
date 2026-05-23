@@ -110,6 +110,7 @@ pub fn extract_document(
             image: None,
             favicon: None,
             word_count,
+            http_status: None,
         },
         content: webclaw_core::Content {
             markdown,

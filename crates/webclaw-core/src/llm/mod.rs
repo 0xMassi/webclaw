@@ -344,6 +344,7 @@ mod tests {
                 image: None,
                 favicon: None,
                 word_count: 42,
+                http_status: None,
             },
             content: Content {
                 markdown: markdown.into(),
@@ -597,6 +598,7 @@ mod tests {
                 image: None,
                 favicon: None,
                 word_count: 0,
+                http_status: None,
             },
             content: Content {
                 markdown: "Just content".into(),
@@ -1213,5 +1215,125 @@ mod tests {
         let out = to_llm_text_with_options(&r, None, &LlmTextOptions { prefer_structured: true });
         assert!(out.contains("## Structured data"), "missing header in:\n{out}");
         assert!(out.contains("schema: WebPage"), "missing WebPage schema label in:\n{out}");
+    }
+
+    // ------------------------------------------------------------------
+    // M7: HTTP status header line (issue #19)
+    // ------------------------------------------------------------------
+
+    /// 200 control: status line appears in -f llm output even on success
+    /// so callers can distinguish "webclaw saw a 200" from "webclaw didn't
+    /// reach the formatter / status unknown" (e.g. local-file path).
+    #[test]
+    fn test_status_header_appears_on_200() {
+        let mut r = make_result("# Body");
+        r.metadata.http_status = Some(200);
+        let out = to_llm_text(&r, None);
+        assert!(
+            out.contains("> Status: 200\n") || out.contains("> Status: 200"),
+            "Status: 200 line missing from -f llm output:\n{out}"
+        );
+        // Must sit between URL and Title (Option A placement).
+        let url_pos = out.find("> URL:").expect("URL line missing");
+        let status_pos = out.find("> Status:").expect("Status line missing");
+        let title_pos = out.find("> Title:").expect("Title line missing");
+        assert!(url_pos < status_pos, "Status must come AFTER URL");
+        assert!(status_pos < title_pos, "Status must come BEFORE Title");
+    }
+
+    /// 404: status line distinguishes a real 404 (Status: 404 + thin
+    /// soft-404 body) from a thin 200 article. This is the core M7 bug
+    /// — `webclaw https://www.dailysabah.com/business/economy` was
+    /// returning exit 0 with a 13-word body and no way for the caller to
+    /// tell it was actually a 404 error page.
+    #[test]
+    fn test_status_header_appears_on_404() {
+        let mut r = make_result("## 404 / The page you're looking for does not exist!");
+        r.metadata.http_status = Some(404);
+        let out = to_llm_text(&r, None);
+        assert!(
+            out.contains("> Status: 404"),
+            "Status: 404 line missing from -f llm output:\n{out}"
+        );
+    }
+
+    /// When http_status is None (local-file / --stdin / direct
+    /// extract_with_options) NO Status line is emitted. Backward-compat
+    /// for callers that pre-date M7 and parse via line index.
+    #[test]
+    fn test_status_header_absent_when_unset() {
+        let r = make_result("# Body"); // http_status defaults to None
+        assert!(r.metadata.http_status.is_none());
+        let out = to_llm_text(&r, None);
+        assert!(
+            !out.contains("> Status:"),
+            "Status line leaked when http_status is None:\n{out}"
+        );
+    }
+
+    /// JSON output: the `status` field (renamed from internal http_status
+    /// via serde rename) appears at metadata level and carries the code.
+    #[test]
+    fn test_status_header_format_in_json() {
+        let mut r = make_result("# Body");
+        r.metadata.http_status = Some(404);
+        let json = serde_json::to_string_pretty(&r).expect("serialize");
+        assert!(
+            json.contains("\"status\": 404"),
+            "JSON output missing \"status\": 404:\n{json}"
+        );
+        // serde rename means the internal name "http_status" must NOT
+        // surface in JSON output.
+        assert!(
+            !json.contains("http_status"),
+            "internal field name leaked into JSON:\n{json}"
+        );
+    }
+
+    /// JSON output: when http_status is None the field is omitted
+    /// entirely (skip_serializing_if = "Option::is_none").
+    #[test]
+    fn test_status_field_omitted_in_json_when_unset() {
+        let r = make_result("# Body"); // http_status defaults to None
+        let json = serde_json::to_string_pretty(&r).expect("serialize");
+        assert!(
+            !json.contains("\"status\""),
+            "status field should be omitted when None:\n{json}"
+        );
+    }
+
+    /// Summary mode (M1 `--mode summary`) must NOT include the Status
+    /// line — summary returns a link list and the status would be noise.
+    #[test]
+    fn test_status_omitted_in_summary_mode() {
+        let mut r = make_result("# Body");
+        r.metadata.http_status = Some(404);
+        // to_llm_summary builds its own header via
+        // build_metadata_header_with_opts(include_status=false).
+        let out = to_llm_summary(&r, None);
+        assert!(
+            !out.contains("> Status:"),
+            "Status line leaked into summary mode output:\n{out}"
+        );
+        // URL line should still be present though.
+        assert!(
+            out.contains("> URL:") || r.metadata.url.is_some_and(|u| out.contains(&u)) || true,
+            // URL is conditional on metadata; we don't assert presence,
+            // only that Status is absent regardless.
+            ""
+        );
+    }
+
+    /// TOC mode (M1 `--mode toc`) must NOT include the Status line either —
+    /// the outline is structural metadata, status would clutter it.
+    #[test]
+    fn test_status_omitted_in_toc_mode() {
+        let mut r = make_result("# H1\n\n## H2\n\nFirst paragraph after H2.");
+        r.metadata.http_status = Some(404);
+        let out = to_llm_toc(&r, None);
+        assert!(
+            !out.contains("> Status:"),
+            "Status line leaked into toc mode output:\n{out}"
+        );
     }
 }

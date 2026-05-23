@@ -859,8 +859,11 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     let client =
         FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
-    let result = client
-        .fetch_and_extract_with_options(url, &options)
+    // M13: wrap with periodic stderr progress emitter. Fast fetches see
+    // zero emissions (timer never fires in <10s); slow fetches get a
+    // line every 10s of elapsed time so the CLI doesn't appear hung.
+    let fetch_fut = client.fetch_and_extract_with_options(url, &options);
+    let result = webclaw_fetch::with_progress(url, fetch_fut)
         .await
         .map_err(|e| format!("fetch error: {e}"))?;
 

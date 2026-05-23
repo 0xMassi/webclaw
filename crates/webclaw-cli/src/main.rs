@@ -171,7 +171,8 @@ struct Cli {
     #[arg(short, long, default_value = "markdown")]
     format: OutputFormat,
 
-    /// Output mode: full (default), summary (link list), or toc (H1/H2 outline + first paragraph).
+    /// Output mode: full (default), summary (link list), toc (H1/H2 outline + first paragraph),
+    /// or sections (nav-level section URLs only, for section discovery).
     /// Orthogonal to --format; e.g. `-f json --mode summary` returns a JSON link array.
     #[arg(long, default_value = "full")]
     mode: OutputMode,
@@ -452,13 +453,17 @@ enum OutputFormat {
 
 /// Output mode. `full` is the default and matches the historical
 /// behaviour; `summary` returns just the navigation/link list; `toc`
-/// returns the H1/H2 outline plus the first paragraph after each H2.
+/// returns the H1/H2 outline plus the first paragraph after each H2;
+/// `sections` (M8, issue #14) returns nav-level section URLs only for
+/// section discovery on hub/aggregator pages.
 /// Orthogonal to `--format`.
 #[derive(Clone, ValueEnum, PartialEq, Eq)]
 enum OutputMode {
     Full,
     Summary,
     Toc,
+    /// sections: nav-level section URLs only (for section discovery)
+    Sections,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -828,6 +833,12 @@ fn render_body(
         OutputMode::Toc => match format {
             OutputFormat::Json => webclaw_core::to_json_toc(result),
             _ => webclaw_core::to_llm_toc(result, result.metadata.url.as_deref()),
+        },
+        OutputMode::Sections => match format {
+            OutputFormat::Json => {
+                webclaw_core::to_json_sections(result, result.metadata.url.as_deref())
+            }
+            _ => webclaw_core::to_llm_sections(result, result.metadata.url.as_deref()),
         },
         OutputMode::Full => match format {
             OutputFormat::Markdown => {
@@ -1269,7 +1280,14 @@ fn apply_hub_detection(
     eprintln!("# hint: {}", classification.hint_line());
     let mode = if prefer_articles {
         // Caller asked us to honor the detection: switch to summary.
-        OutputMode::Summary
+        // M8: if the caller asked for sections explicitly, preserve it —
+        // section listing is more specific than the summary link list,
+        // so don't downgrade Sections → Summary on hub-detect.
+        if matches!(requested_mode, OutputMode::Sections) {
+            OutputMode::Sections
+        } else {
+            OutputMode::Summary
+        }
     } else {
         requested_mode.clone()
     };

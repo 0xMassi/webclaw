@@ -11,9 +11,11 @@ mod images;
 mod links;
 mod metadata;
 mod output_size;
+mod sections;
 mod thin_body;
 
 pub use hub_detect::{classify as classify_hub, HubClassification};
+pub use sections::{collect_section_links, to_json_sections, to_llm_sections};
 pub use thin_body::{classify as classify_thin_body, ThinBodyClassification};
 pub use output_size::{
     to_json_summary, to_json_toc, to_llm_summary, to_llm_toc, truncate_json_with_wrapper,

@@ -27,3 +27,4 @@ _build-release.bat
 _build-release.log
 improve-loop-CONTINUE.md
 iter-*-smoke/
+_local/

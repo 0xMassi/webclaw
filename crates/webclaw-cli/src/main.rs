@@ -11,8 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 use webclaw_core::{
-    ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options,
-    to_llm_text,
+    ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, JsonLdSchema, LlmTextOptions,
+    Metadata, classify_jsonld_all, extract_with_options, primary_schema, to_llm_text,
+    to_llm_text_with_options,
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
@@ -187,6 +188,24 @@ struct Cli {
     /// this flag, so callers can react on the next invocation.
     #[arg(long)]
     prefer_articles: bool,
+
+    /// Surface the schema-aware JSON-LD block (when present) at the TOP of
+    /// the output, before prose. Bypasses the default-drop list for
+    /// WebPage/SiteNavigationElement when explicitly requested. Affects
+    /// `-f llm` / `-f text` (adds a Markdown block) and `-f json` (adds a
+    /// `structured` field to the output object).
+    #[arg(long)]
+    prefer_structured: bool,
+
+    /// When the page contains an ItemList or LiveBlogPosting in its JSON-LD,
+    /// emit ONLY the article list as a JSON array of
+    /// {position, title, url, published}. The `-f` flag is OVERRIDDEN in this
+    /// mode: stdout is always a JSON array. When the page has no
+    /// ItemList/LiveBlogPosting, emits a one-line stderr hint and falls
+    /// through to default extraction (does NOT error). Combined with
+    /// --prefer-structured, this flag wins.
+    #[arg(long)]
+    articles_from_jsonld: bool,
 
     /// Browser to impersonate
     #[arg(short, long, default_value = "chrome")]
@@ -769,7 +788,28 @@ fn format_output_with_mode(
     mode: &OutputMode,
     max_output_bytes: u64,
 ) -> String {
-    let body = render_body(result, format, show_metadata, mode);
+    format_output_with_mode_and_structured(
+        result,
+        format,
+        show_metadata,
+        mode,
+        max_output_bytes,
+        false,
+    )
+}
+
+/// M4 extension: same as `format_output_with_mode` but with an extra
+/// `prefer_structured` flag. When false this is byte-identical to the
+/// legacy formatter — sentinel-critical for p01-p15.
+fn format_output_with_mode_and_structured(
+    result: &ExtractionResult,
+    format: &OutputFormat,
+    show_metadata: bool,
+    mode: &OutputMode,
+    max_output_bytes: u64,
+    prefer_structured: bool,
+) -> String {
+    let body = render_body(result, format, show_metadata, mode, prefer_structured);
     apply_byte_cap(&body, format, max_output_bytes)
 }
 
@@ -778,6 +818,7 @@ fn render_body(
     format: &OutputFormat,
     show_metadata: bool,
     mode: &OutputMode,
+    prefer_structured: bool,
 ) -> String {
     match mode {
         OutputMode::Summary => match format {
@@ -805,10 +846,26 @@ fn render_body(
                 out
             }
             OutputFormat::Json => {
-                serde_json::to_string_pretty(result).expect("serialization failed")
+                if prefer_structured {
+                    let schemas = classify_jsonld_all(&result.structured_data);
+                    let structured = primary_schema(&schemas);
+                    let envelope = serde_json::json!({
+                        "structured": structured,
+                        "extracted": result,
+                    });
+                    serde_json::to_string_pretty(&envelope).expect("serialization failed")
+                } else {
+                    serde_json::to_string_pretty(result).expect("serialization failed")
+                }
             }
             OutputFormat::Text => result.content.plain_text.clone(),
-            OutputFormat::Llm => to_llm_text(result, result.metadata.url.as_deref()),
+            OutputFormat::Llm => to_llm_text_with_options(
+                result,
+                result.metadata.url.as_deref(),
+                &LlmTextOptions {
+                    prefer_structured,
+                },
+            ),
             OutputFormat::Html => raw_html_or_markdown(result).to_string(),
         },
     }
@@ -1129,17 +1186,6 @@ fn format_frontmatter(meta: &Metadata) -> String {
     lines.join("\n")
 }
 
-fn print_output_with_mode(
-    result: &ExtractionResult,
-    format: &OutputFormat,
-    show_metadata: bool,
-    mode: &OutputMode,
-    max_output_bytes: u64,
-) {
-    let out = format_output_with_mode(result, format, show_metadata, mode, max_output_bytes);
-    println!("{out}");
-}
-
 /// Apply iter-2 M2's hub-page detector. When a hub is detected:
 ///   - emit a single stderr hint line (always — informational only),
 ///   - if `prefer_articles` is on, override the OutputMode to `Summary`
@@ -1152,6 +1198,51 @@ fn print_output_with_mode(
 /// Designed to be additive — `prefer_articles=false` callers keep their
 /// existing stdout bytes byte-identical; the hint goes to stderr so it
 /// doesn't affect the sentinel byte-counting on p01-p15.
+/// M4: If the page has an ItemList or LiveBlogPosting JSON-LD record, return
+/// a JSON array of articles (one entry per item). Returns None when the page
+/// has no such schema, in which case the caller should fall through to
+/// default extraction and emit a stderr hint.
+///
+/// Output shape per element: `{position, title, url, published}`. Null fields
+/// for the values that don't appear on this page.
+fn try_articles_from_jsonld(result: &ExtractionResult) -> Option<String> {
+    let schemas = classify_jsonld_all(&result.structured_data);
+    let primary = primary_schema(&schemas)?;
+    match primary {
+        JsonLdSchema::ItemList { items, .. } => {
+            let arr: Vec<serde_json::Value> = items
+                .iter()
+                .enumerate()
+                .map(|(idx, it)| {
+                    serde_json::json!({
+                        "position": it.position.unwrap_or(idx as u64 + 1),
+                        "title": it.title,
+                        "url": it.url,
+                        "published": it.published,
+                    })
+                })
+                .collect();
+            Some(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()))
+        }
+        JsonLdSchema::LiveBlogPosting { updates, .. } => {
+            let arr: Vec<serde_json::Value> = updates
+                .iter()
+                .enumerate()
+                .map(|(idx, u)| {
+                    serde_json::json!({
+                        "position": idx as u64 + 1,
+                        "title": u.headline,
+                        "url": u.url,
+                        "published": u.published,
+                    })
+                })
+                .collect();
+            Some(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()))
+        }
+        _ => None,
+    }
+}
+
 fn apply_hub_detection(
     result: &ExtractionResult,
     requested_mode: &OutputMode,
@@ -2803,6 +2894,21 @@ async fn main() {
     // Single-page extraction (handles both HTML and PDF via content-type detection)
     match fetch_and_extract(&cli).await {
         Ok(FetchOutput::Local(result)) => {
+            // M4: --articles-from-jsonld short-circuits with a JSON array of
+            // articles when the page has an ItemList or LiveBlogPosting.
+            // When neither is present, emit a stderr hint and fall through to
+            // the default extraction path (the --mode flag still applies).
+            if cli.articles_from_jsonld {
+                if let Some(json_array) = try_articles_from_jsonld(&result) {
+                    println!("{json_array}");
+                    return;
+                }
+                eprintln!(
+                    "# hint: --articles-from-jsonld found no ItemList or LiveBlogPosting on this URL; falling through to default extraction"
+                );
+                // Fall through.
+            }
+
             let effective_mode = apply_hub_detection(&result, &cli.mode, cli.prefer_articles);
             if let Some(ref dir) = cli.output_dir {
                 let url = cli
@@ -2812,25 +2918,28 @@ async fn main() {
                     .unwrap_or_default();
                 let custom_name = entries.first().and_then(|(_, name)| name.clone());
                 let filename = custom_name.unwrap_or_else(|| url_to_filename(&url, &cli.format));
-                let content = format_output_with_mode(
+                let content = format_output_with_mode_and_structured(
                     &result,
                     &cli.format,
                     cli.metadata,
                     &effective_mode,
                     cli.max_output_bytes,
+                    cli.prefer_structured,
                 );
                 if let Err(e) = write_to_file(dir, &filename, &content) {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
             } else {
-                print_output_with_mode(
+                let content = format_output_with_mode_and_structured(
                     &result,
                     &cli.format,
                     cli.metadata,
                     &effective_mode,
                     cli.max_output_bytes,
+                    cli.prefer_structured,
                 );
+                println!("{content}");
             }
         }
         Ok(FetchOutput::Cloud(resp)) => {

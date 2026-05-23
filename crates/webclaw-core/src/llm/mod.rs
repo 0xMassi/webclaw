@@ -18,7 +18,26 @@ pub use output_size::{
     truncate_with_footer,
 };
 
+use crate::jsonld::{classify_all, primary_schema, JsonLdSchema};
 use crate::types::ExtractionResult;
+
+/// Hard size cap on the legacy `## Structured Data` block emitted at the
+/// bottom of `to_llm_text` output. The schema-aware block emitted at the top
+/// when `--prefer-structured` is set is NOT capped by this value (it has its
+/// own per-variant size discipline; see `render_structured_block`).
+const STRUCTURED_DATA_MAX_BYTES: usize = 16 * 1024;
+
+/// Controls extra structured-data rendering on top of the legacy `to_llm_text`.
+///
+/// Default values reproduce the legacy `to_llm_text` behaviour exactly —
+/// no caller without M4 flags sees any byte change.
+#[derive(Debug, Clone, Default)]
+pub struct LlmTextOptions {
+    /// When true, emit a schema-aware structured-data block at the TOP of
+    /// the output (after metadata, before prose) and suppress the legacy
+    /// raw JSON `## Structured Data` block at the bottom.
+    pub prefer_structured: bool,
+}
 
 /// Produce a token-optimized text representation of extracted content.
 ///
@@ -27,10 +46,34 @@ use crate::types::ExtractionResult;
 /// 2. Cleaned body (no images, no bold/italic, links as plain text)
 /// 3. Deduplicated links section at the end
 pub fn to_llm_text(result: &ExtractionResult, url: Option<&str>) -> String {
+    to_llm_text_with_options(result, url, &LlmTextOptions::default())
+}
+
+/// Same as `to_llm_text`, but with additional structured-data behaviours
+/// controlled by `LlmTextOptions`. Used by the M4 `--prefer-structured` CLI
+/// flag.
+pub fn to_llm_text_with_options(
+    result: &ExtractionResult,
+    url: Option<&str>,
+    opts: &LlmTextOptions,
+) -> String {
     let mut out = String::new();
 
     // -- 1. Metadata header --
     metadata::build_metadata_header(&mut out, result, url);
+
+    // -- 1b. Schema-aware structured data BEFORE the prose, if requested --
+    // Phase A confirmed that on Pitchfork review pages the existing raw-JSON
+    // block surfaces at byte ~50000 of a 58KB output; this hoists it.
+    if opts.prefer_structured {
+        let schemas = classify_all(&result.structured_data);
+        if let Some(block) = render_structured_block(&schemas) {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&block);
+        }
+    }
 
     // -- 2. Process body --
     let processed = body::process_body(&result.content.markdown);
@@ -59,26 +102,138 @@ pub fn to_llm_text(result: &ExtractionResult, url: Option<&str>) -> String {
     // hydration blobs (Next.js pageProps full of ad-targeting flags, build
     // IDs, schedule paths) explode to hundreds of KB and drown the LLM in
     // noise — drop them rather than ship them.
-    let mut useful: Vec<_> = result
-        .structured_data
-        .iter()
-        .filter(|v| is_useful_structured_data(v))
-        .cloned()
-        .collect();
-    for value in &mut useful {
-        scrub_body_fields(value, 0);
-    }
-    if !useful.is_empty() {
-        let serialized = serde_json::to_string_pretty(&useful).unwrap_or_default();
-        const STRUCTURED_DATA_MAX_BYTES: usize = 16 * 1024;
-        if serialized.len() <= STRUCTURED_DATA_MAX_BYTES {
-            out.push_str("\n\n## Structured Data\n\n```json\n");
-            out.push_str(&serialized);
-            out.push_str("\n```");
+    //
+    // When `prefer_structured` is set the schema-aware block already
+    // carries this information at the top, so we drop the legacy raw block
+    // to avoid duplication.
+    if !opts.prefer_structured {
+        let mut useful: Vec<_> = result
+            .structured_data
+            .iter()
+            .filter(|v| is_useful_structured_data(v))
+            .cloned()
+            .collect();
+        for value in &mut useful {
+            scrub_body_fields(value, 0);
+        }
+        if !useful.is_empty() {
+            let serialized = serde_json::to_string_pretty(&useful).unwrap_or_default();
+            if serialized.len() <= STRUCTURED_DATA_MAX_BYTES {
+                out.push_str("\n\n## Structured Data\n\n```json\n");
+                out.push_str(&serialized);
+                out.push_str("\n```");
+            }
         }
     }
 
     out.trim().to_string()
+}
+
+/// Render a schema-aware Markdown block summarising the page's JSON-LD.
+/// Returns `None` when no content-bearing schema is present.
+///
+/// Format:
+/// ```text
+/// ## Structured data
+///
+/// schema: ItemList (20 items)
+/// 1. <name or url> — <url>
+/// 2. ...
+/// ```
+fn render_structured_block(schemas: &[JsonLdSchema]) -> Option<String> {
+    let primary = primary_schema(schemas)?;
+    let mut buf = String::new();
+    buf.push_str("\n## Structured data\n\n");
+    match primary {
+        JsonLdSchema::ItemList { items, number_of_items } => {
+            let n = number_of_items.unwrap_or(items.len() as u64);
+            buf.push_str(&format!("schema: ItemList ({n} items)\n"));
+            for (i, it) in items.iter().enumerate() {
+                let pos = it.position.unwrap_or(i as u64 + 1);
+                let label = it.title.clone().unwrap_or_else(|| {
+                    it.url.clone().unwrap_or_else(|| "(no url)".to_string())
+                });
+                let url = it.url.as_deref().unwrap_or("");
+                if url.is_empty() {
+                    buf.push_str(&format!("{pos}. {label}\n"));
+                } else {
+                    buf.push_str(&format!("{pos}. {label} — {url}\n"));
+                }
+            }
+        }
+        JsonLdSchema::LiveBlogPosting { headline, updates } => {
+            buf.push_str("schema: LiveBlogPosting");
+            if let Some(h) = headline {
+                buf.push_str(&format!(" — {h}"));
+            }
+            buf.push('\n');
+            buf.push_str(&format!("updates: {}\n", updates.len()));
+            for u in updates {
+                let label = u.headline.clone().unwrap_or_else(|| {
+                    u.url.clone().unwrap_or_else(|| "(no url)".into())
+                });
+                let ts = u.published.as_deref().unwrap_or("");
+                if ts.is_empty() {
+                    buf.push_str(&format!("- {label}\n"));
+                } else {
+                    buf.push_str(&format!("- [{ts}] {label}\n"));
+                }
+            }
+        }
+        JsonLdSchema::NewsArticle { headline, body, date_published, author } => {
+            buf.push_str("schema: NewsArticle\n");
+            if let Some(h) = headline {
+                buf.push_str(&format!("headline: {h}\n"));
+            }
+            if let Some(a) = author {
+                buf.push_str(&format!("author: {a}\n"));
+            }
+            if let Some(d) = date_published {
+                buf.push_str(&format!("published: {d}\n"));
+            }
+            if let Some(b) = body {
+                buf.push_str("\n");
+                buf.push_str(b);
+                buf.push('\n');
+            }
+        }
+        JsonLdSchema::Review { headline, review_body, rated_item, author, date_published } => {
+            buf.push_str("schema: Review\n");
+            if let Some(h) = headline {
+                buf.push_str(&format!("headline: {h}\n"));
+            }
+            if let Some(item) = rated_item {
+                buf.push_str(&format!("rated: {item}\n"));
+            }
+            if let Some(a) = author {
+                buf.push_str(&format!("author: {a}\n"));
+            }
+            if let Some(d) = date_published {
+                buf.push_str(&format!("published: {d}\n"));
+            }
+            if let Some(b) = review_body {
+                buf.push('\n');
+                buf.push_str(b);
+                buf.push('\n');
+            }
+        }
+        JsonLdSchema::WebPageOrChrome { raw_type } => {
+            // Surface the WebPage block even though normal output drops it —
+            // user explicitly asked via --prefer-structured.
+            buf.push_str(&format!("schema: {raw_type}\n"));
+            buf.push_str("(navigation/chrome record; no content fields)\n");
+        }
+        JsonLdSchema::Unknown { raw_type, raw } => {
+            buf.push_str(&format!("schema: {raw_type} (unrecognised)\n"));
+            let pretty = serde_json::to_string_pretty(raw).unwrap_or_default();
+            if pretty.len() <= 4096 {
+                buf.push_str("\n```json\n");
+                buf.push_str(&pretty);
+                buf.push_str("\n```\n");
+            }
+        }
+    }
+    Some(buf)
 }
 
 /// Decide whether a structured-data value carries content worth emitting.
@@ -975,5 +1130,88 @@ mod tests {
             node.as_object().unwrap().get("articleBody").is_none(),
             "shallow articleBody must still be scrubbed"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // M4: --prefer-structured / --articles-from-jsonld integration tests
+    // ------------------------------------------------------------------
+
+    /// Default options (no flags) produce byte-identical output to legacy
+    /// `to_llm_text`. This is the sentinel for "additive change" — every
+    /// p01-p20 probe relies on this.
+    #[test]
+    fn to_llm_text_with_options_default_is_legacy_identical() {
+        let r = make_result_with_structured(vec![serde_json::json!({
+            "@type": "Article",
+            "headline": "Hello",
+        })]);
+        let legacy = to_llm_text(&r, None);
+        let with_opts = to_llm_text_with_options(&r, None, &LlmTextOptions::default());
+        assert_eq!(legacy, with_opts, "default opts must be byte-identical");
+    }
+
+    /// With `prefer_structured`, the schema-aware block appears at the TOP
+    /// of the output (after the metadata header, before the prose body).
+    /// Also: the legacy bottom `## Structured Data` block is suppressed.
+    #[test]
+    fn prefer_structured_places_block_above_body_and_drops_legacy() {
+        let mut r = make_result_with_structured(vec![serde_json::json!({
+            "@type": "Review",
+            "headline": "Album X",
+            "reviewBody": "A long-form review body that would normally be far down the page.".repeat(20),
+            "datePublished": "2026-05-23",
+        })]);
+        r.content.markdown = "## Body Section\n\nLong prose body here.\n".repeat(20);
+        let out = to_llm_text_with_options(&r, None, &LlmTextOptions { prefer_structured: true });
+
+        // Structured-data section is present at the top.
+        let struct_idx = out
+            .find("## Structured data")
+            .expect("schema-aware block must be present");
+        let body_idx = out
+            .find("Body Section")
+            .expect("prose body must be present");
+        assert!(
+            struct_idx < body_idx,
+            "schema-aware block must come BEFORE prose body (struct@{struct_idx}, body@{body_idx})"
+        );
+
+        // Legacy bottom block is suppressed to avoid duplication.
+        assert!(
+            !out.contains("## Structured Data"),
+            "legacy uppercase 'Structured Data' block must be dropped when prefer_structured is set"
+        );
+    }
+
+    /// With `prefer_structured` and an ItemList page, the top block lists
+    /// the items with positions and URLs.
+    #[test]
+    fn prefer_structured_itemlist_renders_items() {
+        let r = make_result_with_structured(vec![serde_json::json!({
+            "@type": "ItemList",
+            "numberOfItems": 2,
+            "itemListElement": [
+                {"@type": "ListItem", "position": 1, "url": "https://x/1", "name": "First"},
+                {"@type": "ListItem", "position": 2, "url": "https://x/2", "name": "Second"},
+            ]
+        })]);
+        let out = to_llm_text_with_options(&r, None, &LlmTextOptions { prefer_structured: true });
+        assert!(out.contains("schema: ItemList (2 items)"), "missing header in:\n{out}");
+        assert!(out.contains("1. First — https://x/1"), "missing item 1 in:\n{out}");
+        assert!(out.contains("2. Second — https://x/2"), "missing item 2 in:\n{out}");
+    }
+
+    /// With `prefer_structured` and a WebPage chrome type, the block is
+    /// still emitted (override of the normal DROP filter) but identifies
+    /// itself as a navigation/chrome record.
+    #[test]
+    fn prefer_structured_surfaces_webpage_chrome() {
+        let r = make_result_with_structured(vec![serde_json::json!({
+            "@type": "WebPage",
+            "name": "Hub Page",
+        })]);
+        let out = to_llm_text_with_options(&r, None, &LlmTextOptions { prefer_structured: true });
+        assert!(out.contains("## Structured data"), "missing header in:\n{out}");
+        assert!(out.contains("schema: WebPage"), "missing WebPage schema label in:\n{out}");
     }
 }

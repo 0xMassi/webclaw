@@ -12,6 +12,7 @@ pub mod error;
 pub mod extractor;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
 pub mod js_eval;
+pub mod jsonld;
 pub mod llm;
 pub mod markdown;
 pub mod metadata;
@@ -25,9 +26,14 @@ pub use brand::BrandIdentity;
 pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;
+pub use jsonld::{
+    classify_all as classify_jsonld_all, classify_value as classify_jsonld_value, primary_schema,
+    ArticleRef, JsonLdSchema, LiveUpdate,
+};
 pub use llm::{
-    classify_hub, to_json_summary, to_json_toc, to_llm_summary, to_llm_text, to_llm_toc,
-    truncate_json_with_wrapper, truncate_with_footer, HubClassification,
+    classify_hub, to_json_summary, to_json_toc, to_llm_summary, to_llm_text,
+    to_llm_text_with_options, to_llm_toc, truncate_json_with_wrapper, truncate_with_footer,
+    HubClassification, LlmTextOptions,
 };
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,

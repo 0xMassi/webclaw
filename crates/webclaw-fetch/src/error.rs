@@ -21,4 +21,15 @@ pub enum FetchError {
 
     #[error("client build failed: {0}")]
     Build(String),
+
+    /// Host matched the known-bad-sites registry (M3). The `message` is
+    /// the pre-formatted stderr line — caller should emit it verbatim and
+    /// exit non-zero. The `host` and `category` are pulled out so library
+    /// callers can pattern-match without parsing the message string.
+    #[error("{message}")]
+    KnownBadSite {
+        host: &'static str,
+        category: &'static str,
+        message: String,
+    },
 }

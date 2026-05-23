@@ -350,6 +350,22 @@ impl FetchClient {
     /// rescue logic; use [`Self::fetch_smart`] for that.
     #[instrument(skip(self), fields(url = %url))]
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
+        // M3 known-bad-sites: short-circuit before any network work. See
+        // the longer comment in `fetch_and_extract_with_options`.
+        if let Some(site) = crate::known_bad_sites::check(url) {
+            let message = crate::known_bad_sites::format_fail_message(site, url);
+            let category = match site.category {
+                crate::known_bad_sites::BadSiteCategory::Cloudflare => "cloudflare",
+                crate::known_bad_sites::BadSiteCategory::Adblock => "adblock",
+                crate::known_bad_sites::BadSiteCategory::HardPaywall => "paywall",
+            };
+            return Err(FetchError::KnownBadSite {
+                host: site.host,
+                category,
+                message,
+            });
+        }
+
         let delays = [Duration::ZERO, Duration::from_secs(1)];
         let mut last_err = None;
 
@@ -493,6 +509,26 @@ impl FetchClient {
         url: &str,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
+        // M3 known-bad-sites registry: fast-fail BEFORE DNS resolution and
+        // any HTTP work. Hosts in the registry (Cloudflare interstitials,
+        // adblock walls) cannot be usefully fetched, so we return an
+        // `Err(KnownBadSite { ... })` here and let the CLI emit the
+        // stderr message + exit non-zero. Library callers can pattern-
+        // match on the variant if they want to skip the warning.
+        if let Some(site) = crate::known_bad_sites::check(url) {
+            let message = crate::known_bad_sites::format_fail_message(site, url);
+            let category = match site.category {
+                crate::known_bad_sites::BadSiteCategory::Cloudflare => "cloudflare",
+                crate::known_bad_sites::BadSiteCategory::Adblock => "adblock",
+                crate::known_bad_sites::BadSiteCategory::HardPaywall => "paywall",
+            };
+            return Err(FetchError::KnownBadSite {
+                host: site.host,
+                category,
+                message,
+            });
+        }
+
         let parsed_url = crate::url_security::validate_public_http_url(url).await?;
         let url = parsed_url.as_str();
 
@@ -1115,5 +1151,49 @@ mod tests {
         let config = FetchConfig::default();
         assert!(config.proxy_pool.is_empty());
         assert!(config.proxy.is_none());
+    }
+
+    /// M3 (iter 3): when the URL hits the known-bad-sites registry, the
+    /// fetch entry point must return `FetchError::KnownBadSite` without
+    /// touching the network. This pins both the variant shape (so the
+    /// CLI's match arm stays correct) and the no-network behavior — the
+    /// `.await` here would 218 ms to ambito.com if the registry check
+    /// were skipped, so a fast-fail under ~50 ms is part of the contract.
+    #[tokio::test]
+    async fn test_fetch_layer_returns_known_bad_site_error() {
+        let client = FetchClient::new(FetchConfig::default()).unwrap();
+        let options = webclaw_core::ExtractionOptions::default();
+        let start = std::time::Instant::now();
+        let err = client
+            .fetch_and_extract_with_options("https://www.ambito.com/economia/", &options)
+            .await
+            .expect_err("ambito.com must short-circuit via registry");
+        let elapsed_ms = start.elapsed().as_millis();
+        match err {
+            FetchError::KnownBadSite {
+                host,
+                category,
+                ref message,
+            } => {
+                assert_eq!(host, "ambito.com");
+                assert_eq!(category, "cloudflare");
+                assert!(
+                    message.contains("ambito.com is cloudflare-walled"),
+                    "stderr line shape: {message}"
+                );
+                assert!(
+                    message.contains("cronista.com"),
+                    "substitute list missing: {message}"
+                );
+            }
+            other => panic!("expected KnownBadSite, got {other:?}"),
+        }
+        // Sanity: no HTTP work happened. Generous upper bound (1000 ms)
+        // tolerates cold-start jitter on CI but still proves we didn't
+        // wait for Cloudflare's 218 ms interstitial.
+        assert!(
+            elapsed_ms < 1000,
+            "registry fast-fail took {elapsed_ms}ms — looks like the check is firing AFTER the HTTP call",
+        );
     }
 }

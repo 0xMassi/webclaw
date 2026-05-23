@@ -25,3 +25,5 @@ baselines/
 *-loop-progress.log
 _build-release.bat
 _build-release.log
+improve-loop-CONTINUE.md
+iter-*-smoke/

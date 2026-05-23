@@ -942,10 +942,20 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     let client =
         FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
-    let result = client
-        .fetch_and_extract_with_options(url, &options)
-        .await
-        .map_err(|e| format!("fetch error: {e}"))?;
+    let result = match client.fetch_and_extract_with_options(url, &options).await {
+        Ok(r) => r,
+        // M3: known-bad-sites registry hit. The error message is already
+        // formatted per phase-A contract. Emit it to stderr verbatim and
+        // exit 67 (chosen because webclaw's existing error paths all use
+        // exit 1; 67 is distinct so callers can grep for "host is in the
+        // known-bad registry" specifically without colliding with generic
+        // fetch failures, and falls inside the BSD sysexits.h band).
+        Err(webclaw_fetch::FetchError::KnownBadSite { message, .. }) => {
+            eprintln!("{message}");
+            process::exit(67);
+        }
+        Err(e) => return Err(format!("fetch error: {e}")),
+    };
 
     // Check if we should fall back to cloud
     let reason = detect_empty(&result);

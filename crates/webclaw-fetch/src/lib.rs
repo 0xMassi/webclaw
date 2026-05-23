@@ -9,6 +9,7 @@ pub mod document;
 pub mod error;
 pub mod extractors;
 pub mod fetcher;
+pub mod known_bad_sites;
 pub mod linkedin;
 pub mod locale;
 pub mod proxy;

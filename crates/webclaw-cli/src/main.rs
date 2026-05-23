@@ -180,6 +180,14 @@ struct Cli {
     #[arg(long, default_value = "0")]
     max_output_bytes: u64,
 
+    /// When the page is detected as a JS hub (short body + nav-style link list,
+    /// e.g. ESPN /nba /nfl /mlb /nhl /soccer), return only the extracted link
+    /// list (equivalent to --mode summary). Non-hub pages are unchanged.
+    /// A one-line stderr hint is also emitted on hub detection regardless of
+    /// this flag, so callers can react on the next invocation.
+    #[arg(long)]
+    prefer_articles: bool,
+
     /// Browser to impersonate
     #[arg(short, long, default_value = "chrome")]
     browser: Browser,
@@ -1120,6 +1128,37 @@ fn print_output_with_mode(
 ) {
     let out = format_output_with_mode(result, format, show_metadata, mode, max_output_bytes);
     println!("{out}");
+}
+
+/// Apply iter-2 M2's hub-page detector. When a hub is detected:
+///   - emit a single stderr hint line (always — informational only),
+///   - if `prefer_articles` is on, override the OutputMode to `Summary`
+///     so the caller gets the link list directly without re-invoking.
+///
+/// Returns the effective `OutputMode` to use for emission. When no hub
+/// is detected or the result is from a non-local path (cloud), the input
+/// mode is returned unchanged and no stderr is written.
+///
+/// Designed to be additive — `prefer_articles=false` callers keep their
+/// existing stdout bytes byte-identical; the hint goes to stderr so it
+/// doesn't affect the sentinel byte-counting on p01-p15.
+fn apply_hub_detection(
+    result: &ExtractionResult,
+    requested_mode: &OutputMode,
+    prefer_articles: bool,
+) -> OutputMode {
+    let classification = webclaw_core::classify_hub(result);
+    if !classification.is_hub {
+        return requested_mode.clone();
+    }
+    // Always emit the informational hint on hub detection — stderr only.
+    eprintln!("# hint: {}", classification.hint_line());
+    if prefer_articles {
+        // Caller asked us to honor the detection: switch to summary.
+        OutputMode::Summary
+    } else {
+        requested_mode.clone()
+    }
 }
 
 /// Print cloud API response in the requested format.
@@ -2754,6 +2793,7 @@ async fn main() {
     // Single-page extraction (handles both HTML and PDF via content-type detection)
     match fetch_and_extract(&cli).await {
         Ok(FetchOutput::Local(result)) => {
+            let effective_mode = apply_hub_detection(&result, &cli.mode, cli.prefer_articles);
             if let Some(ref dir) = cli.output_dir {
                 let url = cli
                     .urls
@@ -2766,7 +2806,7 @@ async fn main() {
                     &result,
                     &cli.format,
                     cli.metadata,
-                    &cli.mode,
+                    &effective_mode,
                     cli.max_output_bytes,
                 );
                 if let Err(e) = write_to_file(dir, &filename, &content) {
@@ -2778,7 +2818,7 @@ async fn main() {
                     &result,
                     &cli.format,
                     cli.metadata,
-                    &cli.mode,
+                    &effective_mode,
                     cli.max_output_bytes,
                 );
             }

@@ -26,8 +26,8 @@ pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;
 pub use llm::{
-    to_json_summary, to_json_toc, to_llm_summary, to_llm_text, to_llm_toc,
-    truncate_json_with_wrapper, truncate_with_footer,
+    classify_hub, to_json_summary, to_json_toc, to_llm_summary, to_llm_text, to_llm_toc,
+    truncate_json_with_wrapper, truncate_with_footer, HubClassification,
 };
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,

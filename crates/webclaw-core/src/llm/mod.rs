@@ -6,11 +6,13 @@
 /// to a deduplicated section at the end.
 mod body;
 mod cleanup;
+mod hub_detect;
 mod images;
 mod links;
 mod metadata;
 mod output_size;
 
+pub use hub_detect::{classify as classify_hub, HubClassification};
 pub use output_size::{
     to_json_summary, to_json_toc, to_llm_summary, to_llm_toc, truncate_json_with_wrapper,
     truncate_with_footer,

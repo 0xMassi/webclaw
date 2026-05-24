@@ -175,6 +175,18 @@ struct Cli {
     #[arg(long)]
     url_encoded: bool,
 
+    /// Best-effort paywall bypass: re-fetches with a Googlebot User-Agent
+    /// (some publishers serve full content to crawlers for SEO indexing).
+    /// This is HEURISTIC ONLY — webclaw has no headless browser and cannot
+    /// bypass paywalls requiring real session auth, cookies, or JS
+    /// execution. If the paywall is still detected after the bypass
+    /// attempt, the stderr warning will suggest https://archive.is/<url>
+    /// as an external fallback. Paywall detection itself (without this
+    /// flag) runs by default on registered publisher hosts and emits an
+    /// advisory stderr warning.
+    #[arg(long)]
+    paywall_bypass: bool,
+
     /// Output format (markdown, json, text, llm, html)
     #[arg(short, long, default_value = "markdown")]
     format: OutputFormat,
@@ -589,6 +601,18 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
                 process::exit(1);
             }
         }
+    }
+
+    // M11 --paywall-bypass: override User-Agent with Googlebot so publishers
+    // that serve full content to crawlers for SEO will hand us the article
+    // body. Best-effort: many publishers verify the request actually comes
+    // from a Google-owned IP, in which case this header alone does nothing.
+    // Honest stderr language in the post-detect warning reflects that.
+    if cli.paywall_bypass {
+        headers.insert(
+            "User-Agent".to_string(),
+            webclaw_fetch::paywall::GOOGLEBOT_USER_AGENT.to_string(),
+        );
     }
 
     FetchConfig {
@@ -1061,8 +1085,9 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     }
 
     // Normal path: try local first
-    let client =
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
+    let client = FetchClient::new(build_fetch_config(cli))
+        .map_err(|e| format!("client error: {e}"))?
+        .with_paywall_bypass(cli.paywall_bypass);
     let options = build_extraction_options(cli);
     // M13: wrap with periodic stderr progress emitter. Fast fetches see
     // zero emissions (timer never fires in <10s); slow fetches get a
@@ -3335,5 +3360,69 @@ mod tests {
         assert!(slug.chars().count() <= 50);
         // Round-trips through formatting without panicking.
         let _ = format!("research-{slug}.json");
+    }
+
+    // -------- M11 paywall-bypass flag --------
+
+    #[test]
+    fn paywall_bypass_flag_present_in_cli() {
+        // clap-level smoke: the flag parses and the field is reachable
+        // from the Cli struct. If the flag was renamed/removed this test
+        // fails to compile, which is the intended sentinel.
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com/",
+            "--paywall-bypass",
+        ])
+        .expect("--paywall-bypass should parse");
+        assert!(cli.paywall_bypass, "--paywall-bypass should set the bool");
+    }
+
+    #[test]
+    fn paywall_bypass_default_false() {
+        // Sentinel: the flag is opt-in only. Default behavior must be
+        // unchanged on all existing probes.
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["webclaw", "https://example.com/"])
+            .expect("default cli should parse");
+        assert!(!cli.paywall_bypass, "paywall_bypass must default to false");
+    }
+
+    #[test]
+    fn paywall_bypass_injects_googlebot_ua() {
+        // The build_fetch_config path inserts the Googlebot UA header
+        // when cli.paywall_bypass is set. This guards against accidental
+        // removal of the header-injection wiring.
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com/",
+            "--paywall-bypass",
+        ])
+        .expect("--paywall-bypass should parse");
+        let config = build_fetch_config(&cli);
+        let ua = config.headers.get("User-Agent").expect("UA header should be set");
+        assert!(ua.contains("Googlebot"), "UA should be Googlebot, got: {ua}");
+        assert_eq!(ua, webclaw_fetch::paywall::GOOGLEBOT_USER_AGENT);
+    }
+
+    #[test]
+    fn paywall_bypass_unset_leaves_default_ua() {
+        // Without the flag, build_fetch_config must NOT inject the
+        // Googlebot UA — preserves browser-profile fingerprinting that
+        // M1-M14 depend on.
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["webclaw", "https://example.com/"])
+            .expect("default cli should parse");
+        let config = build_fetch_config(&cli);
+        // Either UA header is absent (most common; wreq supplies the
+        // browser-profile UA at the TLS layer) OR it's not Googlebot.
+        if let Some(ua) = config.headers.get("User-Agent") {
+            assert!(
+                !ua.contains("Googlebot"),
+                "default UA must not be Googlebot, got: {ua}"
+            );
+        }
     }
 }

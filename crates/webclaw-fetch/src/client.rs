@@ -201,6 +201,12 @@ pub struct FetchClient {
     /// out. Stored as `Arc` so cloning a `FetchClient` (common in
     /// axum state) doesn't clone the underlying reqwest pool.
     cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
+    /// M11 paywall-bypass flag. When true, the post-fetch paywall
+    /// detection (in `fetch_and_extract_with_options`) emits the
+    /// bypass-aware warning variant which acknowledges the
+    /// Googlebot-UA attempt and suggests archive.is as the next step.
+    /// Plumbed via [`Self::with_paywall_bypass`] from the CLI.
+    paywall_bypass_attempted: bool,
 }
 
 impl FetchClient {
@@ -262,7 +268,20 @@ impl FetchClient {
             pool,
             pdf_mode,
             cloud: None,
+            paywall_bypass_attempted: false,
         })
+    }
+
+    /// M11: signal that the caller invoked the request with a
+    /// paywall-bypass attempt (Googlebot-UA override applied via
+    /// `FetchConfig.headers`). Affects the wording of the post-fetch
+    /// paywall-detection stderr warning emitted from
+    /// `fetch_and_extract_with_options` — the bypass-aware variant
+    /// names the bypass attempt and points at archive.is as the next
+    /// step. Returns `self` for builder-style chaining.
+    pub fn with_paywall_bypass(mut self, attempted: bool) -> Self {
+        self.paywall_bypass_attempted = attempted;
+        self
     }
 
     /// Attach a cloud-fallback client. Returns `self` so it composes in
@@ -619,6 +638,35 @@ impl FetchClient {
 
             let elapsed = start.elapsed();
             debug!(status, elapsed_ms = %elapsed.as_millis(), "fetch complete");
+
+            // M11 paywall detection: host-gated scan of the raw html for
+            // known paywall overlay markers (NYT/WSJ/FT/Bloomberg/Substack).
+            // Advisory only — we still hand the html to the extractor below
+            // so the user gets whatever the publisher served (often a
+            // teaser / first paragraph). The warning is informational so
+            // the caller knows why the body is thin.
+            //
+            // The Googlebot-UA bypass attempt (when --paywall-bypass is set)
+            // happens at the CLI layer by injecting a UA into FetchConfig
+            // headers BEFORE the fetch; if the marker still appears here,
+            // it means the soft bypass didn't clear it. We can't tell from
+            // this function whether bypass was attempted, so we emit the
+            // generic warning; the CLI is responsible for the bypass-aware
+            // follow-up message.
+            if let Ok(parsed) = url::Url::parse(&final_url)
+                && let Some(host) = parsed.host_str()
+                && let Some(sig) = crate::paywall::detect_in_html(host, &html)
+            {
+                eprintln!(
+                    "{}",
+                    crate::paywall::format_warning(
+                        sig,
+                        host,
+                        &final_url,
+                        self.paywall_bypass_attempted,
+                    )
+                );
+            }
 
             // LinkedIn: extract from embedded <code> JSON blobs
             if crate::linkedin::is_linkedin_post(&final_url) {

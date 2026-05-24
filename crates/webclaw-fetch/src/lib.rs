@@ -12,6 +12,7 @@ pub mod fetcher;
 pub mod known_bad_sites;
 pub mod linkedin;
 pub mod locale;
+pub mod paywall;
 pub mod progress;
 pub mod proxy;
 pub mod reddit;

@@ -166,6 +166,14 @@ struct Cli {
     #[arg(long)]
     urls_file: Option<String>,
 
+    /// Assert that the URL has been handled for shell escaping. Suppresses
+    /// the URL-truncation stderr warning. Use when the URL is intentionally
+    /// passed with an empty/keyless query (e.g. legacy CGI) or when a
+    /// trailing `&` is genuinely part of the URL. The URL is fetched as-is
+    /// (no extra normalization beyond the standard scheme prepend).
+    #[arg(long)]
+    url_encoded: bool,
+
     /// Output format (markdown, json, text, llm, html)
     #[arg(short, long, default_value = "markdown")]
     format: OutputFormat,
@@ -591,6 +599,31 @@ fn normalize_url(url: &str) -> String {
     }
 }
 
+/// M14: detect URLs that look truncated by the shell (e.g. an unquoted URL
+/// that the shell split on `&` or `?`). Returns `true` when:
+///   - the URL ends with `&` (a trailing param separator suggests the next
+///     param was lopped off), OR
+///   - the URL contains `?` but no `=` after it (a query with bare keys is
+///     rare; usually a real query has at least one `=`).
+///
+/// Informational only — caller decides whether to warn / abort. This is a
+/// heuristic; legitimate URLs with bare-key queries will trigger a false
+/// positive (suppressible via `--url-encoded`).
+fn looks_truncated(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.ends_with('&') {
+        return true;
+    }
+    if let Some((_before, after_q)) = trimmed.split_once('?') {
+        // Trim a trailing fragment so `?#section` etc. doesn't mask the check.
+        let query_part = after_q.split('#').next().unwrap_or(after_q);
+        if !query_part.contains('=') {
+            return true;
+        }
+    }
+    false
+}
+
 /// Derive a filename from a URL for `--output-dir`.
 ///
 /// Strips the scheme/host, maps the path to a filesystem path, and appends
@@ -826,6 +859,14 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         .urls
         .first()
         .ok_or("no input provided -- pass a URL, --file, or --stdin")?;
+    // M14: warn when the URL looks like the shell split it on `&` or `?`.
+    // Informational only — fetch still proceeds. Suppressed by --url-encoded,
+    // which asserts the caller has handled escaping intentionally.
+    if !cli.url_encoded && looks_truncated(raw_url) {
+        eprintln!(
+            "# webclaw: warning: URL looks truncated (ends with '&' or '?'); did the shell split it? Quote the URL or use --url-encoded."
+        );
+    }
     let url = normalize_url(raw_url);
     let url = url.as_str();
 
@@ -2880,6 +2921,59 @@ mod tests {
             "traversal write escaped the output dir"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // M14: URL truncation heuristic tests.
+    #[test]
+    fn looks_truncated_fires_on_trailing_ampersand() {
+        // The most common shell-split shape: `?a=1&` lost the `b=2`.
+        assert!(looks_truncated("https://example.com/?a=1&"));
+        assert!(looks_truncated("https://example.com/path?key=val&"));
+    }
+
+    #[test]
+    fn looks_truncated_fires_on_query_with_no_equals() {
+        // `?foo` with no `=` is a strong signal the shell ate the `=value`.
+        assert!(looks_truncated("https://example.com/?foo"));
+        // Bare `?` (empty query) also looks like the shell ate the whole pair.
+        assert!(looks_truncated("https://example.com/?"));
+        // Same with a fragment after — strip fragment before checking.
+        assert!(looks_truncated("https://example.com/?foo#section"));
+    }
+
+    #[test]
+    fn looks_truncated_silent_on_clean_url() {
+        // Normal URLs (no query, or query with at least one `=`) are clean.
+        assert!(!looks_truncated("https://example.com/"));
+        assert!(!looks_truncated("https://example.com/path/to/page"));
+        assert!(!looks_truncated("https://example.com/?a=1"));
+        assert!(!looks_truncated("https://example.com/?a=1&b=2"));
+        assert!(!looks_truncated("https://example.com/?a=1&b=2&c=hello%20world"));
+        // Hash anchors without a query are clean.
+        assert!(!looks_truncated("https://example.com/page#section"));
+    }
+
+    #[test]
+    fn looks_truncated_silent_with_url_encoded_assertion_modeled_via_skip() {
+        // The --url-encoded flag suppresses the warning at the call site
+        // (main.rs gates the eprintln! behind `if !cli.url_encoded`).
+        // This test models the gate logic directly: when --url-encoded is set,
+        // the warning branch is never entered, even on a truncated-looking URL.
+        let url = "https://example.com/?a=1&";
+        let url_encoded_flag = true;
+        let should_warn = !url_encoded_flag && looks_truncated(url);
+        assert!(
+            !should_warn,
+            "--url-encoded must suppress the warning even on URL ending with &"
+        );
+
+        // Sanity: same URL without --url-encoded does warn.
+        let url_encoded_flag = false;
+        let should_warn = !url_encoded_flag && looks_truncated(url);
+        assert!(
+            should_warn,
+            "without --url-encoded, the warning should fire on URL ending with &"
+        );
     }
 
     #[test]

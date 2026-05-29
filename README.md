@@ -407,7 +407,7 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 
 ---
 
-## Studio Partner
+## Studio Partners
 
 <table>
   <tr>
@@ -433,6 +433,19 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
       The service supports high-volume concurrent scraping, geographic rotation, and integration with web extraction tools.
       Use code <code>WBC15</code> for 15% off IPv4, IPv6, ISP, and Residential proxies, and 10% off Mobile at
       <a href="https://proxy-seller.com/?partner=KXMQNNLIGHXR4B">proxy-seller.com</a>.
+    </td>
+  </tr>
+  <tr>
+    <td width="340" align="center">
+      <a href="https://www.rapidproxy.io/?ref=webclaw">
+        <img src="./assets/sponsors/rapidproxy-banner.png" alt="RapidProxy" width="300" />
+      </a>
+    </td>
+    <td>
+      <strong>RapidProxy</strong> delivers fast, reliable proxy infrastructure for large-scale data collection.
+      With 90M+ residential IPs, smart rotation, high concurrency, AI-powered CAPTCHA bypass, and non-expiring traffic, it helps keep scraping workflows stable at scale.
+      Use code <code>webclaw</code> for 10% off, or
+      <a href="https://www.rapidproxy.io/?ref=webclaw">Try it free</a>.
     </td>
   </tr>
 </table>

@@ -385,6 +385,28 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 
 ---
 
+## Infrastructure Partner
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://coldproxy.com/">
+        <img src="./assets/sponsors/coldproxy-banner.png" alt="ColdProxy" width="720" />
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <strong>ColdProxy</strong> supports webclaw as an Infrastructure Partner, providing residential IPv4,
+      residential IPv6, and datacenter IPv6 proxy infrastructure across 195+ countries for public data
+      collection, regional testing, monitoring, and web scraping workflows. Explore
+      <a href="https://coldproxy.com/">ColdProxy</a>'s latest plans and available offers directly on the website.
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Studio Partner
 
 <table>

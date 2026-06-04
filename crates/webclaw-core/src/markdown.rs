@@ -13,6 +13,8 @@ use crate::noise;
 use crate::types::{CodeBlock, Image, Link};
 
 static CODE_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("code").unwrap());
+static IMG_ALT_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("img[alt]").unwrap());
+static A_HREF_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("a[href]").unwrap());
 
 /// Maximum recursion depth for DOM traversal.
 /// Express.co.uk live blogs and similar pages can nest 1000+ levels deep,
@@ -853,7 +855,7 @@ fn collect_assets_from_noise(
     assets: &mut ConvertedAssets,
 ) {
     // Collect images with alt text
-    for img in element.select(&Selector::parse("img[alt]").unwrap()) {
+    for img in element.select(&IMG_ALT_SELECTOR) {
         let alt = img.value().attr("alt").unwrap_or("").to_string();
         let src = img
             .value()
@@ -866,7 +868,7 @@ fn collect_assets_from_noise(
     }
 
     // Collect links
-    for link in element.select(&Selector::parse("a[href]").unwrap()) {
+    for link in element.select(&A_HREF_SELECTOR) {
         let href = link
             .value()
             .attr("href")

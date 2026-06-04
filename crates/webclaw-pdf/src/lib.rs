@@ -1,7 +1,9 @@
-/// PDF text extraction for webclaw.
-///
-/// Uses pdf-extract (backed by lopdf) to pull text from PDF bytes.
-/// No OCR -- text-based PDFs only. Scanned PDFs return EmptyPdf in Auto mode.
+//! PDF text extraction for webclaw.
+//!
+//! Uses pdf-extract (backed by lopdf) to pull text from PDF bytes.
+//! No OCR -- text-based PDFs only. Scanned PDFs return EmptyPdf in Auto mode.
+#![forbid(unsafe_code)]
+
 pub mod error;
 
 pub use error::PdfError;
@@ -64,9 +66,18 @@ pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
 
     debug!(pages = page_count, "PDF document loaded");
 
-    // Extract text via pdf-extract (higher-level API over lopdf)
-    let text = pdf_extract::extract_text_from_mem(bytes)
-        .map_err(|e| PdfError::ExtractionFailed(e.to_string()))?;
+    // Extract text via pdf-extract (higher-level API over lopdf).
+    // pdf-extract has bare `panic!`/`unreachable!` sites on malformed input,
+    // so we isolate it in catch_unwind: a caught panic becomes a normal
+    // ExtractionFailed error instead of unwinding through our callers.
+    // AssertUnwindSafe is sound here: the closure only borrows `bytes` (a
+    // read-only slice) and we discard all closure state on a caught panic.
+    let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_extract::extract_text_from_mem(bytes)
+    }))
+    .map_err(|_| PdfError::ExtractionFailed("pdf-extract panicked on malformed input".into()))?;
+
+    let text = extracted.map_err(|e| PdfError::ExtractionFailed(e.to_string()))?;
 
     let text = normalize_text(&text);
 

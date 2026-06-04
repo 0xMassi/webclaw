@@ -2,7 +2,25 @@ pub mod anthropic;
 pub mod ollama;
 pub mod openai;
 
+use std::time::Duration;
+
 use crate::error::LlmError;
+
+/// Connect timeout shared by every provider. A dead or wrong host should fail
+/// fast (so the chain can move to the next provider) rather than hang on the
+/// OS default connect timeout.
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Build the HTTP client for a provider with a fixed connect timeout and a
+/// caller-chosen overall request timeout. Falls back to `reqwest::Client::new()`
+/// only if the builder somehow fails, so construction stays infallible.
+pub(crate) fn build_http_client(request_timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(request_timeout)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 /// Load an API key from an explicit override or an environment variable.
 /// Returns `None` if neither is set or the value is empty.

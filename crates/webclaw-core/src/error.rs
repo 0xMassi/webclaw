@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ExtractError {
     #[error("failed to parse HTML")]
     ParseError,

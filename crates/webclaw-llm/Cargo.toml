@@ -3,7 +3,11 @@ name = "webclaw-llm"
 description = "LLM integration for webclaw — local-first hybrid architecture (Ollama -> OpenAI -> Anthropic)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

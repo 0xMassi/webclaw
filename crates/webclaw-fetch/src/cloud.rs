@@ -93,6 +93,7 @@ const KEYS_URL: &str = "https://webclaw.io/dashboard/api-keys";
 /// Display messages end with an actionable URL so API consumers can
 /// surface them to users verbatim.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum CloudError {
     /// No `WEBCLAW_API_KEY` configured. Returned by [`smart_fetch_html`]
     /// and friends when they hit bot protection but have no client to

@@ -4,14 +4,14 @@
 //! * `schema` — JSON Schema describing what to extract.
 //! * `prompt` — natural-language instructions.
 //!
-//! At least one must be provided. The provider chain is built per
-//! request from env (Ollama -> OpenAI -> Anthropic). Self-hosters
-//! get the same fallback behaviour as the CLI.
+//! At least one must be provided. The provider chain (Ollama -> OpenAI
+//! -> Anthropic) is built once at startup and shared via `AppState`.
+//! Self-hosters get the same fallback behaviour as the CLI.
 
 use axum::{Json, extract::State};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use webclaw_llm::{ProviderChain, extract::extract_json, extract::extract_with_prompt};
+use webclaw_llm::{extract::extract_json, extract::extract_with_prompt};
 
 use crate::{error::ApiError, state::AppState};
 
@@ -59,7 +59,7 @@ pub async fn extract(
         ));
     }
 
-    let chain = ProviderChain::default().await;
+    let chain = state.llm_chain();
     if chain.is_empty() {
         return Err(ApiError::Llm(
             "no LLM providers configured (set OLLAMA_HOST, OPENAI_API_KEY, or ANTHROPIC_API_KEY)"
@@ -69,10 +69,10 @@ pub async fn extract(
 
     let model = req.model.as_deref();
     let data = if let Some(schema) = req.schema.as_ref() {
-        extract_json(&content, schema, &chain, model).await?
+        extract_json(&content, schema, chain, model).await?
     } else {
         let prompt = req.prompt.as_deref().unwrap_or_default();
-        extract_with_prompt(&content, prompt, &chain, model).await?
+        extract_with_prompt(&content, prompt, chain, model).await?
     };
 
     Ok(Json(json!({

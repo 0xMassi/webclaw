@@ -81,10 +81,10 @@ const SAFARI_SIGALGS: &str = "ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256:rsa_pkc
 /// Safari curves.
 const SAFARI_CURVES: &str = "X25519:P-256:P-384:P-521";
 
-/// Safari iOS 26 TLS extension order, matching bogdanfinn's
-/// `safari_ios_26_0` wire format. GREASE slots are omitted. wreq
-/// inserts them itself. Diverges from wreq-util's default SafariIos26
-/// extension order, which DataDome's immobiliare.it ruleset flags.
+/// Safari iOS 26 TLS extension order, matching a real Safari iOS 26
+/// handshake. GREASE slots are omitted; the TLS layer inserts them
+/// itself. Diverges from the library default extension order, which
+/// some strict TLS-fingerprinting WAFs flag.
 fn safari_ios_extensions() -> Vec<ExtensionType> {
     vec![
         ExtensionType::CERTIFICATE_TIMESTAMP,
@@ -103,12 +103,10 @@ fn safari_ios_extensions() -> Vec<ExtensionType> {
     ]
 }
 
-/// Chrome 133 TLS extension order, matching bogdanfinn's stable JA3
-/// (`43067709b025da334de1279a120f8e14`). Real Chrome permutes extensions
-/// per handshake, but indeed.com's WAF allowlists this specific wire order
-/// and rejects permuted ones. GREASE slots are inserted by wreq.
-///
-/// JA3 extension field from peet.ws: 18-5-35-51-10-45-11-27-17613-43-13-0-16-65037-65281-23
+/// Chrome 133 TLS extension order, matching a real Chrome 133 handshake.
+/// Real Chrome permutes extensions per handshake, but some WAFs allowlist
+/// one specific real-browser wire order and reject permuted ones. GREASE
+/// slots are inserted by the TLS layer.
 fn chrome_extensions() -> Vec<ExtensionType> {
     vec![
         ExtensionType::CERTIFICATE_TIMESTAMP,                  // 18
@@ -220,9 +218,8 @@ const SAFARI_HEADERS: &[(&str, &str)] = &[
 /// Safari iOS 26 headers, in the wire order real Safari emits. Critically:
 /// NO `sec-fetch-*`, NO `priority: u=0, i` (both Chromium-only leaks), but
 /// `upgrade-insecure-requests: 1` is present. `accept-encoding` does not
-/// include zstd (Safari can't decode it). Verified against bogdanfinn on
-/// 2026-04-22: this header set is what DataDome's immobiliare ruleset
-/// expects for a real iPhone.
+/// include zstd (Safari can't decode it). This header set matches what a
+/// real iPhone emits.
 const SAFARI_IOS_HEADERS: &[(&str, &str)] = &[
     (
         "accept",
@@ -264,8 +261,8 @@ const EDGE_HEADERS: &[(&str, &str)] = &[
 
 fn chrome_tls() -> TlsOptions {
     // permute_extensions is off so the explicit extension_permutation sticks.
-    // Real Chrome permutes, but indeed.com's WAF allowlists bogdanfinn's
-    // fixed order, so matching that gets us through.
+    // Real Chrome permutes, but some WAFs allowlist one fixed real-browser
+    // order, so matching that order is what passes.
     TlsOptions::builder()
         .cipher_list(CHROME_CIPHERS)
         .sigalgs_list(CHROME_SIGALGS)
@@ -330,18 +327,15 @@ fn safari_tls() -> TlsOptions {
 
 /// Safari iOS 26 emulation — composed on top of `wreq_util::Emulation::SafariIos26`
 /// with four targeted overrides. We don't hand-roll this one like Chrome/Firefox
-/// because the wire-level defaults from wreq-util are already correct for ciphers,
-/// sigalgs, curves, and GREASE — the four things wreq-util gets *wrong* for
-/// DataDome compatibility are overridden here:
+/// because the wire-level library defaults are already correct for ciphers,
+/// sigalgs, curves, and GREASE — the four things the library default gets
+/// *wrong* for strict-WAF compatibility are overridden here:
 ///
-///  1. TLS extension order: match bogdanfinn `safari_ios_26_0` exactly (JA3
-///     ends up `8d909525bd5bbb79f133d11cc05159fe`).
+///  1. TLS extension order: match a real Safari iOS 26 handshake exactly.
 ///  2. HTTP/2 HEADERS priority flag: weight=256, exclusive=1, depends_on=0.
-///     wreq-util omits this frame; real Safari and bogdanfinn include it.
-///     This flip is the thing DataDome actually reads — the akamai_fingerprint
-///     hash changes from `c52879e43202aeb92740be6e8c86ea96` to
-///     `d1294410a06522e37a5c5e3f0a45a705`, which is the winning signature.
-///  3. Headers: strip wreq-util's Chromium defaults (`sec-fetch-*`,
+///     The library default omits this frame; real Safari includes it. It is
+///     part of the HTTP/2 fingerprint that strict WAFs inspect.
+///  3. Headers: strip the library's Chromium defaults (`sec-fetch-*`,
 ///     `priority: u=0, i`, zstd), replace with the real iOS 26 set.
 ///  4. `accept-language` preserved from config.extra_headers for locale.
 fn safari_ios_emulation() -> wreq::Emulation {
@@ -354,7 +348,7 @@ fn safari_ios_emulation() -> wreq::Emulation {
 
     // Only override the priority flag — keep wreq-util's SETTINGS, WINDOW_UPDATE,
     // and pseudo-order intact. Replacing the whole Http2Options resets SETTINGS
-    // to defaults, which sends only INITIAL_WINDOW_SIZE and fails DataDome.
+    // to defaults, which sends only INITIAL_WINDOW_SIZE and fails strict WAFs.
     if let Some(h2) = em.http2_options_mut().as_mut() {
         h2.headers_stream_dependency = Some(StreamDependency::new(StreamId::zero(), 255, true));
     }
@@ -374,11 +368,11 @@ fn safari_ios_emulation() -> wreq::Emulation {
 }
 
 fn chrome_h2() -> Http2Options {
-    // SETTINGS frame matches bogdanfinn `chrome_133`: HEADER_TABLE_SIZE,
+    // SETTINGS frame matches real Chrome 133: HEADER_TABLE_SIZE,
     // ENABLE_PUSH=0, INITIAL_WINDOW_SIZE, MAX_HEADER_LIST_SIZE. No
-    // MAX_CONCURRENT_STREAMS — real Chrome 133 and bogdanfinn both omit it,
-    // and indeed.com's WAF reads this as a bot signal when present. Priority
-    // weight 256 (encoded as 255 + 1) matches bogdanfinn's HEADERS frame.
+    // MAX_CONCURRENT_STREAMS — real Chrome 133 omits it, and some WAFs
+    // read its presence as a bot signal. Priority weight 256 (encoded as
+    // 255 + 1) matches a real Chrome HEADERS frame.
     Http2Options::builder()
         .initial_window_size(6_291_456)
         .initial_connection_window_size(15_728_640)
@@ -530,7 +524,22 @@ pub fn build_client(
             max_redirects as usize,
         ))
         .cookie_store(true)
-        .timeout(timeout);
+        .timeout(timeout)
+        // Fail fast on a black-holed host: a stuck connect aborts in ~5s
+        // instead of consuming the full request `timeout`. The total
+        // timeout above still bounds the overall request.
+        .connect_timeout(Duration::from_secs(5))
+        // Keep warm connections around for reuse (HTTP/2 multiplexing,
+        // cookie-warmup retries) but bound idle sockets so a long-lived
+        // rotating-proxy pool doesn't accumulate dead connections.
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(8)
+        // SO_KEEPALIVE so half-open connections through a proxy get torn
+        // down rather than hanging until the request timeout fires.
+        .tcp_keepalive(Duration::from_secs(60));
+    // Note: HTTP/2 keep-alive (PING) interval/timeout are part of the
+    // emulated fingerprint via `Http2Options` and are intentionally not
+    // overridden here — changing them would alter the browser fingerprint.
 
     if let Some(proxy_url) = proxy {
         let proxy = wreq::Proxy::all(proxy_url).map_err(|_| {

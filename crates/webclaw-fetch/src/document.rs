@@ -98,30 +98,11 @@ pub fn extract_document(
     let plain_text = strip_markdown_formatting(&markdown);
     let word_count = plain_text.split_whitespace().count();
 
-    Ok(webclaw_core::ExtractionResult {
-        metadata: webclaw_core::Metadata {
-            title: None,
-            description: None,
-            author: None,
-            published_date: None,
-            language: None,
-            url: None,
-            site_name: None,
-            image: None,
-            favicon: None,
-            word_count,
-        },
-        content: webclaw_core::Content {
-            markdown,
-            plain_text,
-            links: Vec::new(),
-            images: Vec::new(),
-            code_blocks: Vec::new(),
-            raw_html: None,
-        },
-        domain_data: None,
-        structured_data: vec![],
-    })
+    let metadata = webclaw_core::Metadata::default().with_word_count(word_count);
+    let content = webclaw_core::Content::default()
+        .with_markdown(markdown)
+        .with_plain_text(plain_text);
+    Ok(webclaw_core::ExtractionResult::new(metadata, content))
 }
 
 /// Extract text from a DOCX file (ZIP of XML).

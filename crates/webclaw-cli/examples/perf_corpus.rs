@@ -48,7 +48,10 @@ async fn main() {
     match mode.as_str() {
         "capture" => capture().await,
         "bench" => {
-            let iters: usize = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(60);
+            let iters: usize = std::env::args()
+                .nth(2)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(60);
             bench(iters);
         }
         "snapshot" => {
@@ -64,14 +67,21 @@ async fn main() {
 
 async fn capture() {
     fs::create_dir_all(CORPUS).unwrap();
-    let config = FetchConfig { browser: BrowserProfile::Chrome, ..FetchConfig::default() };
+    let config = FetchConfig {
+        browser: BrowserProfile::Chrome,
+        ..FetchConfig::default()
+    };
     let client = FetchClient::new(config).expect("build client");
     let mut ok = 0;
     for (i, u) in URLS.iter().enumerate() {
         let name = format!(
             "{:02}_{}.html",
             i + 1,
-            u.replace("https://", "").chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).take(40).collect::<String>()
+            u.replace("https://", "")
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .take(40)
+                .collect::<String>()
         );
         match client.fetch(u).await {
             Ok(f) if f.html.len() > 1000 => {
@@ -99,7 +109,9 @@ fn snapshot(label: &str) {
     let mut n = 0;
     for path in &files {
         let html = fs::read_to_string(path).unwrap_or_default();
-        if html.is_empty() { continue; }
+        if html.is_empty() {
+            continue;
+        }
         let stem = path.file_stem().unwrap().to_string_lossy().to_string();
         let url = format!("https://corpus/{stem}");
         match extract(&html, Some(&url)) {
@@ -117,7 +129,9 @@ fn snapshot(label: &str) {
 }
 
 fn percentile(sorted: &[u128], p: f64) -> u128 {
-    if sorted.is_empty() { return 0; }
+    if sorted.is_empty() {
+        return 0;
+    }
     let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
     sorted[idx]
 }
@@ -135,7 +149,10 @@ fn bench(iters: usize) {
     }
 
     println!("# perf_corpus bench  docs={}  iters={}", files.len(), iters);
-    println!("{:<42} {:>10} {:>10} {:>10} {:>10}", "doc(KB)", "extract_us", "llm_us", "p50_us", "p90_us");
+    println!(
+        "{:<42} {:>10} {:>10} {:>10} {:>10}",
+        "doc(KB)", "extract_us", "llm_us", "p50_us", "p90_us"
+    );
 
     let mut grand_extract = 0u128;
     let mut grand_llm = 0u128;
@@ -143,8 +160,13 @@ fn bench(iters: usize) {
 
     for path in &files {
         let html = fs::read_to_string(path).unwrap_or_default();
-        if html.is_empty() { continue; }
-        let url = format!("https://corpus/{}", path.file_name().unwrap().to_string_lossy());
+        if html.is_empty() {
+            continue;
+        }
+        let url = format!(
+            "https://corpus/{}",
+            path.file_name().unwrap().to_string_lossy()
+        );
 
         // warmup
         for _ in 0..5 {
@@ -158,7 +180,10 @@ fn bench(iters: usize) {
         let mut total_times = Vec::with_capacity(iters);
         for _ in 0..iters {
             let t0 = Instant::now();
-            let ex = match extract(&html, Some(&url)) { Ok(e) => e, Err(_) => continue };
+            let ex = match extract(&html, Some(&url)) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
             let t1 = Instant::now();
             let txt = to_llm_text(&ex, Some(&url));
             let t2 = Instant::now();
@@ -178,11 +203,24 @@ fn bench(iters: usize) {
         grand_llm += llm_p50;
         grand_total_p50 += tot_p50;
 
-        let label = format!("{} ({}KB)", path.file_stem().unwrap().to_string_lossy(), html.len() / 1024);
-        println!("{:<42} {:>10} {:>10} {:>10} {:>10}", label.chars().take(42).collect::<String>(), ex_p50, llm_p50, tot_p50, tot_p90);
+        let label = format!(
+            "{} ({}KB)",
+            path.file_stem().unwrap().to_string_lossy(),
+            html.len() / 1024
+        );
+        println!(
+            "{:<42} {:>10} {:>10} {:>10} {:>10}",
+            label.chars().take(42).collect::<String>(),
+            ex_p50,
+            llm_p50,
+            tot_p50,
+            tot_p90
+        );
     }
 
     println!("---");
-    println!("CORPUS_PASS_P50_SUM_US extract={grand_extract} llm={grand_llm} total={grand_total_p50}");
+    println!(
+        "CORPUS_PASS_P50_SUM_US extract={grand_extract} llm={grand_llm} total={grand_total_p50}"
+    );
     println!("(lower is better; total = one full extract+llm pass over the whole corpus at p50)");
 }

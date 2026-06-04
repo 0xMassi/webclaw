@@ -1,9 +1,9 @@
 //! Derive an `Accept-Language` header from a URL.
 //!
-//! DataDome-class bot detection on country-specific sites (e.g. immobiliare.it,
-//! leboncoin.fr) does a geo-vs-locale sanity check: residential IP in the
-//! target country + a browser UA but the wrong `Accept-Language` is a bot
-//! signal. Matching the site's expected locale gets us through.
+//! Some bot-detection systems on country-specific sites do a geo-vs-locale
+//! sanity check: an IP in the target country + a browser UA but the wrong
+//! `Accept-Language` is a bot signal. Matching the site's expected locale
+//! avoids that mismatch.
 //!
 //! Default for unmapped TLDs is `en-US,en;q=0.9` — the global fallback.
 
@@ -53,15 +53,15 @@ mod tests {
     #[test]
     fn tld_dispatch() {
         assert_eq!(
-            accept_language_for_url("https://www.immobiliare.it/annunci/1"),
+            accept_language_for_url("https://www.example.it/page/1"),
             Some("it-IT,it;q=0.9")
         );
         assert_eq!(
-            accept_language_for_url("https://www.leboncoin.fr/"),
+            accept_language_for_url("https://www.example.fr/"),
             Some("fr-FR,fr;q=0.9")
         );
         assert_eq!(
-            accept_language_for_url("https://www.amazon.co.uk/"),
+            accept_language_for_url("https://www.example.co.uk/"),
             Some("en-GB,en;q=0.9")
         );
         assert_eq!(

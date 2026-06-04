@@ -1,10 +1,12 @@
+//! webclaw-core: Pure HTML content extraction engine for LLMs.
+//!
+//! Takes raw HTML + optional URL, returns structured content
+//! (metadata, markdown, plain text, links, images, code blocks).
+//! Zero network dependencies — WASM-compatible by design.
+#![forbid(unsafe_code)]
+
 pub mod brand;
 pub(crate) mod data_island;
-/// webclaw-core: Pure HTML content extraction engine for LLMs.
-///
-/// Takes raw HTML + optional URL, returns structured content
-/// (metadata, markdown, plain text, links, images, code blocks).
-/// Zero network dependencies — WASM-compatible by design.
 pub mod diff;
 pub mod domain;
 pub mod endpoints;
@@ -38,6 +40,14 @@ use url::Url;
 ///
 /// `html` — raw HTML string to parse
 /// `url`  — optional source URL, used for resolving relative links and domain detection
+///
+/// # Example
+///
+/// ```rust
+/// let html = "<html><body><article><h1>Hello</h1><p>World</p></article></body></html>";
+/// let result = webclaw_core::extract(html, Some("https://example.com")).unwrap();
+/// assert!(result.content.markdown.contains("# Hello"));
+/// ```
 pub fn extract(html: &str, url: Option<&str>) -> Result<ExtractionResult, ExtractError> {
     extract_with_options(html, url, &ExtractionOptions::default())
 }
@@ -221,9 +231,14 @@ fn extract_with_options_inner(
     // QuickJS: execute inline <script> tags to capture JS-assigned data blobs
     // (e.g., window.__PRELOADED_STATE__, self.__next_f). This supplements the
     // static JSON data island extraction above with runtime-evaluated data.
+    //
+    // Output-neutral fast path: the QuickJS scan can only ever surface
+    // `globalThis.__*` data, so when the HTML contains none of the candidate
+    // markers the VM is provably a no-op and is skipped entirely. We also reuse
+    // the already-parsed `doc` instead of re-parsing the HTML a second time.
     #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
-    {
-        let blobs = js_eval::extract_js_data(html);
+    if js_eval::has_js_candidate_data(html) {
+        let blobs = js_eval::extract_js_data_from_doc(&doc);
         if !blobs.is_empty() {
             let js_text = js_eval::extract_readable_text(&blobs);
             if !js_text.is_empty() {

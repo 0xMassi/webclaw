@@ -196,38 +196,24 @@ pub fn extract_linkedin_post(html: &str, url: &str) -> Option<ExtractionResult> 
         "linkedin extraction done"
     );
 
-    Some(ExtractionResult {
-        metadata: Metadata {
-            title: if post_author.is_empty() {
-                None
-            } else {
-                Some(format!("{post_author}'s LinkedIn Post"))
-            },
-            description: None,
-            author: if post_author.is_empty() {
-                None
-            } else {
-                Some(post_author)
-            },
-            published_date: None,
-            language: None,
-            url: Some(url.to_string()),
-            site_name: Some("LinkedIn".into()),
-            image: None,
-            favicon: None,
-            word_count,
-        },
-        content: Content {
-            markdown,
-            plain_text: String::new(),
-            links: vec![],
-            images: vec![],
-            code_blocks: vec![],
-            raw_html: None,
-        },
-        domain_data: None,
-        structured_data: vec![],
-    })
+    let title = if post_author.is_empty() {
+        None
+    } else {
+        Some(format!("{post_author}'s LinkedIn Post"))
+    };
+    let author = if post_author.is_empty() {
+        None
+    } else {
+        Some(post_author)
+    };
+    let metadata = Metadata::default()
+        .with_title(title)
+        .with_author(author)
+        .with_url(Some(url.to_string()))
+        .with_site_name(Some("LinkedIn".into()))
+        .with_word_count(word_count);
+    let content = Content::default().with_markdown(markdown);
+    Some(ExtractionResult::new(metadata, content))
 }
 
 /// Unescape HTML entities (named + numeric decimal).

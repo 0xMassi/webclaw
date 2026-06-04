@@ -26,6 +26,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::og::parse_og;
 use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
@@ -74,19 +75,26 @@ pub fn parse(html: &str, url: &str, listing_id: &str) -> Value {
     let jsonld = find_product_jsonld(html);
     let slug_title = humanise_slug(parse_slug(url).as_deref());
 
+    // Single scan for the three og:* fields used as fallbacks below.
+    let og_meta = parse_og(html);
+
     let title = jsonld
         .as_ref()
         .and_then(|v| get_text(v, "name"))
-        .or_else(|| og(html, "title").filter(|t| !is_generic_title(t)))
+        .or_else(|| og_meta.raw("title").filter(|t| !is_generic_title(t)))
         .or(slug_title);
     let description = jsonld
         .as_ref()
         .and_then(|v| get_text(v, "description"))
-        .or_else(|| og(html, "description").filter(|d| !is_generic_description(d)));
+        .or_else(|| {
+            og_meta
+                .raw("description")
+                .filter(|d| !is_generic_description(d))
+        });
     let image = jsonld
         .as_ref()
         .and_then(get_first_image)
-        .or_else(|| og(html, "image"));
+        .or_else(|| og_meta.raw("image"));
     let brand = jsonld.as_ref().and_then(get_brand);
 
     // Etsy listings often ship either a single Offer or an
@@ -357,19 +365,6 @@ fn get_aggregate_rating(v: &Value) -> Option<Value> {
 fn strip_schema_prefix(s: String) -> String {
     s.replace("http://schema.org/", "")
         .replace("https://schema.org/", "")
-}
-
-fn og(html: &str, prop: &str) -> Option<String> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#).unwrap()
-    });
-    for c in re.captures_iter(html) {
-        if c.get(1).is_some_and(|m| m.as_str() == prop) {
-            return c.get(2).map(|m| m.as_str().to_string());
-        }
-    }
-    None
 }
 
 /// Etsy links the owning shop with a canonical anchor like

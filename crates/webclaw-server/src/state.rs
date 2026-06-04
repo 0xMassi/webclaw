@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tracing::info;
 use webclaw_fetch::cloud::CloudClient;
 use webclaw_fetch::{BrowserProfile, FetchClient, FetchConfig};
+use webclaw_llm::ProviderChain;
 
 /// Single-process state shared across all request handlers.
 #[derive(Clone)]
@@ -34,6 +35,16 @@ struct Inner {
     /// auto-deref `&Arc<FetchClient>` -> `&FetchClient`, so this costs
     /// them nothing.
     pub fetch: Arc<FetchClient>,
+    /// The exact [`FetchConfig`] the shared `fetch` client was built from.
+    /// Endpoints that spin up their own client (e.g. `/v1/crawl`, which
+    /// builds a `Crawler` with its own internal `FetchClient`) clone this
+    /// so they inherit the same browser profile / proxy / timeout instead
+    /// of silently falling back to `FetchConfig::default()` (Chrome).
+    pub fetch_config: FetchConfig,
+    /// LLM provider chain (Ollama -> OpenAI -> Anthropic), built once at
+    /// startup. `/v1/extract` and `/v1/summarize` borrow this instead of
+    /// rebuilding the chain (and re-probing Ollama) on every request.
+    pub llm_chain: Arc<ProviderChain>,
     /// Inbound bearer-auth token for this server's own `/v1/*` surface.
     pub api_key: Option<String>,
 }
@@ -45,12 +56,15 @@ impl AppState {
     ///
     /// `inbound_api_key` is the bearer token clients must present;
     /// cloud-fallback credentials come from the env (checked here).
-    pub fn new(inbound_api_key: Option<String>) -> anyhow::Result<Self> {
+    ///
+    /// Async because the LLM provider chain probes Ollama for availability
+    /// once at startup; doing it here keeps it off the per-request hot path.
+    pub async fn new(inbound_api_key: Option<String>) -> anyhow::Result<Self> {
         let config = FetchConfig {
             browser: BrowserProfile::Firefox,
             ..FetchConfig::default()
         };
-        let mut fetch = FetchClient::new(config)
+        let mut fetch = FetchClient::new(config.clone())
             .map_err(|e| anyhow::anyhow!("failed to build fetch client: {e}"))?;
 
         // Cloud fallback: only activates when the operator has provided
@@ -66,9 +80,13 @@ impl AppState {
             fetch = fetch.with_cloud(cloud);
         }
 
+        let llm_chain = Arc::new(ProviderChain::default().await);
+
         Ok(Self {
             inner: Arc::new(Inner {
                 fetch: Arc::new(fetch),
+                fetch_config: config,
+                llm_chain,
                 api_key: inbound_api_key,
             }),
         })
@@ -76,6 +94,19 @@ impl AppState {
 
     pub fn fetch(&self) -> &Arc<FetchClient> {
         &self.inner.fetch
+    }
+
+    /// The [`FetchConfig`] the shared client was built from. Cloned by
+    /// endpoints that need to construct their own client with identical
+    /// settings (currently `/v1/crawl`).
+    pub fn fetch_config(&self) -> &FetchConfig {
+        &self.inner.fetch_config
+    }
+
+    /// The shared LLM provider chain. Borrowed by `/v1/extract` and
+    /// `/v1/summarize`; `&ProviderChain` coerces to `&dyn LlmProvider`.
+    pub fn llm_chain(&self) -> &ProviderChain {
+        &self.inner.llm_chain
     }
 
     pub fn api_key(&self) -> Option<&str> {

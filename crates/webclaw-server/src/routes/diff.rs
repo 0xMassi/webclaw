@@ -36,36 +36,16 @@ impl PreviousSnapshot {
     fn into_extraction(self) -> ExtractionResult {
         match self {
             Self::Full(r) => r,
-            Self::Minimal { markdown, metadata } => ExtractionResult {
-                metadata: metadata.unwrap_or_else(empty_metadata),
-                content: Content {
-                    markdown,
-                    plain_text: String::new(),
-                    links: Vec::new(),
-                    images: Vec::new(),
-                    code_blocks: Vec::new(),
-                    raw_html: None,
-                },
-                domain_data: None,
-                structured_data: Vec::new(),
-            },
+            Self::Minimal { markdown, metadata } => ExtractionResult::new(
+                metadata.unwrap_or_else(empty_metadata),
+                Content::default().with_markdown(markdown),
+            ),
         }
     }
 }
 
 fn empty_metadata() -> Metadata {
-    Metadata {
-        title: None,
-        description: None,
-        author: None,
-        published_date: None,
-        language: None,
-        url: None,
-        site_name: None,
-        image: None,
-        favicon: None,
-        word_count: 0,
-    }
+    Metadata::default()
 }
 
 pub async fn diff_route(

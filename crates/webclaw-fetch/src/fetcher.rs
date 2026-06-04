@@ -1,13 +1,14 @@
 //! Pluggable fetcher abstraction for vertical extractors.
 //!
 //! Extractors call the network through this trait instead of hard-
-//! coding [`FetchClient`]. The OSS CLI / MCP / self-hosted server all
-//! pass `&FetchClient` (wreq-backed BoringSSL). The production API
-//! server, which must not use in-process TLS fingerprinting, provides
-//! its own implementation that routes through the Go tls-sidecar.
+//! coding [`FetchClient`]. The CLI / MCP / self-hosted server all pass
+//! `&FetchClient`, which fetches in-process via wreq (BoringSSL) with
+//! browser-grade TLS fingerprinting. Deployments that need different
+//! transport behaviour can supply an alternative [`Fetcher`]
+//! implementation instead.
 //!
-//! Both paths expose the same [`FetchResult`] shape and the same
-//! optional cloud-escalation client, so extractor logic stays
+//! Every implementation exposes the same [`FetchResult`] shape and the
+//! same optional cloud-escalation client, so extractor logic stays
 //! identical across environments.
 //!
 //! ## Choosing an implementation
@@ -15,9 +16,9 @@
 //! - CLI, MCP, self-hosted `webclaw-server`: build a [`FetchClient`]
 //!   with [`FetchClient::with_cloud`] to attach cloud fallback, pass
 //!   it to extractors as `&client`.
-//! - `api.webclaw.io` production server: build a `TlsSidecarFetcher`
-//!   (in `server/src/engine/`) that delegates to `engine::tls_client`
-//!   and wraps it in `Arc<dyn Fetcher>` for handler injection.
+//! - Custom deployments: provide any type implementing [`Fetcher`],
+//!   wrapped in `Arc<dyn Fetcher>` for handler injection, to layer in
+//!   environment-specific routing on top of the same extractor logic.
 //!
 //! ## Why a trait and not a free function
 //!

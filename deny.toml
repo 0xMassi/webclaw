@@ -1,0 +1,59 @@
+# cargo-deny configuration — supply-chain gate for the webclaw workspace.
+# Run locally with `cargo deny check`; CI runs it via EmbarkStudios/cargo-deny-action.
+#
+# Scope of enforcement:
+#   advisories — fail on known RUSTSEC vulnerabilities / unmaintained crates
+#   bans       — keep the dep tree lean and free of disallowed crates
+#   licenses   — allow the AGPL-3.0 workspace plus permissive deps only
+#   sources    — only crates.io and our own GitHub org
+
+[graph]
+# Evaluate all targets so a vuln gated behind a non-host platform still trips
+# the gate. Keep this in sync with the platforms we actually ship.
+all-features = true
+
+[advisories]
+version = 2
+# Fail the build on any unfixed advisory by default (cargo-deny v2 errors on
+# `vulnerability`/`unmaintained`/`unsound`/`yanked` unless explicitly ignored).
+# Add specific RUSTSEC ids here with a justification only when a fix is not yet
+# available upstream.
+ignore = []
+
+[bans]
+# Warn (don't hard-fail) on duplicate versions of the same crate — common and
+# usually benign in a tree this size; revisit if a duplicate becomes a problem.
+multiple-versions = "warn"
+wildcard-dependencies = "deny"
+# Crates that must never enter the tree. Empty for now; this is where a banned
+# transitive dep (e.g. an unmaintained TLS or crypto crate) would be listed.
+deny = []
+
+[licenses]
+version = 2
+# Permissive licenses we accept on dependencies, plus AGPL-3.0 for the
+# workspace crates themselves. SPDX identifiers.
+allow = [
+    "AGPL-3.0",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MPL-2.0",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+]
+# Crates with no SPDX expression in their manifest fail unless clarified here.
+confidence-threshold = 0.8
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[sources.allow-org]
+github = ["0xMassi"]

@@ -1,11 +1,15 @@
 /// Ollama provider — talks to a local Ollama instance (default localhost:11434).
 /// First choice in the provider chain: free, private, fast on Apple Silicon.
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde_json::json;
 
 use crate::clean::strip_thinking_tags;
-use crate::error::LlmError;
+use crate::error::{LlmError, truncate_err};
 use crate::provider::{CompletionRequest, LlmProvider};
+
+use super::build_http_client;
 
 pub struct OllamaProvider {
     client: reqwest::Client,
@@ -23,8 +27,11 @@ impl OllamaProvider {
             .or_else(|| std::env::var("OLLAMA_MODEL").ok())
             .unwrap_or_else(|| "qwen3:8b".into());
 
+        // Ollama runs local models that can take a while to generate; keep the
+        // overall timeout generous, but cap connect time so an unreachable host
+        // fails fast and the chain can fall through to a cloud provider.
         Self {
-            client: reqwest::Client::new(),
+            client: build_http_client(Duration::from_secs(120)),
             base_url,
             default_model,
         }
@@ -70,11 +77,7 @@ impl LlmProvider for OllamaProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            let safe_text = if text.len() > 500 {
-                &text[..500]
-            } else {
-                &text
-            };
+            let safe_text = truncate_err(&text, 500);
             return Err(LlmError::ProviderError(format!(
                 "ollama returned {status}: {safe_text}"
             )));
@@ -140,12 +143,17 @@ mod tests {
         assert_eq!(provider.default_model(), "phi3:mini");
     }
 
-    // Env var fallback is a trivial `env::var().ok()` -- not worth the flakiness
-    // of manipulating process-global state. Run in isolation if needed:
-    //   cargo test -p webclaw-llm env_var_fallback -- --ignored --test-threads=1
+    // OLLAMA_HOST / OLLAMA_MODEL are process-global; cargo runs tests in
+    // parallel threads. Serialize the env-mutating tests so one that sets a
+    // var can't race another asserting its absence (poison-tolerant).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
-    #[ignore = "mutates process env; run with --test-threads=1"]
+    #[allow(unsafe_code)] // test-only env mutation, serialized by ENV_LOCK
     fn env_var_fallback() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: env mutation is serialized by ENV_LOCK; set_var/remove_var
+        // are unsafe on the 2024 toolchain.
         unsafe {
             std::env::set_var("OLLAMA_HOST", "http://remote:11434");
             std::env::set_var("OLLAMA_MODEL", "mistral:7b");

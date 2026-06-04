@@ -2,9 +2,13 @@
 name = "webclaw-server"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Minimal REST API server for self-hosting webclaw extraction. Wraps the OSS extraction crates with HTTP endpoints. NOT the production hosted API at api.webclaw.io — this is a stateless, single-binary reference server for local + self-hosted deployments."
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "webclaw-server"
@@ -18,7 +22,7 @@ webclaw-pdf    = { workspace = true }
 
 axum           = { version = "0.8", features = ["macros"] }
 tokio          = { workspace = true }
-tower-http     = { version = "0.6", features = ["trace", "cors"] }
+tower-http     = { version = "0.6", features = ["trace", "cors", "timeout"] }
 clap           = { workspace = true, features = ["derive", "env"] }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
@@ -27,3 +31,9 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 anyhow         = "1"
 thiserror      = { workspace = true }
 subtle         = "2.6"
+
+[dev-dependencies]
+# `ServiceExt::oneshot` drives the router in-process for hermetic handler
+# tests (no TCP listener, no network).
+tower          = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

@@ -3,13 +3,13 @@
 
 /// Which browser identity to present at the TLS/HTTP layer.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub enum BrowserProfile {
     #[default]
     Chrome,
     Firefox,
-    /// Safari iOS 26 (iPhone). The one profile proven to defeat
-    /// DataDome's immobiliare.it / idealista.it / target.com-class
-    /// rules when paired with a country-scoped residential proxy.
+    /// iOS Safari fingerprint. Useful for sites with stricter TLS
+    /// requirements that expect a mobile Safari client.
     SafariIos,
     /// Randomly pick from all available profiles on each request.
     Random,

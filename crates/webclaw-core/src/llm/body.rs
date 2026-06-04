@@ -184,7 +184,7 @@ fn detect_long_line_cycle(words: &[&str]) -> Option<String> {
 
         // Try exact N-copy cycles first
         for n_copies in (2..=5).rev() {
-            if !slice.len().is_multiple_of(n_copies) {
+            if slice.len() % n_copies != 0 {
                 continue;
             }
             let cycle_len = slice.len() / n_copies;
@@ -759,7 +759,7 @@ pub(crate) fn dedup_comma_lists(input: &str) -> String {
             // First: try full cycle dedup (a,b,c,a,b,c -> a,b,c)
             if items.len() >= 6 {
                 for cycle_len in 1..=items.len() / 2 {
-                    if !items.len().is_multiple_of(cycle_len) {
+                    if items.len() % cycle_len != 0 {
                         continue;
                     }
                     let pattern = &items[..cycle_len];

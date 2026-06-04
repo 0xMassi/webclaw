@@ -3,11 +3,15 @@ name = "webclaw-core"
 description = "Pure HTML content extraction engine for LLMs"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 # Reddit regression fixtures are real old.reddit.com pages read at test time;
 # they're large and only needed to run the test suite from the repo, so keep
 # them out of the published crate.
 exclude = ["testdata/reddit/*.html"]
+
+[lints]
+workspace = true
 
 [features]
 default = ["quickjs"]

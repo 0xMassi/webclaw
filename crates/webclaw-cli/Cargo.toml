@@ -3,7 +3,11 @@ name = "webclaw-cli"
 description = "CLI for extracting web content into LLM-optimized formats"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "webclaw"

@@ -3,7 +3,11 @@ name = "webclaw-mcp"
 description = "MCP server for webclaw web extraction toolkit"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "webclaw-mcp"

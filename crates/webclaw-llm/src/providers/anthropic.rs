@@ -1,14 +1,16 @@
 /// Anthropic provider — Claude models via api.anthropic.com.
 /// Anthropic's API differs from OpenAI: system message is a top-level param,
 /// not part of the messages array.
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde_json::json;
 
 use crate::clean::strip_thinking_tags;
-use crate::error::LlmError;
+use crate::error::{LlmError, truncate_err};
 use crate::provider::{CompletionRequest, LlmProvider};
 
-use super::load_api_key;
+use super::{build_http_client, load_api_key};
 
 const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -35,7 +37,7 @@ impl AnthropicProvider {
         let key = load_api_key(key_override, "ANTHROPIC_API_KEY")?;
 
         Some(Self {
-            client: reqwest::Client::new(),
+            client: build_http_client(Duration::from_secs(120)),
             key,
             base_url: base_url
                 .or_else(|| std::env::var("ANTHROPIC_BASE_URL").ok())
@@ -108,11 +110,7 @@ impl LlmProvider for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            let safe_text = if text.len() > 500 {
-                &text[..500]
-            } else {
-                &text
-            };
+            let safe_text = truncate_err(&text, 500);
             return Err(LlmError::ProviderError(format!(
                 "anthropic returned {status}: {safe_text}"
             )));
@@ -208,12 +206,17 @@ mod tests {
         );
     }
 
-    // Env var fallback tests mutate process-global state and race with parallel tests.
-    // The code path is trivial (load_api_key -> env::var().ok()). Run in isolation if needed:
-    //   cargo test -p webclaw-llm env_var -- --ignored --test-threads=1
+    // ANTHROPIC_API_KEY is process-global; cargo runs tests in parallel
+    // threads. Serialize the env-mutating tests so setting the key in one
+    // can't race another asserting its absence (poison-tolerant).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
-    #[ignore = "mutates process env; run with --test-threads=1"]
+    #[allow(unsafe_code)] // test-only env mutation, serialized by ENV_LOCK
     fn env_var_key_fallback() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: env mutation is serialized by ENV_LOCK; set_var/remove_var
+        // are unsafe on the 2024 toolchain.
         unsafe { std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-env") };
         let provider = AnthropicProvider::new(None, None).expect("should construct from env");
         assert_eq!(provider.key, "sk-ant-env");
@@ -221,8 +224,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "mutates process env; run with --test-threads=1"]
+    #[allow(unsafe_code)] // test-only env mutation, serialized by ENV_LOCK
     fn no_key_returns_none() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: env mutation is serialized by ENV_LOCK. Clear any ambient
+        // runner value so the absence assertion is deterministic.
         unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
         assert!(AnthropicProvider::new(None, None).is_none());
     }

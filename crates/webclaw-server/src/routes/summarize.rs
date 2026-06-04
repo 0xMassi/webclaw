@@ -3,7 +3,7 @@
 use axum::{Json, extract::State};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use webclaw_llm::{ProviderChain, summarize::summarize};
+use webclaw_llm::summarize::summarize;
 
 use crate::{error::ApiError, state::AppState};
 
@@ -36,7 +36,7 @@ pub async fn summarize_route(
         ));
     }
 
-    let chain = ProviderChain::default().await;
+    let chain = state.llm_chain();
     if chain.is_empty() {
         return Err(ApiError::Llm(
             "no LLM providers configured (set OLLAMA_HOST, OPENAI_API_KEY, or ANTHROPIC_API_KEY)"
@@ -44,7 +44,7 @@ pub async fn summarize_route(
         ));
     }
 
-    let summary = summarize(&content, req.max_sentences, &chain, req.model.as_deref()).await?;
+    let summary = summarize(&content, req.max_sentences, chain, req.model.as_deref()).await?;
 
     Ok(Json(json!({
         "url": req.url,

@@ -5,8 +5,30 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.6.5"
 edition = "2024"
+rust-version = "1.85"
 license = "AGPL-3.0"
 repository = "https://github.com/0xMassi/webclaw"
+
+# Hardened release profile: thin LTO + a single codegen unit enable
+# cross-crate inlining on the hot extraction path and shrink the binaries,
+# and stripping symbols trims the shipped artifact. We deliberately do NOT
+# set `panic = "abort"`: webclaw-pdf relies on std::panic::catch_unwind to
+# recover from panics inside the pdf-extract parser, and abort would turn
+# those recoverable panics into hard process kills.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Conservative, high-value hardening lints applied workspace-wide. Crates
+# opt in via `[lints] workspace = true`. Kept deliberately narrow so
+# `clippy -D warnings` stays green — the goal is hardening, not a cleanup
+# sweep that would break the build.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+mem_forget = "warn"
 
 [workspace.dependencies]
 webclaw-core = { path = "crates/webclaw-core" }

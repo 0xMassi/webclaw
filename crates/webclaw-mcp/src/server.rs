@@ -498,30 +498,13 @@ impl WebclawMcp {
                     );
                 }
 
-                let current = webclaw_core::ExtractionResult {
-                    content: webclaw_core::Content {
-                        markdown: markdown.to_string(),
-                        plain_text: markdown.to_string(),
-                        links: Vec::new(),
-                        images: Vec::new(),
-                        code_blocks: Vec::new(),
-                        raw_html: None,
-                    },
-                    metadata: webclaw_core::Metadata {
-                        title: None,
-                        description: None,
-                        author: None,
-                        published_date: None,
-                        language: None,
-                        url: Some(params.url.clone()),
-                        site_name: None,
-                        image: None,
-                        favicon: None,
-                        word_count: markdown.split_whitespace().count(),
-                    },
-                    domain_data: None,
-                    structured_data: Vec::new(),
-                };
+                let content = webclaw_core::Content::default()
+                    .with_markdown(markdown.to_string())
+                    .with_plain_text(markdown.to_string());
+                let metadata = webclaw_core::Metadata::default()
+                    .with_url(Some(params.url.clone()))
+                    .with_word_count(markdown.split_whitespace().count());
+                let current = webclaw_core::ExtractionResult::new(metadata, content);
 
                 let content_diff = webclaw_core::diff::diff(&previous, &current);
                 Ok(serde_json::to_string_pretty(&content_diff).unwrap_or_default())

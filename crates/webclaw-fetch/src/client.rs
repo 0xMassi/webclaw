@@ -168,6 +168,13 @@ impl Response {
     fn into_text(self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
+
+    /// Consume the response and hand back the owned body buffer. Used by
+    /// the PDF path to move the bytes into `spawn_blocking` without copying
+    /// (`Bytes` is a refcounted buffer, so this is a cheap move).
+    fn into_body(self) -> bytes::Bytes {
+        self.body
+    }
 }
 
 /// Internal representation of the client pool strategy.
@@ -330,6 +337,18 @@ impl FetchClient {
     /// rescue logic; use [`Self::fetch_smart`] for that.
     #[instrument(skip(self), fields(url = %url))]
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
+        self.with_retry(url, || self.fetch_once(url)).await
+    }
+
+    /// Shared retry loop for the public `fetch` / `fetch_with_headers`
+    /// entry points. Runs `attempt` with exponential backoff (0s, 1s —
+    /// 2 attempts total), retrying on transient network errors and
+    /// retryable HTTP statuses (5xx, 429). `url` is for logging only.
+    async fn with_retry<F, Fut>(&self, url: &str, attempt_fn: F) -> Result<FetchResult, FetchError>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<FetchResult, FetchError>>,
+    {
         let delays = [Duration::ZERO, Duration::from_secs(1)];
         let mut last_err = None;
 
@@ -338,7 +357,7 @@ impl FetchClient {
                 tokio::time::sleep(*delay).await;
             }
 
-            match self.fetch_once(url).await {
+            match attempt_fn().await {
                 Ok(result) => {
                     if is_retryable_status(result.status) && attempt < delays.len() - 1 {
                         warn!(
@@ -414,46 +433,8 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        let delays = [Duration::ZERO, Duration::from_secs(1)];
-        let mut last_err = None;
-
-        for (attempt, delay) in delays.iter().enumerate() {
-            if attempt > 0 {
-                tokio::time::sleep(*delay).await;
-            }
-            match self.fetch_once_with_headers(url, extra).await {
-                Ok(result) => {
-                    if is_retryable_status(result.status) && attempt < delays.len() - 1 {
-                        warn!(
-                            url,
-                            status = result.status,
-                            attempt = attempt + 1,
-                            "retryable status, will retry"
-                        );
-                        last_err = Some(FetchError::Build(format!("HTTP {}", result.status)));
-                        continue;
-                    }
-                    if attempt > 0 {
-                        debug!(url, attempt = attempt + 1, "retry succeeded");
-                    }
-                    return Ok(result);
-                }
-                Err(e) => {
-                    if !is_retryable_error(&e) || attempt == delays.len() - 1 {
-                        return Err(e);
-                    }
-                    warn!(
-                        url,
-                        error = %e,
-                        attempt = attempt + 1,
-                        "transient error, will retry"
-                    );
-                    last_err = Some(e);
-                }
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
+        self.with_retry(url, || self.fetch_once_with_headers(url, extra))
+            .await
     }
 
     /// Fetch a URL then extract structured content.
@@ -514,17 +495,24 @@ impl FetchClient {
         if is_pdf {
             debug!(status, "detected PDF response, using pdf extraction");
 
-            let bytes = response.body();
+            let bytes = response.into_body();
+            let byte_len = bytes.len();
 
             let elapsed = start.elapsed();
             debug!(
                 status,
-                bytes = bytes.len(),
+                bytes = byte_len,
                 elapsed_ms = %elapsed.as_millis(),
                 "PDF fetch complete"
             );
 
-            let pdf_result = webclaw_pdf::extract_pdf(bytes, self.pdf_mode.clone())?;
+            // pdf-extract is synchronous and CPU-bound; run it off the async
+            // executor so a large PDF doesn't stall the reactor thread.
+            let pdf_mode = self.pdf_mode.clone();
+            let pdf_result =
+                tokio::task::spawn_blocking(move || webclaw_pdf::extract_pdf(&bytes, pdf_mode))
+                    .await
+                    .map_err(|e| FetchError::Build(format!("pdf extraction task failed: {e}")))??;
             Ok(pdf_to_extraction_result(&pdf_result, &final_url))
         } else if let Some(doc_type) =
             crate::document::is_document_content_type(&headers, &final_url)
@@ -814,30 +802,16 @@ fn pdf_to_extraction_result(
     let markdown = webclaw_pdf::to_markdown(pdf);
     let word_count = markdown.split_whitespace().count();
 
-    webclaw_core::ExtractionResult {
-        metadata: webclaw_core::Metadata {
-            title: pdf.metadata.title.clone(),
-            description: pdf.metadata.subject.clone(),
-            author: pdf.metadata.author.clone(),
-            published_date: None,
-            language: None,
-            url: Some(url.to_string()),
-            site_name: None,
-            image: None,
-            favicon: None,
-            word_count,
-        },
-        content: webclaw_core::Content {
-            markdown,
-            plain_text: pdf.text.clone(),
-            links: Vec::new(),
-            images: Vec::new(),
-            code_blocks: Vec::new(),
-            raw_html: None,
-        },
-        domain_data: None,
-        structured_data: vec![],
-    }
+    let metadata = webclaw_core::Metadata::default()
+        .with_title(pdf.metadata.title.clone())
+        .with_description(pdf.metadata.subject.clone())
+        .with_author(pdf.metadata.author.clone())
+        .with_url(Some(url.to_string()))
+        .with_word_count(word_count);
+    let content = webclaw_core::Content::default()
+        .with_markdown(markdown)
+        .with_plain_text(pdf.text.clone());
+    webclaw_core::ExtractionResult::new(metadata, content)
 }
 
 /// Collect spawned tasks and reorder results to match input order.

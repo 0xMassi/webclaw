@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum FetchError {
     #[error("request failed: {0}")]
     Request(#[from] wreq::Error),

@@ -9,7 +9,7 @@ use axum::{Json, extract::State};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::time::Duration;
-use webclaw_fetch::{CrawlConfig, Crawler, FetchConfig};
+use webclaw_fetch::{CrawlConfig, Crawler};
 
 use crate::{error::ApiError, state::AppState};
 
@@ -30,7 +30,7 @@ pub struct CrawlRequest {
 }
 
 pub async fn crawl(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(req): Json<CrawlRequest>,
 ) -> Result<Json<Value>, ApiError> {
     if req.url.trim().is_empty() {
@@ -42,7 +42,10 @@ pub async fn crawl(
     let concurrency = req.concurrency.unwrap_or(5).min(20);
 
     let config = CrawlConfig {
-        fetch: FetchConfig::default(),
+        // Inherit the shared client's profile/proxy/timeout instead of
+        // `FetchConfig::default()` (which is Chrome). The rest of the
+        // server fetches as Firefox; crawl now matches.
+        fetch: state.fetch_config().clone(),
         max_depth,
         max_pages,
         concurrency,

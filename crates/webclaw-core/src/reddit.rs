@@ -422,7 +422,7 @@ fn parse_one_comment(c: ElementRef, op: &str, depth: usize) -> Option<RedditComm
     let score = entry.and_then(comment_score);
 
     let created_utc = entry
-        .and_then(|e| Selector::parse("time[datetime]").ok().map(|s| (e, s)))
+        .zip(Selector::parse("time[datetime]").ok())
         .and_then(|(e, s)| e.select(&s).next())
         .and_then(|t| t.value().attr("datetime"))
         .map(str::to_string);

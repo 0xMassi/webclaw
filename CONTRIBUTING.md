@@ -91,18 +91,16 @@ Body is optional but encouraged for non-trivial changes.
 
 ```
 webclaw (this repo)
-├── crates/
-│   ├── webclaw-core/    # Pure extraction engine (HTML → markdown/json/text)
-│   ├── webclaw-fetch/   # HTTP client + crawler + sitemap + batch
-│   ├── webclaw-llm/     # LLM provider chain (Ollama → OpenAI → Anthropic)
-│   ├── webclaw-pdf/     # PDF text extraction
-│   ├── webclaw-cli/     # CLI binary
-│   └── webclaw-mcp/     # MCP server binary
-│
-└── [patch.crates-io]    # Points to webclaw-tls for TLS fingerprinting
+└── crates/
+    ├── webclaw-core/    # Pure extraction engine (HTML → markdown/json/text)
+    ├── webclaw-fetch/   # HTTP client (wreq/BoringSSL) + crawler + sitemap + batch
+    ├── webclaw-llm/     # LLM provider chain (Ollama → OpenAI → Anthropic)
+    ├── webclaw-pdf/     # PDF text extraction
+    ├── webclaw-cli/     # CLI binary
+    └── webclaw-mcp/     # MCP server binary
 ```
 
-TLS fingerprinting lives in a separate repo: [webclaw-tls](https://github.com/0xMassi/webclaw-tls). The `[patch.crates-io]` section in `Cargo.toml` overrides rustls, h2, hyper, hyper-util, and reqwest with our patched forks for browser-grade JA4 + HTTP/2 Akamai fingerprinting.
+TLS fingerprinting is handled in-process by [wreq](https://crates.io/crates/wreq) (BoringSSL), so `webclaw-fetch` impersonates real browser TLS directly. There are no `[patch.crates-io]` forks or external TLS dependencies.
 
 ## Crate Boundaries
 
@@ -111,7 +109,7 @@ Changes that cross crate boundaries need extra care:
 | Crate | Network? | Key constraint |
 |-------|----------|----------------|
 | webclaw-core | No | Zero network deps, WASM-safe |
-| webclaw-fetch | Yes (webclaw-http) | Uses [webclaw-tls](https://github.com/0xMassi/webclaw-tls) for TLS fingerprinting |
+| webclaw-fetch | Yes (wreq) | Browser TLS impersonation via wreq (BoringSSL); no patched deps |
 | webclaw-llm | Yes (reqwest) | Plain reqwest — LLM APIs don't need TLS fingerprinting |
 | webclaw-pdf | No | Minimal, wraps pdf-extract |
 | webclaw-cli | Yes | Depends on all above |

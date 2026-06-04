@@ -17,6 +17,7 @@ pub mod markdown;
 pub mod metadata;
 #[allow(dead_code)]
 pub(crate) mod noise;
+pub mod reddit;
 pub mod structured_data;
 pub mod types;
 pub mod youtube;
@@ -92,6 +93,24 @@ fn extract_with_options_inner(
 ) -> Result<ExtractionResult, ExtractError> {
     if html.is_empty() {
         return Err(ExtractError::NoContent);
+    }
+
+    // Reddit fast path: parse old.reddit.com HTML directly.
+    // The fetch layer rewrites all Reddit hosts to old.reddit.com before
+    // calling extract, so we always get stable server-rendered HTML here.
+    if let Some(u) = url
+        && reddit::is_reddit_url(u)
+    {
+        if let Some(result) = reddit::try_extract(html, u) {
+            return Ok(result);
+        }
+        // A recognised comment thread that we couldn't parse (Reddit markup
+        // change, or a block/challenge page) — don't fall through to generic
+        // extraction, which would emit Reddit nav/sidebar chrome. Listings
+        // and profiles (no `/comments/`) intentionally fall through below.
+        if u.contains("/comments/") {
+            return Err(ExtractError::NoContent);
+        }
     }
 
     // YouTube fast path: if the URL is a YouTube video page, try extracting

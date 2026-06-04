@@ -160,9 +160,6 @@ impl Response {
     fn body(&self) -> &[u8] {
         &self.body
     }
-    fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
-    }
 
     fn text(&self) -> std::borrow::Cow<'_, str> {
         String::from_utf8_lossy(&self.body)
@@ -299,32 +296,15 @@ impl FetchClient {
     /// when you need literal no-rescue behavior (e.g. inside the rescue
     /// logic itself to avoid recursion).
     pub async fn fetch_smart(&self, url: &str) -> Result<FetchResult, FetchError> {
-        // Reddit: the HTML page shows a verification interstitial for most
-        // client IPs, but appending `.json` returns the post + comment tree
-        // publicly. `parse_reddit_json` in downstream code knows how to read
-        // the result; here we just do the URL swap at the fetch layer.
-        if crate::reddit::is_reddit_url(url) && !url.ends_with(".json") {
-            let json_url = crate::reddit::json_url(url);
-            // Reddit's public .json API serves JSON to identifiable bot
-            // User-Agents and blocks browser UAs with a verification wall.
-            // Override our Chrome-profile UA for this specific call.
-            let ua = concat!(
-                "Webclaw/",
-                env!("CARGO_PKG_VERSION"),
-                " (+https://webclaw.io)"
-            );
-            if let Ok(resp) = self
-                .fetch_with_headers(&json_url, &[("user-agent", ua)])
-                .await
-                && resp.status == 200
-            {
-                let first = resp.html.trim_start().as_bytes().first().copied();
-                if matches!(first, Some(b'{') | Some(b'[')) {
-                    return Ok(resp);
-                }
-            }
-            // If the .json fetch failed or returned HTML, fall through.
-        }
+        // Reddit: fetch old.reddit.com for stable server-rendered HTML.
+        // The JSON API is blocked; old.reddit.com works without JS or auth.
+        let owned;
+        let url = if crate::reddit::is_reddit_url(url) {
+            owned = crate::reddit::to_old_reddit_url(url);
+            owned.as_str()
+        } else {
+            url
+        };
 
         let resp = self.fetch(url).await?;
 
@@ -496,23 +476,16 @@ impl FetchClient {
         let parsed_url = crate::url_security::validate_public_http_url(url).await?;
         let url = parsed_url.as_str();
 
-        // Reddit fallback: use their JSON API to get post + full comment tree.
-        if crate::reddit::is_reddit_url(url) {
-            let json_url = crate::reddit::json_url(url);
-            let json_url = crate::url_security::validate_public_http_url(&json_url).await?;
-            debug!("reddit detected, fetching {json_url}");
-
-            let client = self.pick_client(url);
-            let resp = client.get(json_url.as_str()).send().await?;
-            let response = Response::from_wreq(resp).await?;
-            if response.is_success() {
-                let bytes = response.body();
-                match crate::reddit::parse_reddit_json(bytes, url) {
-                    Ok(result) => return Ok(result),
-                    Err(e) => warn!("reddit json fallback failed: {e}, falling back to HTML"),
-                }
-            }
-        }
+        // Reddit: rewrite to old.reddit.com for stable server-rendered HTML.
+        // webclaw-core's Reddit fast path then parses the thread structure.
+        let reddit_owned;
+        let url = if crate::reddit::is_reddit_url(url) {
+            reddit_owned = crate::reddit::to_old_reddit_url(url);
+            debug!("reddit: rewriting to {reddit_owned}");
+            reddit_owned.as_str()
+        } else {
+            url
+        };
 
         let start = Instant::now();
         let client = self.pick_client(url);

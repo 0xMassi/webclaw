@@ -13,8 +13,12 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 async-trait = "0.1"
-wreq = { version = "6.0.0-rc.28", features = ["cookies", "gzip", "brotli", "zstd", "deflate"] }
-wreq-util = "3.0.0-rc.10"
+# Pinned to exact pre-release versions: wreq/wreq-util are release candidates
+# with no semver stability between rc.N builds (rc.29 broke the TLS + Response
+# API). An exact pin keeps `cargo build`, `cargo install` (which ignores
+# Cargo.lock), and the release workflow all on the version that compiles.
+wreq = { version = "=6.0.0-rc.28", features = ["cookies", "gzip", "brotli", "zstd", "deflate"] }
+wreq-util = "=3.0.0-rc.10"
 http = "1"
 bytes = "1"
 url = "2"

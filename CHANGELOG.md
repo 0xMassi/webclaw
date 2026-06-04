@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.5] — 2026-06-04
+
+### Changed
+- Reddit threads extract reliably again. The old anonymous JSON endpoint is no longer available, so webclaw now reads old.reddit.com directly without an API key or JavaScript. You get the post plus the full nested comment tree, with authors, scores, timestamps, and reply nesting preserved. Comment text keeps its links and code blocks, hidden scores are reported as unknown rather than zero, and deleted comments stay in place so their replies aren't lost.
+
+---
+
 ## [0.6.4] — 2026-05-19
 
 ### Added

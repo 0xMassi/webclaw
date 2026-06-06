@@ -123,6 +123,7 @@ fn build_app(state: AppState) -> Router {
         )
         .route("/crawl", post(routes::crawl::crawl))
         .route("/map", post(routes::map::map))
+        .route("/search", post(routes::search::search))
         .route("/batch", post(routes::batch::batch))
         .route("/extract", post(routes::extract::extract))
         .route("/extractors", get(routes::structured::list_extractors))
@@ -287,6 +288,50 @@ mod tests {
                 .as_str()
                 .is_some_and(|e| e.contains("unknown format")),
             "expected unknown-format error, got {body:?}"
+        );
+    }
+
+    fn post_json(uri: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_owned()))
+            .expect("request")
+    }
+
+    #[tokio::test]
+    async fn search_empty_query_is_bad_request() {
+        // The empty-query guard runs before the key check, so this is
+        // hermetic regardless of whether SERPER_API_KEY is set.
+        let app = app_with_key(None).await;
+        let resp = app
+            .oneshot(post_json("/v1/search", r#"{"query":"   "}"#))
+            .await
+            .expect("response");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn search_without_serper_key_is_not_implemented() {
+        // Only meaningful when the operator hasn't configured a key.
+        // Skip if the test environment happens to set SERPER_API_KEY so
+        // we don't make a live Serper call from the test suite.
+        if std::env::var("SERPER_API_KEY").is_ok_and(|k| !k.trim().is_empty()) {
+            return;
+        }
+        let app = app_with_key(None).await;
+        let resp = app
+            .oneshot(post_json("/v1/search", r#"{"query":"rust"}"#))
+            .await
+            .expect("response");
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        let body = json_body(resp).await;
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("SERPER_API_KEY")),
+            "expected serper setup hint, got {body:?}"
         );
     }
 }

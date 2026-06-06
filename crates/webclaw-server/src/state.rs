@@ -47,6 +47,9 @@ struct Inner {
     pub llm_chain: Arc<ProviderChain>,
     /// Inbound bearer-auth token for this server's own `/v1/*` surface.
     pub api_key: Option<String>,
+    /// Operator's own Serper.dev API key, read from `SERPER_API_KEY`.
+    /// Enables `/v1/search`. Unset = `/v1/search` returns 501.
+    pub serper_api_key: Option<String>,
 }
 
 impl AppState {
@@ -82,12 +85,22 @@ impl AppState {
 
         let llm_chain = Arc::new(ProviderChain::default().await);
 
+        // Operator's own Serper.dev key enables /v1/search. Empty/unset
+        // leaves search returning 501 with a setup hint.
+        let serper_api_key = std::env::var("SERPER_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty());
+        if serper_api_key.is_some() {
+            info!("search enabled — using SERPER_API_KEY for /v1/search");
+        }
+
         Ok(Self {
             inner: Arc::new(Inner {
                 fetch: Arc::new(fetch),
                 fetch_config: config,
                 llm_chain,
                 api_key: inbound_api_key,
+                serper_api_key,
             }),
         })
     }
@@ -111,6 +124,11 @@ impl AppState {
 
     pub fn api_key(&self) -> Option<&str> {
         self.inner.api_key.as_deref()
+    }
+
+    /// Operator's Serper.dev key for `/v1/search`, if configured.
+    pub fn serper_api_key(&self) -> Option<&str> {
+        self.inner.serper_api_key.as_deref()
     }
 }
 

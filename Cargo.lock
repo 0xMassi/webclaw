@@ -3264,6 +3264,7 @@ dependencies = [
  "bytes",
  "calamine",
  "flate2",
+ "futures",
  "http",
  "quick-xml 0.37.5",
  "rand 0.8.5",

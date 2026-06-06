@@ -21,7 +21,7 @@ use fetch::{
 use output::{format_output, print_cloud_output, print_output};
 use run::{
     has_llm_flags, run_batch, run_batch_llm, run_brand, run_crawl, run_diff, run_llm, run_map,
-    run_research, run_watch,
+    run_research, run_search, run_watch,
 };
 
 fn init_logging(verbose: bool) {
@@ -142,6 +142,40 @@ async fn main() {
                         eprintln!("error: {e}");
                         process::exit(1);
                     }
+                }
+                return;
+            }
+            Commands::Search {
+                query,
+                serper_key,
+                num,
+                country,
+                lang,
+                scrape,
+                format,
+            } => {
+                let key = match serper_key {
+                    Some(k) if !k.trim().is_empty() => k.clone(),
+                    _ => {
+                        eprintln!(
+                            "error: search requires a Serper.dev API key: pass --serper-key or set SERPER_API_KEY (get one free at serper.dev)"
+                        );
+                        process::exit(1);
+                    }
+                };
+                if let Err(e) = run_search(
+                    &key,
+                    query,
+                    *num,
+                    country.as_deref(),
+                    lang.as_deref(),
+                    *scrape,
+                    format,
+                )
+                .await
+                {
+                    eprintln!("error: {e}");
+                    process::exit(1);
                 }
                 return;
             }

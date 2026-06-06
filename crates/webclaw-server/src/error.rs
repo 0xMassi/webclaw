@@ -38,6 +38,9 @@ pub enum ApiError {
 
     #[error("internal: {0}")]
     Internal(String),
+
+    #[error("{0}")]
+    NotImplemented(String),
 }
 
 impl ApiError {
@@ -48,6 +51,12 @@ impl ApiError {
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::Internal(msg.into())
     }
+    /// 501 — a capability the operator hasn't configured (e.g. search
+    /// without `SERPER_API_KEY`). Distinct from `BadRequest` (client's
+    /// fault) and `Internal` (our fault): it's a deployment-config gap.
+    pub fn not_implemented(msg: impl Into<String>) -> Self {
+        Self::NotImplemented(msg.into())
+    }
 
     fn status(&self) -> StatusCode {
         match self {
@@ -57,6 +66,7 @@ impl ApiError {
             Self::Fetch(_) => StatusCode::BAD_GATEWAY,
             Self::Extract(_) | Self::Llm(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
         }
     }
 }

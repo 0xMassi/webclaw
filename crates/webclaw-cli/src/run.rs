@@ -229,6 +229,73 @@ pub async fn run_map(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
+/// Web search via Serper.dev with the caller's own API key.
+///
+/// The Serper key is resolved by the caller (flag or `SERPER_API_KEY`
+/// env, via clap's `env`) and passed in already-unwrapped. When `scrape`
+/// is set, each result page is fetched + extracted through a FetchClient
+/// (which carries the browser TLS profile) and its markdown is included.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_search(
+    serper_key: &str,
+    query: &str,
+    num: usize,
+    country: Option<&str>,
+    lang: Option<&str>,
+    scrape: bool,
+    format: &OutputFormat,
+) -> Result<(), String> {
+    // Default fetch config is enough: search localization is handled by
+    // Serper's gl/hl, and the result-page scrape just needs a standard
+    // browser profile. Attach cloud fallback when WEBCLAW_API_KEY is set
+    // so scraped pages behind bot protection can still escalate.
+    let mut client = FetchClient::new(webclaw_fetch::FetchConfig::default())
+        .map_err(|e| format!("client error: {e}"))?;
+    if let Some(cloud) = webclaw_fetch::cloud::CloudClient::from_env() {
+        client = client.with_cloud(cloud);
+    }
+
+    let opts = webclaw_fetch::SearchOptions {
+        num_results: num,
+        country: country.map(str::to_string),
+        lang: lang.map(str::to_string),
+        scrape,
+    };
+
+    let results = webclaw_fetch::search(&client, serper_key, query, &opts)
+        .await
+        .map_err(|e| format!("search error: {e}"))?;
+
+    if matches!(format, OutputFormat::Json) {
+        let json = serde_json::json!({ "query": query, "results": results });
+        match serde_json::to_string_pretty(&json) {
+            Ok(s) => println!("{s}"),
+            Err(e) => return Err(format!("JSON encode failed: {e}")),
+        }
+        return Ok(());
+    }
+
+    if results.is_empty() {
+        eprintln!("no results for \"{query}\"");
+        return Ok(());
+    }
+
+    for r in &results {
+        println!("{}. {}", r.position, r.title);
+        println!("   {}", r.link);
+        if !r.snippet.is_empty() {
+            println!("   {}", r.snippet);
+        }
+        if let Some(ref content) = r.content {
+            println!();
+            println!("{content}");
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
 pub async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<(), String> {
     let client = Arc::new(
         FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?,

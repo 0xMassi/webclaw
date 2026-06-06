@@ -30,6 +30,9 @@ serde_json.workspace = true
 calamine = "0.34"
 zip = "2"
 flate2 = "1"
+# Already in the dependency tree (transitive); used directly here for
+# `join_all` to drive bounded-concurrent result-page scrapes in search.
+futures = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

@@ -271,6 +271,43 @@ pub enum Commands {
         #[arg(long)]
         raw: bool,
     },
+
+    /// Web search via Serper.dev using YOUR OWN API key.
+    ///
+    /// Returns Google organic results (title, link, snippet). With
+    /// `--scrape`, each result page is fetched and extracted to markdown.
+    /// Get a free key at serper.dev, then pass `--serper-key` or set
+    /// `SERPER_API_KEY`.
+    ///
+    /// Example: `webclaw search "rust async runtime" --num 5 --scrape`.
+    Search {
+        /// Search query.
+        query: String,
+
+        /// Serper.dev API key. Falls back to the `SERPER_API_KEY` env var.
+        #[arg(long, env = "SERPER_API_KEY")]
+        serper_key: Option<String>,
+
+        /// Number of results to return (1-10).
+        #[arg(long, default_value = "5")]
+        num: usize,
+
+        /// Country code for localization (e.g. "us", "gb", "it").
+        #[arg(long)]
+        country: Option<String>,
+
+        /// Language code for localization (e.g. "en", "it").
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Fetch + extract each result page and include its markdown.
+        #[arg(long)]
+        scrape: bool,
+
+        /// Output format: `markdown` (human-readable, default) or `json`.
+        #[arg(short, long, default_value = "markdown")]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Clone, ValueEnum)]

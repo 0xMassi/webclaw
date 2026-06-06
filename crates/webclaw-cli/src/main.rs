@@ -35,7 +35,13 @@ fn init_logging(verbose: bool) {
         EnvFilter::try_from_env("WEBCLAW_LOG").unwrap_or_else(|_| EnvFilter::new(default))
     };
 
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // Logs go to stderr, never stdout: stdout carries the actual result
+    // (markdown / JSON / URL list). A stray WARN on stdout corrupts
+    // machine-readable output — e.g. `--map --format json` piped to a parser.
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
 }
 
 #[tokio::main]

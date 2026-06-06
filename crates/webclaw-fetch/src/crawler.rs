@@ -528,7 +528,7 @@ impl Crawler {
 }
 
 /// Canonical origin string for comparing same-origin: "scheme://host[:port]".
-fn origin_key(url: &Url) -> String {
+pub(crate) fn origin_key(url: &Url) -> String {
     let port_suffix = match url.port() {
         Some(p) => format!(":{p}"),
         None => String::new(),
@@ -563,7 +563,7 @@ fn root_domain(url: &Url) -> String {
 
 /// Normalize a URL for dedup: strip fragment, remove trailing slash (except root "/"),
 /// lowercase scheme + host. Preserves query params and path case.
-fn normalize(url: &Url) -> String {
+pub(crate) fn normalize(url: &Url) -> String {
     let scheme = url.scheme();
     let host = url.host_str().unwrap_or("").to_ascii_lowercase();
     let port_suffix = match url.port() {

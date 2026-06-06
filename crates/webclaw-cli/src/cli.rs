@@ -162,6 +162,18 @@ pub struct Cli {
     #[arg(long)]
     pub map: bool,
 
+    /// Max pages for --map's crawl fallback when the sitemap is thin [default: 150]
+    #[arg(long)]
+    pub map_pages: Option<usize>,
+
+    /// Disable --map's crawl fallback (sitemap-only discovery)
+    #[arg(long)]
+    pub no_map_crawl: bool,
+
+    /// Cap the number of URLs --map returns (default: uncapped)
+    #[arg(long)]
+    pub map_limit: Option<usize>,
+
     // -- LLM options --
     /// Extract structured JSON using LLM (pass a JSON schema string or @file)
     #[arg(long)]

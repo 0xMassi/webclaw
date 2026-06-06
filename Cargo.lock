@@ -3263,6 +3263,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "calamine",
+ "flate2",
  "http",
  "quick-xml 0.37.5",
  "rand 0.8.5",

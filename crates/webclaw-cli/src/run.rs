@@ -205,12 +205,22 @@ pub async fn run_map(cli: &Cli) -> Result<(), String> {
     let client =
         FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
 
-    let entries = webclaw_fetch::sitemap::discover(&client, url)
-        .await
-        .map_err(|e| format!("sitemap discovery failed: {e}"))?;
+    // Layered discovery: sitemaps first, bounded crawl fallback when thin.
+    let mut opts = webclaw_fetch::MapOptions::default();
+    if let Some(pages) = cli.map_pages {
+        opts.max_crawl_pages = pages;
+    }
+    if cli.no_map_crawl {
+        opts.crawl_fallback = false;
+    }
+    if let Some(limit) = cli.map_limit {
+        opts.max_urls = Some(limit);
+    }
+
+    let entries = webclaw_fetch::discover_urls(&client, url, &opts).await;
 
     if entries.is_empty() {
-        eprintln!("no sitemap URLs found for {url}");
+        eprintln!("no URLs found for {url}");
     } else {
         eprintln!("discovered {} URLs", entries.len());
     }

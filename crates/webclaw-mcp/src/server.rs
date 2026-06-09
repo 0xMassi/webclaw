@@ -323,9 +323,10 @@ impl WebclawMcp {
         if params.urls.len() > 100 {
             return Err("batch is limited to 100 URLs per request".into());
         }
-        for u in &params.urls {
-            validate_url(u).await?;
-        }
+        // No up-front DNS pre-validation: it aborted the whole batch on a
+        // single unresolvable URL. The fetch layer applies the same SSRF
+        // guard (validate_public_http_url) per URL, so bad entries surface
+        // as individual per-URL errors below instead of failing the batch.
 
         let format = params.format.as_deref().unwrap_or("markdown");
         let concurrency = params.concurrency.unwrap_or(5);

@@ -1548,7 +1548,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     // Fire webhook on crawl complete
     if let Some(ref webhook_url) = cli.webhook {
         let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
-        fire_webhook(
+        let handle = fire_webhook(
             webhook_url,
             &serde_json::json!({
                 "event": "crawl_complete",
@@ -1559,8 +1559,8 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 "urls": urls,
             }),
         );
-        // Brief pause so the async webhook has time to fire
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // Wait for the webhook to finish so the process doesn't exit mid-send.
+        let _ = handle.await;
     }
 
     if result.errors > 0 {
@@ -1658,7 +1658,7 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
     // Fire webhook on batch complete
     if let Some(ref webhook_url) = cli.webhook {
         let urls: Vec<&str> = results.iter().map(|r| r.url.as_str()).collect();
-        fire_webhook(
+        let handle = fire_webhook(
             webhook_url,
             &serde_json::json!({
                 "event": "batch_complete",
@@ -1668,7 +1668,7 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
                 "urls": urls,
             }),
         );
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let _ = handle.await;
     }
 
     if errors > 0 {
@@ -1742,9 +1742,12 @@ async fn spawn_on_change(cmd: &str, stdin_payload: &[u8]) {
     }
 }
 
-/// Fire a webhook POST with a JSON payload. Non-blocking — errors logged to stderr.
-/// Auto-detects Discord and Slack webhook URLs and wraps the payload accordingly.
-fn fire_webhook(url: &str, payload: &serde_json::Value) {
+/// Fire a webhook POST with a JSON payload. Spawns the send on a background task
+/// and returns its `JoinHandle` so callers that need delivery (e.g. one-shot
+/// crawl/batch runs that exit immediately after) can `.await` it; long-running
+/// loops can drop the handle and let it run fire-and-forget. Errors are logged
+/// to stderr. Auto-detects Discord and Slack webhook URLs and wraps the payload.
+fn fire_webhook(url: &str, payload: &serde_json::Value) -> tokio::task::JoinHandle<()> {
     let url = url.to_string();
     let is_discord = url.contains("discord.com/api/webhooks");
     let is_slack = url.contains("hooks.slack.com");
@@ -1806,7 +1809,7 @@ fn fire_webhook(url: &str, payload: &serde_json::Value) {
             },
             Err(e) => eprintln!("[webhook] client error: {e}"),
         }
-    });
+    })
 }
 
 async fn run_watch(cli: &Cli, urls: &[String]) -> Result<(), String> {
@@ -2318,7 +2321,7 @@ async fn run_batch_llm(cli: &Cli, entries: &[(String, Option<String>)]) -> Resul
     eprintln!("Processed {total} URLs ({ok} ok, {errors} errors)");
 
     if let Some(ref webhook_url) = cli.webhook {
-        fire_webhook(
+        let handle = fire_webhook(
             webhook_url,
             &serde_json::json!({
                 "event": "batch_llm_complete",
@@ -2327,7 +2330,7 @@ async fn run_batch_llm(cli: &Cli, entries: &[(String, Option<String>)]) -> Resul
                 "errors": errors,
             }),
         );
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let _ = handle.await;
     }
 
     if errors > 0 {

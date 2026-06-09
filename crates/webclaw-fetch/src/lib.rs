@@ -25,7 +25,7 @@ pub use error::FetchError;
 pub use fetcher::Fetcher;
 pub use http::HeaderMap;
 pub use locale::{accept_language_for_tld, accept_language_for_url};
-pub use progress::{with_progress, PROGRESS_INTERVAL};
+pub use progress::{PROGRESS_INTERVAL, with_progress};
 pub use proxy::{parse_proxy_file, parse_proxy_line};
 pub use sitemap::SitemapEntry;
 pub use webclaw_pdf::PdfMode;

@@ -2948,7 +2948,9 @@ mod tests {
         assert!(!looks_truncated("https://example.com/path/to/page"));
         assert!(!looks_truncated("https://example.com/?a=1"));
         assert!(!looks_truncated("https://example.com/?a=1&b=2"));
-        assert!(!looks_truncated("https://example.com/?a=1&b=2&c=hello%20world"));
+        assert!(!looks_truncated(
+            "https://example.com/?a=1&b=2&c=hello%20world"
+        ));
         // Hash anchors without a query are clean.
         assert!(!looks_truncated("https://example.com/page#section"));
     }

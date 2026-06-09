@@ -18,7 +18,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-use tokio::time::{interval, Instant, MissedTickBehavior};
+use tokio::time::{Instant, MissedTickBehavior, interval};
 
 /// Default progress emission interval. The first tick fires at +10s
 /// elapsed; subsequent ticks at +20s, +30s, etc.
@@ -265,7 +265,8 @@ mod tests {
     fn test_truncate_url_unicode_safe() {
         // Cyrillic URL longer than 80 chars — must not panic on a
         // mid-codepoint split.
-        let url = "https://example.com/путь/к/очень/длинной/странице/с/большим/количеством/кириллицы/тут";
+        let url =
+            "https://example.com/путь/к/очень/длинной/странице/с/большим/количеством/кириллицы/тут";
         let truncated = truncate_url(url, 80);
         assert!(truncated.is_char_boundary(truncated.len()));
         // Roundtrip through chars to confirm valid UTF-8 throughout.
@@ -275,10 +276,7 @@ mod tests {
     #[test]
     fn test_format_progress_line_shape() {
         let line = format_progress_line("https://example.com/", Duration::from_secs(10));
-        assert_eq!(
-            line,
-            "# webclaw: still fetching https://example.com/ (10s)"
-        );
+        assert_eq!(line, "# webclaw: still fetching https://example.com/ (10s)");
     }
 
     #[test]
@@ -287,6 +285,9 @@ mod tests {
         // the first tick fires at +PROGRESS_INTERVAL so this is mostly
         // a defensive shape assertion.)
         let line = format_progress_line("https://x/", Duration::from_millis(9_500));
-        assert!(line.ends_with("(9s)"), "line should end with `(9s)`: {line:?}");
+        assert!(
+            line.ends_with("(9s)"),
+            "line should end with `(9s)`: {line:?}"
+        );
     }
 }

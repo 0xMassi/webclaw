@@ -3,6 +3,14 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.6] — 2026-06-09
+
+### Added
+- Slow fetches now print a progress line to stderr every 10 seconds (`# webclaw: still fetching <url> (Ns)`) so a long request no longer looks like the CLI hung. Fast fetches stay silent and stdout is untouched.
+- New `--url-encoded` flag plus a warning when a URL looks like the shell split it on `&` or `?`. The warning suggests quoting the URL; pass `--url-encoded` to silence it when the URL is intentional.
+
+---
+
 ## [0.6.5] — 2026-06-04
 
 ### Changed

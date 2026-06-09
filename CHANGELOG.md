@@ -3,6 +3,13 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.7] — 2026-06-09
+
+### Changed
+- Updated the HTTP/TLS engine (wreq 6.0.0-rc.29, wreq-util 3.0.0-rc.12). This pulls in upstream robustness fixes: no more panic on responses with non-UTF8 header values, a fix for short reads when decoding large compressed bodies, and the TCP nodelay setting is restored. Browser TLS fingerprints are unchanged.
+
+---
+
 ## [0.6.6] — 2026-06-09
 
 ### Added

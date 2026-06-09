@@ -10,14 +10,23 @@ use std::{borrow::Cow, io, time::Duration};
 use wreq::http2::{
     Http2Options, PseudoId, PseudoOrder, SettingId, SettingsOrder, StreamDependency, StreamId,
 };
-use wreq::tls::{
-    AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsOptions,
-    TlsVersion,
-};
-use wreq::{Client, Emulation};
+use wreq::tls::compress::CertificateCompressor;
+use wreq::tls::{AlpnProtocol, AlpsProtocol, ExtensionType, TlsOptions, TlsVersion};
+use wreq::{Client, Emulation, Group, IntoEmulation};
+use wreq_util::emulate::compress::{BrotliCompressor, ZlibCompressor};
 
 use crate::browser::BrowserVariant;
 use crate::error::FetchError;
+
+// Certificate-compression advertisement per profile. wreq 6.0.0-rc.29 replaced
+// the `CertificateCompressionAlgorithm` enum argument with `&dyn
+// CertificateCompressor` trait objects; wreq-util ships the concrete zlib/brotli
+// implementations. The advertised set (and order) is a TLS fingerprint signal,
+// so these mirror the previous enum lists exactly.
+static CHROME_CERT_COMPRESSORS: &[&'static dyn CertificateCompressor] = &[&BrotliCompressor];
+static FIREFOX_CERT_COMPRESSORS: &[&'static dyn CertificateCompressor] =
+    &[&ZlibCompressor, &BrotliCompressor];
+static SAFARI_CERT_COMPRESSORS: &[&'static dyn CertificateCompressor] = &[&ZlibCompressor];
 
 #[derive(Clone, Default)]
 struct PublicDnsResolver;
@@ -119,14 +128,14 @@ fn chrome_extensions() -> Vec<ExtensionType> {
         ExtensionType::PSK_KEY_EXCHANGE_MODES,                 // 45
         ExtensionType::EC_POINT_FORMATS,                       // 11
         ExtensionType::CERT_COMPRESSION,                       // 27
-        ExtensionType::APPLICATION_SETTINGS_NEW, // 17613 (new codepoint, matches alps_use_new_codepoint)
-        ExtensionType::SUPPORTED_VERSIONS,       // 43
-        ExtensionType::SIGNATURE_ALGORITHMS,     // 13
-        ExtensionType::SERVER_NAME,              // 0
+        ExtensionType::APPLICATION_SETTINGS, // 17613 (new codepoint, matches alps_use_new_codepoint)
+        ExtensionType::SUPPORTED_VERSIONS,   // 43
+        ExtensionType::SIGNATURE_ALGORITHMS, // 13
+        ExtensionType::SERVER_NAME,          // 0
         ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION, // 16
-        ExtensionType::ENCRYPTED_CLIENT_HELLO,   // 65037
-        ExtensionType::RENEGOTIATE,              // 65281
-        ExtensionType::EXTENDED_MASTER_SECRET,   // 23
+        ExtensionType::ENCRYPTED_CLIENT_HELLO, // 65037
+        ExtensionType::RENEGOTIATE,          // 65281
+        ExtensionType::EXTENDED_MASTER_SECRET, // 23
     ]
 }
 
@@ -287,7 +296,7 @@ fn chrome_tls() -> TlsOptions {
         .alps_protocols([AlpsProtocol::HTTP3, AlpsProtocol::HTTP2])
         .alps_use_new_codepoint(true)
         .aes_hw_override(true)
-        .certificate_compression_algorithms(&[CertificateCompressionAlgorithm::BROTLI])
+        .certificate_compressors(CHROME_CERT_COMPRESSORS)
         .build()
 }
 
@@ -304,10 +313,7 @@ fn firefox_tls() -> TlsOptions {
         .pre_shared_key(true)
         .enable_ocsp_stapling(true)
         .enable_signed_cert_timestamps(true)
-        .certificate_compression_algorithms(&[
-            CertificateCompressionAlgorithm::ZLIB,
-            CertificateCompressionAlgorithm::BROTLI,
-        ])
+        .certificate_compressors(FIREFOX_CERT_COMPRESSORS)
         .build()
 }
 
@@ -324,7 +330,7 @@ fn safari_tls() -> TlsOptions {
         .pre_shared_key(false)
         .enable_ocsp_stapling(true)
         .enable_signed_cert_timestamps(true)
-        .certificate_compression_algorithms(&[CertificateCompressionAlgorithm::ZLIB])
+        .certificate_compressors(SAFARI_CERT_COMPRESSORS)
         .build()
 }
 
@@ -345,21 +351,23 @@ fn safari_tls() -> TlsOptions {
 ///     `priority: u=0, i`, zstd), replace with the real iOS 26 set.
 ///  4. `accept-language` preserved from config.extra_headers for locale.
 fn safari_ios_emulation() -> wreq::Emulation {
-    use wreq::EmulationFactory;
-    let mut em = wreq_util::Emulation::SafariIos26.emulation();
+    // wreq 6.0.0-rc.29 exposes the `Emulation` fields directly (no `*_mut()`
+    // accessors) and wreq-util 3.0.0-rc.12 renamed the enum to `Profile` with
+    // `IntoEmulation::into_emulation` replacing `EmulationFactory::emulation`.
+    let mut em = wreq_util::Profile::SafariIos26.into_emulation();
 
-    if let Some(tls) = em.tls_options_mut().as_mut() {
+    if let Some(tls) = em.tls_options.as_mut() {
         tls.extension_permutation = Some(Cow::Owned(safari_ios_extensions()));
     }
 
     // Only override the priority flag — keep wreq-util's SETTINGS, WINDOW_UPDATE,
     // and pseudo-order intact. Replacing the whole Http2Options resets SETTINGS
     // to defaults, which sends only INITIAL_WINDOW_SIZE and fails DataDome.
-    if let Some(h2) = em.http2_options_mut().as_mut() {
+    if let Some(h2) = em.http2_options.as_mut() {
         h2.headers_stream_dependency = Some(StreamDependency::new(StreamId::zero(), 255, true));
     }
 
-    let hm = em.headers_mut();
+    let hm = &mut em.headers;
     hm.clear();
     for (k, v) in SAFARI_IOS_HEADERS {
         if let (Ok(n), Ok(val)) = (
@@ -508,12 +516,12 @@ pub fn build_client(
                 .tls_options(tls)
                 .http2_options(h2)
                 .headers(build_headers(headers))
-                .build()
+                .build(Group::default())
         }
     };
 
     // Append extra headers after profile defaults.
-    let hm = emulation.headers_mut();
+    let hm = &mut emulation.headers;
     for (k, v) in extra_headers {
         if let (Ok(n), Ok(val)) = (
             http::header::HeaderName::from_bytes(k.as_bytes()),

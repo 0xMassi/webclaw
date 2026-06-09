@@ -12,6 +12,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
 use rand::seq::SliceRandom;
 use tokio::sync::Semaphore;
 use tracing::{debug, instrument, warn};
@@ -118,7 +119,7 @@ impl Response {
     /// negotiated), so a tiny compressed payload that inflates to
     /// gigabytes is aborted as soon as the accumulated size crosses the
     /// cap — it never gets fully buffered in memory.
-    async fn from_wreq(mut resp: wreq::Response) -> Result<Self, FetchError> {
+    async fn from_wreq(resp: wreq::Response) -> Result<Self, FetchError> {
         if let Some(len) = resp.content_length()
             && len > MAX_BODY_BYTES
         {
@@ -130,12 +131,13 @@ impl Response {
         let url = resp.uri().to_string();
         let headers = resp.headers().clone();
 
+        // wreq 6.0.0-rc.29 dropped `Response::chunk()`. Stream post-decompression
+        // bytes via `bytes_stream()` and keep enforcing the running ceiling so a
+        // compression bomb is aborted before it is fully buffered in memory.
         let mut buf = bytes::BytesMut::new();
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| FetchError::BodyDecode(e.to_string()))?
-        {
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| FetchError::BodyDecode(e.to_string()))?;
             check_body_ceiling(buf.len(), chunk.len())?;
             buf.extend_from_slice(&chunk);
         }

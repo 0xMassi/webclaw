@@ -414,6 +414,21 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 <table>
   <tr>
     <td width="340" align="center">
+      <a href="https://go.nodemaven.com/webclaw">
+        <img src="./assets/sponsors/nodemaven-banner.png" alt="NodeMaven" width="300" />
+      </a>
+    </td>
+    <td>
+      <strong>NodeMaven</strong> is the most reliable proxy provider with the highest-quality IPs on the market.
+      Best solution for automation, web scraping, SEO research, and social media management: 99.9% uptime,
+      sticky sessions up to 7 days, IP filtering (all proxies under a 97% fraud score), no KYC, and cashback up
+      to 10% on traffic. Use <code>WEBCLAW35</code> for 35% off Mobile and Residential proxies, or
+      <code>WEBCLAW40</code> for 40% off ISP (Static) proxies at
+      <a href="https://go.nodemaven.com/webclaw">NodeMaven</a>.
+    </td>
+  </tr>
+  <tr>
+    <td width="340" align="center">
       <a href="https://quantumproxies.net/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">
         <img src="./assets/sponsors/quantum-proxies-banner.png" alt="Quantum Proxies" width="300" />
       </a>

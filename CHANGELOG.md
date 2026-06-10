@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-06-10
+
 ### Fixed
 - Pages with multibyte text (accented or CJK characters) no longer panic or get mangled during extraction. API-endpoint discovery now cuts oversized scripts on a character boundary instead of crashing mid-character, and structured-data parsing preserves non-ASCII string values instead of turning them into mojibake.
 - LLM error messages from a provider no longer panic when the error body contains multibyte characters near the truncation point.

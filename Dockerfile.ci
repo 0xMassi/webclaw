@@ -1,7 +1,6 @@
 # Slim runtime image — uses pre-built binaries from the release.
 # The full Dockerfile (multi-stage Rust build) is for local development.
 # CI uses this to avoid 60+ min QEMU cross-compilation.
-ARG BINARY_DIR=binaries
 
 FROM ubuntu:24.04
 
@@ -10,10 +9,13 @@ FROM ubuntu:24.04
 # CI runners and breaks the multi-arch release build. No build-time network.
 COPY --from=gcr.io/distroless/static-debian12 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-ARG BINARY_DIR
-COPY ${BINARY_DIR}/webclaw /usr/local/bin/webclaw
-COPY ${BINARY_DIR}/webclaw-mcp /usr/local/bin/webclaw-mcp
-COPY ${BINARY_DIR}/webclaw-server /usr/local/bin/webclaw-server
+# TARGETARCH (amd64 / arm64) is provided automatically by buildx for each
+# target platform, so one multi-platform build copies the matching binaries.
+# The release workflow stages them in binaries-amd64 / binaries-arm64.
+ARG TARGETARCH
+COPY binaries-${TARGETARCH}/webclaw /usr/local/bin/webclaw
+COPY binaries-${TARGETARCH}/webclaw-mcp /usr/local/bin/webclaw-mcp
+COPY binaries-${TARGETARCH}/webclaw-server /usr/local/bin/webclaw-server
 
 # Default REST API port when running `webclaw-server` inside the container.
 EXPOSE 3000
@@ -25,8 +27,9 @@ ENV WEBCLAW_HOST=0.0.0.0
 
 # Entrypoint shim: forwards webclaw args/URL to the binary, but exec's other
 # commands directly so this image can be used as a FROM base with custom CMD.
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# `--chmod` sets the bit at copy time so the build needs no in-container `RUN`
+# (and thus no QEMU emulation for the arm64 platform).
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["webclaw", "--help"]

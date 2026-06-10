@@ -3,6 +3,15 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Manual re-publish of the Docker image for an existing release, without
+  # rebuilding binaries or cutting a new version. Runs only the docker (+
+  # homebrew) jobs against the given tag's already-published release assets.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build + push the Docker image for, e.g. v0.6.9"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,6 +21,9 @@ env:
 
 jobs:
   build:
+    # Binaries are only built when a tag is pushed. A manual dispatch reuses
+    # the existing release's binaries, so it skips this job entirely.
+    if: github.event_name == 'push'
     permissions:
       contents: read
     name: Build ${{ matrix.target }}
@@ -105,6 +117,7 @@ jobs:
 
   release:
     name: Release
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -137,6 +150,10 @@ jobs:
   docker:
     name: Docker
     needs: release
+    # Runs after a successful release on tag push, or standalone via
+    # workflow_dispatch to (re)publish an existing tag's image. `always()` lets
+    # it run even though `release` is skipped on a manual dispatch.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -156,52 +173,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Download pre-built binaries for both architectures
+      # The pushed tag, or the workflow_dispatch input for a manual re-publish.
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      # Download pre-built binaries into TARGETARCH-named dirs (amd64/arm64) so
+      # a single multi-platform build picks the matching binary per platform.
       - name: Download release binaries
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
+          tag="${{ steps.tag.outputs.tag }}"
+          declare -A arch=( [x86_64-unknown-linux-gnu]=amd64 [aarch64-unknown-linux-gnu]=arm64 )
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
             dir="webclaw-${tag}-${target}"
             curl -sSL "https://github.com/0xMassi/webclaw/releases/download/${tag}/${dir}.tar.gz" -o "${target}.tar.gz"
             tar xzf "${target}.tar.gz"
-            mkdir -p "binaries-${target}"
-            cp "${dir}/webclaw" "binaries-${target}/webclaw"
-            cp "${dir}/webclaw-mcp" "binaries-${target}/webclaw-mcp"
-            cp "${dir}/webclaw-server" "binaries-${target}/webclaw-server"
-            chmod +x "binaries-${target}"/*
+            a="${arch[$target]}"
+            mkdir -p "binaries-${a}"
+            cp "${dir}/webclaw" "${dir}/webclaw-mcp" "${dir}/webclaw-server" "binaries-${a}/"
+            chmod +x "binaries-${a}"/*
           done
           ls -laR binaries-*/
 
-      # Build each arch with buildx (the docker-container driver from
-      # setup-buildx-action), pushing straight to the registry. Plain
-      # `docker build --push` uses the legacy docker driver, whose GHCR push
-      # path intermittently fails with "ERROR: unknown blob"; buildx's registry
-      # exporter does not. The multi-arch list is then assembled registry-side
-      # with `imagetools create` (no local manifest store, so no blob races).
+      # One atomic multi-platform build + push. buildx assembles a single
+      # manifest list and pushes it in one shot, so there is no separate
+      # `imagetools create` step to race GHCR's read-after-write (that is what
+      # failed before: "v0.6.9-arm64: not found"). Provenance/SBOM attestations
+      # are disabled so each platform entry stays a plain image manifest.
       - name: Build and push
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-
-          # amd64
-          docker buildx build -f Dockerfile.ci --build-arg BINARY_DIR=binaries-x86_64-unknown-linux-gnu \
-            --platform linux/amd64 -t ghcr.io/0xmassi/webclaw:${tag}-amd64 --push .
-
-          # arm64
-          docker buildx build -f Dockerfile.ci --build-arg BINARY_DIR=binaries-aarch64-unknown-linux-gnu \
-            --platform linux/arm64 -t ghcr.io/0xmassi/webclaw:${tag}-arm64 --push .
-
-          # Multi-arch manifest list, assembled from the already-pushed per-arch tags
-          docker buildx imagetools create -t ghcr.io/0xmassi/webclaw:${tag} \
-            ghcr.io/0xmassi/webclaw:${tag}-amd64 \
-            ghcr.io/0xmassi/webclaw:${tag}-arm64
-
-          docker buildx imagetools create -t ghcr.io/0xmassi/webclaw:latest \
-            ghcr.io/0xmassi/webclaw:${tag}-amd64 \
-            ghcr.io/0xmassi/webclaw:${tag}-arm64
+          tag="${{ steps.tag.outputs.tag }}"
+          docker buildx build -f Dockerfile.ci \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=false --sbom=false \
+            -t "ghcr.io/0xmassi/webclaw:${tag}" \
+            -t ghcr.io/0xmassi/webclaw:latest \
+            --push .
 
   homebrew:
     name: Update Homebrew
     needs: [release, docker]
+    # Runs once Docker succeeds, on both tag push and manual re-publish.
+    if: ${{ always() && needs.docker.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -210,7 +223,7 @@ jobs:
         env:
           COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
           base="https://github.com/0xMassi/webclaw/releases/download/${tag}"
 
           # Download all tarballs (Linux + macOS) and compute SHAs

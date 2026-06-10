@@ -1,5 +1,7 @@
 /// Ollama provider — talks to a local Ollama instance (default localhost:11434).
 /// First choice in the provider chain: free, private, fast on Apple Silicon.
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -24,7 +26,11 @@ impl OllamaProvider {
             .unwrap_or_else(|| "qwen3:8b".into());
 
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(120))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             base_url,
             default_model,
         }
@@ -70,11 +76,7 @@ impl LlmProvider for OllamaProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            let safe_text = if text.len() > 500 {
-                &text[..500]
-            } else {
-                &text
-            };
+            let safe_text = text.chars().take(500).collect::<String>();
             return Err(LlmError::ProviderError(format!(
                 "ollama returned {status}: {safe_text}"
             )));
@@ -98,7 +100,8 @@ impl LlmProvider for OllamaProvider {
 
     async fn is_available(&self) -> bool {
         let url = format!("{}/api/tags", self.base_url);
-        matches!(self.client.get(&url).send().await, Ok(r) if r.status().is_success())
+        let req = self.client.get(&url).timeout(Duration::from_secs(10));
+        matches!(req.send().await, Ok(r) if r.status().is_success())
     }
 
     fn name(&self) -> &str {

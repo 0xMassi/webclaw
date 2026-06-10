@@ -1,6 +1,8 @@
 /// Anthropic provider — Claude models via api.anthropic.com.
 /// Anthropic's API differs from OpenAI: system message is a top-level param,
 /// not part of the messages array.
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -35,7 +37,11 @@ impl AnthropicProvider {
         let key = load_api_key(key_override, "ANTHROPIC_API_KEY")?;
 
         Some(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(120))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             key,
             base_url: base_url
                 .or_else(|| std::env::var("ANTHROPIC_BASE_URL").ok())
@@ -108,11 +114,7 @@ impl LlmProvider for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            let safe_text = if text.len() > 500 {
-                &text[..500]
-            } else {
-                &text
-            };
+            let safe_text = text.chars().take(500).collect::<String>();
             return Err(LlmError::ProviderError(format!(
                 "anthropic returned {status}: {safe_text}"
             )));

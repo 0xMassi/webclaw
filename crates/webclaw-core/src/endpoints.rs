@@ -233,7 +233,13 @@ pub fn extract_endpoints(
         }
         let slice = if text.len() > *budget {
             *truncated = true;
-            &text[..*budget]
+            // Snap the cut to a UTF-8 char boundary so non-ASCII content
+            // (multibyte codepoints straddling the budget) can't panic.
+            let mut cut = (*budget).min(text.len());
+            while cut > 0 && !text.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            &text[..cut]
         } else {
             text
         };
@@ -511,5 +517,17 @@ mod tests {
                 .any(|h| h == "f" || h == "n" || h == "schema.org")
         );
         assert!(r.hosts.iter().any(|h| h == "pubapi.ticketmaster.co.uk"));
+    }
+
+    #[test]
+    fn scan_truncation_at_non_ascii_boundary_does_not_panic() {
+        // A bundle just over the scan budget, padded with a multibyte char
+        // ('é' is 2 bytes) so the cut lands mid-codepoint. The old
+        // `&text[..budget]` slice panicked here; the boundary snap must not.
+        let pad = "é".repeat(MAX_SCAN_BYTES); // ~2× budget in bytes
+        let bundle = format!("{pad} fetch(\"/api/x\")");
+        let bundles = vec![("big.js".to_string(), bundle)];
+        let r = extract_endpoints("<html></html>", "https://example.com/", &bundles);
+        assert!(r.truncated, "oversized bundle should mark truncated");
     }
 }

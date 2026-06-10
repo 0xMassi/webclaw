@@ -801,11 +801,17 @@ fn is_challenge_html(html: &str) -> bool {
     false
 }
 
-/// Extract the homepage URL (scheme + host) from a full URL.
+/// Extract the homepage URL (scheme + host[:port]) from a full URL.
 fn extract_homepage(url: &str) -> Option<String> {
-    url::Url::parse(url)
-        .ok()
-        .map(|u| format!("{}://{}/", u.scheme(), u.host_str().unwrap_or("")))
+    url::Url::parse(url).ok().map(|u| {
+        let host = u.host_str().unwrap_or("");
+        // `port()` is `Some` only for a non-default port; include it so a
+        // host like example.com:8443 is warmed on the right port.
+        match u.port() {
+            Some(port) => format!("{}://{}:{}/", u.scheme(), host, port),
+            None => format!("{}://{}/", u.scheme(), host),
+        }
+    })
 }
 
 /// Convert a webclaw-pdf PdfResult into a webclaw-core ExtractionResult.

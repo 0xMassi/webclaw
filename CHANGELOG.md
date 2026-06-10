@@ -3,6 +3,18 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- Pages with multibyte text (accented or CJK characters) no longer panic or get mangled during extraction. API-endpoint discovery now cuts oversized scripts on a character boundary instead of crashing mid-character, and structured-data parsing preserves non-ASCII string values instead of turning them into mojibake.
+- LLM error messages from a provider no longer panic when the error body contains multibyte characters near the truncation point.
+- LLM provider requests now have explicit connect and overall timeouts, so a stalled or unreachable provider fails fast instead of hanging.
+- Batch extraction in the MCP server no longer aborts the whole batch when a single URL fails to resolve; bad URLs are reported as individual per-URL errors and the rest still run.
+- CLI crawl and batch runs now wait for the completion webhook to actually send before exiting, replacing a fixed delay that could cut the request off or waste time.
+- Homepage warm-up requests now include the port for hosts on a non-default port, so those sites are warmed correctly.
+
+---
+
 ## [0.6.7] — 2026-06-09
 
 ### Changed

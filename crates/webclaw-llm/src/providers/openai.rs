@@ -1,4 +1,6 @@
 /// OpenAI provider — works with api.openai.com and any OpenAI-compatible endpoint.
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -69,7 +71,11 @@ impl OpenAiProvider {
         let key = load_api_key(key_override, "OPENAI_API_KEY")?;
 
         Some(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(120))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             key,
             base_url: base_url
                 .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
@@ -132,11 +138,7 @@ impl LlmProvider for OpenAiProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            let safe_text = if text.len() > 500 {
-                &text[..500]
-            } else {
-                &text
-            };
+            let safe_text = text.chars().take(500).collect::<String>();
             return Err(LlmError::ProviderError(format!(
                 "openai returned {status}: {safe_text}"
             )));

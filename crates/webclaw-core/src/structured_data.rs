@@ -178,7 +178,12 @@ pub fn extract_sveltekit(html: &str) -> Vec<Value> {
 /// Preserves already-quoted keys and string values.
 fn js_literal_to_json(input: &str) -> String {
     let bytes = input.as_bytes();
-    let mut out = String::with_capacity(input.len() + input.len() / 10);
+    // Accumulate raw bytes, not `byte as char`. The input is valid UTF-8 and we
+    // only ever copy its bytes verbatim or insert ASCII quotes, so the result is
+    // guaranteed valid UTF-8 — copying byte-by-byte preserves multibyte
+    // codepoints (e.g. accented/CJK string values) instead of mangling them
+    // into Latin-1 mojibake.
+    let mut out: Vec<u8> = Vec::with_capacity(input.len() + input.len() / 10);
     let mut i = 0;
     let len = bytes.len();
 
@@ -187,14 +192,14 @@ fn js_literal_to_json(input: &str) -> String {
 
         // Skip through strings
         if b == b'"' {
-            out.push('"');
+            out.push(b'"');
             i += 1;
             while i < len {
                 let c = bytes[i];
-                out.push(c as char);
+                out.push(c);
                 i += 1;
                 if c == b'\\' && i < len {
-                    out.push(bytes[i] as char);
+                    out.push(bytes[i]);
                     i += 1;
                 } else if c == b'"' {
                     break;
@@ -205,11 +210,11 @@ fn js_literal_to_json(input: &str) -> String {
 
         // After { or , — look for unquoted key followed by :
         if (b == b'{' || b == b',' || b == b'[') && i + 1 < len {
-            out.push(b as char);
+            out.push(b);
             i += 1;
             // Skip whitespace
             while i < len && bytes[i].is_ascii_whitespace() {
-                out.push(bytes[i] as char);
+                out.push(bytes[i]);
                 i += 1;
             }
             // Check if next is an unquoted identifier (key)
@@ -218,29 +223,30 @@ fn js_literal_to_json(input: &str) -> String {
                 while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
-                let key = &input[key_start..i];
+                let key = &bytes[key_start..i];
                 // Skip whitespace after key
                 while i < len && bytes[i].is_ascii_whitespace() {
                     i += 1;
                 }
                 // If followed by :, it's an unquoted key — quote it
                 if i < len && bytes[i] == b':' {
-                    out.push('"');
-                    out.push_str(key);
-                    out.push('"');
+                    out.push(b'"');
+                    out.extend_from_slice(key);
+                    out.push(b'"');
                 } else {
                     // Not a key — might be a bare value like true/false/null
-                    out.push_str(key);
+                    out.extend_from_slice(key);
                 }
             }
             continue;
         }
 
-        out.push(b as char);
+        out.push(b);
         i += 1;
     }
 
-    out
+    // Safe: we only copied bytes from valid-UTF-8 `input` plus ASCII quotes.
+    String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// Replace raw newlines/tabs inside JSON string values with escape sequences.
@@ -439,5 +445,18 @@ newline"}"#;
         let parsed: Value = serde_json::from_str(&sanitized).unwrap();
         assert_eq!(parsed["text"], "line1\nline2");
         assert_eq!(parsed["raw"], "has\nnewline");
+    }
+
+    #[test]
+    fn js_literal_to_json_preserves_multibyte_utf8() {
+        // Unquoted ASCII keys with accented and CJK string values (the shape
+        // SvelteKit emits). The old `byte as char` path turned the multibyte
+        // values into Latin-1 mojibake; they must now survive intact.
+        let input = r#"{name:"déjà vu", city:"東京", emoji:"🌱"}"#;
+        let json = js_literal_to_json(input);
+        let parsed: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["name"], "déjà vu");
+        assert_eq!(parsed["city"], "東京");
+        assert_eq!(parsed["emoji"], "🌱");
     }
 }

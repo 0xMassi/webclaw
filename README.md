@@ -142,7 +142,7 @@ webclaw https://docs.rust-lang.org --crawl --depth 2 --max-pages 50
 - [HTML to Markdown for RAG](examples/html-to-markdown-rag/)
 - [Firecrawl-compatible API](examples/firecrawl-compatible-api/)
 - [MCP web scraping](examples/mcp-web-scraping/)
-- [Proxy-backed crawling](examples/proxy-backed-crawling/)
+- [Proxy-backed crawling with ColdProxy](examples/proxy-backed-crawling/)
 - [Cloudflare diagnostics](examples/cloudflare-diagnostics/)
 
 ### Extract brand assets
@@ -401,6 +401,8 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
       residential IPv6, and datacenter IPv6 proxy infrastructure across 195+ countries for public data
       collection, regional testing, monitoring, and web scraping workflows. Explore
       <a href="https://coldproxy.com/">ColdProxy</a>'s latest plans and available offers directly on the website.
+      See the <a href="examples/proxy-backed-crawling/#using-coldproxy">proxy-backed crawling guide</a>
+      for a hands-on walkthrough of wiring ColdProxy into webclaw.
     </td>
   </tr>
 </table>

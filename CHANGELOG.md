@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-06-10
+
+### Fixed
+- The multi-arch Docker image (linux/amd64 + linux/arm64) now publishes reliably on each release. The build moved to Buildx so registry pushes no longer fail intermittently, and the Homebrew formula update that depends on it is no longer skipped.
+
 ## [0.6.8] - 2026-06-10
 
 ### Fixed

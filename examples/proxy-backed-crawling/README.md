@@ -61,7 +61,7 @@ ColdProxy offers access across 195+ countries. Use the country-specific endpoint
 
 ### Choosing a product
 
-- **Residential IPv4 / IPv6** — highest trust; best for consumer sites, geo-restricted content, and regional QA.
+- **Residential IPv4 / IPv6** — suitable for region-specific testing, localized content validation, public data collection, market monitoring, and regional QA.
 - **Datacenter IPv6** — fastest and most cost-effective; best for high-volume crawling of tolerant endpoints.
 
 ## Single Proxy

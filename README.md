@@ -77,7 +77,7 @@ brew install webclaw
 
 ### Prebuilt binaries
 
-Download macOS and Linux binaries from [GitHub Releases](https://github.com/0xMassi/webclaw/releases).
+Download macOS, Linux, and Windows binaries from [GitHub Releases](https://github.com/0xMassi/webclaw/releases).
 
 ### Docker
 

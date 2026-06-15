@@ -465,6 +465,18 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
       <a href="https://www.rapidproxy.io/?ref=webclaw">Try it free</a>.
     </td>
   </tr>
+  <tr>
+    <td width="340" align="center">
+      <a href="https://mangoproxy.com/?utm_source=github&utm_medium=partner&utm_campaign=0xmassi">
+        <img src="./assets/sponsors/mangoproxy-banner.png" alt="MangoProxy" width="300" />
+      </a>
+    </td>
+    <td>
+      <strong>MangoProxy</strong> provides residential, ISP, datacenter, and mobile proxies across 200+ locations, backed by a 90M+ IP pool with HTTP and SOCKS5 support and high stability for web scraping and data collection at scale.
+      Use code <code>0XMASSI</code> for 8% off ISP (Static) proxies at
+      <a href="https://mangoproxy.com/?utm_source=github&utm_medium=partner&utm_campaign=0xmassi">mangoproxy.com</a>.
+    </td>
+  </tr>
 </table>
 
 ---

@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-06-15
+
+### Fixed
+- MCP tools that take numeric arguments now accept those values whether the client sends them as numbers or as numeric strings. Some MCP clients (e.g. Claude Desktop) send `"5"` instead of `5`, which previously failed the call with a deserialization error. Affects `crawl` (depth, max_pages, concurrency), `batch` (concurrency), `search` (num_results), and `summarize` (max_sentences).
+
 ## [0.6.9] - 2026-06-10
 
 ### Fixed

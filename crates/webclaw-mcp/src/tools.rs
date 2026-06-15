@@ -28,11 +28,11 @@ where
     match Option::<NumOrStr>::deserialize(d)? {
         None => Ok(None),
         Some(NumOrStr::Num(n)) => Ok(Some(n)),
-        Some(NumOrStr::Str(s)) => s
-            .trim()
-            .parse::<u32>()
-            .map(Some)
-            .map_err(|_| serde::de::Error::custom(format!("expected a u32, got string \"{s}\""))),
+        Some(NumOrStr::Str(s)) => {
+            s.trim().parse::<u32>().map(Some).map_err(|_| {
+                serde::de::Error::custom(format!("expected a u32, got string \"{s}\""))
+            })
+        }
     }
 }
 
@@ -49,13 +49,11 @@ where
     match Option::<NumOrStr>::deserialize(d)? {
         None => Ok(None),
         Some(NumOrStr::Num(n)) => Ok(Some(n)),
-        Some(NumOrStr::Str(s)) => s
-            .trim()
-            .parse::<usize>()
-            .map(Some)
-            .map_err(|_| {
+        Some(NumOrStr::Str(s)) => {
+            s.trim().parse::<usize>().map(Some).map_err(|_| {
                 serde::de::Error::custom(format!("expected a usize, got string \"{s}\""))
-            }),
+            })
+        }
     }
 }
 
@@ -199,8 +197,7 @@ mod tests {
 
     #[test]
     fn crawl_depth_from_number() {
-        let v: CrawlParams =
-            serde_json::from_str(r#"{"url":"https://x.com","depth":3}"#).unwrap();
+        let v: CrawlParams = serde_json::from_str(r#"{"url":"https://x.com","depth":3}"#).unwrap();
         assert_eq!(v.depth, Some(3));
     }
 
@@ -240,8 +237,7 @@ mod tests {
 
     #[test]
     fn crawl_max_pages_non_numeric_string_errors() {
-        let e =
-            serde_json::from_str::<CrawlParams>(r#"{"url":"https://x.com","max_pages":"abc"}"#);
+        let e = serde_json::from_str::<CrawlParams>(r#"{"url":"https://x.com","max_pages":"abc"}"#);
         assert!(e.is_err(), "expected Err, got {e:?}");
     }
 
@@ -269,9 +265,8 @@ mod tests {
 
     #[test]
     fn crawl_concurrency_non_numeric_string_errors() {
-        let e = serde_json::from_str::<CrawlParams>(
-            r#"{"url":"https://x.com","concurrency":"abc"}"#,
-        );
+        let e =
+            serde_json::from_str::<CrawlParams>(r#"{"url":"https://x.com","concurrency":"abc"}"#);
         assert!(e.is_err(), "expected Err, got {e:?}");
     }
 
@@ -316,8 +311,7 @@ mod tests {
 
     #[test]
     fn search_num_results_from_number() {
-        let v: SearchParams =
-            serde_json::from_str(r#"{"query":"rust","num_results":10}"#).unwrap();
+        let v: SearchParams = serde_json::from_str(r#"{"query":"rust","num_results":10}"#).unwrap();
         assert_eq!(v.num_results, Some(10));
     }
 
@@ -329,8 +323,7 @@ mod tests {
 
     #[test]
     fn search_num_results_non_numeric_string_errors() {
-        let e =
-            serde_json::from_str::<SearchParams>(r#"{"query":"rust","num_results":"abc"}"#);
+        let e = serde_json::from_str::<SearchParams>(r#"{"query":"rust","num_results":"abc"}"#);
         assert!(e.is_err(), "expected Err, got {e:?}");
     }
 

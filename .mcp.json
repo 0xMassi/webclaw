@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "webclaw": {
+      "command": "~/.webclaw/webclaw-mcp"
+    }
+  }
+}

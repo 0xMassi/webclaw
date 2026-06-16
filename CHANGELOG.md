@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-06-16
+
+### Added
+- New **Google Gemini** provider in the LLM provider chain. Set `GEMINI_API_KEY` (and optionally `GEMINI_MODEL`, default `gemini-2.5-flash`) to enable it; the chain tries Ollama → OpenAI → Gemini → Anthropic and uses the first available provider.
+
+### Fixed
+- The Anthropic provider's default model pointed at a retired model id that now returns `404`, which could fail extraction/summarization when falling back to Anthropic. It now defaults to a current model and is overridable via `ANTHROPIC_MODEL`.
+
 ## [0.6.10] - 2026-06-15
 
 ### Fixed

@@ -1,6 +1,6 @@
 /// webclaw-llm: LLM integration with local-first hybrid architecture.
 ///
-/// Provider chain tries Ollama (local) first, falls back to OpenAI, then Anthropic.
+/// Provider chain tries Ollama (local) first, falls back to OpenAI, then Gemini, then Anthropic.
 /// Provides schema-based extraction, prompt extraction, and summarization
 /// on top of webclaw-core's content pipeline.
 pub mod chain;

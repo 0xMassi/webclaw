@@ -48,7 +48,9 @@ impl AnthropicProvider {
                 .unwrap_or_else(|| DEFAULT_ANTHROPIC_BASE_URL.into())
                 .trim_end_matches('/')
                 .to_string(),
-            default_model: model.unwrap_or_else(|| "claude-sonnet-4-20250514".into()),
+            default_model: model
+                .or_else(|| std::env::var("ANTHROPIC_MODEL").ok())
+                .unwrap_or_else(|| "claude-sonnet-4-6".into()),
         })
     }
 
@@ -158,7 +160,7 @@ mod tests {
         let provider =
             AnthropicProvider::new(Some("sk-ant-test".into()), None).expect("should construct");
         assert_eq!(provider.name(), "anthropic");
-        assert_eq!(provider.default_model, "claude-sonnet-4-20250514");
+        assert_eq!(provider.default_model, "claude-sonnet-4-6");
         assert_eq!(provider.key, "sk-ant-test");
         assert_eq!(provider.base_url, "https://api.anthropic.com/v1");
         assert_eq!(
@@ -178,7 +180,7 @@ mod tests {
     #[test]
     fn default_model_accessor() {
         let provider = AnthropicProvider::new(Some("sk-ant-test".into()), None).unwrap();
-        assert_eq!(provider.default_model(), "claude-sonnet-4-20250514");
+        assert_eq!(provider.default_model(), "claude-sonnet-4-6");
     }
 
     #[test]

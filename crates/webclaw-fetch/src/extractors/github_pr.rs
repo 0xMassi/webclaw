@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::github_common::fetch_api;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -39,25 +40,15 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
     })?;
 
     let api_url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{number}");
-    let resp = client.fetch(&api_url).await?;
-    if resp.status == 404 {
-        return Err(FetchError::Build(format!(
-            "github_pr: pull request '{owner}/{repo}#{number}' not found"
-        )));
-    }
-    if resp.status == 403 {
-        return Err(FetchError::Build(
-            "github_pr: rate limited (60/hour unauth). Set GITHUB_TOKEN for 5,000/hour.".into(),
-        ));
-    }
-    if resp.status != 200 {
-        return Err(FetchError::Build(format!(
-            "github api returned status {}",
-            resp.status
-        )));
-    }
+    let body = fetch_api(
+        client,
+        &api_url,
+        "github_pr",
+        &format!("pull request '{owner}/{repo}#{number}' not found"),
+    )
+    .await?;
 
-    let p: PullRequest = serde_json::from_str(&resp.html)
+    let p: PullRequest = serde_json::from_str(&body)
         .map_err(|e| FetchError::BodyDecode(format!("github pr parse: {e}")))?;
 
     Ok(json!({

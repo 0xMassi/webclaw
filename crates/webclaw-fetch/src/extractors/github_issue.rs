@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::github_common::fetch_api;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -40,25 +41,15 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
     })?;
 
     let api_url = format!("https://api.github.com/repos/{owner}/{repo}/issues/{number}");
-    let resp = client.fetch(&api_url).await?;
-    if resp.status == 404 {
-        return Err(FetchError::Build(format!(
-            "github_issue: issue '{owner}/{repo}#{number}' not found"
-        )));
-    }
-    if resp.status == 403 {
-        return Err(FetchError::Build(
-            "github_issue: rate limited (60/hour unauth). Set GITHUB_TOKEN for 5,000/hour.".into(),
-        ));
-    }
-    if resp.status != 200 {
-        return Err(FetchError::Build(format!(
-            "github api returned status {}",
-            resp.status
-        )));
-    }
+    let body = fetch_api(
+        client,
+        &api_url,
+        "github_issue",
+        &format!("issue '{owner}/{repo}#{number}' not found"),
+    )
+    .await?;
 
-    let issue: Issue = serde_json::from_str(&resp.html)
+    let issue: Issue = serde_json::from_str(&body)
         .map_err(|e| FetchError::BodyDecode(format!("github issue parse: {e}")))?;
 
     // The same endpoint returns PRs too; reject if we got one so the caller

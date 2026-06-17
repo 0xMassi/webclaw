@@ -22,6 +22,7 @@ pub mod docker_hub;
 pub mod ebay_listing;
 pub mod ecommerce_product;
 pub mod etsy_listing;
+pub(crate) mod github_common;
 pub mod github_issue;
 pub mod github_pr;
 pub mod github_release;

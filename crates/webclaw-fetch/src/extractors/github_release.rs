@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::github_common::fetch_api;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -38,26 +39,15 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
     })?;
 
     let api_url = format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}");
-    let resp = client.fetch(&api_url).await?;
-    if resp.status == 404 {
-        return Err(FetchError::Build(format!(
-            "github_release: release '{owner}/{repo}@{tag}' not found"
-        )));
-    }
-    if resp.status == 403 {
-        return Err(FetchError::Build(
-            "github_release: rate limited (60/hour unauth). Set GITHUB_TOKEN for 5,000/hour."
-                .into(),
-        ));
-    }
-    if resp.status != 200 {
-        return Err(FetchError::Build(format!(
-            "github api returned status {}",
-            resp.status
-        )));
-    }
+    let body = fetch_api(
+        client,
+        &api_url,
+        "github_release",
+        &format!("release '{owner}/{repo}@{tag}' not found"),
+    )
+    .await?;
 
-    let r: Release = serde_json::from_str(&resp.html)
+    let r: Release = serde_json::from_str(&body)
         .map_err(|e| FetchError::BodyDecode(format!("github release parse: {e}")))?;
 
     let assets: Vec<Value> = r

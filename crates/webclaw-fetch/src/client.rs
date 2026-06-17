@@ -170,6 +170,13 @@ impl Response {
     fn into_text(self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
+
+    /// Consume the response and return the raw, undecoded body bytes.
+    /// Used by [`FetchClient::fetch_raw`] for binary payloads (e.g. gzipped
+    /// sitemaps) that must not be run through lossy UTF-8 decoding.
+    fn into_body(self) -> bytes::Bytes {
+        self.body
+    }
 }
 
 /// Internal representation of the client pool strategy.
@@ -456,6 +463,27 @@ impl FetchClient {
         }
 
         Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
+    }
+
+    /// Fetch a URL and return the raw, undecoded response body as bytes.
+    ///
+    /// Unlike [`fetch`](Self::fetch), this does **not** run the body through
+    /// `String::from_utf8_lossy`, so binary payloads survive intact. This is
+    /// required for gzipped sitemaps (`.xml.gz`): such files are served with
+    /// `Content-Type: application/gzip` and *no* `Content-Encoding`, so wreq
+    /// never auto-inflates them — the bytes arrive as raw gzip and the lossy
+    /// String path would mangle them. Callers detect the gzip magic
+    /// (`0x1f 0x8b`) and gunzip before parsing.
+    ///
+    /// No retry wrapper: callers (sitemap discovery) already tolerate
+    /// per-URL failures by skipping. Returns `(status, body)`.
+    pub async fn fetch_raw(&self, url: &str) -> Result<(u16, bytes::Bytes), FetchError> {
+        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
+        let url = parsed_url.as_str();
+        let client = self.pick_client(url);
+        let resp = client.get(url).send().await?;
+        let response = Response::from_wreq(resp).await?;
+        Ok((response.status(), response.into_body()))
     }
 
     /// Fetch a URL then extract structured content.

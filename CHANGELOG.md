@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.12] - 2026-06-17
+
+### Added
+- **Standalone web search** using your own [Serper.dev](https://serper.dev) key — no hosted webclaw account needed. Available across the CLI (`webclaw search "query" --num 5 --scrape`, key via `--serper-key` or `SERPER_API_KEY`), the MCP `search` tool (local-first when `SERPER_API_KEY` is set, hosted API otherwise), and the self-hosted REST server (`POST /v1/search`, enabled when started with `SERPER_API_KEY`). With `--scrape`, the top result pages are fetched and extracted to markdown.
+- **Layered URL discovery for `--map`**: when a site has no sitemap or only a thin one, map now falls back to a bounded same-origin crawl and harvests links from every fetched page plus the unfetched frontier, returning far more URLs. Adds gzipped-sitemap (`.xml.gz`) support, deeper sitemap-index recursion, more fallback paths, and `--map-pages` / `--no-map-crawl` / `--map-limit` controls. Crawler logs now go to stderr so `--map --format json` stays machine-parseable.
+
+### Fixed
+- MCP tools now accept boolean arguments whether the client sends them as JSON booleans or as the strings `"true"`/`"false"` (case-insensitive). Some MCP clients (e.g. Claude Desktop) send booleans as strings, which previously failed the call with a deserialization error. Affects `scrape` (only_main_content), `crawl` (use_sitemap), `research` (deep), and `search` (scrape). This completes the earlier numeric-parameter fix.
+
 ## [0.6.11] - 2026-06-16
 
 ### Added

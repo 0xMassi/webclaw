@@ -538,7 +538,11 @@ pub fn build_client(
             max_redirects as usize,
         ))
         .cookie_store(true)
-        .timeout(timeout);
+        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(5))
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(8)
+        .tcp_keepalive(Duration::from_secs(60));
 
     if let Some(proxy_url) = proxy {
         let proxy = wreq::Proxy::all(proxy_url).map_err(|_| {

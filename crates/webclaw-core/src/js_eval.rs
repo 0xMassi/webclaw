@@ -16,6 +16,29 @@ static SCRIPT_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("script").
 static HTML_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
 const JS_EVAL_TIMEOUT: Duration = Duration::from_millis(250);
 
+/// Markers that, if absent from the HTML, prove the QuickJS scan cannot find
+/// any data blob. The scan only ever surfaces `globalThis.__*` object/array
+/// properties, and the seeded `__next_f` only emits when non-empty. Every
+/// realistic way an inline script populates such a global goes through one of
+/// these substrings (`window.`/`self.__next` assignments, or the
+/// `__NEXT_DATA__`/`__NUXT__`/`application/json` payload conventions). If none
+/// are present, running the VM is guaranteed to return zero blobs, so skipping
+/// it is output-neutral. Conservative by design: any of these may appear in
+/// non-script HTML too, which only makes us skip *less* often, never more.
+const JS_CANDIDATE_MARKERS: [&str; 5] = [
+    "window.",
+    "__NEXT_DATA__",
+    "__NUXT__",
+    "application/json",
+    "self.__next",
+];
+
+/// Returns true if the HTML plausibly contains JS-assigned data the QuickJS
+/// scan could surface. When false, the VM is provably a no-op and is skipped.
+pub fn has_js_candidate_data(html: &str) -> bool {
+    JS_CANDIDATE_MARKERS.iter().any(|m| html.contains(m))
+}
+
 /// A blob of data extracted from JS execution.
 pub struct JsDataBlob {
     pub name: String,
@@ -24,9 +47,17 @@ pub struct JsDataBlob {
 }
 
 /// Execute inline `<script>` tags in a QuickJS sandbox and extract `window.__*` data.
+///
+/// Convenience wrapper that parses `html` first. Hot callers that already hold a
+/// parsed [`Html`] should use [`extract_js_data_from_doc`] to avoid a second parse.
 pub fn extract_js_data(html: &str) -> Vec<JsDataBlob> {
     let doc = Html::parse_document(html);
+    extract_js_data_from_doc(&doc)
+}
 
+/// Execute inline `<script>` tags in a QuickJS sandbox and extract `window.__*` data,
+/// reusing an already-parsed [`Html`] document instead of re-parsing the HTML.
+pub fn extract_js_data_from_doc(doc: &Html) -> Vec<JsDataBlob> {
     let scripts: Vec<String> = doc
         .select(&SCRIPT_SELECTOR)
         .filter(|el| {

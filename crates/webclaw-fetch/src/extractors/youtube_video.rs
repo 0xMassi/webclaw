@@ -25,6 +25,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::og::parse_og;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -143,9 +144,11 @@ fn build_player_payload(
 // ---------------------------------------------------------------------------
 
 fn build_og_fallback(html: &str, url: &str, canonical: &str, video_id: &str) -> Value {
-    let title = og(html, "title");
-    let description = og(html, "description");
-    let thumbnail = og(html, "image");
+    // Single scan for the three og:* fields read below.
+    let og_meta = parse_og(html);
+    let title = og_meta.raw("title");
+    let description = og_meta.raw("description");
+    let thumbnail = og_meta.raw("image");
     // YouTube sets `<meta name="channel_name" ...>` on some pages but
     // OG-only pages reliably carry `og:video:tag` and the channel in
     // `<link itemprop="name">`. We keep this lean: just what's stable.
@@ -247,19 +250,6 @@ fn extract_player_response(html: &str) -> Option<Value> {
 // ---------------------------------------------------------------------------
 // Meta-tag helpers (for OG fallback)
 // ---------------------------------------------------------------------------
-
-fn og(html: &str, prop: &str) -> Option<String> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#).unwrap()
-    });
-    for c in re.captures_iter(html) {
-        if c.get(1).is_some_and(|m| m.as_str() == prop) {
-            return c.get(2).map(|m| m.as_str().to_string());
-        }
-    }
-    None
-}
 
 fn meta_name(html: &str, name: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();

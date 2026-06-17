@@ -42,6 +42,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::og::{og, parse_og};
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -142,15 +143,17 @@ fn build_jsonld_payload(product: &Value, html: &str, url: &str) -> Value {
 /// Build a minimal payload from OG / product meta tags. Used when a
 /// page has no Product JSON-LD at all.
 fn build_og_payload(html: &str, url: &str) -> Value {
+    // Single scan for the three og:* fields this fallback reads.
+    let og_meta = parse_og(html);
     let offers = build_og_offer(html).map(|o| vec![o]).unwrap_or_default();
-    let image = og(html, "image");
+    let image = og_meta.raw("image");
     let images: Vec<Value> = image.map(|i| vec![Value::String(i)]).unwrap_or_default();
 
     json!({
         "url":                url,
         "data_source":        "og_fallback",
-        "name":               og(html, "title"),
-        "description":        og(html, "description"),
+        "name":               og_meta.raw("title"),
+        "description":        og_meta.raw("description"),
         "brand":              meta_property(html, "product:brand"),
         "sku":                None::<String>,
         "mpn":                None::<String>,
@@ -366,20 +369,6 @@ fn build_og_offer(html: &str) -> Option<Value> {
         "seller":           None::<String>,
         "offer_count":      None::<String>,
     }))
-}
-
-/// Pull the value of `<meta property="og:{prop}" content="...">`.
-fn og(html: &str, prop: &str) -> Option<String> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#).unwrap()
-    });
-    for c in re.captures_iter(html) {
-        if c.get(1).is_some_and(|m| m.as_str() == prop) {
-            return c.get(2).map(|m| m.as_str().to_string());
-        }
-    }
-    None
 }
 
 /// Pull the value of any `<meta property="..." content="...">` tag.

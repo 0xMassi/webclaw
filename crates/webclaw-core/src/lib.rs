@@ -222,8 +222,8 @@ fn extract_with_options_inner(
     // (e.g., window.__PRELOADED_STATE__, self.__next_f). This supplements the
     // static JSON data island extraction above with runtime-evaluated data.
     #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
-    {
-        let blobs = js_eval::extract_js_data(html);
+    if js_eval::has_js_candidate_data(html) {
+        let blobs = js_eval::extract_js_data_from_doc(&doc);
         if !blobs.is_empty() {
             let js_text = js_eval::extract_readable_text(&blobs);
             if !js_text.is_empty() {

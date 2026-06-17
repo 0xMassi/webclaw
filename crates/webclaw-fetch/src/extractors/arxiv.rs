@@ -10,6 +10,7 @@ use quick_xml::events::Event;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -25,7 +26,9 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
+    let Some(host) = host_of(url) else {
+        return false;
+    };
     if host != "arxiv.org" && host != "www.arxiv.org" {
         return false;
     }
@@ -74,15 +77,6 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-}
 
 /// Parse an arxiv id from a URL. Strips the version suffix (`v2`, `v3`)
 /// and the `.pdf` extension when present.

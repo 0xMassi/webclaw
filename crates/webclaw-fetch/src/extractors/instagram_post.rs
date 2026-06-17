@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use std::sync::OnceLock;
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -26,8 +27,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !matches!(host, "www.instagram.com" | "instagram.com") {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !matches!(host.as_str(), "www.instagram.com" | "instagram.com") {
         return false;
     }
     parse_shortcode(url).is_some()
@@ -71,15 +74,6 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
 // ---------------------------------------------------------------------------
 // URL parsing
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-}
 
 /// Returns `(kind, shortcode)` where kind ∈ {`post`, `reel`, `tv`}.
 fn parse_shortcode(url: &str) -> Option<(&'static str, String)> {

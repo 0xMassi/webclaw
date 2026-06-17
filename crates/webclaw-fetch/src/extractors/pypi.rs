@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -23,7 +24,9 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
+    let Some(host) = host_of(url) else {
+        return false;
+    };
     if host != "pypi.org" && host != "www.pypi.org" {
         return false;
     }
@@ -100,15 +103,6 @@ fn pick_license_classifier(classifiers: &Option<Vec<String>>) -> Option<String> 
         .filter(|c| c.starts_with("License ::"))
         .max_by_key(|c| c.len())
         .cloned()
-}
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
 }
 
 fn parse_project(url: &str) -> Option<(String, Option<String>)> {

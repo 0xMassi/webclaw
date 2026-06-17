@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -24,7 +25,9 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
+    let Some(host) = host_of(url) else {
+        return false;
+    };
     if host != "stackoverflow.com" && host != "www.stackoverflow.com" {
         return false;
     }
@@ -113,15 +116,6 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
         "accepted_answer": accepted,
         "top_answers":    answers,
     }))
-}
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
 }
 
 /// Parse question id from a URL of the form `/questions/{id}/{slug}`.

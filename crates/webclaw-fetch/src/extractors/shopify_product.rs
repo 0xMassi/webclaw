@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -40,7 +41,9 @@ pub fn matches(url: &str) -> bool {
     // extractor's /.json fallback is what confirms Shopify; `matches`
     // just says "this is a plausible shape." Still reject obviously
     // non-Shopify known hosts to save a failed request.
-    let host = host_of(url);
+    let Some(host) = host_of(url) else {
+        return false;
+    };
     if host.is_empty() || NON_SHOPIFY_HOSTS.iter().any(|h| host.ends_with(h)) {
         return false;
     }
@@ -187,15 +190,6 @@ fn build_json_url(url: &str) -> String {
         Some(q) => format!("{with_json}?{q}"),
         None => with_json,
     }
-}
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
 }
 
 // ---------------------------------------------------------------------------

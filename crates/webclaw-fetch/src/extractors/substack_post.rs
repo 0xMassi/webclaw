@@ -28,6 +28,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use super::og::parse_og;
 use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
@@ -54,12 +55,8 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
     let slug = parse_slug(url).ok_or_else(|| {
         FetchError::Build(format!("substack_post: cannot parse slug from '{url}'"))
     })?;
-    let host = host_of(url);
-    if host.is_empty() {
-        return Err(FetchError::Build(format!(
-            "substack_post: empty host in '{url}'"
-        )));
-    }
+    let host = host_of(url)
+        .ok_or_else(|| FetchError::Build(format!("substack_post: empty host in '{url}'")))?;
     let scheme = if url.starts_with("http://") {
         "http"
     } else {
@@ -261,15 +258,6 @@ fn extract_authors(v: &Value) -> Vec<Value> {
 // ---------------------------------------------------------------------------
 // URL helpers
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-}
 
 fn parse_slug(url: &str) -> Option<String> {
     let after = url.split("/p/").nth(1)?;

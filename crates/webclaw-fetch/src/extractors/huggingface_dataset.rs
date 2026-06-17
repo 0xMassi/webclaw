@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -18,7 +19,9 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
+    let Some(host) = host_of(url) else {
+        return false;
+    };
     if host != "huggingface.co" && host != "www.huggingface.co" {
         return false;
     }
@@ -94,15 +97,6 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
         "file_count":      d.siblings.len(),
         "files":           files,
     }))
-}
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
 }
 
 /// Returns the part to append to the API URL — either `name` (legacy

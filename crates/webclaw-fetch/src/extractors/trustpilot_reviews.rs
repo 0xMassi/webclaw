@@ -32,6 +32,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use super::og::parse_og;
 use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
@@ -45,8 +46,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !matches!(host, "www.trustpilot.com" | "trustpilot.com") {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !matches!(host.as_str(), "www.trustpilot.com" | "trustpilot.com") {
         return false;
     }
     url.contains("/review/")
@@ -151,15 +154,6 @@ fn cloud_to_fetch_err(e: CloudError) -> FetchError {
 // ---------------------------------------------------------------------------
 // URL helpers
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-}
 
 /// Pull the target domain from `trustpilot.com/review/{domain}`.
 fn parse_review_domain(url: &str) -> Option<String> {

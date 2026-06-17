@@ -23,6 +23,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -38,8 +39,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 const IG_APP_ID: &str = "936619743392459";
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !matches!(host, "www.instagram.com" | "instagram.com") {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !matches!(host.as_str(), "www.instagram.com" | "instagram.com") {
         return false;
     }
     let path = url
@@ -240,15 +243,6 @@ fn null_value() -> Value {
 // ---------------------------------------------------------------------------
 // URL parsing
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-}
 
 fn parse_username(url: &str) -> Option<String> {
     let path = url.split("://").nth(1)?.split_once('/').map(|(_, p)| p)?;

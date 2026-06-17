@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -29,7 +30,9 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
+    let Some(host) = host_of(url) else {
+        return false;
+    };
     if host.is_empty() || NON_SHOPIFY_HOSTS.iter().any(|h| host.ends_with(h)) {
         return false;
     }
@@ -128,15 +131,6 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
 // ---------------------------------------------------------------------------
 // URL helpers
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-}
 
 /// Build `(collection.json, collection/products.json)` from a user URL.
 fn build_json_urls(url: &str) -> (String, String) {

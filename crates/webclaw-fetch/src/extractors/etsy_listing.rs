@@ -26,6 +26,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use super::jsonld_product::{
     find_product_jsonld, first_offer, get_aggregate_rating, get_brand, get_first_image, get_text,
 };
@@ -46,8 +47,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !is_etsy_host(host) {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !is_etsy_host(&host) {
         return false;
     }
     parse_listing_id(url).is_some()
@@ -158,15 +161,6 @@ pub fn parse(html: &str, url: &str, listing_id: &str) -> Value {
 // ---------------------------------------------------------------------------
 // URL helpers
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-}
 
 fn is_etsy_host(host: &str) -> bool {
     host == "etsy.com" || host == "www.etsy.com" || host.ends_with(".etsy.com")

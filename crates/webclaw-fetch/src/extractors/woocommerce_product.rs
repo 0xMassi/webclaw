@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -29,7 +30,9 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
+    let Some(host) = host_of(url) else {
+        return false;
+    };
     if host.is_empty() {
         return false;
     }
@@ -48,12 +51,8 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
             "woocommerce_product: cannot parse slug from '{url}'"
         ))
     })?;
-    let host = host_of(url);
-    if host.is_empty() {
-        return Err(FetchError::Build(format!(
-            "woocommerce_product: empty host in '{url}'"
-        )));
-    }
+    let host = host_of(url)
+        .ok_or_else(|| FetchError::Build(format!("woocommerce_product: empty host in '{url}'")))?;
     let scheme = if url.starts_with("http://") {
         "http"
     } else {
@@ -128,15 +127,6 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
 // ---------------------------------------------------------------------------
 // URL helpers
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-}
 
 /// Extract the product slug from common WooCommerce permalinks.
 fn parse_slug(url: &str) -> Option<String> {

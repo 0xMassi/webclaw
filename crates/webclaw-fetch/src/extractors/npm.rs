@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -24,7 +25,9 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
+    let Some(host) = host_of(url) else {
+        return false;
+    };
     if host != "www.npmjs.com" && host != "npmjs.com" {
         return false;
     }
@@ -109,15 +112,6 @@ async fn fetch_weekly_downloads(client: &dyn Fetcher, name: &str) -> Result<i64,
     let dl: Downloads = serde_json::from_str(&resp.html)
         .map_err(|e| FetchError::BodyDecode(format!("npm downloads parse: {e}")))?;
     Ok(dl.downloads)
-}
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
 }
 
 /// Extract the package name from an npmjs.com URL. Handles scoped packages
@@ -209,6 +203,10 @@ mod tests {
         assert!(matches("https://npmjs.com/package/lodash"));
         assert!(!matches("https://www.npmjs.com/"));
         assert!(!matches("https://example.com/package/foo"));
+        // Hardening (shared SSRF-aware host_of): userinfo host-confusion is
+        // rejected, and host matching is case-insensitive.
+        assert!(!matches("https://www.npmjs.com@evil.com/package/foo"));
+        assert!(matches("https://WWW.NPMJS.COM/package/react"));
     }
 
     #[test]

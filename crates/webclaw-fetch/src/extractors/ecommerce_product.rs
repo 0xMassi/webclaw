@@ -42,6 +42,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::host_of;
 use super::og::{og, parse_og};
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
@@ -67,7 +68,7 @@ pub fn matches(url: &str) -> bool {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return false;
     }
-    !host_of(url).is_empty()
+    host_of(url).is_some()
 }
 
 pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
@@ -315,15 +316,6 @@ fn get_review_count(v: &Value) -> Option<String> {
     v.get("aggregateRating")
         .and_then(|r| get_text(r, "reviewCount"))
         .or_else(|| get_text(v, "reviewCount"))
-}
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
 }
 
 // ---------------------------------------------------------------------------

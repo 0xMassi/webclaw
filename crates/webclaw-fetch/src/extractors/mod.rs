@@ -48,6 +48,7 @@ pub mod youtube_video;
 
 use serde::Serialize;
 use serde_json::Value;
+use url::Url;
 
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
@@ -65,6 +66,22 @@ pub struct ExtractorInfo {
     /// Glob-ish URL pattern(s) the extractor claims. For documentation;
     /// the actual matching is done by the extractor's `matches` fn.
     pub url_patterns: &'static [&'static str],
+}
+
+/// Extract the lowercased host from a URL for `matches()` host checks.
+///
+/// SSRF-aware and shared by every vertical extractor so host matching is
+/// consistent in one place. Returns `None` when the URL is unparseable,
+/// has no host, or carries userinfo (`user:pass@host`) — userinfo is a
+/// host-confusion vector (`https://github.com@evil.com/...`), so such URLs
+/// never match a vertical. The host is lowercased and port-stripped, so
+/// `matches()` checks compare against canonical bare hostnames.
+pub(crate) fn host_of(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    parsed.host_str().map(|host| host.to_ascii_lowercase())
 }
 
 /// Full catalog. Order is stable; new entries append.

@@ -12,9 +12,9 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 use serde_json::{Value, json};
-use url::Url;
 
 use super::ExtractorInfo;
+use super::host_of;
 use super::jsonld_product::{
     find_product_jsonld, first_offer, get_aggregate_rating, get_brand, get_first_image, get_text,
 };
@@ -128,14 +128,6 @@ pub fn parse(html: &str, url: &str, item_id: &str) -> Value {
 // ---------------------------------------------------------------------------
 // URL helpers
 // ---------------------------------------------------------------------------
-
-fn host_of(url: &str) -> Option<String> {
-    let parsed = Url::parse(url).ok()?;
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return None;
-    }
-    parsed.host_str().map(|host| host.to_ascii_lowercase())
-}
 
 fn is_ebay_host(host: &str) -> bool {
     const EBAY_HOSTS: &[&str] = &[

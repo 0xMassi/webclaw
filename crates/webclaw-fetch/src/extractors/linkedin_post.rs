@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use std::sync::OnceLock;
 
 use super::ExtractorInfo;
+use super::host_of;
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -29,8 +30,10 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
 };
 
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url);
-    if !matches!(host, "www.linkedin.com" | "linkedin.com") {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    if !matches!(host.as_str(), "www.linkedin.com" | "linkedin.com") {
         return false;
     }
     url.contains("/feed/update/urn:li:") || url.contains("/posts/")
@@ -189,15 +192,6 @@ fn strip_tags(html: &str) -> String {
     let re = RE.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
     let no_tags = re.replace_all(html, "").to_string();
     html_decode(&no_tags)
-}
-
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
 }
 
 #[cfg(test)]

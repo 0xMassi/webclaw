@@ -3265,6 +3265,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "calamine",
+ "flate2",
  "futures-util",
  "http",
  "quick-xml 0.37.5",

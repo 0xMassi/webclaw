@@ -313,6 +313,18 @@ struct Cli {
     #[arg(long)]
     map: bool,
 
+    /// Max pages for --map's crawl fallback when the sitemap is thin [default: 150]
+    #[arg(long)]
+    map_pages: Option<usize>,
+
+    /// Disable --map's crawl fallback (sitemap-only discovery)
+    #[arg(long)]
+    no_map_crawl: bool,
+
+    /// Cap the number of URLs --map returns (default: uncapped)
+    #[arg(long)]
+    map_limit: Option<usize>,
+
     // -- LLM options --
     /// Extract structured JSON using LLM (pass a JSON schema string or @file)
     #[arg(long)]
@@ -508,7 +520,13 @@ fn init_logging(verbose: bool) {
         EnvFilter::try_from_env("WEBCLAW_LOG").unwrap_or_else(|_| EnvFilter::new(default))
     };
 
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // Logs go to stderr, never stdout: stdout carries the actual result
+    // (markdown / JSON / URL list). A stray WARN on stdout corrupts
+    // machine-readable output — e.g. `--map --format json` piped to a parser.
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
 }
 
 /// Build FetchConfig from CLI flags.
@@ -1688,12 +1706,22 @@ async fn run_map(cli: &Cli) -> Result<(), String> {
     let client =
         FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
 
-    let entries = webclaw_fetch::sitemap::discover(&client, url)
-        .await
-        .map_err(|e| format!("sitemap discovery failed: {e}"))?;
+    // Layered discovery: sitemaps first, bounded crawl fallback when thin.
+    let mut opts = webclaw_fetch::MapOptions::default();
+    if let Some(pages) = cli.map_pages {
+        opts.max_crawl_pages = pages;
+    }
+    if cli.no_map_crawl {
+        opts.crawl_fallback = false;
+    }
+    if let Some(limit) = cli.map_limit {
+        opts.max_urls = Some(limit);
+    }
+
+    let entries = webclaw_fetch::discover_urls(&client, url, &opts).await;
 
     if entries.is_empty() {
-        eprintln!("no sitemap URLs found for {url}");
+        eprintln!("no URLs found for {url}");
     } else {
         eprintln!("discovered {} URLs", entries.len());
     }

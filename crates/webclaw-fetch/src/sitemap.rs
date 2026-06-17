@@ -18,12 +18,20 @@ use crate::error::FetchError;
 
 /// Maximum depth when recursively fetching sitemap index files.
 /// Prevents infinite loops from circular sitemap references.
-const MAX_RECURSION_DEPTH: usize = 3;
+///
+/// Raised 3→5: large sites (gov.uk, news publishers) nest sitemap indexes
+/// more than three levels deep — a top index → per-section index →
+/// per-month index → urlset is already four hops. Three cut those off.
+const MAX_RECURSION_DEPTH: usize = 5;
 
 /// Common sitemap paths to try when robots.txt doesn't list any.
 const FALLBACK_SITEMAP_PATHS: &[&str] = &[
     "/sitemap.xml",
     "/sitemap_index.xml",
+    "/sitemap-index.xml",
+    "/sitemap1.xml",
+    "/sitemaps.xml",
+    "/sitemap/index.xml",
     "/wp-sitemap.xml",
     "/sitemap/sitemap-index.xml",
 ];
@@ -105,14 +113,24 @@ async fn fetch_sitemaps(
     for sitemap_url in urls {
         debug!(url = %sitemap_url, depth, "fetching sitemap");
 
-        let xml = match client.fetch(sitemap_url).await {
-            Ok(result) if result.status == 200 => result.html,
-            Ok(result) => {
-                debug!(url = %sitemap_url, status = result.status, "sitemap not found");
+        // Fetch raw bytes so gzipped sitemaps survive intact. `fetch` runs
+        // the body through `from_utf8_lossy`, which corrupts binary gzip.
+        let body = match client.fetch_raw(sitemap_url).await {
+            Ok((200, body)) => body,
+            Ok((status, _)) => {
+                debug!(url = %sitemap_url, status, "sitemap not found");
                 continue;
             }
             Err(e) => {
                 debug!(url = %sitemap_url, error = %e, "failed to fetch sitemap");
+                continue;
+            }
+        };
+
+        let xml = match decode_sitemap_body(&body) {
+            Some(xml) => xml,
+            None => {
+                debug!(url = %sitemap_url, "failed to decode sitemap body, skipping");
                 continue;
             }
         };
@@ -144,6 +162,33 @@ async fn fetch_sitemaps(
                 debug!(url = %sitemap_url, "unrecognized sitemap format, skipping");
             }
         }
+    }
+}
+
+/// Decode a raw sitemap body into a UTF-8 XML string.
+///
+/// Sitemaps are commonly served gzipped (`.xml.gz`) with
+/// `Content-Type: application/gzip` and *no* `Content-Encoding`, so the HTTP
+/// layer never inflates them. We detect the gzip magic bytes (`0x1f 0x8b`)
+/// and gunzip in-process; otherwise the body is treated as plain XML.
+///
+/// Returns `None` if a gzip stream fails to inflate. Plain (non-gzip) bodies
+/// always succeed via lossy UTF-8 decode, mirroring the previous behaviour.
+pub(crate) fn decode_sitemap_body(body: &[u8]) -> Option<String> {
+    if body.starts_with(&[0x1f, 0x8b]) {
+        use std::io::Read;
+
+        let mut decoder = flate2::read::GzDecoder::new(body);
+        let mut out = String::new();
+        match decoder.read_to_string(&mut out) {
+            Ok(_) => Some(out),
+            Err(e) => {
+                warn!(error = %e, "failed to gunzip sitemap body");
+                None
+            }
+        }
+    } else {
+        Some(String::from_utf8_lossy(body).into_owned())
     }
 }
 
@@ -669,5 +714,47 @@ mod tests {
         assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemap_index.xml"));
         assert!(FALLBACK_SITEMAP_PATHS.contains(&"/wp-sitemap.xml"));
         assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemap/sitemap-index.xml"));
+        // Paths added for robustness (item 3).
+        assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemap-index.xml"));
+        assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemap1.xml"));
+        assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemaps.xml"));
+        assert!(FALLBACK_SITEMAP_PATHS.contains(&"/sitemap/index.xml"));
+    }
+
+    #[test]
+    fn decode_plain_xml_body() {
+        let xml = r#"<?xml version="1.0"?><urlset></urlset>"#;
+        let got = decode_sitemap_body(xml.as_bytes()).expect("plain body decodes");
+        assert_eq!(got, xml);
+    }
+
+    #[test]
+    fn decode_gzipped_body() {
+        use std::io::Write;
+
+        let xml = r#"<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/gz-page</loc></url>
+</urlset>"#;
+
+        // Gzip-compress the XML, then confirm decode_sitemap_body inflates it
+        // and the parser finds the URL.
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let gz = encoder.finish().unwrap();
+
+        assert_eq!(&gz[..2], &[0x1f, 0x8b], "gzip magic present");
+
+        let decoded = decode_sitemap_body(&gz).expect("gzip body inflates");
+        let entries = parse_urlset(&decoded);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, "https://example.com/gz-page");
+    }
+
+    #[test]
+    fn decode_corrupt_gzip_returns_none() {
+        // Starts with gzip magic but the rest is garbage -> inflate fails.
+        let bad = [0x1f, 0x8b, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef];
+        assert!(decode_sitemap_body(&bad).is_none());
     }
 }

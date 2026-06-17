@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.13] - 2026-06-17
+
+### Performance
+- Faster content extraction with byte-identical output. The markdown noise filter no longer recompiles its CSS selectors on every element; the vertical extractors share a single Open Graph meta parse instead of re-scanning the page per field; the JavaScript sandbox is skipped entirely when a page has no JS-assigned data (and reuses the already-parsed document instead of re-parsing); and the HTTP client now tunes its connection pool (connect timeout, idle-pool reuse, keep-alive) for better connection reuse across requests.
+
 ## [0.6.12] - 2026-06-17
 
 ### Added

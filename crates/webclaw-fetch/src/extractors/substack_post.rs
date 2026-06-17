@@ -28,6 +28,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::og::parse_og;
 use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
@@ -181,24 +182,27 @@ async fn html_fallback(
 pub fn parse_html(html: &str, url: &str, api_url: &str, slug: &str) -> Value {
     let article = find_article_jsonld(html);
 
+    // Single scan for the four og:* fields read as fallbacks below.
+    let og_meta = parse_og(html);
+
     let title = article
         .as_ref()
         .and_then(|v| get_text(v, "headline"))
-        .or_else(|| og(html, "title"));
+        .or_else(|| og_meta.raw("title"));
     let description = article
         .as_ref()
         .and_then(|v| get_text(v, "description"))
-        .or_else(|| og(html, "description"));
+        .or_else(|| og_meta.raw("description"));
     let cover_image = article
         .as_ref()
         .and_then(get_first_image)
-        .or_else(|| og(html, "image"));
+        .or_else(|| og_meta.raw("image"));
     let post_date = article
         .as_ref()
         .and_then(|v| get_text(v, "datePublished"))
         .or_else(|| meta_property(html, "article:published_time"));
     let updated_at = article.as_ref().and_then(|v| get_text(v, "dateModified"));
-    let publication_name = og(html, "site_name");
+    let publication_name = og_meta.raw("site_name");
     let authors = article.as_ref().map(extract_authors).unwrap_or_default();
 
     json!({
@@ -301,19 +305,6 @@ fn handle_from_author_url(u: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 // HTML tag helpers
 // ---------------------------------------------------------------------------
-
-fn og(html: &str, prop: &str) -> Option<String> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#).unwrap()
-    });
-    for c in re.captures_iter(html) {
-        if c.get(1).is_some_and(|m| m.as_str() == prop) {
-            return c.get(2).map(|m| m.as_str().to_string());
-        }
-    }
-    None
-}
 
 /// Pull `<meta property="article:published_time" content="...">` and
 /// similar structured meta tags.

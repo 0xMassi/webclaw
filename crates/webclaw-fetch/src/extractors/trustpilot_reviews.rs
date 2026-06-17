@@ -32,6 +32,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
+use super::og::parse_og;
 use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
@@ -87,11 +88,17 @@ pub fn parse(html: &str, url: &str) -> Result<Value, FetchError> {
     // The aiSummary block: not typed (no `@type`), detect by key.
     let ai_block = find_ai_summary_block(&blocks);
 
+    // Single scan of the page's og:* meta tags; title + description feed
+    // the regex fallbacks below.
+    let og_meta = parse_og(html);
+    let og_title = og_meta.unescaped("title");
+    let og_description = og_meta.unescaped("description");
+
     // Business name: Dataset > metadata.title regex > URL domain.
     let business_name = dataset
         .as_ref()
         .and_then(|d| get_string(d, "name"))
-        .or_else(|| parse_name_from_og_title(html))
+        .or_else(|| parse_name_from_og_title(og_title.as_deref()))
         .or_else(|| Some(domain.clone()));
 
     // Rating distribution from the csvw:Table columns. Each column has
@@ -105,8 +112,8 @@ pub fn parse(html: &str, url: &str) -> Result<Value, FetchError> {
 
     // Page-title / page-description fallbacks. OG title format:
     // "Anthropic is rated \"Bad\" with 1.5 / 5 on Trustpilot"
-    let (rating_label, rating_from_og) = parse_rating_from_og_title(html);
-    let total_from_desc = parse_review_count_from_og_description(html);
+    let (rating_label, rating_from_og) = parse_rating_from_og_title(og_title.as_deref());
+    let total_from_desc = parse_review_count_from_og_description(og_description.as_deref());
 
     // Recent reviews carried by the aiSummary block.
     let recent_reviews: Vec<Value> = ai_block
@@ -336,20 +343,21 @@ fn compute_rating_stats(distribution: &Value) -> (Option<String>, Option<i64>) {
 
 /// Regex out the business name from the standard Trustpilot OG title
 /// shape: `"{name} is rated \"{label}\" with {rating} / 5 on Trustpilot"`.
-fn parse_name_from_og_title(html: &str) -> Option<String> {
-    let title = og(html, "title")?;
+/// `title` is the (entity-decoded) `og:title` content.
+fn parse_name_from_og_title(title: Option<&str>) -> Option<String> {
+    let title = title?;
     // "Anthropic is rated \"Bad\" with 1.5 / 5 on Trustpilot"
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"^(.+?)\s+is rated\b").unwrap());
-    re.captures(&title)
+    re.captures(title)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
 }
 
 /// Pull the rating label (e.g. "Bad", "Excellent") and numeric value
-/// from the OG title.
-fn parse_rating_from_og_title(html: &str) -> (Option<String>, Option<String>) {
-    let Some(title) = og(html, "title") else {
+/// from the (entity-decoded) `og:title` content.
+fn parse_rating_from_og_title(title: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(title) = title else {
         return (None, None);
     };
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -357,7 +365,7 @@ fn parse_rating_from_og_title(html: &str) -> (Option<String>, Option<String>) {
     let re = RE.get_or_init(|| {
         Regex::new(r#"is rated\s*[\\"]+([^"\\]+)[\\"]+\s*with\s*([\d.]+)\s*/\s*5"#).unwrap()
     });
-    let Some(caps) = re.captures(&title) else {
+    let Some(caps) = re.captures(title) else {
         return (None, None);
     };
     (
@@ -366,41 +374,18 @@ fn parse_rating_from_og_title(html: &str) -> (Option<String>, Option<String>) {
     )
 }
 
-/// Parse "hear what 226 customers have already said" from the OG
-/// description tag.
-fn parse_review_count_from_og_description(html: &str) -> Option<i64> {
-    let desc = og(html, "description")?;
+/// Parse "hear what 226 customers have already said" from the
+/// (entity-decoded) `og:description` content.
+fn parse_review_count_from_og_description(desc: Option<&str>) -> Option<i64> {
+    let desc = desc?;
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"(\d[\d,]*)\s+customers").unwrap());
-    re.captures(&desc)?
+    re.captures(desc)?
         .get(1)?
         .as_str()
         .replace(',', "")
         .parse::<i64>()
         .ok()
-}
-
-fn og(html: &str, prop: &str) -> Option<String> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#).unwrap()
-    });
-    for c in re.captures_iter(html) {
-        if c.get(1).is_some_and(|m| m.as_str() == prop) {
-            let raw = c.get(2).map(|m| m.as_str())?;
-            return Some(html_unescape(raw));
-        }
-    }
-    None
-}
-
-/// Minimal HTML entity unescaping for the three entities the
-/// synthesize_html escaper might produce. Keeps us off a heavier dep.
-fn html_unescape(s: &str) -> String {
-    s.replace("&quot;", "\"")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
 }
 
 fn get_string(v: &Value, key: &str) -> Option<String> {
@@ -488,8 +473,12 @@ mod tests {
     #[test]
     fn parse_og_title_extracts_name_and_rating() {
         let html = r#"<meta property="og:title" content="Anthropic is rated &quot;Bad&quot; with 1.5 / 5 on Trustpilot">"#;
-        assert_eq!(parse_name_from_og_title(html), Some("Anthropic".into()));
-        let (label, rating) = parse_rating_from_og_title(html);
+        let title = parse_og(html).unescaped("title");
+        assert_eq!(
+            parse_name_from_og_title(title.as_deref()),
+            Some("Anthropic".into())
+        );
+        let (label, rating) = parse_rating_from_og_title(title.as_deref());
         assert_eq!(label.as_deref(), Some("Bad"));
         assert_eq!(rating.as_deref(), Some("1.5"));
     }
@@ -497,7 +486,11 @@ mod tests {
     #[test]
     fn parse_review_count_from_og_description_picks_number() {
         let html = r#"<meta property="og:description" content="Do you agree? Voice your opinion today and hear what 226 customers have already said.">"#;
-        assert_eq!(parse_review_count_from_og_description(html), Some(226));
+        let desc = parse_og(html).unescaped("description");
+        assert_eq!(
+            parse_review_count_from_og_description(desc.as_deref()),
+            Some(226)
+        );
     }
 
     #[test]

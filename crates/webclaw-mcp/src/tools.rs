@@ -12,8 +12,11 @@ use serde::Deserialize;
 //
 //   "invalid type: string \"3\", expected u32"
 //
-// These two helpers accept both forms transparently so callers never see that
-// error regardless of which representation their client sends.
+// These helpers accept both forms transparently so callers never see that
+// error regardless of which representation their client sends. The same
+// problem hits booleans: clients send `"true"`/`"false"` as JSON strings,
+// which serde's default bool deserialiser rejects — `deser_opt_bool_or_str`
+// covers that case.
 
 fn deser_opt_u32_or_str<'de, D>(d: D) -> Result<Option<u32>, D::Error>
 where
@@ -57,6 +60,31 @@ where
     }
 }
 
+fn deser_opt_bool_or_str<'de, D>(d: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrStr {
+        Bool(bool),
+        Str(String),
+    }
+    match Option::<BoolOrStr>::deserialize(d)? {
+        None => Ok(None),
+        Some(BoolOrStr::Bool(b)) => Ok(Some(b)),
+        // Accept "true"/"false" case-insensitively (trimmed). Reject anything
+        // else with a clear message rather than silently coercing it.
+        Some(BoolOrStr::Str(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" => Ok(Some(true)),
+            "false" => Ok(Some(false)),
+            _ => Err(serde::de::Error::custom(format!(
+                "expected a bool, got string \"{s}\""
+            ))),
+        },
+    }
+}
+
 // ── Parameter structs ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -70,6 +98,7 @@ pub struct ScrapeParams {
     /// CSS selectors to exclude from output
     pub exclude_selectors: Option<Vec<String>>,
     /// If true, extract only the main content (article/main element)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub only_main_content: Option<bool>,
     /// Browser profile: "chrome" (default), "firefox", or "random"
     pub browser: Option<String>,
@@ -91,6 +120,7 @@ pub struct CrawlParams {
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub concurrency: Option<usize>,
     /// Seed the frontier from sitemap discovery before crawling
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub use_sitemap: Option<bool>,
     /// Output format for each page: "markdown" (default), "llm", "text"
     pub format: Option<String>,
@@ -151,6 +181,7 @@ pub struct ResearchParams {
     /// Research query or question to investigate
     pub query: String,
     /// Enable deep research mode for more thorough investigation (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub deep: Option<bool>,
     /// Topic hint to guide research focus (e.g. "technology", "finance", "science")
     pub topic: Option<String>,
@@ -171,6 +202,7 @@ pub struct SearchParams {
     pub lang: Option<String>,
     /// When true, fetch + extract each result page and include its
     /// markdown. Only used by the local Serper path (SERPER_API_KEY).
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub scrape: Option<bool>,
 }
 
@@ -363,6 +395,119 @@ mod tests {
         let e = serde_json::from_str::<SummarizeParams>(
             r#"{"url":"https://x.com","max_sentences":"abc"}"#,
         );
+        assert!(e.is_err(), "expected Err, got {e:?}");
+    }
+
+    // ── Boolean param string-coercion (issue #62) ───────────────────────────
+
+    // ScrapeParams.only_main_content
+    #[test]
+    fn scrape_only_main_content_from_bool() {
+        let v: ScrapeParams =
+            serde_json::from_str(r#"{"url":"https://x.com","only_main_content":true}"#).unwrap();
+        assert_eq!(v.only_main_content, Some(true));
+    }
+
+    #[test]
+    fn scrape_only_main_content_from_string() {
+        let t: ScrapeParams =
+            serde_json::from_str(r#"{"url":"https://x.com","only_main_content":"true"}"#).unwrap();
+        assert_eq!(t.only_main_content, Some(true));
+        let f: ScrapeParams =
+            serde_json::from_str(r#"{"url":"https://x.com","only_main_content":"false"}"#).unwrap();
+        assert_eq!(f.only_main_content, Some(false));
+    }
+
+    #[test]
+    fn scrape_only_main_content_absent_is_none() {
+        let v: ScrapeParams = serde_json::from_str(r#"{"url":"https://x.com"}"#).unwrap();
+        assert_eq!(v.only_main_content, None);
+    }
+
+    #[test]
+    fn scrape_only_main_content_non_bool_string_errors() {
+        let e = serde_json::from_str::<ScrapeParams>(
+            r#"{"url":"https://x.com","only_main_content":"yes"}"#,
+        );
+        assert!(e.is_err(), "expected Err, got {e:?}");
+    }
+
+    // CrawlParams.use_sitemap
+    #[test]
+    fn crawl_use_sitemap_from_bool() {
+        let v: CrawlParams =
+            serde_json::from_str(r#"{"url":"https://x.com","use_sitemap":false}"#).unwrap();
+        assert_eq!(v.use_sitemap, Some(false));
+    }
+
+    #[test]
+    fn crawl_use_sitemap_from_string() {
+        let v: CrawlParams =
+            serde_json::from_str(r#"{"url":"https://x.com","use_sitemap":"true"}"#).unwrap();
+        assert_eq!(v.use_sitemap, Some(true));
+    }
+
+    #[test]
+    fn crawl_use_sitemap_absent_is_none() {
+        let v: CrawlParams = serde_json::from_str(r#"{"url":"https://x.com"}"#).unwrap();
+        assert_eq!(v.use_sitemap, None);
+    }
+
+    #[test]
+    fn crawl_use_sitemap_non_bool_string_errors() {
+        let e =
+            serde_json::from_str::<CrawlParams>(r#"{"url":"https://x.com","use_sitemap":"nope"}"#);
+        assert!(e.is_err(), "expected Err, got {e:?}");
+    }
+
+    // ResearchParams.deep
+    #[test]
+    fn research_deep_from_bool() {
+        let v: ResearchParams = serde_json::from_str(r#"{"query":"rust","deep":true}"#).unwrap();
+        assert_eq!(v.deep, Some(true));
+    }
+
+    #[test]
+    fn research_deep_from_string() {
+        let v: ResearchParams = serde_json::from_str(r#"{"query":"rust","deep":"true"}"#).unwrap();
+        assert_eq!(v.deep, Some(true));
+    }
+
+    #[test]
+    fn research_deep_absent_is_none() {
+        let v: ResearchParams = serde_json::from_str(r#"{"query":"rust"}"#).unwrap();
+        assert_eq!(v.deep, None);
+    }
+
+    #[test]
+    fn research_deep_non_bool_string_errors() {
+        // Numeric-looking strings are NOT accepted for bools (avoids ambiguity).
+        let e = serde_json::from_str::<ResearchParams>(r#"{"query":"rust","deep":"1"}"#);
+        assert!(e.is_err(), "expected Err, got {e:?}");
+    }
+
+    // SearchParams.scrape
+    #[test]
+    fn search_scrape_from_bool() {
+        let v: SearchParams = serde_json::from_str(r#"{"query":"rust","scrape":true}"#).unwrap();
+        assert_eq!(v.scrape, Some(true));
+    }
+
+    #[test]
+    fn search_scrape_from_string_case_insensitive() {
+        let v: SearchParams = serde_json::from_str(r#"{"query":"rust","scrape":"True"}"#).unwrap();
+        assert_eq!(v.scrape, Some(true));
+    }
+
+    #[test]
+    fn search_scrape_absent_is_none() {
+        let v: SearchParams = serde_json::from_str(r#"{"query":"rust"}"#).unwrap();
+        assert_eq!(v.scrape, None);
+    }
+
+    #[test]
+    fn search_scrape_non_bool_string_errors() {
+        let e = serde_json::from_str::<SearchParams>(r#"{"query":"rust","scrape":"maybe"}"#);
         assert!(e.is_err(), "expected Err, got {e:?}");
     }
 }

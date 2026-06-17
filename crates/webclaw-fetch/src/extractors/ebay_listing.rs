@@ -15,6 +15,9 @@ use serde_json::{Value, json};
 use url::Url;
 
 use super::ExtractorInfo;
+use super::jsonld_product::{
+    find_product_jsonld, first_offer, get_aggregate_rating, get_brand, get_first_image, get_text,
+};
 use super::og::parse_og;
 use crate::cloud::{self, CloudError};
 use crate::error::FetchError;
@@ -171,104 +174,6 @@ fn parse_item_id(url: &str) -> Option<String> {
     re.captures(url)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
-}
-
-// ---------------------------------------------------------------------------
-// JSON-LD walkers
-// ---------------------------------------------------------------------------
-
-fn find_product_jsonld(html: &str) -> Option<Value> {
-    let blocks = webclaw_core::structured_data::extract_json_ld(html);
-    for b in blocks {
-        if let Some(found) = find_product_in(&b) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn find_product_in(v: &Value) -> Option<Value> {
-    if is_product_type(v) {
-        return Some(v.clone());
-    }
-    if let Some(graph) = v.get("@graph").and_then(|g| g.as_array()) {
-        for item in graph {
-            if let Some(found) = find_product_in(item) {
-                return Some(found);
-            }
-        }
-    }
-    if let Some(arr) = v.as_array() {
-        for item in arr {
-            if let Some(found) = find_product_in(item) {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
-
-fn is_product_type(v: &Value) -> bool {
-    let Some(t) = v.get("@type") else {
-        return false;
-    };
-    let is_prod = |s: &str| matches!(s, "Product" | "ProductGroup" | "IndividualProduct");
-    match t {
-        Value::String(s) => is_prod(s),
-        Value::Array(arr) => arr.iter().any(|x| x.as_str().is_some_and(is_prod)),
-        _ => false,
-    }
-}
-
-fn get_text(v: &Value, key: &str) -> Option<String> {
-    v.get(key).and_then(|x| match x {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        _ => None,
-    })
-}
-
-fn get_brand(v: &Value) -> Option<String> {
-    let brand = v.get("brand")?;
-    if let Some(s) = brand.as_str() {
-        return Some(s.to_string());
-    }
-    brand
-        .as_object()
-        .and_then(|o| o.get("name"))
-        .and_then(|n| n.as_str())
-        .map(String::from)
-}
-
-fn get_first_image(v: &Value) -> Option<String> {
-    match v.get("image")? {
-        Value::String(s) => Some(s.clone()),
-        Value::Array(arr) => arr.iter().find_map(|x| match x {
-            Value::String(s) => Some(s.clone()),
-            Value::Object(_) => x.get("url").and_then(|u| u.as_str()).map(String::from),
-            _ => None,
-        }),
-        Value::Object(o) => o.get("url").and_then(|u| u.as_str()).map(String::from),
-        _ => None,
-    }
-}
-
-fn first_offer(v: &Value) -> Option<Value> {
-    let offers = v.get("offers")?;
-    match offers {
-        Value::Array(arr) => arr.first().cloned(),
-        Value::Object(_) => Some(offers.clone()),
-        _ => None,
-    }
-}
-
-fn get_aggregate_rating(v: &Value) -> Option<Value> {
-    let r = v.get("aggregateRating")?;
-    Some(json!({
-        "rating_value": get_text(r, "ratingValue"),
-        "review_count": get_text(r, "reviewCount"),
-        "best_rating":  get_text(r, "bestRating"),
-    }))
 }
 
 fn cloud_to_fetch_err(e: CloudError) -> FetchError {

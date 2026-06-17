@@ -31,6 +31,7 @@ pub mod huggingface_dataset;
 pub mod huggingface_model;
 pub mod instagram_post;
 pub mod instagram_profile;
+pub(crate) mod jsonld_product;
 pub mod linkedin_post;
 pub mod npm;
 pub(crate) mod og;

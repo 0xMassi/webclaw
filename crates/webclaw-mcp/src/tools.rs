@@ -18,45 +18,26 @@ use serde::Deserialize;
 // which serde's default bool deserialiser rejects — `deser_opt_bool_or_str`
 // covers that case.
 
-fn deser_opt_u32_or_str<'de, D>(d: D) -> Result<Option<u32>, D::Error>
+fn deser_opt_num_or_str<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + std::str::FromStr,
 {
+    // Number first; a JSON string falls through to `Str` and is parsed into
+    // `T`. The concrete type (u32 / usize / ...) is inferred from the field
+    // at each `#[serde(deserialize_with = ...)]` callsite.
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
-    enum NumOrStr {
-        Num(u32),
+    enum NumOrStr<T> {
+        Num(T),
         Str(String),
     }
-    match Option::<NumOrStr>::deserialize(d)? {
+    match Option::<NumOrStr<T>>::deserialize(d)? {
         None => Ok(None),
         Some(NumOrStr::Num(n)) => Ok(Some(n)),
-        Some(NumOrStr::Str(s)) => {
-            s.trim().parse::<u32>().map(Some).map_err(|_| {
-                serde::de::Error::custom(format!("expected a u32, got string \"{s}\""))
-            })
-        }
-    }
-}
-
-fn deser_opt_usize_or_str<'de, D>(d: D) -> Result<Option<usize>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(serde::Deserialize)]
-    #[serde(untagged)]
-    enum NumOrStr {
-        Num(usize),
-        Str(String),
-    }
-    match Option::<NumOrStr>::deserialize(d)? {
-        None => Ok(None),
-        Some(NumOrStr::Num(n)) => Ok(Some(n)),
-        Some(NumOrStr::Str(s)) => {
-            s.trim().parse::<usize>().map(Some).map_err(|_| {
-                serde::de::Error::custom(format!("expected a usize, got string \"{s}\""))
-            })
-        }
+        Some(NumOrStr::Str(s)) => s.trim().parse::<T>().map(Some).map_err(|_| {
+            serde::de::Error::custom(format!("expected a number, got string \"{s}\""))
+        }),
     }
 }
 
@@ -111,13 +92,13 @@ pub struct CrawlParams {
     /// Seed URL to start crawling from
     pub url: String,
     /// Maximum link depth to follow (default: 2)
-    #[serde(default, deserialize_with = "deser_opt_u32_or_str")]
+    #[serde(default, deserialize_with = "deser_opt_num_or_str")]
     pub depth: Option<u32>,
     /// Maximum number of pages to crawl (default: 50)
-    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    #[serde(default, deserialize_with = "deser_opt_num_or_str")]
     pub max_pages: Option<usize>,
     /// Number of concurrent requests (default: 5)
-    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    #[serde(default, deserialize_with = "deser_opt_num_or_str")]
     pub concurrency: Option<usize>,
     /// Seed the frontier from sitemap discovery before crawling
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
@@ -139,7 +120,7 @@ pub struct BatchParams {
     /// Output format: "markdown" (default), "llm", "text"
     pub format: Option<String>,
     /// Number of concurrent requests (default: 5)
-    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    #[serde(default, deserialize_with = "deser_opt_num_or_str")]
     pub concurrency: Option<usize>,
 }
 
@@ -158,7 +139,7 @@ pub struct SummarizeParams {
     /// URL to fetch and summarize
     pub url: String,
     /// Number of sentences in the summary (default: 3)
-    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    #[serde(default, deserialize_with = "deser_opt_num_or_str")]
     pub max_sentences: Option<usize>,
 }
 
@@ -192,7 +173,7 @@ pub struct SearchParams {
     /// Search query
     pub query: String,
     /// Number of results to return (default: 5, max: 10)
-    #[serde(default, deserialize_with = "deser_opt_u32_or_str")]
+    #[serde(default, deserialize_with = "deser_opt_num_or_str")]
     pub num_results: Option<u32>,
     /// Country code for localization (e.g. "us", "gb", "it").
     /// Only used by the local Serper path (SERPER_API_KEY).

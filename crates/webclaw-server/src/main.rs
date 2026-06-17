@@ -94,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/crawl", post(routes::crawl::crawl))
         .route("/map", post(routes::map::map))
+        .route("/search", post(routes::search::search))
         .route("/batch", post(routes::batch::batch))
         .route("/extract", post(routes::extract::extract))
         .route("/extractors", get(routes::structured::list_extractors))

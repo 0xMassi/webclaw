@@ -668,13 +668,55 @@ impl WebclawMcp {
         ))
     }
 
-    /// Search the web for a query and return structured results. Requires WEBCLAW_API_KEY.
+    /// Search the web for a query and return structured results.
+    ///
+    /// Resolves the backend in priority order:
+    /// 1. `SERPER_API_KEY` set → local Serper.dev search with the user's
+    ///    own key (no hosted API needed). Supports `country`, `lang`, and
+    ///    `scrape` (fetch + extract each result page).
+    /// 2. else `WEBCLAW_API_KEY` set → the hosted webclaw search API.
+    /// 3. else → an error explaining both options.
     #[tool]
     async fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
-        let cloud = self
-            .cloud
-            .as_ref()
-            .ok_or("Search requires WEBCLAW_API_KEY. Get a key at https://webclaw.io")?;
+        // Local path: user's own Serper key. Preferred when present so the
+        // tool works without the hosted API and without spending credits.
+        if let Ok(serper_key) = std::env::var("SERPER_API_KEY")
+            && !serper_key.trim().is_empty()
+        {
+            let opts = webclaw_fetch::SearchOptions {
+                num_results: params.num_results.unwrap_or(5) as usize,
+                country: params.country.clone(),
+                lang: params.lang.clone(),
+                scrape: params.scrape.unwrap_or(false),
+            };
+            let results = webclaw_fetch::search(
+                self.fetch_client.as_ref(),
+                &serper_key,
+                &params.query,
+                &opts,
+            )
+            .await
+            .map_err(|e| format!("search error: {e}"))?;
+
+            let mut output = format!("Found {} results:\n\n", results.len());
+            for r in &results {
+                output.push_str(&format!("{}. {}\n   {}\n", r.position, r.title, r.link));
+                if !r.snippet.is_empty() {
+                    output.push_str(&format!("   {}\n", r.snippet));
+                }
+                if let Some(ref content) = r.content {
+                    output.push_str(&format!("\n{content}\n"));
+                }
+                output.push('\n');
+            }
+            return Ok(output);
+        }
+
+        // Hosted path: the webclaw cloud API.
+        let cloud = self.cloud.as_ref().ok_or(
+            "Search requires a search backend: set SERPER_API_KEY for local search \
+             (get one free at serper.dev), or WEBCLAW_API_KEY for the hosted API.",
+        )?;
 
         let mut body = json!({ "query": params.query });
         if let Some(num) = params.num_results {

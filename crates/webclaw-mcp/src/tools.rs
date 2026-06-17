@@ -160,9 +160,18 @@ pub struct ResearchParams {
 pub struct SearchParams {
     /// Search query
     pub query: String,
-    /// Number of results to return (default: 10)
+    /// Number of results to return (default: 5, max: 10)
     #[serde(default, deserialize_with = "deser_opt_u32_or_str")]
     pub num_results: Option<u32>,
+    /// Country code for localization (e.g. "us", "gb", "it").
+    /// Only used by the local Serper path (SERPER_API_KEY).
+    pub country: Option<String>,
+    /// Language code for localization (e.g. "en", "it").
+    /// Only used by the local Serper path (SERPER_API_KEY).
+    pub lang: Option<String>,
+    /// When true, fetch + extract each result page and include its
+    /// markdown. Only used by the local Serper path (SERPER_API_KEY).
+    pub scrape: Option<bool>,
 }
 
 /// Parameters for `vertical_scrape`: run a site-specific extractor by name.

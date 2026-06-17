@@ -124,6 +124,14 @@ pub fn extract_document(
     })
 }
 
+/// Cap on the *decompressed* size of a single document entry.
+///
+/// The fetch layer's `MAX_BODY_BYTES` bounds the *compressed* archive (≤50 MB),
+/// but a DEFLATE entry can advertise a tiny compressed size and inflate to many
+/// gigabytes — a classic zip bomb that would OOM the process. 100 MB is far
+/// larger than any genuine `document.xml` while still bounding the blast radius.
+const MAX_DOC_DECOMPRESSED: u64 = 100 * 1024 * 1024;
+
 /// Extract text from a DOCX file (ZIP of XML).
 /// Reads `word/document.xml`, extracts `<w:t>` text nodes, detects heading styles.
 fn extract_docx(bytes: &[u8]) -> Result<String, FetchError> {
@@ -132,12 +140,27 @@ fn extract_docx(bytes: &[u8]) -> Result<String, FetchError> {
         zip::ZipArchive::new(cursor).map_err(|e| FetchError::Build(format!("DOCX zip: {e}")))?;
 
     let xml = {
-        let mut file = archive
+        let file = archive
             .by_name("word/document.xml")
             .map_err(|e| FetchError::Build(format!("DOCX missing document.xml: {e}")))?;
+        // Reject on the declared uncompressed size first (cheap; catches an
+        // honest header), then bound the actual read in case the header lies.
+        if file.size() > MAX_DOC_DECOMPRESSED {
+            return Err(FetchError::Build(format!(
+                "DOCX document.xml declares {} bytes, exceeds {MAX_DOC_DECOMPRESSED} cap",
+                file.size()
+            )));
+        }
         let mut buf = String::new();
-        file.read_to_string(&mut buf)
+        let read = file
+            .take(MAX_DOC_DECOMPRESSED)
+            .read_to_string(&mut buf)
             .map_err(|e| FetchError::BodyDecode(format!("DOCX read: {e}")))?;
+        if read as u64 >= MAX_DOC_DECOMPRESSED {
+            return Err(FetchError::Build(
+                "DOCX document.xml exceeds decompressed cap (possible zip bomb)".into(),
+            ));
+        }
         buf
     };
 

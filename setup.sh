@@ -244,7 +244,7 @@ EOF
 # --- Server ---
 WEBCLAW_PORT=$server_port
 WEBCLAW_HOST=0.0.0.0
-WEBCLAW_AUTH_KEY=$auth_key
+WEBCLAW_API_KEY=$auth_key
 
 # --- Logging ---
 WEBCLAW_LOG=info

@@ -16,7 +16,7 @@ webclaw/
                       # + PDF content-type detection
                       # + document parsing (DOCX, XLSX, CSV)
                       # + layered URL discovery (map) + Serper web search (BYO key)
-    webclaw-llm/      # LLM provider chain (Ollama -> OpenAI -> Anthropic)
+    webclaw-llm/      # LLM provider chain (Ollama -> OpenAI -> Gemini -> Anthropic)
                       # + JSON schema extraction, prompt extraction, summarization
     webclaw-pdf/      # PDF text extraction via pdf-extract
     webclaw-mcp/      # MCP server (Model Context Protocol) for AI agents
@@ -49,7 +49,9 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - `fetcher.rs` — the public `Fetcher` trait (`Send + Sync`). Vertical extractors take `&dyn Fetcher`, not `&FetchClient`.
 - `browser.rs` — `BrowserProfile`/`BrowserVariant` enums only (Chrome, ChromeMacos, Firefox, Safari, SafariIos26, Edge). No version numbers live here.
 - `tls.rs` — the real fingerprint builder: per-variant wreq `Emulation` (cipher/sigalg/curve lists, TLS extension order, HTTP/2 SETTINGS, header wire-order). Browser versions are set HERE: Chrome 145, Firefox 135, Edge 145, Safari 18.3.1, Safari iOS 26. SafariIos26 composes on top of `wreq_util::Profile::SafariIos26`. SSRF-safe redirect policy lives here too.
-- `extractors/` — ~28 vertical site extractors (Amazon, eBay, GitHub, Instagram, LinkedIn, Reddit, YouTube, npm, PyPI, HuggingFace, ...); `extractors/mod.rs` is the dispatch table. All reach the network through `&dyn Fetcher`. `extractors/og.rs` is the shared single-pass Open Graph (`og:*`) meta parser the verticals use (`raw()` vs `unescaped()`).
+- `extractors/` — ~30 vertical site extractors (Amazon, eBay, GitHub, Instagram, LinkedIn, Reddit, YouTube, npm, PyPI, HuggingFace, Etsy, Shopify, WooCommerce, Trustpilot, arXiv, Hacker News, StackOverflow, ...); `extractors/mod.rs` is the dispatch table. All reach the network through `&dyn Fetcher`. Shared helpers (not verticals themselves): `extractors/og.rs` (single-pass Open Graph `og:*` parser, `raw()` vs `unescaped()`), `extractors/github_common.rs` (shared GitHub API fetch + status handling), `extractors/jsonld_product.rs` / `ecommerce_product.rs` (shared JSON-LD product walker reused by the e-commerce verticals).
+- `reddit.rs` / `linkedin.rs` — top-level fetch-side verticals (distinct from `extractors/` and from `webclaw-core`'s parsers): `reddit.rs` rewrites Reddit hosts to `old.reddit.com` (the `*.json` API is blocked) so `webclaw-core::reddit` can parse server-rendered HTML; `linkedin.rs` reconstructs post + comments from the SPA's HTML-escaped JSON in `<code>` tags (the `included` typed-entity array).
+- `progress.rs` — wraps a slow fetch future in `tokio::select!` against an interval, emitting a periodic `# webclaw: still fetching <URL> (Ns)` line to STDERR.
 - `crawler.rs` — BFS same-origin crawler with configurable depth/concurrency/delay
 - `sitemap.rs` — Sitemap discovery and parsing (sitemap.xml, robots.txt; gzip `.xml.gz` supported via `decode_sitemap_body`, sitemap-index recursion)
 - `map.rs` — layered URL discovery (`discover_urls` / `MapOptions`): sitemaps first, then a bounded same-origin crawl fallback when the sitemap is thin, harvesting links from fetched pages + the unfetched frontier (deduped against the sitemap set)
@@ -61,7 +63,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - `url_security.rs` — SSRF guards + SSRF-safe redirect policy
 
 ### LLM Modules (`webclaw-llm`)
-- Provider chain: Ollama (local-first) -> OpenAI -> Anthropic
+- Provider chain (`chain.rs`): Ollama (local-first, always added; availability checked at call time) -> OpenAI -> Gemini -> Anthropic. Gemini sits ahead of Anthropic so Google Cloud credits are preferred; Anthropic is the last-resort fallback. Each provider lives in `providers/` (`ollama.rs`, `openai.rs`, `gemini.rs`, `anthropic.rs`).
 - JSON schema extraction, prompt-based extraction, summarization
 
 ### PDF Modules (`webclaw-pdf`)

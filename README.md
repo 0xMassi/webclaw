@@ -429,18 +429,6 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
   </tr>
   <tr>
     <td width="340" align="center">
-      <a href="https://quantumproxies.net/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">
-        <img src="./assets/sponsors/quantum-proxies-banner.png" alt="Quantum Proxies" width="300" />
-      </a>
-    </td>
-    <td>
-      <strong>Quantum Proxies</strong> provides fast, reliable residential and ISP proxy infrastructure for developers running large-scale extraction workloads.
-      Get 20% off any plan with code <code>WEBCLAW20</code> at
-      <a href="https://quantumproxies.net/?utm_source=webclaw&utm_medium=github&utm_campaign=sponsor">quantumproxies.net</a>.
-    </td>
-  </tr>
-  <tr>
-    <td width="340" align="center">
       <a href="https://proxy-seller.com/?partner=KXMQNNLIGHXR4B">
         <img src="./assets/sponsors/proxy-seller-banner.png" alt="Proxy-Seller" width="300" />
       </a>

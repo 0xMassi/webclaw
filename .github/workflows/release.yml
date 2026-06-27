@@ -46,6 +46,14 @@ jobs:
             os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04
+          # musl static builds: glibc-independent, run on ANY Linux (Alpine,
+          # Amazon Linux 2023, RHEL 9, old distros) where the gnu builds can't.
+          # cargo-zigbuild links statically, so the host glibc is irrelevant —
+          # ubuntu-latest is fine. See #73.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
 
@@ -84,8 +92,30 @@ jobs:
           choco install nasm -y
           echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      # musl static builds use zig as the C/C++ cross-compiler for BoringSSL,
+      # driven by cargo-zigbuild. Build scripts (bindgen) still run as the glibc
+      # host so libclang loads fine; the linked output is fully static and runs
+      # on any Linux regardless of glibc. (A native Alpine build can't do this —
+      # its static build scripts can't dlopen libclang.)
+      - name: Setup zig + cargo-zigbuild (musl)
+        if: contains(matrix.target, 'musl')
+        run: |
+          python3 -m pip install --user --break-system-packages ziglang
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec python3 -m ziglang "$@"\n' > "$HOME/.local/bin/zig"
+          chmod +x "$HOME/.local/bin/zig"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/zig" version
+          cargo install cargo-zigbuild --locked
+
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == *-musl ]]; then
+            cargo zigbuild --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
 
       - name: Package
         shell: bash

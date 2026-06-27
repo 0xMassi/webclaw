@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  copyFileSync,
+  rmSync,
+} from "fs";
 import { createInterface } from "readline";
 import { homedir, platform, arch } from "os";
 import { join, dirname } from "path";
@@ -13,10 +20,10 @@ import http from "http";
 // ── Constants ──
 
 const REPO = "0xMassi/webclaw";
-const BINARY_NAME = "webclaw-mcp";
+const IS_WINDOWS = platform() === "win32";
+const BINARY_NAME = IS_WINDOWS ? "webclaw-mcp.exe" : "webclaw-mcp";
 const INSTALL_DIR = join(homedir(), ".webclaw");
 const BINARY_PATH = join(INSTALL_DIR, BINARY_NAME);
-const VERSION = "latest";
 
 const COLORS = {
   reset: "\x1b[0m",
@@ -166,12 +173,14 @@ function ask(question) {
   });
 }
 
-function download(url) {
+function download(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith("https") ? https : http;
+    const headers = { "User-Agent": "create-webclaw", ...extraHeaders };
     client
-      .get(url, { headers: { "User-Agent": "create-webclaw" } }, (res) => {
-        // Follow redirects
+      .get(url, { headers }, (res) => {
+        // Follow redirects, dropping extra headers so an Authorization token
+        // never leaks to the release CDN (its signed URLs reject it anyway).
         if (
           res.statusCode >= 300 &&
           res.statusCode < 400 &&
@@ -220,22 +229,19 @@ async function downloadFile(url, dest) {
   });
 }
 
-function getAssetName() {
-  const os = platform();
-  const a = arch();
-
-  if (os === "darwin" && a === "arm64")
-    return `webclaw-mcp-aarch64-apple-darwin.tar.gz`;
-  if (os === "darwin" && a === "x64")
-    return `webclaw-mcp-x86_64-apple-darwin.tar.gz`;
-  if (os === "linux" && a === "x64")
-    return `webclaw-mcp-x86_64-unknown-linux-gnu.tar.gz`;
-  if (os === "linux" && a === "arm64")
-    return `webclaw-mcp-aarch64-unknown-linux-gnu.tar.gz`;
-  if (os === "win32" && a === "x64")
-    return `webclaw-mcp-x86_64-pc-windows-msvc.zip`;
-
-  return null;
+// Map the current platform to its Rust release target triple. Release assets
+// are named `webclaw-<tag>-<target>.<ext>` (e.g.
+// webclaw-v0.6.13-x86_64-unknown-linux-gnu.tar.gz), so the asset name is built
+// from the release's tag_name at fetch time — it can't be hardcoded here.
+function getTarget() {
+  const targets = {
+    "darwin-arm64": "aarch64-apple-darwin",
+    "darwin-x64": "x86_64-apple-darwin",
+    "linux-x64": "x86_64-unknown-linux-gnu",
+    "linux-arm64": "aarch64-unknown-linux-gnu",
+    "win32-x64": "x86_64-pc-windows-msvc",
+  };
+  return targets[`${platform()}-${arch()}`] || null;
 }
 
 function readJsonFile(path) {
@@ -439,8 +445,8 @@ async function main() {
   // 3. Download binary
   console.log(c("bold", "  Downloading webclaw-mcp..."));
 
-  const assetName = getAssetName();
-  if (!assetName) {
+  const target = getTarget();
+  if (!target) {
     console.log(c("red", `  Unsupported platform: ${platform()}-${arch()}`));
     console.log(
       c(
@@ -456,62 +462,103 @@ async function main() {
   }
 
   let downloaded = false;
+  let prebuiltError = null;
 
   try {
-    // Get latest release URL
-    const releaseData = await download(
-      `https://api.github.com/repos/${REPO}/releases/latest`,
+    // Resolve the latest release. Its tag_name drives the asset name. An
+    // unauthenticated GitHub API call is rate-limited to 60/hour per IP, so
+    // honour GITHUB_TOKEN when set — but only on this api.github.com request,
+    // never on the asset download (which redirects to a CDN).
+    const apiHeaders = process.env.GITHUB_TOKEN
+      ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+      : {};
+    const release = JSON.parse(
+      (
+        await download(
+          `https://api.github.com/repos/${REPO}/releases/latest`,
+          apiHeaders,
+        )
+      ).toString(),
     );
-    const release = JSON.parse(releaseData.toString());
+
+    const version = release.tag_name; // e.g. "v0.6.13"
+    const ext = IS_WINDOWS ? "zip" : "tar.gz";
+    const assetName = `webclaw-${version}-${target}.${ext}`;
     const asset = release.assets?.find((a) => a.name === assetName);
-
-    if (asset) {
-      const tarPath = join(INSTALL_DIR, assetName);
-      await downloadFile(asset.browser_download_url, tarPath);
-
-      // Extract
-      if (assetName.endsWith(".tar.gz")) {
-        execSync(`tar xzf "${tarPath}" -C "${INSTALL_DIR}"`, {
-          stdio: "ignore",
-        });
-      } else if (assetName.endsWith(".zip")) {
-        execSync(`unzip -o "${tarPath}" -d "${INSTALL_DIR}"`, {
-          stdio: "ignore",
-        });
-      }
-
-      // Make executable
-      await chmod(BINARY_PATH, 0o755);
-
-      // Cleanup archive
-      try {
-        execSync(`rm "${tarPath}"`, { stdio: "ignore" });
-      } catch {}
-
-      console.log(c("green", `  ✓ Installed to ${BINARY_PATH}`));
-      downloaded = true;
+    if (!asset) {
+      throw new Error(`asset ${assetName} not found in release ${version}`);
     }
+
+    const archivePath = join(INSTALL_DIR, assetName);
+    await downloadFile(asset.browser_download_url, archivePath);
+
+    // Each archive holds a top-level `webclaw-<version>-<target>/` directory
+    // containing webclaw, webclaw-mcp, webclaw-server, and docs.
+    if (ext === "tar.gz") {
+      execSync(`tar xzf "${archivePath}" -C "${INSTALL_DIR}"`, {
+        stdio: "ignore",
+      });
+    } else if (IS_WINDOWS) {
+      // Windows ships no `unzip`; Expand-Archive comes with PowerShell 5+.
+      execSync(
+        `powershell -NoProfile -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${INSTALL_DIR}' -Force"`,
+        { stdio: "ignore" },
+      );
+    } else {
+      execSync(`unzip -o "${archivePath}" -d "${INSTALL_DIR}"`, {
+        stdio: "ignore",
+      });
+    }
+
+    // Lift webclaw-mcp out of the extracted directory to BINARY_PATH, then
+    // drop the rest (the other two binaries + docs).
+    const extractedDir = join(INSTALL_DIR, `webclaw-${version}-${target}`);
+    const extractedBin = join(extractedDir, BINARY_NAME);
+    if (!existsSync(extractedBin)) {
+      throw new Error(`binary missing after extract: ${extractedBin}`);
+    }
+    copyFileSync(extractedBin, BINARY_PATH);
+    if (!IS_WINDOWS) await chmod(BINARY_PATH, 0o755);
+
+    try {
+      rmSync(extractedDir, { recursive: true, force: true });
+      rmSync(archivePath, { force: true });
+    } catch {}
+
+    console.log(c("green", `  ✓ Installed to ${BINARY_PATH}`));
+    downloaded = true;
   } catch (e) {
-    // Release not available yet — expected before first release
+    prebuiltError = e;
   }
 
   if (!downloaded) {
-    // Try cargo install as fallback
-    console.log(
-      c("yellow", "  No pre-built binary found. Trying cargo install..."),
-    );
+    // Surface why the prebuilt path failed instead of hiding it — a 403 here
+    // is almost always a GitHub API rate limit, which Rust can't fix.
+    if (prebuiltError) {
+      const m = prebuiltError.message || String(prebuiltError);
+      if (m.includes("403") || /rate limit/i.test(m)) {
+        console.log(
+          c(
+            "yellow",
+            "  GitHub API rate limit hit. Retry in a few minutes, or set GITHUB_TOKEN.",
+          ),
+        );
+      } else {
+        console.log(c("yellow", `  Prebuilt binary unavailable (${m}).`));
+      }
+    }
+
+    // Fall back to building from source.
+    console.log(c("yellow", "  Trying cargo install..."));
     try {
       execSync(
         `cargo install --git https://github.com/${REPO} webclaw-mcp --root "${INSTALL_DIR}"`,
         { stdio: "inherit" },
       );
-      // cargo install puts binary in INSTALL_DIR/bin/
+      // cargo install puts the binary in INSTALL_DIR/bin/
       const cargoPath = join(INSTALL_DIR, "bin", BINARY_NAME);
       if (existsSync(cargoPath)) {
-        // Move to expected location
-        execSync(`mv "${cargoPath}" "${BINARY_PATH}"`, {
-          stdio: "ignore",
-        });
+        copyFileSync(cargoPath, BINARY_PATH);
         console.log(c("green", `  ✓ Built and installed to ${BINARY_PATH}`));
         downloaded = true;
       }

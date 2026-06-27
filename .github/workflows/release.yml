@@ -176,11 +176,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
+          # SemVer prerelease tags (e.g. v1.2.3-rc1) contain a hyphen — mark
+          # them as prereleases so they never surface as the stable release.
+          prerelease=""
+          case "$tag" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$tag" \
             artifacts/*.tar.gz \
             artifacts/*.zip \
             artifacts/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
+            $prerelease \
             --generate-notes
 
   docker:
@@ -239,18 +244,25 @@ jobs:
       - name: Build and push
         run: |
           tag="${{ steps.tag.outputs.tag }}"
+          # Only move :latest for stable tags. Prereleases (hyphenated, e.g.
+          # v1.2.3-rc1) still publish :${tag} for testing but must not clobber
+          # :latest.
+          latest=""
+          case "$tag" in *-*) ;; *) latest="-t ghcr.io/0xmassi/webclaw:latest" ;; esac
           docker buildx build -f Dockerfile.ci \
             --platform linux/amd64,linux/arm64 \
             --provenance=false --sbom=false \
             -t "ghcr.io/0xmassi/webclaw:${tag}" \
-            -t ghcr.io/0xmassi/webclaw:latest \
+            $latest \
             --push .
 
   homebrew:
     name: Update Homebrew
     needs: [release, docker]
     # Runs once Docker succeeds, on both tag push and manual re-publish.
-    if: ${{ always() && needs.docker.result == 'success' }}
+    # Skipped for prereleases (hyphenated tags like v1.2.3-rc1) so the formula
+    # keeps pointing at the latest stable, never an rc.
+    if: ${{ always() && needs.docker.result == 'success' && !contains(github.event.inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -36,10 +36,16 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          # Linux targets pin to ubuntu-22.04 (glibc 2.35), NOT ubuntu-latest
+          # (24.04 = glibc 2.39): glibc is forward- but not backward-compatible,
+          # so binaries built on 24.04 require GLIBC_2.38 and won't start on
+          # older LTS distros (Debian 12, Ubuntu 22.04). The aarch64 cross
+          # toolchain tracks the runner's distro too, so this lowers both
+          # targets. See #73. Don't bump to ubuntu-latest.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: x86_64-pc-windows-msvc
             os: windows-latest
 

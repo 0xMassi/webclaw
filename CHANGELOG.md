@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.14] - 2026-06-27
+
+A distribution release: the extraction engine is unchanged from 0.6.13, but the
+Linux binaries now run on far more systems.
+
+### Added
+- **Static musl Linux binaries** (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) that run on any Linux regardless of glibc — Alpine, Amazon Linux 2023, RHEL 9, and older distros. Built with cargo-zigbuild and shipped alongside the existing gnu binaries.
+
+### Changed
+- **gnu Linux binaries now run on older glibc.** They are built on Ubuntu 22.04 (glibc 2.35) instead of the latest runner (glibc 2.39), so they start on Debian 12, Ubuntu 22.04, and other LTS distros that previously failed with `version 'GLIBC_2.38' not found`.
+
+### Fixed
+- **`create-webclaw` install (`create-webclaw@0.1.5`)** failed on every platform: it looked up the wrong release-asset name and used `unzip` (absent on Windows), silently falling back to `cargo install`. It now downloads the correct versioned asset, extracts via PowerShell on Windows, lifts the binary out of the archive's versioned subdirectory, and surfaces GitHub API rate-limit errors instead of hiding them.
+- **Self-hosting setup scripts** wrote `WEBCLAW_AUTH_KEY` into the generated `.env`, but the server reads `WEBCLAW_API_KEY` — on a public bind this made the server refuse to start. `setup.sh` and `deploy/hetzner.sh` now write the correct variable.
+
 ## [0.6.13] - 2026-06-17
 
 ### Performance

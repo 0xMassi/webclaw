@@ -481,11 +481,11 @@ Thanks to everyone improving webclaw through issues, examples, docs, bug reports
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=0xMassi%2Fwebclaw&type=date&legend=top-left">
+<a href="https://github.com/0xMassi/webclaw/stargazers">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=0xMassi/webclaw&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=0xMassi/webclaw&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=0xMassi/webclaw&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/chart/github/stars/0xMassi/webclaw.svg?mode=dark&theme=zinc&bg=transparent&border=false&logo=false&icon=Star" />
+   <source media="(prefers-color-scheme: light)" srcset="https://shieldcn.dev/chart/github/stars/0xMassi/webclaw.svg?mode=light&theme=zinc&bg=transparent&border=false&logo=false&icon=Star" />
+   <img alt="Star History Chart" src="https://shieldcn.dev/chart/github/stars/0xMassi/webclaw.svg?mode=light&theme=zinc&bg=transparent&border=false&logo=false&icon=Star" />
  </picture>
 </a>
 

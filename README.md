@@ -429,19 +429,6 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
   </tr>
   <tr>
     <td width="340" align="center">
-      <a href="https://proxy-seller.com/?partner=KXMQNNLIGHXR4B">
-        <img src="./assets/sponsors/proxy-seller-banner.png" alt="Proxy-Seller" width="300" />
-      </a>
-    </td>
-    <td>
-      <strong>Proxy-Seller</strong> maintains a global network of residential and datacenter proxies optimized for web extraction at scale.
-      The service supports high-volume concurrent scraping, geographic rotation, and integration with web extraction tools.
-      Use code <code>WBC15</code> for 15% off IPv4, IPv6, ISP, and Residential proxies, and 10% off Mobile at
-      <a href="https://proxy-seller.com/?partner=KXMQNNLIGHXR4B">proxy-seller.com</a>.
-    </td>
-  </tr>
-  <tr>
-    <td width="340" align="center">
       <a href="https://www.rapidproxy.io/?ref=webclaw">
         <img src="./assets/sponsors/rapidproxy-banner.png" alt="RapidProxy" width="300" />
       </a>

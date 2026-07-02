@@ -57,7 +57,7 @@ struct Args {
     /// `/v1/*` request must present `Authorization: Bearer <key>`.
     /// When unset, the server runs in open mode (no auth) — only
     /// safe on a local-bound interface or behind another auth layer.
-    #[arg(long, env = "WEBCLAW_API_KEY")]
+    #[arg(long, env = "WEBCLAW_API_KEY", hide_env_values = true)]
     api_key: Option<String>,
 
     /// Tracing filter. Env: RUST_LOG.

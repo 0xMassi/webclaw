@@ -183,11 +183,11 @@ struct Cli {
     browser: Browser,
 
     /// Proxy URL (http://user:pass@host:port or socks5://host:port)
-    #[arg(short, long, env = "WEBCLAW_PROXY")]
+    #[arg(short, long, env = "WEBCLAW_PROXY", hide_env_values = true)]
     proxy: Option<String>,
 
     /// File with proxies (host:port:user:pass, one per line). Rotates per request.
-    #[arg(long, env = "WEBCLAW_PROXY_FILE")]
+    #[arg(long, env = "WEBCLAW_PROXY_FILE", hide_env_values = true)]
     proxy_file: Option<String>,
 
     /// Request timeout in seconds
@@ -256,7 +256,7 @@ struct Cli {
 
     /// Webhook URL: POST a JSON payload when an operation completes.
     /// Works with crawl, batch, watch (on change), and single URL modes.
-    #[arg(long, env = "WEBCLAW_WEBHOOK_URL")]
+    #[arg(long, env = "WEBCLAW_WEBHOOK_URL", hide_env_values = true)]
     webhook: Option<String>,
 
     /// Extract brand identity (colors, fonts, logo)
@@ -347,12 +347,12 @@ struct Cli {
     llm_model: Option<String>,
 
     /// Override the LLM base URL (Ollama, OpenAI-compatible, or Anthropic-compatible)
-    #[arg(long, env = "WEBCLAW_LLM_BASE_URL")]
+    #[arg(long, env = "WEBCLAW_LLM_BASE_URL", hide_env_values = true)]
     llm_base_url: Option<String>,
 
     // -- Cloud API options --
     /// Webclaw Cloud API key for automatic fallback on bot-protected or JS-rendered sites
-    #[arg(long, env = "WEBCLAW_API_KEY")]
+    #[arg(long, env = "WEBCLAW_API_KEY", hide_env_values = true)]
     api_key: Option<String>,
 
     /// Force all requests through the cloud API (skip local extraction)
@@ -436,7 +436,7 @@ enum Commands {
         query: String,
 
         /// Serper.dev API key. Falls back to the `SERPER_API_KEY` env var.
-        #[arg(long, env = "SERPER_API_KEY")]
+        #[arg(long, env = "SERPER_API_KEY", hide_env_values = true)]
         serper_key: Option<String>,
 
         /// Number of results to return (1-10).

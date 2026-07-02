@@ -1,6 +1,6 @@
 ---
 name: webclaw
-description: Web extraction engine with antibot bypass. Scrape, crawl, extract, summarize, search, map, diff, monitor, research, and analyze any URL — including Cloudflare-protected sites. Use when you need reliable web content, the built-in web_fetch fails, or you need structured data extraction from web pages.
+description: Web extraction engine for LLMs and agents. Scrape, crawl, extract, summarize, search, map, diff, monitor, research, and analyze any URL into clean Markdown, text, or JSON, including pages that block bots or render with JavaScript. Use when you need reliable web content, the built-in web_fetch fails, or you need structured data extraction from web pages.
 homepage: https://webclaw.io
 user-invocable: true
 metadata: {"openclaw":{"emoji":"🦀","requires":{"env":["WEBCLAW_API_KEY"]},"primaryEnv":"WEBCLAW_API_KEY","homepage":"https://webclaw.io","install":[{"id":"npx","kind":"node","bins":["webclaw-mcp"],"label":"npx create-webclaw"}]}}
@@ -8,12 +8,12 @@ metadata: {"openclaw":{"emoji":"🦀","requires":{"env":["WEBCLAW_API_KEY"]},"pr
 
 # webclaw
 
-High-quality web extraction with automatic antibot bypass. Beats Firecrawl on extraction quality and handles Cloudflare, DataDome, and JS-rendered pages automatically.
+Web extraction tuned for LLM and RAG pipelines. Bot-protected and JavaScript-rendered pages are handled for you when `WEBCLAW_API_KEY` is set; without it, those pages return a clear message explaining how to enable it.
 
 ## When to use this skill
 
 - **Always** when you need to fetch web content and want reliable results
-- When `web_fetch` returns empty/blocked content (403, Cloudflare challenges)
+- When `web_fetch` returns empty or blocked content (403s, bot challenges)
 - When you need structured data extraction (pricing tables, product info)
 - When you need to crawl an entire site or discover all URLs
 - When you need LLM-optimized content (cleaner than raw markdown)
@@ -80,15 +80,7 @@ curl -X POST https://api.webclaw.io/v1/scrape \
 - `llm` — optimized for LLM consumption: includes page title, URL, and cleaned content with link references. Best for feeding to AI models.
 - `json` — full extraction result with all metadata
 
-**When antibot bypass activates** (automatic, no extra config):
-```json
-{
-  "antibot": {
-    "bypass": true,
-    "elapsed_ms": 3200
-  }
-}
-```
+Protected or JavaScript-rendered pages are handled through the cloud fallback when `WEBCLAW_API_KEY` is set (see Smart Fetch Architecture below).
 
 ### 2. Crawl — scrape an entire website
 
@@ -394,7 +386,7 @@ curl -X POST https://api.webclaw.io/v1/research \
   -H "Authorization: Bearer $WEBCLAW_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "How does Cloudflare Turnstile work and what are its known bypass methods?",
+    "query": "Compare the top managed PostgreSQL providers on pricing, backups, and regions",
     "max_iterations": 5,
     "max_sources": 10,
     "topic": "security",
@@ -425,16 +417,16 @@ Response when complete:
 {
   "id": "res-abc-123",
   "status": "completed",
-  "query": "How does Cloudflare Turnstile work and what are its known bypass methods?",
-  "report": "# Cloudflare Turnstile Analysis\n\n## Overview\nCloudflare Turnstile is a CAPTCHA replacement that...\n\n## How It Works\n...\n\n## Known Bypass Methods\n...",
+  "query": "Compare the top managed PostgreSQL providers on pricing, backups, and regions",
+  "report": "# Managed PostgreSQL Providers\n\n## Overview\n...\n\n## Pricing\n...\n\n## Backups and regions\n...",
   "sources": [
-    { "url": "https://developers.cloudflare.com/turnstile/", "title": "Turnstile Documentation" },
-    { "url": "https://blog.cloudflare.com/turnstile-ga/", "title": "Turnstile GA Announcement" }
+    { "url": "https://neon.tech/pricing", "title": "Neon Pricing" },
+    { "url": "https://supabase.com/pricing", "title": "Supabase Pricing" }
   ],
   "findings": [
-    "Turnstile uses browser environment signals and proof-of-work challenges",
-    "Managed mode auto-selects challenge difficulty based on visitor risk score",
-    "Known bypass approaches include instrumented browser automation"
+    "Entry tiers cluster around $19-25/mo for a small production instance",
+    "Point-in-time recovery windows range from 7 to 30 days by tier",
+    "Region coverage is widest on the largest providers"
   ],
   "iterations": 5,
   "elapsed_ms": 34200
@@ -600,7 +592,7 @@ curl -X DELETE https://api.webclaw.io/v1/watch/watch-abc-123 \
 - **Batch over individual scrapes** when fetching multiple URLs — it's faster and more efficient.
 - **Use `map` before `crawl`** to discover the site structure first, then crawl specific sections.
 - **Use `extract` with a JSON schema** for reliable structured output (e.g., pricing tables, product specs, contact info).
-- **Antibot bypass is automatic** — no extra configuration needed. Works on Cloudflare, DataDome, AWS WAF, and JS-rendered SPAs.
+- **Protected pages are handled for you** when `WEBCLAW_API_KEY` is set. Bot-protected sites and JavaScript-rendered SPAs fall back to the cloud engine; without a key they return a clear setup message.
 - **Use `search` with `scrape: true`** to get full page content for each search result in one call instead of searching then scraping separately.
 - **Use `research` for complex questions** that need multiple sources — it handles the search-read-synthesize loop automatically. Enable `deep: true` for thorough analysis.
 - **Use `agent-scrape` for interactive pages** where data is behind filters, pagination, or form submissions that a simple scrape cannot reach.
@@ -608,23 +600,23 @@ curl -X DELETE https://api.webclaw.io/v1/watch/watch-abc-123 \
 
 ## Smart Fetch Architecture
 
-The webclaw MCP server uses a **local-first** approach:
+The webclaw MCP server uses a local-first approach:
 
-1. **Local fetch** — fast, free, no API credits used (~80% of sites)
-2. **Cloud API fallback** — automatic when bot protection or JS rendering is detected
+1. **Local fetch**: fast, free, no API credits used (most sites)
+2. **Cloud fallback**: used when a page is bot-protected or JavaScript-rendered, and only when `WEBCLAW_API_KEY` is set
 
 This means:
-- Most scrapes cost zero credits (local extraction)
-- Cloudflare, DataDome, AWS WAF sites automatically fall back to the cloud API
-- JS-rendered SPAs (React, Next.js, Vue) also fall back automatically
-- Set `WEBCLAW_API_KEY` to enable cloud fallback
+- Most scrapes run locally and cost zero credits
+- Bot-protected sites fall back to the cloud engine when `WEBCLAW_API_KEY` is set
+- JavaScript-rendered SPAs (React, Next.js, Vue) fall back the same way
+- Without a key, those pages return a clear message explaining how to enable the fallback
 
 ## vs web_fetch
 
 | | webclaw | web_fetch |
 |---|---------|-----------|
-| Cloudflare bypass | Automatic (cloud fallback) | Fails (403) |
-| JS-rendered pages | Automatic fallback | Readability only |
+| Bot-protected sites | Cloud fallback with `WEBCLAW_API_KEY` | Fails (403) |
+| JavaScript-rendered pages | Cloud fallback with a key | Readability only |
 | Output quality | 20-step optimization pipeline | Basic HTML parsing |
 | Structured extraction | LLM-powered, schema-based | None |
 | Crawling | Full site crawl with sitemap | Single page only |

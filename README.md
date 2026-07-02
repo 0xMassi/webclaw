@@ -196,6 +196,22 @@ Extract the brand colors, fonts, and logos from this company website.
 
 ---
 
+## Use as an agent skill
+
+Add webclaw to Claude Code, Cursor, Windsurf, and other MCP agents in one command:
+
+```bash
+npx skills add 0xMassi/webclaw-skill
+```
+
+Your agent gets scrape, crawl, map, extract, summarize, diff, brand, and search
+as native tools. Most sites extract locally with no API key. Set `WEBCLAW_API_KEY`
+to handle bot-protected and JavaScript-rendered pages.
+
+Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
+
+---
+
 ## Tools
 
 | Tool | What it does | Local |

@@ -338,7 +338,7 @@ struct Cli {
     #[arg(long, num_args = 0..=1, default_missing_value = "3")]
     summarize: Option<usize>,
 
-    /// Force a specific LLM provider (ollama, openai, anthropic)
+    /// Force a specific LLM provider (ollama, openai, atlascloud, anthropic)
     #[arg(long, env = "WEBCLAW_LLM_PROVIDER")]
     llm_provider: Option<String>,
 
@@ -2239,6 +2239,14 @@ async fn build_llm_provider(cli: &Cli) -> Result<Box<dyn LlmProvider>, String> {
                 .ok_or("OPENAI_API_KEY not set")?;
                 Ok(Box::new(provider))
             }
+            "atlascloud" => {
+                let provider = webclaw_llm::providers::atlascloud::AtlasCloudProvider::new(
+                    None,
+                    cli.llm_model.clone(),
+                )
+                .ok_or("ATLASCLOUD_API_KEY not set")?;
+                Ok(Box::new(provider))
+            }
             "anthropic" => {
                 let provider = webclaw_llm::providers::anthropic::AnthropicProvider::with_base_url(
                     None,
@@ -2249,14 +2257,14 @@ async fn build_llm_provider(cli: &Cli) -> Result<Box<dyn LlmProvider>, String> {
                 Ok(Box::new(provider))
             }
             other => Err(format!(
-                "unknown LLM provider: {other} (use ollama, openai, or anthropic)"
+                "unknown LLM provider: {other} (use ollama, openai, atlascloud, or anthropic)"
             )),
         }
     } else {
         let chain = webclaw_llm::ProviderChain::default().await;
         if chain.is_empty() {
             return Err(
-                "no LLM providers available -- start Ollama or set OPENAI_API_KEY / ANTHROPIC_API_KEY"
+                "no LLM providers available -- start Ollama or set OPENAI_API_KEY / ATLASCLOUD_API_KEY / ANTHROPIC_API_KEY"
                     .into(),
             );
         }

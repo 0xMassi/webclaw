@@ -57,8 +57,8 @@ mod tests {
 
     #[test]
     fn explicit_key_constructs_with_atlas_defaults() {
-        let provider = AtlasCloudProvider::new(Some("test-key".into()), None, None)
-            .expect("should construct");
+        let provider =
+            AtlasCloudProvider::new(Some("test-key".into()), None, None).expect("should construct");
         assert_eq!(provider.name(), "atlascloud");
         assert_eq!(provider.default_model(), "qwen/qwen3.5-flash");
     }

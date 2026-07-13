@@ -37,7 +37,7 @@ impl ProviderChain {
             providers.push(Box::new(openai));
         }
 
-        if let Some(atlascloud) = AtlasCloudProvider::new(None, None) {
+        if let Some(atlascloud) = AtlasCloudProvider::new(None, None, None) {
             debug!("atlascloud configured, adding to chain");
             providers.push(Box::new(atlascloud));
         }

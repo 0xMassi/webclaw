@@ -2242,6 +2242,7 @@ async fn build_llm_provider(cli: &Cli) -> Result<Box<dyn LlmProvider>, String> {
             "atlascloud" => {
                 let provider = webclaw_llm::providers::atlascloud::AtlasCloudProvider::new(
                     None,
+                    cli.llm_base_url.clone(),
                     cli.llm_model.clone(),
                 )
                 .ok_or("ATLASCLOUD_API_KEY not set")?;

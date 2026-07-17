@@ -4,11 +4,11 @@ Use proxy rotation when you need to distribute a crawl across a proxy pool. webc
 
 ## Using ColdProxy
 
-[ColdProxy](https://coldproxy.com/) is webclaw's infrastructure partner, providing residential IPv4, residential IPv6, and datacenter IPv6 proxies across 195+ countries. Use a ColdProxy endpoint as a full URL with `--proxy` / `WEBCLAW_PROXY`, or list several in a `--proxy-file` pool.
+[ColdProxy](https://coldproxy.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=webclaw-sponsor) is webclaw's infrastructure partner, providing residential IPv4, residential IPv6, and datacenter IPv6 proxies across 195+ countries. Use a ColdProxy endpoint as a full URL with `--proxy` / `WEBCLAW_PROXY`, or list several in a `--proxy-file` pool.
 
 ### 1. Get your endpoint
 
-Sign in to your [ColdProxy dashboard](https://coldproxy.com/) and copy your proxy host, port, and credentials. Assemble them into a standard proxy URL:
+Sign in to your [ColdProxy dashboard](https://coldproxy.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=webclaw-sponsor) and copy your proxy host, port, and credentials. Assemble them into a standard proxy URL:
 
 ```text
 http://USERNAME:PASSWORD@HOST:PORT

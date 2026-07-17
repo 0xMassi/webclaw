@@ -406,7 +406,7 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 <table>
   <tr>
     <td align="center">
-      <a href="https://coldproxy.com/">
+      <a href="https://coldproxy.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=webclaw-sponsor">
         <img src="./assets/sponsors/coldproxy-banner.png" alt="ColdProxy" width="720" />
       </a>
     </td>
@@ -416,7 +416,7 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
       <strong>ColdProxy</strong> supports webclaw as an Infrastructure Partner, providing residential IPv4,
       residential IPv6, and datacenter IPv6 proxy infrastructure across 195+ countries for public data
       collection, regional testing, monitoring, and web scraping workflows. Explore
-      <a href="https://coldproxy.com/">ColdProxy</a>'s latest plans and available offers directly on the website.
+      <a href="https://coldproxy.com/?utm_source=github&utm_medium=sponsorship&utm_campaign=webclaw-sponsor">ColdProxy</a>'s latest plans and available offers directly on the website.
       See the <a href="examples/proxy-backed-crawling/#using-coldproxy">proxy-backed crawling guide</a>
       for a hands-on walkthrough of wiring ColdProxy into webclaw.
     </td>

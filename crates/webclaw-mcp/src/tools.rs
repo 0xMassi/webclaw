@@ -188,6 +188,24 @@ pub struct ResearchParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct LeadParams {
+    /// Company website URL to enrich into an outreach-ready lead
+    pub url: String,
+    /// Skip the cache and force a fresh enrichment (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub no_cache: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LeadBatchParams {
+    /// Company website URLs to enrich (up to 25 per batch)
+    pub urls: Vec<String>,
+    /// Skip the cache and force a fresh enrichment (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub no_cache: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchParams {
     /// Search query
     pub query: String,

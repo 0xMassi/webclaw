@@ -65,6 +65,10 @@ const LOCAL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum poll iterations for research jobs (~10 minutes at 3s intervals).
 const RESEARCH_MAX_POLLS: u32 = 200;
 
+/// Maximum poll iterations for lead batch jobs (~10 minutes at 3s intervals);
+/// enough for a full 25-URL batch at ~20-40s per lead, 4 in parallel.
+const LEAD_BATCH_MAX_POLLS: u32 = 200;
+
 #[tool_router]
 impl WebclawMcp {
     pub async fn new() -> Self {
@@ -668,6 +672,95 @@ impl WebclawMcp {
         ))
     }
 
+    /// Enrich a company into an outreach-ready lead: the founders and leadership
+    /// with their LinkedIn and X (recovered from open-web search), plus company
+    /// summary, socials, tech stack, pricing, and public emails. Requires
+    /// WEBCLAW_API_KEY. Flat 100 credits per lead.
+    #[tool]
+    async fn lead(&self, Parameters(params): Parameters<LeadParams>) -> Result<String, String> {
+        let cloud = self
+            .cloud
+            .as_ref()
+            .ok_or("Lead enrichment requires WEBCLAW_API_KEY. Get a key at https://webclaw.io")?;
+
+        let mut body = json!({ "url": params.url });
+        if let Some(no_cache) = params.no_cache {
+            body["no_cache"] = json!(no_cache);
+        }
+
+        let resp = cloud.post("lead", body).await?;
+        Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
+    }
+
+    /// Enrich many companies at once (up to 25 URLs) into outreach-ready leads.
+    /// Async: starts a batch job, polls until it finishes, and returns the
+    /// per-URL results. Requires WEBCLAW_API_KEY. Billed 100 credits per
+    /// successfully enriched lead (unreachable/empty URLs are not charged).
+    #[tool]
+    async fn lead_batch(
+        &self,
+        Parameters(params): Parameters<LeadBatchParams>,
+    ) -> Result<String, String> {
+        let cloud = self
+            .cloud
+            .as_ref()
+            .ok_or("Lead enrichment requires WEBCLAW_API_KEY. Get a key at https://webclaw.io")?;
+
+        let url_count = params.urls.len();
+        if url_count == 0 {
+            return Err("lead_batch requires at least one URL".to_string());
+        }
+
+        let mut body = json!({ "urls": params.urls });
+        if let Some(no_cache) = params.no_cache {
+            body["no_cache"] = json!(no_cache);
+        }
+
+        // Start the async batch job.
+        let start_resp = cloud.post("lead/batch", body).await?;
+        let job_id = start_resp
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or("Lead batch API did not return a job ID")?
+            .to_string();
+
+        info!(job_id = %job_id, urls = url_count, "lead batch started, polling for completion");
+
+        // Poll until completed or failed.
+        for poll in 0..LEAD_BATCH_MAX_POLLS {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            let status_resp = cloud.get(&format!("lead/batch/{job_id}")).await?;
+            let status = status_resp
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
+            match status {
+                "completed" => {
+                    return Ok(serde_json::to_string_pretty(&status_resp).unwrap_or_default());
+                }
+                "failed" => {
+                    let error = status_resp
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown error");
+                    return Err(format!("Lead batch job failed: {error}"));
+                }
+                _ => {
+                    if poll % 20 == 19 {
+                        info!(job_id = %job_id, poll, "lead batch still in progress...");
+                    }
+                }
+            }
+        }
+
+        Err(format!(
+            "Lead batch job {job_id} timed out after ~10 minutes of polling. \
+             Check status manually via the webclaw API: GET /v1/lead/batch/{job_id}"
+        ))
+    }
+
     /// Search the web for a query and return structured results.
     ///
     /// Resolves the backend in priority order:
@@ -810,7 +903,7 @@ impl ServerHandler for WebclawMcp {
             .with_instructions(String::from(
                 "Webclaw MCP server -- web content extraction for AI agents. \
                  Tools: scrape, crawl, map, batch, extract, summarize, diff, brand, research, search, \
-                 list_extractors, vertical_scrape.",
+                 list_extractors, vertical_scrape, lead, lead_batch.",
             ))
     }
 }

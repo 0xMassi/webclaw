@@ -71,7 +71,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 
 ### MCP Server (`webclaw-mcp`)
 - Model Context Protocol server over stdio transport
-- 12 tools: scrape, crawl, map, batch, extract, summarize, diff, brand, research, search, list_extractors, vertical_scrape. `search` is local-first via the caller's `SERPER_API_KEY` (falls back to the hosted API when unset); `research` uses the hosted deep-research API. The rest run locally.
+- 14 tools: scrape, crawl, map, batch, extract, summarize, diff, brand, research, search, list_extractors, vertical_scrape, lead, lead_batch. `search` is local-first via the caller's `SERPER_API_KEY` (falls back to the hosted API when unset); `research`, `lead`, and `lead_batch` are hosted-only cloud proxies (require `WEBCLAW_API_KEY`) — `lead`/`lead_batch` call `/v1/lead` and the async `/v1/lead/batch`. The rest run locally.
 - Works with Claude Desktop, Claude Code, and any MCP client
 - Uses `rmcp` crate (official Rust MCP SDK)
 

@@ -40,7 +40,7 @@ When it does work, you get 100KB+ of raw HTML — navigation, ads, cookie banner
 
 ## The Fix
 
-webclaw impersonates Chrome 146 at the TLS protocol level. Perfect JA4 fingerprint. Perfect HTTP/2 Akamai hash. 99% bypass rate on 102 tested sites.
+webclaw impersonates the latest Chrome at the TLS protocol level. Perfect JA4 fingerprint. Perfect HTTP/2 Akamai hash. 99% bypass rate on 102 tested sites.
 
 Then it extracts just the content — clean markdown, 67% fewer tokens.
 
@@ -71,9 +71,9 @@ npx create-webclaw
 3. Asks for your API key (optional — **works locally without one**)
 4. Writes the MCP config for each detected tool
 
-## 10 MCP Tools
+## MCP Tools
 
-After setup, your AI agent has access to:
+After setup, your AI agent has access to these 14 tools:
 
 | Tool | What it does | API key needed? |
 |------|-------------|-----------------|
@@ -87,8 +87,12 @@ After setup, your AI agent has access to:
 | **diff** | Track content changes | No |
 | **brand** | Extract brand identity | No |
 | **research** | Deep multi-page research | Yes |
+| **list_extractors** | List the built-in vertical extractors | No |
+| **vertical_scrape** | Scrape with a built-in vertical extractor | No |
+| **lead** | Enrich a company URL into an outreach-ready lead (leadership + socials, tech, pricing, public emails) | Yes (webclaw) |
+| **lead_batch** | Enrich up to 25 company URLs at once | Yes (webclaw) |
 
-**8 of 10 tools work fully offline.** No API key, no cloud, no tracking.
+**8 of the 14 tools work fully offline** — no API key, no cloud, no tracking.
 
 ## Supported Tools
 
@@ -99,9 +103,9 @@ After setup, your AI agent has access to:
 | Cursor | `.cursor/mcp.json` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` |
 | VS Code (Continue) | `~/.continue/config.json` |
-| OpenCode | `~/.opencode/config.json` |
-| Codex CLI | `~/.codex/config.json` |
-| Antigravity | `~/.antigravity/mcp.json` |
+| OpenCode | `~/.config/opencode/opencode.json` (or `./opencode.json`) |
+| Codex CLI | `~/.codex/config.toml` |
+| Antigravity | `~/.config/antigravity/mcp.json` (or `~/.antigravity/mcp.json`) |
 
 ## Sites That Work
 
@@ -140,7 +144,6 @@ Download from [GitHub Releases](https://github.com/0xMassi/webclaw/releases) for
 - [Website](https://webclaw.io)
 - [Documentation](https://webclaw.io/docs)
 - [GitHub](https://github.com/0xMassi/webclaw)
-- [TLS Library](https://github.com/0xMassi/webclaw-tls)
 - [Discord](https://discord.gg/KDfd48EpnW)
 - [Status](https://status.webclaw.io)
 

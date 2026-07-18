@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-07-18
+
+### Added
+- **`lead` and `lead_batch` MCP tools.** Turn a company URL into an outreach-ready lead — founders and leadership with their LinkedIn and X, plus company summary, socials, tech stack, pricing, and public emails — straight from any MCP client (Claude Desktop, Cursor, Claude Code, …). `lead` enriches one company; `lead_batch` enriches up to 25 at once and blocks until the batch finishes. Both require `WEBCLAW_API_KEY`.
+
+### Fixed
+- **`webclaw --help` no longer prints secret environment values.** Secret env vars are masked in help output instead of being shown in the clear.
+
 ## [0.6.14] - 2026-06-27
 
 A distribution release: the extraction engine is unchanged from 0.6.13, but the

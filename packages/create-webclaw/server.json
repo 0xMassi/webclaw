@@ -3,12 +3,12 @@
   "name": "io.github.0xMassi/webclaw",
   "title": "webclaw",
   "description": "Web extraction for AI agents — 14 tools to scrape, crawl, search, extract, summarize, and diff any URL into clean markdown, JSON, or LLM-ready text. A self-hostable Firecrawl alternative.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "create-webclaw",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "transport": {
         "type": "stdio"
       }

@@ -16,8 +16,8 @@ startCommand:
         secret: true
   commandFunction: |
     (config) => ({
-      command: 'webclaw-mcp',
-      args: [],
+      command: 'npx',
+      args: ['-y', '@webclaw/mcp'],
       env: config.apiKey ? { WEBCLAW_API_KEY: config.apiKey } : {}
     })
   exampleConfig:

@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **`@webclaw/mcp` — zero-install MCP launcher.** `npx -y @webclaw/mcp` downloads the prebuilt `webclaw-mcp` binary once, verifies it against the release `SHA256SUMS`, caches it, and runs it as an MCP stdio server. This is now the canonical way to add webclaw to an MCP client (`{"command": "npx", "args": ["-y", "@webclaw/mcp"]}`) — no Rust build — and it makes the server introspectable in MCP registries (Glama, Smithery, the MCP registry). `create-webclaw` stays as the auto-detect installer.
+
 ## [0.6.15] - 2026-07-18
 
 ### Added

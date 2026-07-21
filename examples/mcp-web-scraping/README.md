@@ -16,7 +16,8 @@ The installer detects supported MCP clients and can write the config for you.
 {
   "mcpServers": {
     "webclaw": {
-      "command": "~/.webclaw/webclaw-mcp",
+      "command": "npx",
+      "args": ["-y", "@webclaw/mcp"],
       "env": {
         "WEBCLAW_API_KEY": "wc_your_key"
       }

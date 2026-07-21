@@ -273,14 +273,15 @@ webclaw https://example.com  # Automatically detects and uses proxies.txt
 ## MCP Server (AI Agent Integration)
 
 ```bash
-# Start the MCP server (stdio transport)
-webclaw-mcp
+# Run the MCP server (stdio transport) — no install needed
+npx -y @webclaw/mcp
 
 # Configure in Claude Desktop (~/.config/claude/claude_desktop_config.json):
 # {
 #   "mcpServers": {
 #     "webclaw": {
-#       "command": "/path/to/webclaw-mcp",
+#       "command": "npx",
+#       "args": ["-y", "@webclaw/mcp"],
 #       "env": {
 #         "WEBCLAW_API_KEY": "wc_your_key"  // optional, enables cloud fallback
 #       }
@@ -288,7 +289,7 @@ webclaw-mcp
 #   }
 # }
 
-# Available tools: scrape, crawl, map, batch, extract, summarize, diff, brand, research, search
+# Available tools: scrape, search, crawl, map, batch, extract, summarize, diff, brand, research, lead, lead_batch, list_extractors, vertical_scrape
 ```
 
 ## Real-World Recipes

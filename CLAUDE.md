@@ -190,7 +190,8 @@ Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_deskt
 {
   "mcpServers": {
     "webclaw": {
-      "command": "/path/to/webclaw-mcp"
+      "command": "npx",
+      "args": ["-y", "@webclaw/mcp"]
     }
   }
 }

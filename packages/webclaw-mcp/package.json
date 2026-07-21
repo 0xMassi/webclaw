@@ -1,0 +1,39 @@
+{
+  "name": "@webclaw/mcp",
+  "version": "0.1.0",
+  "description": "Zero-install launcher for the webclaw MCP server: web extraction and anti-bot access for AI agents. Runs `npx @webclaw/mcp`.",
+  "type": "module",
+  "bin": {
+    "webclaw-mcp": "./webclaw-mcp.mjs"
+  },
+  "mcpName": "io.github.0xMassi/webclaw",
+  "files": [
+    "webclaw-mcp.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "AGPL-3.0-only",
+  "author": "0xMassi",
+  "homepage": "https://webclaw.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMassi/webclaw.git",
+    "directory": "packages/webclaw-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMassi/webclaw/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "webclaw",
+    "web-scraping",
+    "web-extraction",
+    "ai-agents",
+    "cloudflare",
+    "anti-bot",
+    "llm"
+  ]
+}

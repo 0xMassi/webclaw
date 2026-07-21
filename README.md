@@ -164,21 +164,20 @@ webclaw https://example.com/pricing --diff-with pricing-old.json
 
 webclaw ships with an MCP server for AI agents.
 
-```bash
-npx create-webclaw
-```
-
-Manual config:
+Zero-install — point any MCP client at the npx launcher:
 
 ```json
 {
   "mcpServers": {
     "webclaw": {
-      "command": "~/.webclaw/webclaw-mcp"
+      "command": "npx",
+      "args": ["-y", "@webclaw/mcp"]
     }
   }
 }
 ```
+
+Or run `npx create-webclaw` to auto-detect your AI tools and write their configs for you.
 
 Then ask your agent things like:
 

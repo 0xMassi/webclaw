@@ -3,12 +3,12 @@
   "name": "io.github.0xMassi/webclaw",
   "title": "webclaw",
   "description": "Turn any URL into clean markdown/JSON for AI agents. Self-hostable Firecrawl alternative.",
-  "version": "0.1.6",
+  "version": "0.1.0",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "create-webclaw",
-      "version": "0.1.6",
+      "identifier": "@webclaw/mcp",
+      "version": "0.1.0",
       "transport": {
         "type": "stdio"
       }

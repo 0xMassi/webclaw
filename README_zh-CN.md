@@ -1,4 +1,4 @@
-<p align="right"><a href="./README.md">English</a> | 简体中文</p>
+<p align="center"><a href="./README.md">English</a> | <strong>简体中文</strong></p>
 
 <p align="center">
   <a href="https://webclaw.io">

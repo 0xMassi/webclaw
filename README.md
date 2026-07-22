@@ -1,3 +1,5 @@
+<p align="center"><strong>English</strong> | <a href="README_zh-CN.md">简体中文</a></p>
+
 <p align="center">
   <a href="https://webclaw.io">
     <img src=".github/banner.png" alt="webclaw" width="760" />

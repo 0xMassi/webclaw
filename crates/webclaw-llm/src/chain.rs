@@ -1,5 +1,5 @@
 /// Provider chain — tries providers in order until one succeeds.
-/// Default order: Ollama (local, free) -> OpenAI -> Atlas Cloud -> Gemini -> Anthropic.
+/// Default order: Ollama (local, free) -> OpenAI -> Gemini -> Anthropic.
 /// Only includes providers that are actually configured/available.
 use async_trait::async_trait;
 use tracing::{debug, warn};
@@ -7,8 +7,8 @@ use tracing::{debug, warn};
 use crate::error::LlmError;
 use crate::provider::{CompletionRequest, LlmProvider};
 use crate::providers::{
-    anthropic::AnthropicProvider, atlascloud::AtlasCloudProvider, gemini::GeminiProvider,
-    ollama::OllamaProvider, openai::OpenAiProvider,
+    anthropic::AnthropicProvider, gemini::GeminiProvider, ollama::OllamaProvider,
+    openai::OpenAiProvider,
 };
 
 pub struct ProviderChain {
@@ -16,7 +16,7 @@ pub struct ProviderChain {
 }
 
 impl ProviderChain {
-    /// Build the default chain: Ollama -> OpenAI -> Atlas Cloud -> Gemini -> Anthropic.
+    /// Build the default chain: Ollama -> OpenAI -> Gemini -> Anthropic.
     /// Ollama is always added (availability checked at call time).
     /// Cloud providers are only added if their API keys are configured.
     /// Gemini sits ahead of Anthropic so Google Cloud credits are preferred,
@@ -35,11 +35,6 @@ impl ProviderChain {
         if let Some(openai) = OpenAiProvider::new(None, None, None) {
             debug!("openai configured, adding to chain");
             providers.push(Box::new(openai));
-        }
-
-        if let Some(atlascloud) = AtlasCloudProvider::new(None, None, None) {
-            debug!("atlascloud configured, adding to chain");
-            providers.push(Box::new(atlascloud));
         }
 
         if let Some(gemini) = GeminiProvider::new(None, None, None) {

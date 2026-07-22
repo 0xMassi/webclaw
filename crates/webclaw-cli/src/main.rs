@@ -2265,7 +2265,7 @@ async fn build_llm_provider(cli: &Cli) -> Result<Box<dyn LlmProvider>, String> {
         let chain = webclaw_llm::ProviderChain::default().await;
         if chain.is_empty() {
             return Err(
-                "no LLM providers available -- start Ollama or set OPENAI_API_KEY / ATLASCLOUD_API_KEY / ANTHROPIC_API_KEY"
+                "no LLM providers available -- start Ollama or set OPENAI_API_KEY / ANTHROPIC_API_KEY"
                     .into(),
             );
         }

@@ -6,6 +6,10 @@
     "create-webclaw": "./index.mjs"
   },
   "type": "module",
+  "files": [
+    "index.mjs",
+    "README.md"
+  ],
   "keywords": [
     "webclaw",
     "mcp",

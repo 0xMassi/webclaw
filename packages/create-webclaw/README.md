@@ -26,7 +26,7 @@
 npx create-webclaw
 ```
 
-That's it. Auto-detects your AI tools, downloads the MCP server, configures everything.
+That's it. Auto-detects your AI tools and writes the `npx @webclaw/mcp` config into each — nothing to install.
 
 Works with **Claude Desktop**, **Claude Code**, **Cursor**, **Windsurf**, **VS Code**, **OpenCode**, **Codex CLI**, and **Antigravity**.
 
@@ -67,9 +67,25 @@ npx create-webclaw
 ```
 
 1. Detects installed AI tools (Claude, Cursor, Windsurf, VS Code, OpenCode, Codex, Antigravity)
-2. Downloads the `webclaw-mcp` binary for your platform (macOS arm64/x86, Linux x86/arm64)
-3. Asks for your API key (optional — **works locally without one**)
-4. Writes the MCP config for each detected tool
+2. Asks for your API key (optional — **works locally without one**)
+3. Writes the `npx @webclaw/mcp` config into each detected tool
+
+The server itself runs via [`@webclaw/mcp`](https://www.npmjs.com/package/@webclaw/mcp) — `npx` fetches it on first launch and caches it. `create-webclaw` is just the convenience that writes that config for you.
+
+### Prefer to configure by hand?
+
+Add this one block to your client's `mcpServers` config — it's identical to what `create-webclaw` writes:
+
+```json
+{
+  "mcpServers": {
+    "webclaw": {
+      "command": "npx",
+      "args": ["-y", "@webclaw/mcp"]
+    }
+  }
+}
+```
 
 ## MCP Tools
 

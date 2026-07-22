@@ -1,6 +1,6 @@
 {
   "name": "create-webclaw",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Set up webclaw MCP server for AI agents (Claude, Cursor, Windsurf, OpenCode, Codex, Antigravity)",
   "bin": {
     "create-webclaw": "./index.mjs"

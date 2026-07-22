@@ -21,7 +21,9 @@ impl AtlasCloudProvider {
         let base_url = base_url
             .or_else(|| std::env::var("ATLASCLOUD_BASE_URL").ok())
             .unwrap_or_else(|| "https://api.atlascloud.ai/v1".into());
-        let model = model.unwrap_or_else(|| "qwen/qwen3.5-flash".into());
+        let model = model
+            .or_else(|| std::env::var("ATLASCLOUD_MODEL").ok())
+            .unwrap_or_else(|| "qwen/qwen3.5-flash".into());
         let inner = OpenAiProvider::new(Some(key), Some(base_url), Some(model))?;
         Some(Self { inner })
     }

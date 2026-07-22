@@ -1,5 +1,5 @@
 /// Provider chain — tries providers in order until one succeeds.
-/// Default order: Ollama (local, free) -> OpenAI -> Gemini -> Anthropic.
+/// Default order: Ollama (local, free) -> OpenAI -> Gemini -> Anthropic -> Atlas Cloud (opt-in).
 /// Only includes providers that are actually configured/available.
 use async_trait::async_trait;
 use tracing::{debug, warn};
@@ -7,8 +7,8 @@ use tracing::{debug, warn};
 use crate::error::LlmError;
 use crate::provider::{CompletionRequest, LlmProvider};
 use crate::providers::{
-    anthropic::AnthropicProvider, gemini::GeminiProvider, ollama::OllamaProvider,
-    openai::OpenAiProvider,
+    anthropic::AnthropicProvider, atlascloud::AtlasCloudProvider, gemini::GeminiProvider,
+    ollama::OllamaProvider, openai::OpenAiProvider,
 };
 
 pub struct ProviderChain {
@@ -16,11 +16,13 @@ pub struct ProviderChain {
 }
 
 impl ProviderChain {
-    /// Build the default chain: Ollama -> OpenAI -> Gemini -> Anthropic.
+    /// Build the default chain: Ollama -> OpenAI -> Gemini -> Anthropic -> Atlas Cloud.
     /// Ollama is always added (availability checked at call time).
     /// Cloud providers are only added if their API keys are configured.
     /// Gemini sits ahead of Anthropic so Google Cloud credits are preferred,
-    /// with Anthropic as the last-resort fallback.
+    /// with Anthropic as the last-resort fallback. Atlas Cloud is opt-in and
+    /// added last (only when `ATLASCLOUD_API_KEY` is set), so it never preempts
+    /// an already-configured provider.
     pub async fn default() -> Self {
         let mut providers: Vec<Box<dyn LlmProvider>> = Vec::new();
 
@@ -45,6 +47,11 @@ impl ProviderChain {
         if let Some(anthropic) = AnthropicProvider::with_base_url(None, None, None) {
             debug!("anthropic configured, adding to chain");
             providers.push(Box::new(anthropic));
+        }
+
+        if let Some(atlas) = AtlasCloudProvider::new(None, None, None) {
+            debug!("atlascloud configured, adding to chain");
+            providers.push(Box::new(atlas));
         }
 
         Self { providers }

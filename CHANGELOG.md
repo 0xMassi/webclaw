@@ -3,10 +3,14 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.6.16] - 2026-07-22
 
 ### Added
 - **`@webclaw/mcp` — zero-install MCP launcher.** `npx -y @webclaw/mcp` downloads the prebuilt `webclaw-mcp` binary once, verifies it against the release `SHA256SUMS`, caches it, and runs it as an MCP stdio server. This is now the canonical way to add webclaw to an MCP client (`{"command": "npx", "args": ["-y", "@webclaw/mcp"]}`) — no Rust build — and it makes the server introspectable in MCP registries (Glama, Smithery, the MCP registry). `create-webclaw` stays as the auto-detect installer.
+- **Atlas Cloud provider in the LLM chain (opt-in).** Set `ATLASCLOUD_API_KEY` to add [Atlas Cloud](https://atlascloud.ai) as a provider for the LLM features (extraction, summarization). It's added at the end of the chain — Ollama → OpenAI → Gemini → Anthropic → Atlas Cloud — so it only runs when you configure it and never preempts an already-configured provider. Override the model with `ATLASCLOUD_MODEL` (default `qwen/qwen3.5-flash`) and the endpoint with `ATLASCLOUD_BASE_URL`.
+
+### Fixed
+- **`--urls-file` with a single URL now works.** A file containing exactly one URL (with no positional URL on the command line) was rejected with *"no input provided"*: it fell between the batch path, which skips single-entry files, and the single-URL path, which only reads positional arguments. A lone file URL is now treated exactly like `webclaw <url>`, so it works with stdout, `--output-dir`, `--brand`, `--diff-with`, `--crawl`, `--watch`, and the LLM paths.
 
 ## [0.6.15] - 2026-07-18
 

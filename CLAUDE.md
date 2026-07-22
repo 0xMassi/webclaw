@@ -63,7 +63,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - `url_security.rs` — SSRF guards + SSRF-safe redirect policy
 
 ### LLM Modules (`webclaw-llm`)
-- Provider chain (`chain.rs`): Ollama (local-first, always added; availability checked at call time) -> OpenAI -> Gemini -> Anthropic. Gemini sits ahead of Anthropic so Google Cloud credits are preferred; Anthropic is the last-resort fallback. Each provider lives in `providers/` (`ollama.rs`, `openai.rs`, `gemini.rs`, `anthropic.rs`).
+- Provider chain (`chain.rs`): Ollama (local-first, always added; availability checked at call time) -> OpenAI -> Gemini -> Anthropic -> Atlas Cloud. Gemini sits ahead of Anthropic so Google Cloud credits are preferred; Anthropic is the last-resort fallback. Atlas Cloud is opt-in and added last — only when `ATLASCLOUD_API_KEY` is set — so it never preempts an already-configured provider (`ATLASCLOUD_MODEL` / `ATLASCLOUD_BASE_URL` override its model/endpoint). Each provider lives in `providers/` (`ollama.rs`, `openai.rs`, `gemini.rs`, `anthropic.rs`, `atlascloud.rs`).
 - JSON schema extraction, prompt-based extraction, summarization
 
 ### PDF Modules (`webclaw-pdf`)

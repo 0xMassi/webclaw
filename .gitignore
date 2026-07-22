@@ -13,3 +13,6 @@ local-test-results.json
 # not code and shouldn't live in git. Track deliberately-saved research
 # output under a different name.
 research-*.json
+# MCP registry publisher credentials (mcp-publisher writes these into
+# packages/create-webclaw/). They are OAuth/API tokens — never commit them.
+.mcpregistry_*_token

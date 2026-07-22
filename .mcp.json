@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "webclaw": {
-      "command": "~/.webclaw/webclaw-mcp"
+      "command": "npx",
+      "args": ["-y", "@webclaw/mcp"]
     }
   }
 }

@@ -188,6 +188,39 @@ jobs:
             $prerelease \
             --generate-notes
 
+  npm:
+    name: npm (@webclaw/mcp)
+    needs: release
+    # Publish the zero-install MCP launcher on STABLE tags only (prerelease
+    # tags contain a hyphen and are skipped). Requires the NPM_TOKEN repo
+    # secret: an npm automation token with publish rights on the @webclaw scope.
+    if: ${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Pin launcher to this release and publish
+        working-directory: packages/webclaw-mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"   # e.g. v0.6.16
+          ver="${tag#v}"                   # 0.6.16
+          # Lockstep versioning: @webclaw/mcp@X.Y.Z installs the webclaw vX.Y.Z
+          # release. Both the pinned binary tag and the npm version derive from
+          # the git tag, so no commit-back is needed and the published package
+          # always points at matching, already-uploaded release assets.
+          sed -i -E "/const RELEASE_TAG =/ s|\"v[0-9.]+\"|\"${tag}\"|" webclaw-mcp.mjs
+          npm version "$ver" --no-git-tag-version --allow-same-version
+          echo "publishing @webclaw/mcp@${ver} pinned to ${tag}:"
+          grep -n "RELEASE_TAG =" webclaw-mcp.mjs
+          npm publish --access public
+
   docker:
     name: Docker
     needs: release

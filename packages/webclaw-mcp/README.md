@@ -1,12 +1,12 @@
 # @webclaw/mcp
 
-Zero-install launcher for the [webclaw](https://webclaw.io) MCP server — web extraction and anti-bot web access for AI agents, over the Model Context Protocol.
+**Clean web access for AI agents, over MCP.** Turn any URL into markdown, JSON, or LLM-ready context — including pages that block bots or need JavaScript — straight from Claude, Cursor, and any MCP client.
 
-`npx @webclaw/mcp` downloads a prebuilt `webclaw-mcp` binary once (from the pinned GitHub release), caches it, and runs it as an MCP stdio server. No Rust build, no global install. It runs on your machine; the hosted webclaw cloud is only used for tools that need it, and only when you set `WEBCLAW_API_KEY`.
+Zero-install launcher for the [webclaw](https://webclaw.io) MCP server. `npx @webclaw/mcp` downloads a prebuilt `webclaw-mcp` binary once (verified against the release `SHA256SUMS`), caches it, and runs it as an MCP stdio server. No Rust build, no global install. It runs on your machine; the hosted webclaw cloud is used only for the tools that need it, and only when you set `WEBCLAW_API_KEY`.
 
-## Use in an MCP client
+## Add to your MCP client
 
-Point any stdio MCP client at the npx command. Claude Desktop / Cursor / Windsurf / Antigravity (`mcpServers` JSON):
+Point any stdio MCP client at the npx command — Claude Desktop, Cursor, Windsurf, Antigravity (`mcpServers` JSON):
 
 ```json
 {
@@ -19,7 +19,7 @@ Point any stdio MCP client at the npx command. Claude Desktop / Cursor / Windsur
 }
 ```
 
-Add a key for cloud-backed tools (anti-bot bypass, JS rendering, search, research):
+Add a key to unlock the cloud-backed tools (bot-protection bypass, JS rendering, web search, research, lead enrichment):
 
 ```json
 {
@@ -39,25 +39,32 @@ Claude Code:
 claude mcp add webclaw -- npx -y @webclaw/mcp
 ```
 
-## Tools
+Or run `npx create-webclaw` to auto-detect your AI tools and write their configs for you.
 
-scrape, search, crawl, map, batch, extract, summarize, diff, brand, research, lead, lead_batch, plus `list_extractors` / `vertical_scrape` for 30+ site-specific extractors. Local tools run with no API key; cloud tools require `WEBCLAW_API_KEY`.
+## Tools (14)
+
+scrape, search, crawl, map, batch, extract, summarize, diff, brand, research, lead, lead_batch, plus `list_extractors` / `vertical_scrape` for 30+ site-specific extractors (Amazon, GitHub, Reddit, YouTube, npm, PyPI, and more).
+
+- **No key needed:** scrape, crawl, map, batch, diff, brand, list_extractors, vertical_scrape.
+- **Needs an LLM** (local Ollama or a provider key): extract, summarize.
+- **Needs `WEBCLAW_API_KEY`:** search, research, lead, lead_batch — plus automatic bot-protection bypass and JS rendering for the fetch tools.
+
+Get a key at [webclaw.io](https://webclaw.io).
 
 ## Environment
 
 | Variable | Purpose |
 |---|---|
 | `WEBCLAW_API_KEY` | Enables cloud-backed tools (optional). |
-| `WEBCLAW_MCP_BIN` | Absolute path to a `webclaw-mcp` binary; skips download. |
+| `WEBCLAW_MCP_BIN` | Absolute path to a `webclaw-mcp` binary; skips the download. |
 | `WEBCLAW_MCP_VERSION` | Release tag to install (default: the pinned release). |
 | `WEBCLAW_MCP_CACHE` | Cache directory (default: `~/.cache/webclaw`). |
 
-The downloaded archive is verified against the release `SHA256SUMS` before use.
+## Links
 
-## Alternatives
-
-- `npx create-webclaw` — interactive installer that auto-detects your AI tools and writes their configs for you.
-- Prebuilt binaries, Homebrew, Docker, and `cargo install` — see the [main README](https://github.com/0xMassi/webclaw).
+- **Docs:** [webclaw.io/docs/mcp](https://webclaw.io/docs/mcp)
+- **Source** (CLI, REST API, SDKs, extraction engine): [github.com/0xMassi/webclaw](https://github.com/0xMassi/webclaw)
+- **Hosted API & keys:** [webclaw.io](https://webclaw.io)
 
 ## License
 

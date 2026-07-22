@@ -864,6 +864,18 @@ fn collect_urls(cli: &Cli) -> Result<Vec<(String, Option<String>)>, String> {
     Ok(entries)
 }
 
+/// When `--urls-file` supplies exactly one URL and no positional URL was given,
+/// treat it like a single positional URL so a one-line file behaves identically
+/// to `webclaw <url>` (stdout, `--output-dir`, cloud fallback, `--raw-html`,
+/// `--diff`, LLM paths). Without this the lone file URL gives `entries.len() == 1`,
+/// which the batch gates skip, and the single path then finds an empty `cli.urls`
+/// and errors "no input provided". See issue #86.
+fn backfill_single_file_url(urls: &mut Vec<String>, entries: &[(String, Option<String>)]) {
+    if urls.is_empty() && entries.len() == 1 {
+        urls.push(entries[0].0.clone());
+    }
+}
+
 /// Result that can be either a local extraction or a cloud API JSON response.
 enum FetchOutput {
     Local(Box<ExtractionResult>),
@@ -2633,7 +2645,7 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
 async fn main() {
     dotenvy::dotenv().ok();
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     init_logging(cli.verbose);
 
     // Subcommand path. Handled before the flag dispatch so a subcommand
@@ -2776,6 +2788,20 @@ async fn main() {
         return;
     }
 
+    // Collect URLs from args + --urls-file up front, and backfill a lone
+    // --urls-file URL into cli.urls so a one-line file behaves like a positional
+    // URL across ALL modes below (crawl / watch / diff / brand / batch / single).
+    // See issue #86 — the mode gates and single path read cli.urls, which is
+    // empty when the URL came only from --urls-file.
+    let entries = match collect_urls(&cli) {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+    };
+    backfill_single_file_url(&mut cli.urls, &entries);
+
     // --crawl: recursive crawl mode
     if cli.crawl {
         if let Err(e) = run_crawl(&cli).await {
@@ -2787,13 +2813,7 @@ async fn main() {
 
     // --watch: poll URL(s) for changes
     if cli.watch {
-        let watch_urls: Vec<String> = match collect_urls(&cli) {
-            Ok(entries) => entries.into_iter().map(|(url, _)| url).collect(),
-            Err(e) => {
-                eprintln!("error: {e}");
-                process::exit(1);
-            }
-        };
+        let watch_urls: Vec<String> = entries.iter().map(|(url, _)| url.clone()).collect();
         if let Err(e) = run_watch(&cli, &watch_urls).await {
             eprintln!("error: {e}");
             process::exit(1);
@@ -2827,15 +2847,6 @@ async fn main() {
         }
         return;
     }
-
-    // Collect all URLs from args + --urls-file
-    let entries = match collect_urls(&cli) {
-        Ok(u) => u,
-        Err(e) => {
-            eprintln!("error: {e}");
-            process::exit(1);
-        }
-    };
 
     // LLM modes: --extract-json, --extract-prompt, --summarize
     // When multiple URLs are provided, run batch LLM extraction over all of them.
@@ -2907,6 +2918,36 @@ async fn main() {
 mod tests {
     use super::*;
     use webclaw_core::Content;
+
+    // issue #86: a single URL sourced only from --urls-file must be promoted to
+    // a positional URL so it takes the single-scrape path (batch gates need >1).
+    #[test]
+    fn single_file_url_backfilled_into_positional() {
+        let mut urls: Vec<String> = Vec::new();
+        let entries = vec![("https://example.com".to_string(), None)];
+        backfill_single_file_url(&mut urls, &entries);
+        assert_eq!(urls, vec!["https://example.com".to_string()]);
+    }
+
+    #[test]
+    fn positional_urls_left_untouched() {
+        let mut urls = vec!["https://a.com".to_string()];
+        let entries = vec![("https://a.com".to_string(), None)];
+        backfill_single_file_url(&mut urls, &entries);
+        assert_eq!(urls, vec!["https://a.com".to_string()]);
+    }
+
+    #[test]
+    fn multiple_file_urls_not_backfilled() {
+        // 2+ URLs already route to run_batch, so cli.urls stays empty here.
+        let mut urls: Vec<String> = Vec::new();
+        let entries = vec![
+            ("https://a.com".to_string(), None),
+            ("https://b.com".to_string(), None),
+        ];
+        backfill_single_file_url(&mut urls, &entries);
+        assert!(urls.is_empty());
+    }
 
     fn empty_result(title: Option<&str>, url: Option<&str>, markdown: &str) -> ExtractionResult {
         ExtractionResult {

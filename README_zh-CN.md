@@ -40,7 +40,7 @@
 
 [webclaw.io](https://webclaw.io) 是 webclaw 的托管式网页提取 API。本仓库包含开源的 CLI、MCP 服务器、提取引擎，以及可自托管的服务端。
 
-webclaw 用 Rust 编写，把一个 URL 变成你的工具真正用得上的干净内容——它是一个**开源、可自托管的 [Firecrawl](https://webclaw.io) 替代方案**。
+webclaw 用 Rust 编写，把一个 URL 变成你的工具真正用得上的干净内容——它是一个**开源、可自托管的 Firecrawl 替代方案**。
 
 ```bash
 webclaw https://example.com --format markdown

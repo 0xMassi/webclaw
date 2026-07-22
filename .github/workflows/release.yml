@@ -209,15 +209,16 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"   # e.g. v0.6.16
-          ver="${tag#v}"                   # 0.6.16
-          # Lockstep versioning: @webclaw/mcp@X.Y.Z installs the webclaw vX.Y.Z
-          # release. Both the pinned binary tag and the npm version derive from
-          # the git tag, so no commit-back is needed and the published package
-          # always points at matching, already-uploaded release assets.
+          tag="${GITHUB_REF#refs/tags/}"   # e.g. v0.6.17 (core release)
+          # Pin which prebuilt binary this launcher downloads to the just-released tag.
           sed -i -E "/const RELEASE_TAG =/ s|\"v[0-9.]+\"|\"${tag}\"|" webclaw-mcp.mjs
-          npm version "$ver" --no-git-tag-version --allow-same-version
-          echo "publishing @webclaw/mcp@${ver} pinned to ${tag}:"
+          # The launcher is versioned INDEPENDENTLY of the core release (a
+          # launcher-only fix must be shippable without a core bump). Publish the
+          # next patch above whatever is currently on npm — no commit-back needed.
+          cur="$(npm view @webclaw/mcp version 2>/dev/null || echo 0.0.0)"
+          npm version "$cur" --no-git-tag-version --allow-same-version >/dev/null
+          npm version patch --no-git-tag-version >/dev/null
+          echo "publishing @webclaw/mcp@$(node -p "require('./package.json').version") pinned to ${tag}:"
           grep -n "RELEASE_TAG =" webclaw-mcp.mjs
           npm publish --access public
 

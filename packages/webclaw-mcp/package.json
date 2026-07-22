@@ -1,10 +1,10 @@
 {
   "name": "@webclaw/mcp",
-  "version": "0.6.15",
+  "version": "0.6.16",
   "description": "Zero-install launcher for the webclaw MCP server: web extraction and anti-bot access for AI agents. Runs `npx @webclaw/mcp`.",
   "type": "module",
   "bin": {
-    "webclaw-mcp": "./webclaw-mcp.mjs"
+    "webclaw-mcp-launcher": "./webclaw-mcp.mjs"
   },
   "mcpName": "io.github.0xMassi/webclaw",
   "files": [

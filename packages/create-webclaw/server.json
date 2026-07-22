@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.0xMassi/webclaw",
   "title": "webclaw",
-  "description": "Turn any URL into clean markdown/JSON for AI agents. Self-hostable Firecrawl alternative.",
-  "version": "0.6.16",
+  "description": "Turn any URL into clean markdown/JSON for AI agents. Self-hostable web content extraction.",
+  "version": "0.6.17",
   "packages": [
     {
       "registryType": "npm",

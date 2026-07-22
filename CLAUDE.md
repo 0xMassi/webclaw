@@ -117,13 +117,14 @@ CI (`.github/workflows/ci.yml`, with `RUSTFLAGS=--cfg reqwest_unstable`) runs fo
 
 ## Repo Layout & Packaging
 
-Workspace is version **0.6.13**, edition **2024**, license **AGPL-3.0** (matters for the public-OSS scrubbing rules). No crate declares `rust-version`, so MSRV is implicit — edition 2024 floors it at Rust 1.85+; CI pins `dtolnay/rust-toolchain@stable`.
+Workspace is version **0.6.15**, edition **2024**, license **AGPL-3.0** (matters for the public-OSS scrubbing rules). No crate declares `rust-version`, so MSRV is implicit — edition 2024 floors it at Rust 1.85+; CI pins `dtolnay/rust-toolchain@stable`.
 
 Artifacts outside `crates/` that need separate attention:
 - `packages/create-webclaw/` — `npx create-webclaw` Node scaffolder that installs/configures the MCP server for AI agents (Claude, Cursor, Windsurf, ...). Versioned independently (own `package.json`) — bump it separately when MCP setup changes.
 - `smithery.yaml` + `glama.json` — MCP-registry manifests (Smithery stdio config spawning `webclaw-mcp` with optional `WEBCLAW_API_KEY`; Glama). Update when the MCP launch command or env changes.
 - `examples/` — runnable demos (cloudflare-diagnostics, firecrawl-compatible-api, html-to-markdown-rag, mcp-web-scraping, proxy-backed-crawling).
-- `Dockerfile` / `Dockerfile.ci` / `docker-compose.yml`, `benchmarks/` (`/benchmark` skill), `SKILL.md` + `skill/` (Claude Code skill).
+- `Dockerfile` / `Dockerfile.ci` / `docker-compose.yml`, `benchmarks/` (`/benchmark` skill).
+- The Claude Code / agent skill is NOT in this repo — it lives in its own skills.sh repo `github.com/0xMassi/webclaw-skill` (`skills/webclaw` + `skills/lead-enrichment`), installed via `npx skills add 0xMassi/webclaw-skill`.
 
 ## CLI
 

@@ -400,8 +400,9 @@ pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     // the real interstitial loads
     // `/cdn-cgi/challenge-platform/h/{b,g}/orchestrate/chl_page/v1?ray=…`.
     //
-    // `orchestrate/chl_page` is the whole discriminator, and it has to be
-    // this specific. Each looser form flags healthy pages:
+    // The orchestrate script must be matched as ONE contiguous path, and it
+    // has to include the `h/{b,g}` segment. Every looser form flags healthy
+    // pages:
     //   - `challenge-platform` and `challenge-platform/h/` both match the
     //     benign JS-detection beacon Cloudflare injects into ordinary 200
     //     responses, served under `/cdn-cgi/challenge-platform/scripts/jsd/
@@ -411,10 +412,16 @@ pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     //     on github.com, pypi.org and IBM's watsonx docs all contain it.
     //   - even `/cdn-cgi/challenge-platform/` AND `/orchestrate/` as separate
     //     substrings co-occur on a Cloudflare-fronted docs site that links to
-    //     `/docs/orchestrate/…`, which is exactly what a workflow-tool site
-    //     looks like.
-    // One contiguous literal avoids all three.
-    if html_lower.contains("_cf_chl_opt") || html_lower.contains("orchestrate/chl_page") {
+    //     `/docs/orchestrate/…`, which is what a workflow-tool site looks like.
+    // Matching the endpoint name instead (`orchestrate/chl_page`) is too
+    // narrow the other way: `orchestrate/jsch/v1` (JS challenge) and
+    // `orchestrate/managed/v1` (managed challenge) are equally real. Keying
+    // on the `h/{b,g}/orchestrate/` prefix covers every variant while still
+    // rejecting the beacon, which always sits under `/scripts/`.
+    if html_lower.contains("_cf_chl_opt")
+        || html_lower.contains("challenge-platform/h/b/orchestrate/")
+        || html_lower.contains("challenge-platform/h/g/orchestrate/")
+    {
         return true;
     }
 
@@ -742,6 +749,25 @@ mod tests {
         headers.insert("cf-mitigated", "challenge".parse().expect("valid header"));
         let html = "<html><body>Sorry, you have been blocked</body></html>";
         assert!(is_bot_protected(html, &headers));
+    }
+
+    #[test]
+    fn is_bot_protected_detects_all_orchestrate_challenge_variants() {
+        // `chl_page` is not the only orchestration endpoint — `jsch/v1` (JS
+        // challenge) and `managed/v1` (managed challenge) are equally real.
+        // Each must be caught by the path arm ALONE, without relying on
+        // `_cf_chl_opt` also being present.
+        for path in [
+            "/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=9a1",
+            "/cdn-cgi/challenge-platform/h/g/orchestrate/jsch/v1?ray=9a1",
+            "/cdn-cgi/challenge-platform/h/b/orchestrate/managed/v1?ray=9a1",
+        ] {
+            let html = format!(r#"<html><body><script src="{path}"></script></body></html>"#);
+            assert!(
+                is_bot_protected(&html, &empty_headers()),
+                "challenge variant must be detected: {path}"
+            );
+        }
     }
 
     #[test]

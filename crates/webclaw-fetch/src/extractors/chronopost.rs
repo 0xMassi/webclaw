@@ -187,9 +187,13 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
         // so in prose, and it only renders `en` or `fr`, so match both. If
         // neither matches, the markup really has moved: keep that alarm loud
         // and distinct, because a routine bad number must not trip it.
+        // Matched on apostrophe-FREE fragments: the message contains one, and
+        // whether it arrives as `&#x27;`, `&rsquo;` or a literal U+2019 is a
+        // template detail. Anchoring around it keeps a routine bad number from
+        // re-tripping the markup-moved alarm on a typographic-quote change.
         let top_text = strip_tags(top).to_lowercase();
-        let unknown_parcel = top_text.contains("don't have any information")
-            || top_text.contains("n'avons pas d'information");
+        let unknown_parcel =
+            top_text.contains("have any information") || top_text.contains("avons pas d");
         return Err(if unknown_parcel {
             FetchError::Build(format!(
                 "chronopost: no tracking information for '{numbers}' — check the number"
@@ -258,9 +262,11 @@ fn parse_steps(top: &str) -> Vec<Step> {
             .expect("valid step-info regex")
     });
     let text_re = TEXT.get_or_init(|| {
-        // `\s*` not `[^"]*`: tolerates the trailing space Chronopost's
-        // templates emit without also matching `…-light-textual`.
-        Regex::new(r#"(?s)class="ch-suivi-colis-light-text\s*"[^>]*>(.*?)</div>"#)
+        // `(?:\s[^"]*)?` — the name must end at the quote or at whitespace,
+        // which rejects `…-light-textual` while still tolerating both the
+        // trailing space Chronopost emits and any additional modifier class.
+        // Non-capturing so group 1 stays the label.
+        Regex::new(r#"(?s)class="ch-suivi-colis-light-text(?:\s[^"]*)?"[^>]*>(.*?)</div>"#)
             .expect("valid step-text regex")
     });
 
@@ -384,6 +390,13 @@ fn strip_tags(html: &str) -> String {
         .replace("&nbsp;", " ")
         .replace("&#x27;", "'")
         .replace("&#39;", "'")
+        // Typographic apostrophe, in all three spellings plus the literal
+        // char. French copy uses it freely and it shows up inside labels
+        // ("shipper's"), so fold it to ASCII rather than leaving a raw entity.
+        .replace("&rsquo;", "'")
+        .replace("&#8217;", "'")
+        .replace("&#x2019;", "'")
+        .replace('\u{2019}', "'")
         .replace("&quot;", "\"")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -545,6 +558,34 @@ mod tests {
               <div class="ch-suivi-colis-light-textual">Not a step</div>
             </div>"#;
         assert!(parse_steps(top).is_empty());
+    }
+
+    #[test]
+    fn parse_steps_tolerates_a_modifier_class_on_the_label() {
+        // Tightening the text class to `\s*` required it to be the ONLY
+        // class, silently dropping a step whose label carried a modifier.
+        let top = r#"<div class="ch-suivi-colis-light-info active ">
+              <div class="ch-suivi-colis-light-text bold">Delivered</div>
+            </div>"#;
+        let steps = parse_steps(top);
+        assert_eq!(steps.len(), 1, "a modifier class must not drop the step");
+        assert_eq!(steps[0].label, "Delivered");
+        assert_eq!(steps[0].state, "current");
+    }
+
+    #[test]
+    fn strip_tags_folds_typographic_apostrophes() {
+        // The unknown-parcel prose match and the milestone labels both depend
+        // on this; French copy uses U+2019 freely.
+        for raw in [
+            "shipper&#x27;s",
+            "shipper&rsquo;s",
+            "shipper&#8217;s",
+            "shipper&#x2019;s",
+            "shipper\u{2019}s",
+        ] {
+            assert_eq!(strip_tags(raw), "shipper's", "failed for {raw}");
+        }
     }
 
     #[test]

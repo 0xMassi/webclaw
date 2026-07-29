@@ -33,79 +33,61 @@ pub const INFO: ExtractorInfo = ExtractorInfo {
     url_patterns: &["https://www.chronopost.fr/tracking-no-cms/suivi-page?listeNumerosLT={number}"],
 };
 
-/// Host suffix check — Chronopost runs country sites but the tracking app
-/// lives on the `.fr` domain, which is where the AJAX endpoint is rooted.
-fn host_of(url: &str) -> &str {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .split('@')
-        .next_back()
-        .unwrap_or("")
-}
-
 pub fn matches(url: &str) -> bool {
-    let host = host_of(url).to_ascii_lowercase();
-    let host = host.split(':').next().unwrap_or("");
+    parse_tracking(url).is_some()
+}
+
+/// Parse a tracking URL into `(tracking numbers, language)`.
+///
+/// Returns `None` unless the host is exactly `chronopost.fr` /
+/// `www.chronopost.fr` and a non-empty `listeNumerosLT` is present — the
+/// tracking number is the whole point, and this predicate gates
+/// `dispatch_by_url` auto-detect, so it must not claim a URL it can't serve.
+///
+/// Uses `Url` rather than hand-rolled string splitting. That is not just
+/// tidiness: splitting on `://`, `/`, then `@` reads the host out of the
+/// *query* on a URL with no path (`https://evil.com?x&@www.chronopost.fr`),
+/// and a hand-rolled percent-decoder that slices `&s[i+1..i+3]` panics when
+/// a `%` is followed by a multi-byte char. `Url` also normalises case,
+/// punycodes IDN, strips userinfo and port from `host_str`, and decodes
+/// query values without ever slicing off a char boundary.
+fn parse_tracking(url: &str) -> Option<(String, String)> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
     if host != "chronopost.fr" && host != "www.chronopost.fr" {
-        return false;
+        return None;
     }
-    // The tracking number is the whole point — a bare /tracking-no-cms/ path
-    // has nothing to extract.
-    query_param(url, "listeNumerosLT").is_some_and(|v| !v.is_empty())
-}
 
-/// Pull a query parameter without pulling in a full URL parse for what is
-/// always a flat `?a=b&c=d` string. Returns the percent-decoded value.
-fn query_param(url: &str, key: &str) -> Option<String> {
-    let query = url.split_once('?')?.1;
-    let query = query.split('#').next().unwrap_or("");
-    query.split('&').find_map(|pair| {
-        let (k, v) = pair.split_once('=')?;
-        (k == key).then(|| percent_decode(v))
-    })
-}
-
-/// Minimal percent-decoder. Tracking numbers are alphanumeric and `langue`
-/// is a two-letter code, so this only has to survive the occasional `%2C`
-/// between numbers in a multi-parcel query.
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16)
-        {
-            out.push(b);
-            i += 3;
-            continue;
+    let mut numbers = None;
+    let mut langue = None;
+    for (k, v) in parsed.query_pairs() {
+        match k.as_ref() {
+            "listeNumerosLT" if !v.is_empty() => numbers = Some(v.into_owned()),
+            "langue" if !v.is_empty() => langue = Some(v.into_owned()),
+            _ => {}
         }
-        out.push(if bytes[i] == b'+' { b' ' } else { bytes[i] });
-        i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    // Chronopost accepts `en`/`fr`; anything else renders French. Default to
+    // English so labels are readable when the caller didn't ask.
+    Some((numbers?, langue.unwrap_or_else(|| "en".to_string())))
 }
 
 pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
-    let numbers = query_param(url, "listeNumerosLT")
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            FetchError::Build(format!(
-                "chronopost: no 'listeNumerosLT' tracking number in '{url}'"
-            ))
-        })?;
-    // Chronopost accepts `en`/`fr`; anything else renders French. Default to
-    // the caller's choice when present so labels come back in their language.
-    let langue = query_param(url, "langue").unwrap_or_else(|| "en".to_string());
+    let (numbers, langue) = parse_tracking(url).ok_or_else(|| {
+        FetchError::Build(format!(
+            "chronopost: no 'listeNumerosLT' tracking number in '{url}'"
+        ))
+    })?;
 
-    let api_url = format!(
-        "https://www.chronopost.fr/tracking-no-cms/suivi-colis?listeNumerosLT={numbers}&langue={langue}"
-    );
+    // Built through `query_pairs_mut` rather than `format!`: the values come
+    // back percent-DECODED, so interpolating them raw would let a number like
+    // `X%26langue%3Dfr` inject an extra parameter into our own request.
+    let mut api = url::Url::parse("https://www.chronopost.fr/tracking-no-cms/suivi-colis")
+        .expect("static URL is valid");
+    api.query_pairs_mut()
+        .append_pair("listeNumerosLT", &numbers)
+        .append_pair("langue", &langue);
+    let api_url = api.to_string();
     // `X-Requested-With` is load-bearing: without it the endpoint returns a
     // "Site en maintenance" HTML page instead of the tracking JSON. The
     // Referer mirrors what the real page sends.
@@ -161,6 +143,20 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
         .map(|s| s.label.clone());
     let events = parse_events(tab);
 
+    // Fail loudly rather than returning a well-formed empty result. The
+    // endpoint answered 200 with JSON, so if we recovered neither a milestone
+    // nor a scan event the markup has moved and our selectors are stale —
+    // reporting `Ok` with empty arrays would make a site redesign look like a
+    // parcel with no history, and (via `dispatch_by_url`) would stop the
+    // caller from falling back to the generic scrape path.
+    if steps.is_empty() && events.is_empty() {
+        return Err(FetchError::BodyDecode(
+            "chronopost: tracking response contained neither milestones nor \
+             scan events — the page markup has likely changed"
+                .to_string(),
+        ));
+    }
+
     Ok(json!({
         "tracking_number": numbers,
         "language": langue,
@@ -197,19 +193,54 @@ struct Step {
 /// Chronopost renders the bar twice (desktop + mobile variants share the
 /// same `id`s), so identical labels are de-duplicated, keeping first-seen
 /// order.
+///
+/// Each milestone is sliced out on its own boundary before the label is read,
+/// rather than matched with one pattern spanning both `<div>`s. A single
+/// spanning pattern bridges two milestones whenever one renders without a
+/// text child — it would pair step N's class list with step N+1's label,
+/// mis-assigning the state and silently swallowing a step. (`regex` has no
+/// lookaround, so the gap can't simply be told to stop at the next
+/// milestone.) `[^"]*` after each class name tolerates the trailing space
+/// Chronopost's templates emit, e.g. `class="ch-suivi-colis-light-text "`.
 fn parse_steps(top: &str) -> Vec<Step> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(
-            r#"(?s)<div[^>]*class="ch-suivi-colis-light-info([^"]*)".*?ch-suivi-colis-light-text"[^>]*>(.*?)</div>"#,
-        )
-        .expect("valid step regex")
+    static INFO: OnceLock<Regex> = OnceLock::new();
+    static TEXT: OnceLock<Regex> = OnceLock::new();
+    let info_re = INFO.get_or_init(|| {
+        Regex::new(r#"<div[^>]*class="ch-suivi-colis-light-info([^"]*)"[^>]*>"#)
+            .expect("valid step-info regex")
+    });
+    let text_re = TEXT.get_or_init(|| {
+        Regex::new(r#"(?s)class="ch-suivi-colis-light-text[^"]*"[^>]*>(.*?)</div>"#)
+            .expect("valid step-text regex")
     });
 
+    // (class list, where this milestone's content starts, where its opening
+    // tag starts). Byte offsets from `regex` are always char boundaries.
+    let heads: Vec<(&str, usize, usize)> = info_re
+        .captures_iter(top)
+        .filter_map(|c| {
+            let whole = c.get(0)?;
+            Some((c.get(1)?.as_str(), whole.end(), whole.start()))
+        })
+        .collect();
+
     let mut out: Vec<Step> = Vec::new();
-    for cap in re.captures_iter(top) {
-        let classes = cap.get(1).map_or("", |m| m.as_str());
-        let label = strip_tags(cap.get(2).map_or("", |m| m.as_str()));
+    for (i, (classes, content_start, _)) in heads.iter().enumerate() {
+        // Stop at the next milestone's opening tag so a label can never be
+        // borrowed from the following step.
+        let stop = heads
+            .get(i + 1)
+            .map(|(_, _, next_start)| *next_start)
+            .unwrap_or(top.len());
+        if stop <= *content_start {
+            continue;
+        }
+        let Some(label) = text_re
+            .captures(&top[*content_start..stop])
+            .and_then(|c| c.get(1).map(|m| strip_tags(m.as_str())))
+        else {
+            continue;
+        };
         if label.is_empty() {
             continue;
         }
@@ -332,18 +363,52 @@ mod tests {
             "https://www.chronopost.fr.evil.com/x?listeNumerosLT=A1"
         ));
         assert!(!matches("https://user@evil.com/x?listeNumerosLT=A1"));
+        assert!(!matches(
+            "https://chronopost.fr@evil.com/x?listeNumerosLT=A1"
+        ));
+        // Regression: with no path segment there is no `/` to split on, so
+        // hand-rolled host parsing read the host out of the QUERY and matched.
+        assert!(!matches(
+            "https://evil.com?listeNumerosLT=A1&@www.chronopost.fr"
+        ));
+        assert!(!matches(
+            r"https://evil.com\@www.chronopost.fr/?listeNumerosLT=A1"
+        ));
+        // Not a URL at all must be rejected, not panic.
+        assert!(!matches("not a url"));
+        assert!(!matches(""));
     }
 
     #[test]
-    fn query_param_reads_values_and_decodes() {
-        let url = "https://www.chronopost.fr/t?listeNumerosLT=AB1%2CCD2&langue=fr#frag";
+    fn parse_tracking_decodes_and_defaults_language() {
         assert_eq!(
-            query_param(url, "listeNumerosLT").as_deref(),
-            Some("AB1,CD2")
+            parse_tracking("https://www.chronopost.fr/t?listeNumerosLT=AB1%2CCD2&langue=fr#frag"),
+            Some(("AB1,CD2".to_string(), "fr".to_string()))
         );
-        assert_eq!(query_param(url, "langue").as_deref(), Some("fr"));
-        assert_eq!(query_param(url, "missing"), None);
-        assert_eq!(query_param("https://x.fr/no-query", "langue"), None);
+        // `langue` absent => English default.
+        assert_eq!(
+            parse_tracking("https://www.chronopost.fr/t?listeNumerosLT=AB1"),
+            Some(("AB1".to_string(), "en".to_string()))
+        );
+        assert_eq!(parse_tracking("https://www.chronopost.fr/no-query"), None);
+    }
+
+    #[test]
+    fn parse_tracking_survives_malformed_percent_escapes() {
+        // Regression: a hand-rolled decoder sliced `&s[i+1..i+3]` on byte
+        // indices and panicked when a `%` was followed by a multi-byte char.
+        // This ran inside `matches()`, i.e. before any fetch, so it was
+        // reachable from every dispatch path.
+        for bad in [
+            "https://www.chronopost.fr/t?listeNumerosLT=%a\u{e9}",
+            "https://www.chronopost.fr/t?listeNumerosLT=%",
+            "https://www.chronopost.fr/t?listeNumerosLT=%zz",
+            "https://www.chronopost.fr/t?listeNumerosLT=\u{e9}%",
+        ] {
+            // Must not panic; value is whatever the URL parser makes of it.
+            let _ = matches(bad);
+            let _ = parse_tracking(bad);
+        }
     }
 
     #[test]
@@ -374,6 +439,40 @@ mod tests {
         assert_eq!(steps[1].label, "Delayed parcel");
         assert_eq!(steps[1].state, "current");
         assert_eq!(steps[2].state, "pending");
+    }
+
+    #[test]
+    fn parse_steps_does_not_bridge_a_step_with_no_label() {
+        // Regression: one pattern spanning both <div>s paired step1's class
+        // list with step2's label, so the state was wrong AND a step vanished.
+        let top = r#"
+            <div id="step1" class="ch-suivi-colis-light-info first before ">
+              <div class="ch-suivi-colis-light-picto "></div>
+            </div>
+            <div id="step2" class="ch-suivi-colis-light-info active ">
+              <div class="ch-suivi-colis-light-picto"></div>
+              <div class="ch-suivi-colis-light-text">Delivered</div>
+            </div>"#;
+        let steps = parse_steps(top);
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].label, "Delivered");
+        assert_eq!(
+            steps[0].state, "current",
+            "label must keep its OWN step's state, not the previous step's"
+        );
+    }
+
+    #[test]
+    fn parse_steps_tolerates_trailing_space_in_class() {
+        // Chronopost's templates emit `class="ch-suivi-colis-light-picto "`,
+        // so the text class can carry a trailing space too. Requiring the
+        // quote immediately after the name returned zero steps, silently.
+        let top = r#"<div class="ch-suivi-colis-light-info active ">
+              <div class="ch-suivi-colis-light-text ">Out for delivery</div>
+            </div>"#;
+        let steps = parse_steps(top);
+        assert_eq!(steps.len(), 1, "trailing space must not drop the step");
+        assert_eq!(steps[0].label, "Out for delivery");
     }
 
     #[test]

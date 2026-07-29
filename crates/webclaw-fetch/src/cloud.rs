@@ -396,16 +396,20 @@ async fn parse_cloud_response(resp: reqwest::Response) -> Result<Value, CloudErr
 pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     let html_lower = html.to_lowercase();
 
-    // Cloudflare challenge page. `_cf_chl_opt` is the challenge options blob
-    // and `challenge-platform/h/` is the orchestrate script a real
-    // interstitial loads.
+    // Cloudflare challenge page. `_cf_chl_opt` is the challenge options blob;
+    // `/orchestrate/` is the script a real interstitial loads
+    // (`/cdn-cgi/challenge-platform/h/{b,g}/orchestrate/chl_page/v1?ray=…`).
     //
-    // NOT a bare `challenge-platform` match: Cloudflare injects its benign
-    // JS-detection beacon (`/cdn-cgi/challenge-platform/scripts/jsd/main.js`,
-    // paired with `__CF$cv$params`) into ordinary 200 responses, so matching
-    // the bare path flagged healthy Cloudflare-fronted pages as challenges
-    // and escalated them to the cloud API for nothing.
-    if html_lower.contains("_cf_chl_opt") || html_lower.contains("challenge-platform/h/") {
+    // Matching any looser form of `challenge-platform` is wrong: Cloudflare
+    // injects a benign JS-detection beacon into ordinary 200 responses, and it
+    // is served under BOTH the short path
+    // (`/cdn-cgi/challenge-platform/scripts/jsd/main.js`) and the hashed one
+    // (`/cdn-cgi/challenge-platform/h/g/scripts/jsd/<hash>/main.js`). So
+    // neither `challenge-platform` nor `challenge-platform/h/` discriminates —
+    // both flag healthy pages and burn a cloud escalation on a challenge that
+    // was never there. `/orchestrate/` appears only on the real interstitial;
+    // the beacon always sits under `/scripts/`.
+    if html_lower.contains("_cf_chl_opt") || html_lower.contains("/orchestrate/") {
         return true;
     }
 
@@ -678,6 +682,27 @@ mod tests {
         let html = r#"<html><body><script
             src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=abc">
             </script></body></html>"#;
+        assert!(is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_ignores_hashed_cloudflare_jsd_beacon() {
+        // Cloudflare also serves the benign beacon under the `h/{b,g}` prefix
+        // with a hash segment. This form is why matching `challenge-platform`
+        // — or even `challenge-platform/h/` — is not a valid discriminator.
+        let html = r#"<html><head><script
+            src="/cdn-cgi/challenge-platform/h/g/scripts/jsd/e4025c85ea63/main.js">
+            </script></head><body>a perfectly ordinary page</body></html>"#;
+        assert!(!is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_detects_full_interstitial() {
+        // Pins the false-negative property the narrowing is riskiest for: a
+        // complete managed-challenge page must still be caught.
+        let html = r#"<html><head><script>window._cf_chl_opt={cvId:'3'};</script>
+            <script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=9a1">
+            </script></head><body>Just a moment...</body></html>"#;
         assert!(is_bot_protected(html, &empty_headers()));
     }
 

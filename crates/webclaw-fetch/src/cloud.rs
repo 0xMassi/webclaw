@@ -396,8 +396,16 @@ async fn parse_cloud_response(resp: reqwest::Response) -> Result<Value, CloudErr
 pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     let html_lower = html.to_lowercase();
 
-    // Cloudflare challenge page.
-    if html_lower.contains("_cf_chl_opt") || html_lower.contains("challenge-platform") {
+    // Cloudflare challenge page. `_cf_chl_opt` is the challenge options blob
+    // and `challenge-platform/h/` is the orchestrate script a real
+    // interstitial loads.
+    //
+    // NOT a bare `challenge-platform` match: Cloudflare injects its benign
+    // JS-detection beacon (`/cdn-cgi/challenge-platform/scripts/jsd/main.js`,
+    // paired with `__CF$cv$params`) into ordinary 200 responses, so matching
+    // the bare path flagged healthy Cloudflare-fronted pages as challenges
+    // and escalated them to the cloud API for nothing.
+    if html_lower.contains("_cf_chl_opt") || html_lower.contains("challenge-platform/h/") {
         return true;
     }
 
@@ -663,6 +671,30 @@ mod tests {
     fn is_bot_protected_detects_cloudflare_challenge() {
         let html = "<html><body>_cf_chl_opt loaded</body></html>";
         assert!(is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_detects_cloudflare_orchestrate_script() {
+        let html = r#"<html><body><script
+            src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=abc">
+            </script></body></html>"#;
+        assert!(is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_ignores_cloudflare_jsd_beacon() {
+        // Regression (chronopost.fr): Cloudflare injects its JS-detection
+        // beacon into ordinary 200 pages. This is the real markup that page
+        // serves — it is NOT an interstitial, and flagging it escalated a
+        // healthy fetch to the cloud API, which then reported an unsolvable
+        // challenge that did not exist.
+        let html = r#"<html><head><script>window.__CF$cv$params={
+            r:'a22db83e59720e29',t:'MTc4NTM0NDg0NA=='};
+            var a=document.createElement('script');
+            a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';
+            document.getElementsByTagName('head')[0].appendChild(a);
+            </script></head><body>Track your parcel</body></html>"#;
+        assert!(!is_bot_protected(html, &empty_headers()));
     }
 
     #[test]

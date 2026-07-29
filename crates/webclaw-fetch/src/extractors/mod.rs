@@ -16,6 +16,7 @@
 
 pub mod amazon_product;
 pub mod arxiv;
+pub mod chronopost;
 pub mod crates_io;
 pub mod dev_to;
 pub mod docker_hub;
@@ -96,6 +97,7 @@ pub fn list() -> Vec<ExtractorInfo> {
         ebay_listing::INFO,
         etsy_listing::INFO,
         trustpilot_reviews::INFO,
+        chronopost::INFO,
     ]
 }
 
@@ -265,6 +267,16 @@ pub async fn dispatch_by_url(
             youtube_video::extract(client, url)
                 .await
                 .map(|v| (youtube_video::INFO.name, v)),
+        );
+    }
+    // Safe to auto-dispatch: `matches` requires the exact chronopost.fr host
+    // AND a non-empty `listeNumerosLT`, so it can't steal a generic URL. The
+    // tracking page is an AJAX shell that extracts to zero words otherwise.
+    if chronopost::matches(url) {
+        return Some(
+            chronopost::extract(client, url)
+                .await
+                .map(|v| (chronopost::INFO.name, v)),
         );
     }
     // NOTE: shopify_product, shopify_collection, ecommerce_product,
@@ -443,6 +455,12 @@ pub async fn dispatch_by_name(
         n if n == woocommerce_product::INFO.name => {
             run_or_mismatch(woocommerce_product::matches(url), n, url, || {
                 woocommerce_product::extract(client, url)
+            })
+            .await
+        }
+        n if n == chronopost::INFO.name => {
+            run_or_mismatch(chronopost::matches(url), n, url, || {
+                chronopost::extract(client, url)
             })
             .await
         }

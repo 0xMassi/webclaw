@@ -396,8 +396,41 @@ async fn parse_cloud_response(resp: reqwest::Response) -> Result<Value, CloudErr
 pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     let html_lower = html.to_lowercase();
 
-    // Cloudflare challenge page.
-    if html_lower.contains("_cf_chl_opt") || html_lower.contains("challenge-platform") {
+    // Cloudflare challenge page. `_cf_chl_opt` is the challenge options blob;
+    // the real interstitial loads
+    // `/cdn-cgi/challenge-platform/h/{b,g}/orchestrate/chl_page/v1?ray=…`.
+    //
+    // The orchestrate script must be matched as ONE contiguous path, and it
+    // has to include the `h/{b,g}` segment. Every looser form flags healthy
+    // pages:
+    //   - `challenge-platform` and `challenge-platform/h/` both match the
+    //     benign JS-detection beacon Cloudflare injects into ordinary 200
+    //     responses, served under `/cdn-cgi/challenge-platform/scripts/jsd/
+    //     main.js` AND `/cdn-cgi/challenge-platform/h/g/scripts/jsd/<hash>/
+    //     main.js`.
+    //   - `/orchestrate/` alone is an ordinary word in API paths — real pages
+    //     on github.com, pypi.org and IBM's watsonx docs all contain it.
+    //   - even `/cdn-cgi/challenge-platform/` AND `/orchestrate/` as separate
+    //     substrings co-occur on a Cloudflare-fronted docs site that links to
+    //     `/docs/orchestrate/…`, which is what a workflow-tool site looks like.
+    // Matching the endpoint name instead (`orchestrate/chl_page`) is too
+    // narrow the other way: `orchestrate/jsch/v1` (JS challenge) and
+    // `orchestrate/managed/v1` (managed challenge) are equally real. Keying
+    // on the `h/{b,g}/orchestrate/` prefix covers every variant while still
+    // rejecting the beacon, which always sits under `/scripts/`.
+    if html_lower.contains("_cf_chl_opt")
+        || html_lower.contains("challenge-platform/h/b/orchestrate/")
+        || html_lower.contains("challenge-platform/h/g/orchestrate/")
+    {
+        return true;
+    }
+
+    // `cf-mitigated` is set only when Cloudflare actually mitigated the
+    // request, so unlike `cf-ray` (present on every proxied response) it is
+    // conclusive on its own. Catches terminal block pages (1020 "Access
+    // denied" / "Sorry, you have been blocked"), which carry neither the
+    // challenge blob nor the orchestrate script.
+    if headers.get("cf-mitigated").is_some() {
         return true;
     }
 
@@ -663,6 +696,104 @@ mod tests {
     fn is_bot_protected_detects_cloudflare_challenge() {
         let html = "<html><body>_cf_chl_opt loaded</body></html>";
         assert!(is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_detects_cloudflare_orchestrate_script() {
+        let html = r#"<html><body><script
+            src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=abc">
+            </script></body></html>"#;
+        assert!(is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_ignores_hashed_cloudflare_jsd_beacon() {
+        // Cloudflare also serves the benign beacon under the `h/{b,g}` prefix
+        // with a hash segment. This form is why matching `challenge-platform`
+        // — or even `challenge-platform/h/` — is not a valid discriminator.
+        let html = r#"<html><head><script
+            src="/cdn-cgi/challenge-platform/h/g/scripts/jsd/e4025c85ea63/main.js">
+            </script></head><body>a perfectly ordinary page</body></html>"#;
+        assert!(!is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_ignores_orchestrate_outside_cloudflare_path() {
+        // "orchestrate" is an ordinary word in API/doc paths — verified live
+        // on github.com, pypi.org and IBM's watsonx docs. Matching it
+        // unanchored flagged all of them as challenges.
+        let html = r#"<html><body><nav><a href="/guides/orchestrate/">Orchestrate</a>
+            <a href="/docs/orchestrate/schedules">Schedules</a></nav>
+            <h1>Orchestrate your pipelines</h1></body></html>"#;
+        assert!(!is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_ignores_orchestrate_link_on_cloudflare_fronted_docs() {
+        // The hard case: a Cloudflare-fronted docs site carries the benign
+        // beacon AND links to `/docs/orchestrate/…`. Testing the two
+        // substrings separately would flag it; one contiguous literal does not.
+        let html = r#"<html><head><script
+            src="/cdn-cgi/challenge-platform/h/g/scripts/jsd/e4025c85ea63/main.js">
+            </script></head><body><a href="/docs/orchestrate/schedules">Schedules</a>
+            <h1>Orchestrate your pipelines</h1></body></html>"#;
+        assert!(!is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_detects_cf_mitigated_header() {
+        // Terminal block pages (1020) carry neither `_cf_chl_opt` nor the
+        // orchestrate script, but Cloudflare only sets `cf-mitigated` when it
+        // actually mitigated — so the header alone is conclusive.
+        let mut headers = HeaderMap::new();
+        headers.insert("cf-mitigated", "challenge".parse().expect("valid header"));
+        let html = "<html><body>Sorry, you have been blocked</body></html>";
+        assert!(is_bot_protected(html, &headers));
+    }
+
+    #[test]
+    fn is_bot_protected_detects_all_orchestrate_challenge_variants() {
+        // `chl_page` is not the only orchestration endpoint — `jsch/v1` (JS
+        // challenge) and `managed/v1` (managed challenge) are equally real.
+        // Each must be caught by the path arm ALONE, without relying on
+        // `_cf_chl_opt` also being present.
+        for path in [
+            "/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=9a1",
+            "/cdn-cgi/challenge-platform/h/g/orchestrate/jsch/v1?ray=9a1",
+            "/cdn-cgi/challenge-platform/h/b/orchestrate/managed/v1?ray=9a1",
+        ] {
+            let html = format!(r#"<html><body><script src="{path}"></script></body></html>"#);
+            assert!(
+                is_bot_protected(&html, &empty_headers()),
+                "challenge variant must be detected: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_bot_protected_detects_full_interstitial() {
+        // Pins the false-negative property the narrowing is riskiest for: a
+        // complete managed-challenge page must still be caught.
+        let html = r#"<html><head><script>window._cf_chl_opt={cvId:'3'};</script>
+            <script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=9a1">
+            </script></head><body>Just a moment...</body></html>"#;
+        assert!(is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_ignores_cloudflare_jsd_beacon() {
+        // Regression (chronopost.fr): Cloudflare injects its JS-detection
+        // beacon into ordinary 200 pages. This is the real markup that page
+        // serves — it is NOT an interstitial, and flagging it escalated a
+        // healthy fetch to the cloud API, which then reported an unsolvable
+        // challenge that did not exist.
+        let html = r#"<html><head><script>window.__CF$cv$params={
+            r:'a22db83e59720e29',t:'MTc4NTM0NDg0NA=='};
+            var a=document.createElement('script');
+            a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';
+            document.getElementsByTagName('head')[0].appendChild(a);
+            </script></head><body>Track your parcel</body></html>"#;
+        assert!(!is_bot_protected(html, &empty_headers()));
     }
 
     #[test]

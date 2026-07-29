@@ -400,19 +400,21 @@ pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     // the real interstitial loads
     // `/cdn-cgi/challenge-platform/h/{b,g}/orchestrate/chl_page/v1?ray=…`.
     //
-    // BOTH halves of that path are required. Cloudflare injects a benign
-    // JS-detection beacon into ordinary 200 responses under both
-    // `/cdn-cgi/challenge-platform/scripts/jsd/main.js` and the hashed
-    // `/cdn-cgi/challenge-platform/h/g/scripts/jsd/<hash>/main.js`, so
-    // `challenge-platform` (and `challenge-platform/h/`) match healthy pages.
-    // But `/orchestrate/` alone is no good either: it is an ordinary word in
-    // API paths, so a docs site with a nav link to `/guides/orchestrate/`
-    // would be flagged as challenged. Requiring the `cdn-cgi` prefix as well
-    // pins it to Cloudflare's own path namespace.
-    let cf_challenge_platform = html_lower.contains("/cdn-cgi/challenge-platform/");
-    if html_lower.contains("_cf_chl_opt")
-        || (cf_challenge_platform && html_lower.contains("/orchestrate/"))
-    {
+    // `orchestrate/chl_page` is the whole discriminator, and it has to be
+    // this specific. Each looser form flags healthy pages:
+    //   - `challenge-platform` and `challenge-platform/h/` both match the
+    //     benign JS-detection beacon Cloudflare injects into ordinary 200
+    //     responses, served under `/cdn-cgi/challenge-platform/scripts/jsd/
+    //     main.js` AND `/cdn-cgi/challenge-platform/h/g/scripts/jsd/<hash>/
+    //     main.js`.
+    //   - `/orchestrate/` alone is an ordinary word in API paths — real pages
+    //     on github.com, pypi.org and IBM's watsonx docs all contain it.
+    //   - even `/cdn-cgi/challenge-platform/` AND `/orchestrate/` as separate
+    //     substrings co-occur on a Cloudflare-fronted docs site that links to
+    //     `/docs/orchestrate/…`, which is exactly what a workflow-tool site
+    //     looks like.
+    // One contiguous literal avoids all three.
+    if html_lower.contains("_cf_chl_opt") || html_lower.contains("orchestrate/chl_page") {
         return true;
     }
 
@@ -710,10 +712,23 @@ mod tests {
 
     #[test]
     fn is_bot_protected_ignores_orchestrate_outside_cloudflare_path() {
-        // "orchestrate" is an ordinary word in API/doc paths. Matching it
-        // unanchored would flag any workflow-orchestration docs page.
+        // "orchestrate" is an ordinary word in API/doc paths — verified live
+        // on github.com, pypi.org and IBM's watsonx docs. Matching it
+        // unanchored flagged all of them as challenges.
         let html = r#"<html><body><nav><a href="/guides/orchestrate/">Orchestrate</a>
             <a href="/docs/orchestrate/schedules">Schedules</a></nav>
+            <h1>Orchestrate your pipelines</h1></body></html>"#;
+        assert!(!is_bot_protected(html, &empty_headers()));
+    }
+
+    #[test]
+    fn is_bot_protected_ignores_orchestrate_link_on_cloudflare_fronted_docs() {
+        // The hard case: a Cloudflare-fronted docs site carries the benign
+        // beacon AND links to `/docs/orchestrate/…`. Testing the two
+        // substrings separately would flag it; one contiguous literal does not.
+        let html = r#"<html><head><script
+            src="/cdn-cgi/challenge-platform/h/g/scripts/jsd/e4025c85ea63/main.js">
+            </script></head><body><a href="/docs/orchestrate/schedules">Schedules</a>
             <h1>Orchestrate your pipelines</h1></body></html>"#;
         assert!(!is_bot_protected(html, &empty_headers()));
     }

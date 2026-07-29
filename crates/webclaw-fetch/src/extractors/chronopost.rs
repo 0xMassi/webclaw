@@ -37,6 +37,17 @@ pub fn matches(url: &str) -> bool {
     parse_tracking(url).is_some()
 }
 
+/// What a tracking URL yields once validated.
+struct Tracking {
+    /// `listeNumerosLT`, percent-decoded. May be a comma-separated list.
+    numbers: String,
+    /// `langue`, defaulting to `en`.
+    langue: String,
+    /// The caller's URL with any credentials removed, safe to echo back as
+    /// a `Referer` header.
+    referer: String,
+}
+
 /// Parse a tracking URL into `(tracking numbers, language)`.
 ///
 /// Returns `None` unless the host is exactly `chronopost.fr` /
@@ -51,8 +62,11 @@ pub fn matches(url: &str) -> bool {
 /// a `%` is followed by a multi-byte char. `Url` also normalises case,
 /// punycodes IDN, strips userinfo and port from `host_str`, and decodes
 /// query values without ever slicing off a char boundary.
-fn parse_tracking(url: &str) -> Option<(String, String)> {
+fn parse_tracking(url: &str) -> Option<Tracking> {
     let parsed = url::Url::parse(url).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
     let host = parsed.host_str()?.to_ascii_lowercase();
     if host != "chronopost.fr" && host != "www.chronopost.fr" {
         return None;
@@ -67,13 +81,29 @@ fn parse_tracking(url: &str) -> Option<(String, String)> {
             _ => {}
         }
     }
-    // Chronopost accepts `en`/`fr`; anything else renders French. Default to
-    // English so labels are readable when the caller didn't ask.
-    Some((numbers?, langue.unwrap_or_else(|| "en".to_string())))
+
+    // `https://user:pw@www.chronopost.fr/?...` is a legitimate URL, but the
+    // raw input is echoed back as `Referer` — so drop the credentials rather
+    // than forwarding them to Chronopost.
+    let mut referer = parsed.clone();
+    let _ = referer.set_username("");
+    let _ = referer.set_password(None);
+
+    Some(Tracking {
+        numbers: numbers?,
+        // Chronopost accepts `en`/`fr`; anything else renders French. Default
+        // to English so labels are readable when the caller didn't ask.
+        langue: langue.unwrap_or_else(|| "en".to_string()),
+        referer: referer.to_string(),
+    })
 }
 
 pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
-    let (numbers, langue) = parse_tracking(url).ok_or_else(|| {
+    let Tracking {
+        numbers,
+        langue,
+        referer,
+    } = parse_tracking(url).ok_or_else(|| {
         FetchError::Build(format!(
             "chronopost: no 'listeNumerosLT' tracking number in '{url}'"
         ))
@@ -96,7 +126,7 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
             &api_url,
             &[
                 ("X-Requested-With", "XMLHttpRequest"),
-                ("Referer", url),
+                ("Referer", referer.as_str()),
                 ("Accept", "text/html, */*; q=0.01"),
             ],
         )
@@ -150,11 +180,27 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
     // parcel with no history, and (via `dispatch_by_url`) would stop the
     // caller from falling back to the generic scrape path.
     if steps.is_empty() && events.is_empty() {
-        return Err(FetchError::BodyDecode(
-            "chronopost: tracking response contained neither milestones nor \
-             scan events — the page markup has likely changed"
-                .to_string(),
-        ));
+        // Distinguish "this number has no data" from "our selectors broke".
+        // Both produce an empty parse, and structure can't tell them apart —
+        // the `ch-colis-information` block wraps the not-found message in the
+        // empty case AND the summary in the normal one. Chronopost does say
+        // so in prose, and it only renders `en` or `fr`, so match both. If
+        // neither matches, the markup really has moved: keep that alarm loud
+        // and distinct, because a routine bad number must not trip it.
+        let top_text = strip_tags(top).to_lowercase();
+        let unknown_parcel = top_text.contains("don't have any information")
+            || top_text.contains("n'avons pas d'information");
+        return Err(if unknown_parcel {
+            FetchError::Build(format!(
+                "chronopost: no tracking information for '{numbers}' — check the number"
+            ))
+        } else {
+            FetchError::BodyDecode(
+                "chronopost: tracking response contained neither milestones nor \
+                 scan events — the page markup has likely changed"
+                    .to_string(),
+            )
+        });
     }
 
     Ok(json!({
@@ -206,11 +252,15 @@ fn parse_steps(top: &str) -> Vec<Step> {
     static INFO: OnceLock<Regex> = OnceLock::new();
     static TEXT: OnceLock<Regex> = OnceLock::new();
     let info_re = INFO.get_or_init(|| {
-        Regex::new(r#"<div[^>]*class="ch-suivi-colis-light-info([^"]*)"[^>]*>"#)
+        // `(?:\s[^"]*)?` — the class name must end at the quote or at
+        // whitespace, so this can't also claim `…-light-infobox`.
+        Regex::new(r#"<div[^>]*class="ch-suivi-colis-light-info(\s[^"]*)?"[^>]*>"#)
             .expect("valid step-info regex")
     });
     let text_re = TEXT.get_or_init(|| {
-        Regex::new(r#"(?s)class="ch-suivi-colis-light-text[^"]*"[^>]*>(.*?)</div>"#)
+        // `\s*` not `[^"]*`: tolerates the trailing space Chronopost's
+        // templates emit without also matching `…-light-textual`.
+        Regex::new(r#"(?s)class="ch-suivi-colis-light-text\s*"[^>]*>(.*?)</div>"#)
             .expect("valid step-text regex")
     });
 
@@ -220,7 +270,11 @@ fn parse_steps(top: &str) -> Vec<Step> {
         .captures_iter(top)
         .filter_map(|c| {
             let whole = c.get(0)?;
-            Some((c.get(1)?.as_str(), whole.end(), whole.start()))
+            // Group 1 is optional — a milestone whose class list is exactly
+            // `ch-suivi-colis-light-info` has no trailing classes and must
+            // still count (it just has no state keyword, i.e. "completed").
+            let classes = c.get(1).map_or("", |m| m.as_str());
+            Some((classes, whole.end(), whole.start()))
         })
         .collect();
 
@@ -381,16 +435,37 @@ mod tests {
 
     #[test]
     fn parse_tracking_decodes_and_defaults_language() {
-        assert_eq!(
-            parse_tracking("https://www.chronopost.fr/t?listeNumerosLT=AB1%2CCD2&langue=fr#frag"),
-            Some(("AB1,CD2".to_string(), "fr".to_string()))
-        );
+        let t =
+            parse_tracking("https://www.chronopost.fr/t?listeNumerosLT=AB1%2CCD2&langue=fr#frag")
+                .expect("should parse");
+        assert_eq!(t.numbers, "AB1,CD2");
+        assert_eq!(t.langue, "fr");
+
         // `langue` absent => English default.
-        assert_eq!(
-            parse_tracking("https://www.chronopost.fr/t?listeNumerosLT=AB1"),
-            Some(("AB1".to_string(), "en".to_string()))
+        let t = parse_tracking("https://www.chronopost.fr/t?listeNumerosLT=AB1").expect("parses");
+        assert_eq!(t.langue, "en");
+
+        assert!(parse_tracking("https://www.chronopost.fr/no-query").is_none());
+    }
+
+    #[test]
+    fn parse_tracking_strips_credentials_from_referer() {
+        // The caller's URL is echoed back as `Referer`; credentials in it
+        // must not be forwarded to Chronopost.
+        let t = parse_tracking("https://user:hunter2@www.chronopost.fr/t?listeNumerosLT=AB1")
+            .expect("credentials are legal in a URL, so this still parses");
+        assert!(
+            !t.referer.contains("hunter2") && !t.referer.contains("user"),
+            "referer must not carry credentials, got {}",
+            t.referer
         );
-        assert_eq!(parse_tracking("https://www.chronopost.fr/no-query"), None);
+    }
+
+    #[test]
+    fn parse_tracking_rejects_non_http_schemes() {
+        assert!(parse_tracking("ftp://www.chronopost.fr/?listeNumerosLT=A1").is_none());
+        assert!(parse_tracking("wacky://www.chronopost.fr/?listeNumerosLT=A1").is_none());
+        assert!(parse_tracking("http://www.chronopost.fr/?listeNumerosLT=A1").is_some());
     }
 
     #[test]
@@ -460,6 +535,27 @@ mod tests {
             steps[0].state, "current",
             "label must keep its OWN step's state, not the previous step's"
         );
+    }
+
+    #[test]
+    fn parse_steps_ignores_classes_that_merely_share_a_prefix() {
+        // `[^"]*` after the class name also matched `…-light-infobox` and
+        // `…-light-textual`, inventing a step out of unrelated markup.
+        let top = r#"<div class="ch-suivi-colis-light-infobox foo">
+              <div class="ch-suivi-colis-light-textual">Not a step</div>
+            </div>"#;
+        assert!(parse_steps(top).is_empty());
+    }
+
+    #[test]
+    fn parse_steps_keeps_a_step_with_no_extra_classes() {
+        // The state keyword is optional; a bare class list means "completed".
+        let top = r#"<div class="ch-suivi-colis-light-info">
+              <div class="ch-suivi-colis-light-text">Taken up</div>
+            </div>"#;
+        let steps = parse_steps(top);
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].state, "completed");
     }
 
     #[test]

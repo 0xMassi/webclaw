@@ -3,6 +3,14 @@
 All notable changes to webclaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Chronopost parcel tracking extractor.** `webclaw vertical chronopost <tracking-url>` (also auto-detected by `webclaw <url>`, the `vertical_scrape` MCP tool, and `POST /v1/scrape/chronopost`) returns the current status, the milestone progress bar, and the full scan-event history as typed JSON. The tracking page itself renders its content after load, so a plain fetch of it returns an empty document — this extractor reads the underlying data directly.
+
+### Fixed
+- **Healthy Cloudflare-fronted pages are no longer mistaken for challenge pages.** Cloudflare adds a small JavaScript-detection snippet to ordinary, successfully served pages. webclaw matched on part of that snippet's path, so any page carrying it was treated as a bot challenge and needlessly escalated to the cloud API — which then reported an unsolvable challenge that was never there. Detection now keys on markers that only appear on a real interstitial.
+
 ## [0.6.16] - 2026-07-22
 
 ### Added

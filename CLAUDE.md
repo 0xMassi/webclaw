@@ -49,7 +49,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - `fetcher.rs` — the public `Fetcher` trait (`Send + Sync`). Vertical extractors take `&dyn Fetcher`, not `&FetchClient`.
 - `browser.rs` — `BrowserProfile`/`BrowserVariant` enums only (Chrome, ChromeMacos, Firefox, Safari, SafariIos26, Edge). No version numbers live here.
 - `tls.rs` — the real fingerprint builder: per-variant wreq `Emulation` (cipher/sigalg/curve lists, TLS extension order, HTTP/2 SETTINGS, header wire-order). Browser versions are set HERE: Chrome 145, Firefox 135, Edge 145, Safari 18.3.1, Safari iOS 26. SafariIos26 composes on top of `wreq_util::Profile::SafariIos26`. SSRF-safe redirect policy lives here too.
-- `extractors/` — ~30 vertical site extractors (Amazon, eBay, GitHub, Instagram, LinkedIn, Reddit, YouTube, npm, PyPI, HuggingFace, Etsy, Shopify, WooCommerce, Trustpilot, arXiv, Hacker News, StackOverflow, ...); `extractors/mod.rs` is the dispatch table. All reach the network through `&dyn Fetcher`. Shared helpers (not verticals themselves): `extractors/og.rs` (single-pass Open Graph `og:*` parser, `raw()` vs `unescaped()`), `extractors/github_common.rs` (shared GitHub API fetch + status handling), `extractors/jsonld_product.rs` / `ecommerce_product.rs` (shared JSON-LD product walker reused by the e-commerce verticals).
+- `extractors/` — ~30 vertical site extractors (Amazon, eBay, GitHub, Instagram, LinkedIn, Reddit, YouTube, npm, PyPI, HuggingFace, Etsy, Shopify, WooCommerce, Trustpilot, arXiv, Hacker News, StackOverflow, Chronopost, ...); `extractors/mod.rs` is the dispatch table. Note `dispatch_by_url` (auto-detect) deliberately excludes the permissive e-commerce/substack matchers — only add an extractor there when its `matches()` is strict enough that it cannot steal a generic URL. All reach the network through `&dyn Fetcher`. Shared helpers (not verticals themselves): `extractors/og.rs` (single-pass Open Graph `og:*` parser, `raw()` vs `unescaped()`), `extractors/github_common.rs` (shared GitHub API fetch + status handling), `extractors/jsonld_product.rs` / `ecommerce_product.rs` (shared JSON-LD product walker reused by the e-commerce verticals).
 - `reddit.rs` / `linkedin.rs` — top-level fetch-side verticals (distinct from `extractors/` and from `webclaw-core`'s parsers): `reddit.rs` rewrites Reddit hosts to `old.reddit.com` (the `*.json` API is blocked) so `webclaw-core::reddit` can parse server-rendered HTML; `linkedin.rs` reconstructs post + comments from the SPA's HTML-escaped JSON in `<code>` tags (the `included` typed-entity array).
 - `progress.rs` — wraps a slow fetch future in `tokio::select!` against an interval, emitting a periodic `# webclaw: still fetching <URL> (Ns)` line to STDERR.
 - `crawler.rs` — BFS same-origin crawler with configurable depth/concurrency/delay
@@ -96,7 +96,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - **Core has ZERO network dependencies** — takes `&str` HTML, returns structured output. Keep it WASM-compatible. The `quickjs` feature (default ON) pulls in rquickjs, which links a C lib and can't target wasm32; it's gated `cfg(not(target_arch = "wasm32"))` in `lib.rs`. CI compiles webclaw-core for wasm32 both with AND without default features — never ungate that.
 - **webclaw-fetch pins wreq exactly**: `wreq = "=6.0.0-rc.29"` + `wreq-util = "=3.0.0-rc.12"` (BoringSSL). The `=` pin is deliberate — these are release candidates with no semver stability between rc.N builds. No `[patch.crates-io]` forks needed; wreq handles TLS internally.
 - **No build flags in `.cargo/config.toml`** (it is comments-only) — don't add any locally. BUT CI (`.github/workflows/ci.yml`, `deps.yml`) DOES export `RUSTFLAGS: "--cfg reqwest_unstable"` for the wreq path; don't remove it from CI.
-- **webclaw-llm uses plain reqwest**. LLM APIs don't need TLS fingerprinting, so no wreq dep.
+- **webclaw-llm uses plain reqwest**. LLM APIs don't need TLS fingerprinting, so no wreq dep. `webclaw-fetch` also carries a reqwest dep, but only for `cloud.rs` (`CloudClient` → api.webclaw.io) — every *target-site* fetch must go through the wreq `FetchClient`. Don't reach for reqwest in the fetch path.
 - **Vertical extractors take `&dyn Fetcher`**, not `&FetchClient`. This lets the production server plug in a `ProductionFetcher` that adds domain_hints routing and antibot escalation on top of the same wreq client.
 - **qwen3 thinking tags** (`<think>`) are stripped at both provider and consumer levels.
 
@@ -104,10 +104,24 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 
 ```bash
 cargo build --release           # All three binaries (webclaw, webclaw-mcp, webclaw-server)
-cargo test --workspace          # All tests
+cargo test --workspace          # All tests (see the bench_1k caveat below)
 cargo test -p webclaw-core      # Core only
 cargo test -p webclaw-llm       # LLM only
+
+# Single test / one module — tests are inline `#[cfg(test)]` mods, so filter by name:
+cargo test -p webclaw-core noise            # every test whose name contains "noise"
+cargo test -p webclaw-core -- --exact <module>::tests::<fn_name>   # exactly one test
+cargo test -p webclaw-fetch --lib -- --nocapture   # unit tests only, print stdout
 ```
+
+⚠️ **`cargo test --workspace` runs a live 1000-site network benchmark.**
+`crates/webclaw-fetch/tests/bench_1k.rs::bench_1k_sites` is a plain
+`#[tokio::test]` (not `#[ignore]`) that fetches every URL in the tracked
+`targets_1000.txt`. It's the only integration test in the workspace; everything
+else is inline unit tests. For a fast offline loop use `--lib`:
+`cargo test --workspace --lib`. Run the benchmark deliberately instead:
+`cargo test -p webclaw-fetch --test bench_1k --release -- --nocapture`
+(honors `TARGETS_FILE` and the proxy env vars).
 
 CI (`.github/workflows/ci.yml`, with `RUSTFLAGS=--cfg reqwest_unstable`) runs four jobs — match them locally before pushing:
 - `cargo test --workspace`
@@ -117,7 +131,7 @@ CI (`.github/workflows/ci.yml`, with `RUSTFLAGS=--cfg reqwest_unstable`) runs fo
 
 ## Repo Layout & Packaging
 
-Workspace is version **0.6.15**, edition **2024**, license **AGPL-3.0** (matters for the public-OSS scrubbing rules). No crate declares `rust-version`, so MSRV is implicit — edition 2024 floors it at Rust 1.85+; CI pins `dtolnay/rust-toolchain@stable`.
+Workspace is version **0.6.16** (single source of truth: `[workspace.package] version` in the root `Cargo.toml`; all crates inherit it), edition **2024**, license **AGPL-3.0** (matters for the public-OSS scrubbing rules). No crate declares `rust-version`, so MSRV is implicit — edition 2024 floors it at Rust 1.85+; CI pins `dtolnay/rust-toolchain@stable`.
 
 Artifacts outside `crates/` that need separate attention:
 - `packages/create-webclaw/` — `npx create-webclaw` Node scaffolder that installs/configures the MCP server for AI agents (Claude, Cursor, Windsurf, ...). Versioned independently (own `package.json`) — bump it separately when MCP setup changes.
@@ -176,6 +190,17 @@ webclaw --file page.html
 cat page.html | webclaw --stdin
 ```
 
+The bare-URL form above is the default path (`command: Option<Commands>` is
+`None`, and the flag-based flow runs). There are also four **subcommands** for
+flows that don't fit that model (`Commands` enum in `webclaw-cli/src/main.rs`):
+
+```bash
+webclaw extractors --json                  # catalog of vertical extractors (same data as GET /v1/extractors)
+webclaw vertical reddit <url> --raw        # run one vertical by name → typed JSON
+webclaw search "<query>" --num 5 --scrape  # Serper.dev search (BYO key)
+webclaw bench <url> --json --facts benchmarks/facts.json   # token/bytes/time vs raw HTML
+```
+
 ## Key Thresholds
 
 - Scoring minimum: 50 chars text length
@@ -200,13 +225,51 @@ Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_deskt
 
 ## Skills
 
+Repo-local, under `.claude/skills/`:
+
 - `/scrape <url>` — extract content from a URL
-- `/benchmark [url]` — run extraction performance benchmarks
-- `/research <url>` — deep web research via crawl + extraction
 - `/crawl <url>` — crawl a website
+- `/research <url>` — deep web research via crawl + extraction
+- `/benchmark [url]` — extraction quality benchmarks (webclaw vs. WebFetch)
 - `/commit` — conventional commit with change analysis
+- `/add-site` — debug + fix extraction for a site webclaw handles poorly
+- `/noise-debug` — investigate false positives/negatives in `noise.rs`
+- `/test-extraction` — quick single-URL quality check after touching the extractor
+
+## Release
+
+Cutting a release is a **tag push** — `.github/workflows/release.yml` does the rest.
+Bump `[workspace.package] version` in the root `Cargo.toml`, commit, then push
+`vX.Y.Z`. Jobs, in order:
+
+1. `build` — cross-compiles 7 targets. Linux gnu targets are pinned to
+   `ubuntu-22.04` on purpose (glibc 2.35 — building on 24.04 emits a
+   `GLIBC_2.38` requirement that won't start on Debian 12 / Ubuntu 22.04, see
+   issue #73). Don't bump those to `ubuntu-latest`. musl targets build with
+   cargo-zigbuild and are glibc-independent.
+2. `release` — publishes the GitHub release + binary assets.
+3. `npm`, `docker`, `homebrew` — consume the release assets.
+
+`workflow_dispatch` with an existing tag re-runs only `docker` (+ `homebrew`)
+against already-published assets — use it to re-push an image without cutting a
+version.
+
+`packages/create-webclaw/` has its **own** `package.json` version (currently
+0.1.7) and is bumped separately from the workspace.
 
 ## Git
 
 - Remote: `git@github.com:0xMassi/webclaw.git`
-- Use `/commit` skill for commits
+- Three long-lived branches: `dev` → `staging` → `main`. Promote up, never
+  sideways; never push straight to `main`, and never delete `dev`/`staging`.
+  Ship via PR (open → check → merge).
+- **Downstream consumers pin core by git tag**, not branch (`tag = "vX.Y.Z"`).
+  So core's `dev`/`staging` branches are a local workflow convention only —
+  anything a consumer needs must land on `main` **and be tagged**. (Note the
+  name collision: `crates/webclaw-server` here is the OSS self-host binary; the
+  hosted api.webclaw.io service is a separate private repo that depends on this
+  one.)
+- Use the `/commit` skill for commits.
+- Before pushing to this repo, scan the diff — it's public-OSS-bound (AGPL-3.0).
+  No proxy/provider names, antibot mechanics, VPS/Tailscale details, keys, or
+  private roadmap notes. Use generic user-facing wording in `CHANGELOG.md`.

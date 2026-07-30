@@ -28,6 +28,10 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/24218?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-24218" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/24218/daily?language=Rust" alt="0xMassi/webclaw | Trendshift" width="250" height="55"/></a>
+</p>
+
+<p align="center">
   <img src="assets/demo.gif" alt="webclaw extracting clean markdown from a page" width="760" />
 </p>
 
@@ -432,7 +436,7 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 <table>
   <tr>
     <td width="340" align="center">
-      <a href="https://go.nodemaven.com/webclaw">
+      <a href="https://go.nodemaven.com/webclawgh">
         <img src="./assets/sponsors/nodemaven-banner.png" alt="NodeMaven" width="300" />
       </a>
     </td>
@@ -442,20 +446,7 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
       sticky sessions up to 7 days, IP filtering (all proxies under a 97% fraud score), no KYC, and cashback up
       to 10% on traffic. Use <code>WEBCLAW35</code> for 35% off Mobile and Residential proxies, or
       <code>WEBCLAW40</code> for 40% off ISP (Static) proxies at
-      <a href="https://go.nodemaven.com/webclaw">NodeMaven</a>.
-    </td>
-  </tr>
-  <tr>
-    <td width="340" align="center">
-      <a href="https://www.rapidproxy.io/?ref=webclaw">
-        <img src="./assets/sponsors/rapidproxy-banner.png" alt="RapidProxy" width="300" />
-      </a>
-    </td>
-    <td>
-      <strong>RapidProxy</strong> delivers fast, reliable proxy infrastructure for large-scale data collection.
-      With 90M+ residential IPs, smart rotation, high concurrency, AI-powered CAPTCHA bypass, and non-expiring traffic, it helps keep scraping workflows stable at scale.
-      Use code <code>webclaw</code> for 10% off, or
-      <a href="https://www.rapidproxy.io/?ref=webclaw">Try it free</a>.
+      <a href="https://go.nodemaven.com/webclawgh">NodeMaven</a>.
     </td>
   </tr>
   <tr>

@@ -427,27 +427,15 @@ URL:
 <table>
   <tr>
     <td width="340" align="center">
-      <a href="https://go.nodemaven.com/webclaw">
+      <a href="https://go.nodemaven.com/webclawgh">
         <img src="./assets/sponsors/nodemaven-banner.png" alt="NodeMaven" width="300" />
       </a>
     </td>
     <td>
       <strong>NodeMaven</strong> 提供市场上最可靠、IP 质量最高的代理服务。适用于自动化、网页抓取、SEO 研究
       与社媒管理：99.9% 在线率、最长 7 天的粘性会话、IP 过滤（所有代理欺诈评分低于 97%）、无需 KYC，
-      并提供最高 10% 的流量返现。在 <a href="https://go.nodemaven.com/webclaw">NodeMaven</a> 使用
+      并提供最高 10% 的流量返现。在 <a href="https://go.nodemaven.com/webclawgh">NodeMaven</a> 使用
       <code>WEBCLAW35</code> 享移动与住宅代理 35% 折扣，或用 <code>WEBCLAW40</code> 享 ISP（静态）代理 40% 折扣。
-    </td>
-  </tr>
-  <tr>
-    <td width="340" align="center">
-      <a href="https://www.rapidproxy.io/?ref=webclaw">
-        <img src="./assets/sponsors/rapidproxy-banner.png" alt="RapidProxy" width="300" />
-      </a>
-    </td>
-    <td>
-      <strong>RapidProxy</strong> 为大规模数据采集提供快速、可靠的代理基础设施。凭借 9000 万+ 住宅 IP、
-      智能轮换、高并发、AI 驱动的验证码识别以及永不过期的流量，帮助抓取工作流在规模化下保持稳定。
-      使用优惠码 <code>webclaw</code> 享 9 折，或 <a href="https://www.rapidproxy.io/?ref=webclaw">免费试用</a>。
     </td>
   </tr>
   <tr>

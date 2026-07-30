@@ -406,6 +406,39 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 
 ---
 
+## Strategic Partner
+
+<table>
+  <tr>
+    <td align="center">
+      <!-- GitHub renders the README on light OR dark depending on the
+           viewer's theme, and SerpApi's media kit ships a mark per
+           background: gradient-icon-with-black-text for light, all-white for
+           dark. <picture> picks the right one instead of leaving a white
+           wordmark invisible on light mode. Colours unmodified, per their
+           media kit. -->
+      <a href="https://serpapi.com/use-cases/web-search-api?utm_source=webclaw">
+        <picture>
+          <source
+            media="(prefers-color-scheme: dark)"
+            srcset="./assets/sponsors/serpapi-white.png"
+          />
+          <img src="./assets/sponsors/serpapi.png" alt="SerpApi" width="720" />
+        </picture>
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <a href="https://serpapi.com/use-cases/web-search-api?utm_source=webclaw"><strong>SerpApi, the Web Search API</strong></a>.
+      Give real-time data to your AI agents and enhance their responses with SerpApi’s
+      structured search engine results. SerpApi supports webclaw as a Strategic Partner.
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Infrastructure Partner
 
 <table>

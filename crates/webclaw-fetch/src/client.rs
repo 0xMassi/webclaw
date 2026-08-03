@@ -32,7 +32,31 @@ pub struct FetchConfig {
     /// random browser fingerprint. Same-host URLs reuse the same client
     /// for HTTP/2 connection multiplexing.
     pub proxy_pool: Vec<String>,
+    /// Per-attempt timeout handed to the HTTP client.
+    ///
+    /// NOTE: the underlying client applies this as two independent budgets —
+    /// one for the response head, then a *fresh* one for the body — so a single
+    /// attempt can take up to `2 * timeout`. Use [`total_timeout`](Self::total_timeout)
+    /// to bound the whole operation.
     pub timeout: Duration,
+    /// Ceiling on one complete `fetch`, covering every attempt, redirect and
+    /// body read.
+    ///
+    /// Without this the budget compounds and nothing states the real worst
+    /// case: `timeout` is applied twice per attempt by the client, and the
+    /// retry loop runs two attempts with a 1s pause, so a `timeout` of 12s
+    /// permits 49s. Callers reasonably read `timeout: 12s` as "this returns in
+    /// about 12 seconds"; a request that occupies a worker for 49s is a
+    /// reliability problem, not a slow page.
+    ///
+    /// Defaults to `2 * timeout`: one attempt keeps its full head+body budget,
+    /// so a slow-but-successful fetch is unaffected, while a retry can no
+    /// longer extend past it. Retries exist for transient failures, which fail
+    /// fast; retrying after a full-budget timeout rarely succeeds and always
+    /// costs the caller another full budget.
+    ///
+    /// `None` restores the old compounding behaviour.
+    pub total_timeout: Option<Duration>,
     pub follow_redirects: bool,
     pub max_redirects: u32,
     pub headers: HashMap<String, String>,
@@ -46,6 +70,7 @@ impl Default for FetchConfig {
             proxy: None,
             proxy_pool: Vec::new(),
             timeout: Duration::from_secs(12),
+            total_timeout: Some(Duration::from_secs(24)),
             follow_redirects: true,
             max_redirects: 10,
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
@@ -227,9 +252,43 @@ pub struct FetchClient {
     /// out. Stored as `Arc` so cloning a `FetchClient` (common in
     /// axum state) doesn't clone the underlying reqwest pool.
     cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
+    /// Ceiling on one complete `fetch`. See [`FetchConfig::total_timeout`].
+    total_timeout: Option<Duration>,
 }
 
 impl FetchClient {
+    /// Run one attempt under the remaining share of the total budget.
+    ///
+    /// Returns `Err(Timeout)` if the budget is already spent, so the caller
+    /// stops retrying rather than starting an attempt it cannot finish.
+    async fn within_budget<F, T>(
+        &self,
+        started: Instant,
+        url: &str,
+        attempt: F,
+    ) -> Result<T, FetchError>
+    where
+        F: std::future::Future<Output = Result<T, FetchError>>,
+    {
+        let Some(total) = self.total_timeout else {
+            return attempt.await;
+        };
+        let remaining = total.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(FetchError::Build(format!(
+                "fetch budget of {}ms exhausted for {url}",
+                total.as_millis()
+            )));
+        }
+        match tokio::time::timeout(remaining, attempt).await {
+            Ok(res) => res,
+            Err(_) => Err(FetchError::Build(format!(
+                "fetch exceeded its {}ms budget for {url}",
+                total.as_millis()
+            ))),
+        }
+    }
+
     /// Build a new client from config.
     pub fn new(config: FetchConfig) -> Result<Self, FetchError> {
         let variants = collect_variants(&config.browser);
@@ -288,6 +347,7 @@ impl FetchClient {
             pool,
             pdf_mode,
             cloud: None,
+            total_timeout: config.total_timeout,
         })
     }
 
@@ -361,13 +421,16 @@ impl FetchClient {
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
         let delays = [Duration::ZERO, Duration::from_secs(1)];
         let mut last_err = None;
+        // Clock starts before the first attempt so the retry pause and every
+        // attempt come out of one budget, rather than each getting a fresh one.
+        let started = Instant::now();
 
         for (attempt, delay) in delays.iter().enumerate() {
             if attempt > 0 {
                 tokio::time::sleep(*delay).await;
             }
 
-            match self.fetch_once(url).await {
+            match self.within_budget(started, url, self.fetch_once(url)).await {
                 Ok(result) => {
                     if is_retryable_status(result.status) && attempt < delays.len() - 1 {
                         warn!(
@@ -445,12 +508,17 @@ impl FetchClient {
     ) -> Result<FetchResult, FetchError> {
         let delays = [Duration::ZERO, Duration::from_secs(1)];
         let mut last_err = None;
+        // One budget across the whole call — see `within_budget`.
+        let started = Instant::now();
 
         for (attempt, delay) in delays.iter().enumerate() {
             if attempt > 0 {
                 tokio::time::sleep(*delay).await;
             }
-            match self.fetch_once_with_headers(url, extra).await {
+            match self
+                .within_budget(started, url, self.fetch_once_with_headers(url, extra))
+                .await
+            {
                 Ok(result) => {
                     if is_retryable_status(result.status) && attempt < delays.len() - 1 {
                         warn!(
@@ -932,6 +1000,83 @@ mod tests {
             headers: http::HeaderMap::new(),
             body,
         }
+    }
+
+    #[test]
+    fn total_timeout_defaults_to_twice_the_per_attempt_timeout() {
+        // The client applies `timeout` twice per attempt (head, then a fresh
+        // one for the body), so 2x keeps a single slow-but-successful fetch
+        // intact while stopping the retry loop from compounding it.
+        let c = FetchConfig::default();
+        assert_eq!(c.timeout, Duration::from_secs(12));
+        assert_eq!(c.total_timeout, Some(Duration::from_secs(24)));
+    }
+
+    #[tokio::test]
+    async fn within_budget_refuses_an_attempt_once_the_budget_is_spent() {
+        let client = FetchClient::new(FetchConfig {
+            total_timeout: Some(Duration::from_millis(50)),
+            ..Default::default()
+        })
+        .expect("build client");
+
+        // Pretend the call started long ago: the next attempt must not run.
+        let started = Instant::now() - Duration::from_secs(5);
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran2 = std::sync::Arc::clone(&ran);
+        let res: Result<(), FetchError> = client
+            .within_budget(started, "https://example.com", async move {
+                ran2.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            res.is_err(),
+            "an exhausted budget must not start an attempt"
+        );
+        assert!(
+            !ran.load(std::sync::atomic::Ordering::SeqCst),
+            "the attempt future must never be polled once the budget is gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn within_budget_bounds_a_hanging_attempt() {
+        let client = FetchClient::new(FetchConfig {
+            total_timeout: Some(Duration::from_millis(80)),
+            ..Default::default()
+        })
+        .expect("build client");
+
+        let began = Instant::now();
+        let res: Result<(), FetchError> = client
+            .within_budget(Instant::now(), "https://example.com", async {
+                // Far longer than the budget.
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok(())
+            })
+            .await;
+
+        assert!(res.is_err());
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "must abort at the budget, not run to completion"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_total_timeout_restores_uncapped_behaviour() {
+        let client = FetchClient::new(FetchConfig {
+            total_timeout: None,
+            ..Default::default()
+        })
+        .expect("build client");
+        let started = Instant::now() - Duration::from_secs(600);
+        let res: Result<u8, FetchError> = client
+            .within_budget(started, "https://example.com", async { Ok(7) })
+            .await;
+        assert_eq!(res.expect("should run"), 7);
     }
 
     #[test]

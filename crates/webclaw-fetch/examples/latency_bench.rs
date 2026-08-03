@@ -236,8 +236,18 @@ async fn main() {
         println!("{}", r.to_json());
     }
 
-    let ok: Vec<&Row> = rows.iter().filter(|r| r.error.is_none()).collect();
-    let failed = rows.len() - ok.len();
+    // A transport error is not the only kind of failure. A 403 challenge page
+    // arrives fast, carries a body, and sets no error — so counting it as a
+    // successful fetch lets FAST FAILURES WIN RACES: an egress path that gets
+    // blocked looks quicker than one that is served the real page. Latency is
+    // therefore only summarised over 2xx responses, and non-2xx is reported
+    // separately rather than folded into the percentiles.
+    let ok: Vec<&Row> = rows
+        .iter()
+        .filter(|r| r.error.is_none() && matches!(r.status, Some(200..=299)))
+        .collect();
+    let transport_err = rows.iter().filter(|r| r.error.is_some()).count();
+    let non_2xx = rows.len() - ok.len() - transport_err;
 
     eprintln!("\n=== latency (ms) ===");
     summarize("fetch", ok.iter().map(|r| r.fetch_ms).collect());
@@ -258,11 +268,28 @@ async fn main() {
     let total_bytes: usize = ok.iter().map(|r| r.bytes).sum();
     eprintln!("\n=== shape ===");
     eprintln!(
-        "ok={} failed={} success={:.1}%",
+        "2xx={} non-2xx={} transport-err={} success={:.1}%",
         ok.len(),
-        failed,
+        non_2xx,
+        transport_err,
         100.0 * ok.len() as f64 / rows.len().max(1) as f64
     );
+    if non_2xx > 0 {
+        // Worth calling out: a scenario with many non-2xx responses may look
+        // fast purely because it was blocked quickly.
+        let mut codes: Vec<u16> = rows
+            .iter()
+            .filter(|r| r.error.is_none())
+            .filter_map(|r| r.status)
+            .filter(|s| !(200..=299).contains(s))
+            .collect();
+        codes.sort_unstable();
+        codes.dedup();
+        eprintln!(
+            "  non-2xx status codes seen: {:?} — excluded from the latency percentiles above",
+            codes
+        );
+    }
     eprintln!(
         "bytes fetched: {:.1} MB (metered egress is billed on this)",
         total_bytes as f64 / 1_048_576.0

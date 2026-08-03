@@ -56,6 +56,40 @@ HTML genuinely has no content, and a browser render is the correct answer. A
 page tripping on **byte size while carrying real words** would be a false
 positive. The two demand opposite fixes, so measure before concluding.
 
+## Comparing two egress paths
+
+Two traps make A/B egress comparisons produce confident nonsense. Both were hit
+on the first real run here.
+
+**Fast failures win races.** A 403 challenge page arrives quickly, carries a
+body, and raises no transport error. Score it as a success and the egress path
+that gets *blocked* looks faster than the one served the real page. One such row
+produced an apparent "28× speedup" that was a block page timed against a real
+one. Latency percentiles here therefore cover 2xx only, and non-2xx is counted
+separately — but that is a floor, not a ceiling. When comparing two runs, also
+require **body sizes within ~10%** per URL before believing the pair; a soft
+block returns 200 with a much smaller body and slips past a status check.
+
+**The noise floor is bigger than most effects.** Four runs of an *unchanged*
+configuration over the same 200 URLs spanned 1.8× in mean and 2.8× in max, with
+per-URL max/min across identical runs reaching ~10× at p90. A single-run
+difference under roughly 2× carries no information, and a single-URL difference
+of any size carries none at all. To make a comparison mean something:
+
+- **Interleave the arms** per URL (A/B/A/B within the same short window) instead
+  of running all of A then all of B — sequential order alone can manufacture a
+  result.
+- **Include a null arm** — A vs a second instance of A. Any A-vs-B effect has to
+  beat the A-vs-A effect to count.
+- **Deduplicate to backends, not hostnames.** Distinct hostnames routinely share
+  one origin or anycast endpoint, so four URLs behind one backend is one
+  observation. Resolve first and keep one URL per backend.
+- **Report the paired median ratio**, not the difference of aggregate p50s. A
+  single multi-MB URL can supply more than the entire gap between two arms.
+
+Note that a large-object transfer difference is a *bandwidth* question wearing a
+latency costume; separate it rather than letting it drive a p99.
+
 ## Reading the tail
 
 Latency here is heavily tail-weighted: on a representative corpus a low

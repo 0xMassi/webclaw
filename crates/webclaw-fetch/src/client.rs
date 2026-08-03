@@ -110,16 +110,31 @@ fn check_body_ceiling(buffered: usize, next_chunk: usize) -> Result<(), FetchErr
 }
 
 impl Response {
-    /// Buffer a wreq response into an owned Response.
+    /// Buffer a wreq response into an owned Response, bounded in BOTH bytes
+    /// and time.
     ///
     /// Rejects bodies that advertise a Content-Length beyond
     /// [`MAX_BODY_BYTES`] before we pay any allocation, then streams the
-    /// body chunk-by-chunk while enforcing a running ceiling. `chunk()`
+    /// body chunk-by-chunk while enforcing a running ceiling. The stream
     /// yields *post-decompression* bytes (gzip/brotli/zstd/deflate are
     /// negotiated), so a tiny compressed payload that inflates to
     /// gigabytes is aborted as soon as the accumulated size crosses the
     /// cap — it never gets fully buffered in memory.
-    async fn from_wreq(resp: wreq::Response) -> Result<Self, FetchError> {
+    ///
+    /// `stall` bounds how long the body may go with NO new bytes. The
+    /// client-level `.timeout()` does not cover this loop — it governs getting
+    /// a response head — so without a deadline here a server that stops
+    /// sending mid-body holds the connection open indefinitely and a fetch
+    /// runs well past the configured timeout. The size ceiling alone does not
+    /// help: a stalled stream never reaches it.
+    ///
+    /// Deliberately an idle timeout rather than a total-body deadline. A total
+    /// deadline penalises *size* instead of *stalling*: a legitimate multi-MB
+    /// download (a CSV export, a large PDF) is slow because there is a lot of
+    /// it, and killing that is a regression, not a fix. A stalled peer is
+    /// distinguishable because it stops delivering chunks — so the clock
+    /// resets on every chunk and only silence trips it.
+    async fn from_wreq(resp: wreq::Response, stall: Duration) -> Result<Self, FetchError> {
         if let Some(len) = resp.content_length()
             && len > MAX_BODY_BYTES
         {
@@ -136,10 +151,23 @@ impl Response {
         // compression bomb is aborted before it is fully buffered in memory.
         let mut buf = bytes::BytesMut::new();
         let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| FetchError::BodyDecode(e.to_string()))?;
-            check_body_ceiling(buf.len(), chunk.len())?;
-            buf.extend_from_slice(&chunk);
+        loop {
+            match tokio::time::timeout(stall, stream.next()).await {
+                // No chunk within the idle window: the peer went quiet.
+                Err(_) => {
+                    return Err(FetchError::BodyDecode(format!(
+                        "response body stalled: no data for {}ms after {} bytes",
+                        stall.as_millis(),
+                        buf.len()
+                    )));
+                }
+                Ok(None) => break,
+                Ok(Some(chunk)) => {
+                    let chunk = chunk.map_err(|e| FetchError::BodyDecode(e.to_string()))?;
+                    check_body_ceiling(buf.len(), chunk.len())?;
+                    buf.extend_from_slice(&chunk);
+                }
+            }
         }
 
         Ok(Self {
@@ -207,6 +235,10 @@ pub struct FetchClient {
     /// out. Stored as `Arc` so cloning a `FetchClient` (common in
     /// axum state) doesn't clone the underlying reqwest pool.
     cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
+    /// Configured per-request timeout, retained so the body-read deadline can
+    /// be derived from it. The wreq client's own `.timeout()` governs getting
+    /// a response head; it does not bound streaming the body.
+    timeout: Duration,
 }
 
 impl FetchClient {
@@ -268,7 +300,19 @@ impl FetchClient {
             pool,
             pdf_mode,
             cloud: None,
+            timeout: config.timeout,
         })
+    }
+
+    /// How long the body stream may go with no new bytes before it counts as
+    /// stalled.
+    ///
+    /// Reuses the configured request timeout: a peer that has sent nothing for
+    /// as long as we were willing to wait for the whole response head is not
+    /// coming back. This is an *idle* window, not a total budget, so a large
+    /// but healthy download is unaffected however long it legitimately takes.
+    fn body_stall_timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// Attach a cloud-fallback client. Returns `self` so it composes in
@@ -406,7 +450,7 @@ impl FetchClient {
             req = req.header(*k, *v);
         }
         let resp = req.send().await?;
-        let response = Response::from_wreq(resp).await?;
+        let response = Response::from_wreq(resp, self.body_stall_timeout()).await?;
         response_to_result(response, start)
     }
 
@@ -482,7 +526,7 @@ impl FetchClient {
         let url = parsed_url.as_str();
         let client = self.pick_client(url);
         let resp = client.get(url).send().await?;
-        let response = Response::from_wreq(resp).await?;
+        let response = Response::from_wreq(resp, self.body_stall_timeout()).await?;
         Ok((response.status(), response.into_body()))
     }
 
@@ -520,7 +564,7 @@ impl FetchClient {
         let start = Instant::now();
         let client = self.pick_client(url);
         let resp = client.get(url).send().await?;
-        let mut response = Response::from_wreq(resp).await?;
+        let mut response = Response::from_wreq(resp, self.body_stall_timeout()).await?;
 
         // Cookie warmup: if we get a challenge page, visit the homepage first
         // to collect Akamai cookies (_abck, bm_sz, etc.), then retry.
@@ -530,7 +574,7 @@ impl FetchClient {
             debug!("challenge detected, warming cookies via {homepage}");
             let _ = self.fetch(&homepage).await;
             let resp = client.get(url).send().await?;
-            response = Response::from_wreq(resp).await?;
+            response = Response::from_wreq(resp, self.body_stall_timeout()).await?;
             debug!("retried after cookie warmup: status={}", response.status());
         }
 
@@ -900,6 +944,41 @@ async fn collect_ordered<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn client_with_timeout(secs: u64) -> FetchClient {
+        FetchClient::new(FetchConfig {
+            timeout: Duration::from_secs(secs),
+            ..Default::default()
+        })
+        .expect("build client")
+    }
+
+    #[test]
+    fn body_stall_timeout_tracks_the_configured_timeout() {
+        assert_eq!(
+            client_with_timeout(10).body_stall_timeout(),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            client_with_timeout(3).body_stall_timeout(),
+            Duration::from_secs(3)
+        );
+    }
+
+    /// The stall window is an IDLE timeout, not a total-body deadline: it must
+    /// not depend on how long the request has already been running, or a large
+    /// healthy download gets killed for being large.
+    #[tokio::test]
+    async fn body_stall_timeout_is_independent_of_elapsed_time() {
+        let c = client_with_timeout(5);
+        let before = c.body_stall_timeout();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            before,
+            c.body_stall_timeout(),
+            "idle window must not shrink as the request ages"
+        );
+    }
 
     #[test]
     fn test_batch_result_struct() {

@@ -757,6 +757,51 @@ impl FetchClient {
         collect_ordered(handles, urls.len()).await
     }
 
+    /// Fetch and extract many URLs, yielding each result as it completes.
+    ///
+    /// Prefer this over [`fetch_and_extract_batch`](Self::fetch_and_extract_batch)
+    /// for large inputs. That one spawns a task per URL up front and collects
+    /// everything into a `Vec`, so both task count and memory scale with the
+    /// input — which is what forces callers to impose an arbitrary maximum
+    /// batch size. This polls at most `concurrency` futures at a time and hands
+    /// each result straight to the consumer, so a batch of ten URLs and a batch
+    /// of ten thousand cost the same at rest and no cap is needed.
+    ///
+    /// Results arrive in **completion order**, not input order — that is the
+    /// point of streaming. Use `fetch_and_extract_batch` when order matters and
+    /// the input is small enough to buffer.
+    ///
+    /// ```ignore
+    /// use futures_util::StreamExt;
+    /// let mut s = client.fetch_and_extract_batch_stream(urls, 10, opts);
+    /// while let Some(res) = s.next().await {
+    ///     // write it out; nothing accumulates
+    /// }
+    /// ```
+    pub fn fetch_and_extract_batch_stream(
+        self: &Arc<Self>,
+        urls: Vec<String>,
+        concurrency: usize,
+        options: webclaw_core::ExtractionOptions,
+        // `use<>`: the stream clones the Arc internally and borrows nothing,
+        // so it must not capture `&self`'s lifetime — otherwise callers cannot
+        // return it from the scope that built it (e.g. an axum handler
+        // streaming a response body).
+    ) -> impl futures_util::Stream<Item = BatchExtractResult> + use<> {
+        let client = Arc::clone(self);
+        let options = Arc::new(options);
+        futures_util::stream::iter(urls.into_iter().map(move |url| {
+            let client = Arc::clone(&client);
+            let options = Arc::clone(&options);
+            async move {
+                let result = client.fetch_and_extract_with_options(&url, &options).await;
+                BatchExtractResult { url, result }
+            }
+        }))
+        // Bounds in-flight work without materialising a task per URL.
+        .buffer_unordered(concurrency.max(1))
+    }
+
     /// Returns the number of proxies in the rotation pool, or 0 if static mode.
     pub fn proxy_pool_size(&self) -> usize {
         match &self.pool {
@@ -1000,6 +1045,49 @@ mod tests {
             headers: http::HeaderMap::new(),
             body,
         }
+    }
+
+    #[tokio::test]
+    async fn batch_stream_yields_every_url_without_buffering_them() {
+        use futures_util::StreamExt;
+
+        // All unroutable, so each fails fast — the point here is the stream
+        // contract (every input yields exactly one result), not the fetching.
+        let urls: Vec<String> = (0..25)
+            .map(|i| format!("https://nonexistent-{i}.invalid/"))
+            .collect();
+        let expected: std::collections::HashSet<String> = urls.iter().cloned().collect();
+
+        let client = Arc::new(FetchClient::new(FetchConfig::default()).expect("build client"));
+        let mut seen = std::collections::HashSet::new();
+        let mut stream = client.fetch_and_extract_batch_stream(
+            urls,
+            8,
+            webclaw_core::ExtractionOptions::default(),
+        );
+        while let Some(res) = stream.next().await {
+            assert!(
+                seen.insert(res.url),
+                "each URL must be yielded exactly once"
+            );
+        }
+        assert_eq!(seen, expected, "every input URL must produce a result");
+    }
+
+    #[tokio::test]
+    async fn batch_stream_survives_zero_concurrency() {
+        use futures_util::StreamExt;
+        let client = Arc::new(FetchClient::new(FetchConfig::default()).expect("build client"));
+        // `buffer_unordered(0)` would stall forever; the API clamps it.
+        let mut stream = client.fetch_and_extract_batch_stream(
+            vec!["https://nonexistent.invalid/".to_string()],
+            0,
+            webclaw_core::ExtractionOptions::default(),
+        );
+        assert!(
+            stream.next().await.is_some(),
+            "must not deadlock at concurrency 0"
+        );
     }
 
     #[test]

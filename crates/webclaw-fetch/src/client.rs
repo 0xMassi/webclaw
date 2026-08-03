@@ -85,7 +85,9 @@ struct Response {
     status: u16,
     url: String,
     headers: http::HeaderMap,
-    body: bytes::Bytes,
+    /// Owned as `Vec<u8>` rather than `Bytes` so `into_text` can hand the
+    /// allocation straight to `String` instead of copying it (see `into_text`).
+    body: Vec<u8>,
 }
 
 /// Maximum fetched body size. A single 50 MB HTML document is already
@@ -134,7 +136,8 @@ impl Response {
         // wreq 6.0.0-rc.29 dropped `Response::chunk()`. Stream post-decompression
         // bytes via `bytes_stream()` and keep enforcing the running ceiling so a
         // compression bomb is aborted before it is fully buffered in memory.
-        let mut buf = bytes::BytesMut::new();
+        // No capacity hint on purpose — see `into_text` and the note below.
+        let mut buf: Vec<u8> = Vec::new();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| FetchError::BodyDecode(e.to_string()))?;
@@ -146,7 +149,7 @@ impl Response {
             status,
             url,
             headers,
-            body: buf.freeze(),
+            body: buf,
         })
     }
 
@@ -167,15 +170,32 @@ impl Response {
         String::from_utf8_lossy(&self.body)
     }
 
+    /// Decode the body to `String`, consuming the buffer.
+    ///
+    /// The valid-UTF-8 case — effectively every page — takes ownership of the
+    /// existing allocation, so this costs no allocation and no copy.
+    /// `from_utf8_lossy(&self.body).into_owned()` always allocated a second
+    /// full-size buffer and memcpy'd the whole body into it.
+    ///
+    /// The fallback must decode `e.as_bytes()`, i.e. the bytes handed back by
+    /// the failed conversion, so invalid-UTF-8 output stays byte-identical to
+    /// the previous implementation. Do NOT add `shrink_to_fit()` — it would
+    /// reintroduce exactly the copy this removes.
+    ///
+    /// Charset handling is unchanged and still ignores `Content-Type: charset`;
+    /// a page in a non-UTF-8 encoding produces the same mojibake it did before.
+    /// Fixing that is separate work with extraction-quality blast radius.
     fn into_text(self) -> String {
-        String::from_utf8_lossy(&self.body).into_owned()
+        String::from_utf8(self.body)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
     }
 
     /// Consume the response and return the raw, undecoded body bytes.
     /// Used by [`FetchClient::fetch_raw`] for binary payloads (e.g. gzipped
     /// sitemaps) that must not be run through lossy UTF-8 decoding.
     fn into_body(self) -> bytes::Bytes {
-        self.body
+        // `Bytes::from(Vec<u8>)` adopts the allocation; still no copy.
+        bytes::Bytes::from(self.body)
     }
 }
 
@@ -537,9 +557,11 @@ impl FetchClient {
         let status = response.status();
         let final_url = response.url().to_string();
 
-        let headers = response.headers().clone();
+        // Borrowed, not cloned: both consumers below take `&HeaderMap`, and the
+        // borrow ends before `response` is moved into `into_text()`.
+        let headers = response.headers();
 
-        let is_pdf = is_pdf_content_type(&headers);
+        let is_pdf = is_pdf_content_type(headers);
 
         if is_pdf {
             debug!(status, "detected PDF response, using pdf extraction");
@@ -557,7 +579,7 @@ impl FetchClient {
             let pdf_result = webclaw_pdf::extract_pdf(bytes, self.pdf_mode.clone())?;
             Ok(pdf_to_extraction_result(&pdf_result, &final_url))
         } else if let Some(doc_type) =
-            crate::document::is_document_content_type(&headers, &final_url)
+            crate::document::is_document_content_type(headers, &final_url)
         {
             debug!(status, doc_type = ?doc_type, "detected document response, extracting");
 
@@ -900,6 +922,74 @@ async fn collect_ordered<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a `Response` around a raw body so the decode path can be tested
+    /// without a network round trip.
+    fn resp_with_body(body: Vec<u8>) -> Response {
+        Response {
+            status: 200,
+            url: "https://example.com/".to_string(),
+            headers: http::HeaderMap::new(),
+            body,
+        }
+    }
+
+    #[test]
+    fn into_text_matches_lossy_decoding_byte_for_byte() {
+        // `into_text` swapped `from_utf8_lossy(..).into_owned()` for a
+        // consuming `String::from_utf8`. The valid case must be identical and
+        // the INVALID case must still produce the same replacement characters
+        // in the same positions — that is the whole hazard of the change.
+        let mut cases: Vec<Vec<u8>> = vec![
+            b"".to_vec(),
+            b"plain ascii".to_vec(),
+            "héllo wörld — em dash".as_bytes().to_vec(),
+            "日本語のテキスト".as_bytes().to_vec(),
+            b"\xEF\xBB\xBFleading BOM".to_vec(),
+            b"truncated 2-byte: \xC3".to_vec(),
+            b"truncated 3-byte: \xE2\x82".to_vec(),
+            b"truncated 4-byte: \xF0\x9F\x98".to_vec(),
+            b"lone surrogate: \xED\xA0\x80".to_vec(),
+            b"overlong NUL: \xC0\x80".to_vec(),
+            b"beyond U+10FFFF: \xF5\x80\x80\x80".to_vec(),
+            b"windows-1252 quotes: \x93hi\x94".to_vec(),
+            vec![0xFF, 0xFE, 0xFD],
+        ];
+        // A bad byte at several offsets, including around common buffer edges.
+        for off in [0usize, 1, 4095, 4096, 4097, 65535] {
+            let mut v = vec![b'a'; 70_000];
+            v[off] = 0xFF;
+            cases.push(v);
+        }
+
+        for body in cases {
+            let expected = String::from_utf8_lossy(&body).into_owned();
+            let got = resp_with_body(body.clone()).into_text();
+            assert_eq!(
+                got,
+                expected,
+                "decode diverged for body prefix {:?}",
+                &body[..body.len().min(24)]
+            );
+        }
+    }
+
+    #[test]
+    fn into_text_reuses_the_buffer_for_valid_utf8() {
+        // The point of the change: no second allocation, no copy. Proven by
+        // the String landing on the same address the Vec occupied.
+        let body = "a reasonably sized valid utf-8 body".repeat(4096);
+        let bytes = body.into_bytes();
+        let ptr = bytes.as_ptr();
+        let text = resp_with_body(bytes).into_text();
+        assert_eq!(text.as_ptr(), ptr, "valid UTF-8 must not be re-allocated");
+    }
+
+    #[test]
+    fn into_body_still_returns_the_bytes_unchanged() {
+        let raw = vec![0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe];
+        assert_eq!(resp_with_body(raw.clone()).into_body().as_ref(), &raw[..]);
+    }
 
     #[test]
     fn test_batch_result_struct() {

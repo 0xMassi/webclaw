@@ -60,6 +60,23 @@ pub struct CrawlConfig {
     /// When set to `true`, the crawler breaks out of the main loop early.
     /// Callers (e.g. a Ctrl+C handler) can flip this to request graceful cancellation.
     pub cancel_flag: Option<Arc<AtomicBool>>,
+    /// Drop each `PageResult` after reporting it instead of collecting it into
+    /// [`CrawlResult::pages`].
+    ///
+    /// This is what makes a large crawl possible at all. Retention is O(pages ×
+    /// page size), and an extracted page runs to ~90 KB, so a 5 000-page crawl
+    /// holds roughly 440 MB and a 50 000-page crawl roughly 4.4 GB — the crawl
+    /// only returns once it is finished, so that is all live at once. The page
+    /// ceiling exists to bound that, not because the crawl itself cannot go
+    /// further.
+    ///
+    /// Set this with [`progress_tx`](Self::progress_tx) to stream results to
+    /// the consumer as they complete and keep peak memory flat regardless of
+    /// page count. `total`/`ok`/`errors` are still counted, so the summary is
+    /// unaffected; only `pages` comes back empty.
+    ///
+    /// Defaults to `false`, so existing callers keep collecting.
+    pub stream_only: bool,
 }
 
 impl Default for CrawlConfig {
@@ -78,6 +95,7 @@ impl Default for CrawlConfig {
             allow_external_links: false,
             progress_tx: None,
             cancel_flag: None,
+            stream_only: false,
         }
     }
 }
@@ -240,6 +258,11 @@ impl Crawler {
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency));
         let mut visited: HashSet<String>;
         let mut pages: Vec<PageResult> = Vec::new();
+        // Counted independently of `pages`: in stream-only mode nothing is
+        // retained, so `pages.len()` can no longer stand in for progress.
+        let mut completed: usize = 0;
+        let mut ok_count: usize = 0;
+        let mut err_count: usize = 0;
         let mut frontier: Vec<(String, usize)>;
 
         // Resume from saved state or start fresh
@@ -284,7 +307,7 @@ impl Crawler {
             }
         }
 
-        while !frontier.is_empty() && pages.len() < self.config.max_pages {
+        while !frontier.is_empty() && completed < self.config.max_pages {
             // Check cancel flag before processing each batch
             if self.is_cancelled() {
                 info!("crawl cancelled by user");
@@ -295,7 +318,7 @@ impl Crawler {
             let batch: Vec<(String, usize)> = frontier
                 .drain(..)
                 .filter(|(url, _)| visited.insert(url.clone()))
-                .take(self.config.max_pages.saturating_sub(pages.len()))
+                .take(self.config.max_pages.saturating_sub(completed))
                 .collect();
 
             if batch.is_empty() {
@@ -388,14 +411,30 @@ impl Crawler {
                     }
                 }
 
-                // Stream progress if a channel is configured
-                if let Some(tx) = &self.config.progress_tx {
-                    let _ = tx.send(page.clone());
+                completed += 1;
+                if page.extraction.is_some() {
+                    ok_count += 1;
+                } else {
+                    err_count += 1;
                 }
 
-                pages.push(page);
+                // Stream progress if a channel is configured. In stream-only
+                // mode the page is moved into the channel rather than cloned —
+                // nothing downstream retains it, so the clone would be pure
+                // waste at exactly the page counts this mode exists to serve.
+                match (&self.config.progress_tx, self.config.stream_only) {
+                    (Some(tx), true) => {
+                        let _ = tx.send(page);
+                    }
+                    (Some(tx), false) => {
+                        let _ = tx.send(page.clone());
+                        pages.push(page);
+                    }
+                    (None, true) => {}
+                    (None, false) => pages.push(page),
+                }
 
-                if pages.len() >= self.config.max_pages {
+                if completed >= self.config.max_pages {
                     break;
                 }
 
@@ -430,10 +469,8 @@ impl Crawler {
         }
 
         let total_elapsed = start.elapsed();
-        let ok_count = pages.iter().filter(|p| p.extraction.is_some()).count();
-        let err_count = pages.len() - ok_count;
         info!(
-            total = pages.len(),
+            total = completed,
             ok = ok_count,
             errors = err_count,
             elapsed_ms = %total_elapsed.as_millis(),
@@ -441,7 +478,7 @@ impl Crawler {
         );
 
         CrawlResult {
-            total: pages.len(),
+            total: completed,
             ok: ok_count,
             errors: err_count,
             elapsed_secs: total_elapsed.as_secs_f64(),
@@ -700,6 +737,37 @@ fn glob_match_inner(pat: &[u8], text: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_only_defaults_off_so_existing_callers_keep_collecting() {
+        assert!(
+            !CrawlConfig::default().stream_only,
+            "flipping this default would silently empty CrawlResult::pages for every caller"
+        );
+    }
+
+    /// The seed-fetch failure path is the one place a `CrawlResult` is built
+    /// without running the main loop, so it is reachable without a network.
+    /// It must report the failure in the counters either way — those are what
+    /// a streaming consumer has left once `pages` is empty.
+    #[tokio::test]
+    async fn failed_seed_is_counted_not_just_collected() {
+        let cfg = CrawlConfig {
+            max_pages: 5,
+            ..Default::default()
+        };
+        let crawler = Crawler::new("https://invalid.invalid/", cfg).expect("build crawler");
+        let res = crawler.crawl("https://invalid.invalid/", None).await;
+
+        assert_eq!(res.total, 1);
+        assert_eq!(res.ok, 0);
+        assert_eq!(res.errors, 1);
+        assert_eq!(
+            res.total,
+            res.ok + res.errors,
+            "counters must reconcile independently of what `pages` retained"
+        );
+    }
 
     #[test]
     fn normalize_strips_fragment() {

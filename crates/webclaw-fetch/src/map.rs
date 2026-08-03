@@ -101,7 +101,7 @@ pub async fn discover_urls(
     let config = CrawlConfig {
         fetch: FetchConfig::default(),
         max_depth: opts.crawl_depth,
-        max_pages: opts.max_crawl_pages,
+        max_pages: Some(opts.max_crawl_pages),
         // Politeness + scope: same-origin only (crawler default), modest delay.
         delay: Duration::from_millis(50),
         ..CrawlConfig::default()

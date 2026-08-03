@@ -94,11 +94,11 @@ pub async fn batch(
                 Ok::<_, std::convert::Infallible>(line)
             });
 
-        return Ok(Response::builder()
+        return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/x-ndjson")
             .body(Body::from_stream(lines))
-            .map_err(|e| ApiError::internal(format!("failed to start stream: {e}")))?);
+            .map_err(|e| ApiError::internal(format!("failed to start stream: {e}")));
     }
 
     let url_refs: Vec<&str> = safe_urls.iter().map(|s| s.as_str()).collect();

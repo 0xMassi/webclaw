@@ -21,6 +21,23 @@
 //! Writes JSONL to stdout (one object per URL) and a percentile summary to
 //! stderr, so `> runs/today.jsonl` keeps the raw data while the summary stays
 //! on the terminal.
+//!
+//! ## Egress
+//!
+//! | Env | Effect |
+//! |---|---|
+//! | *(neither set)* | Direct from this host |
+//! | `WEBCLAW_PROXY` | Every request through one proxy |
+//! | `BENCH_PROXY_FILE` | Rotating pool, one client per proxy URL in the file |
+//!
+//! `BENCH_PROXY_FILE` exercises the same rotating-pool path production uses,
+//! so pool behaviour (per-host client affinity, connection reuse across a
+//! pool) is measured rather than assumed. Proxy files hold credentials: keep
+//! them outside the repo.
+//!
+//! `BENCH_LABEL` tags every row so runs across different egress paths can be
+//! concatenated and compared. Total bytes fetched is reported because metered
+//! egress (residential proxies especially) is billed per GB.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -29,6 +46,7 @@ use webclaw_fetch::{BrowserProfile, FetchClient, FetchConfig};
 
 /// One measured URL.
 struct Row {
+    label: String,
     url: String,
     status: Option<u16>,
     fetch_ms: u128,
@@ -43,7 +61,8 @@ impl Row {
         // Hand-rolled so the example pulls in no serde_json dev-dependency.
         let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
         format!(
-            r#"{{"url":"{}","status":{},"fetch_ms":{},"extract_ms":{},"bytes":{},"words":{},"error":{}}}"#,
+            r#"{{"label":"{}","url":"{}","status":{},"fetch_ms":{},"extract_ms":{},"bytes":{},"words":{},"error":{}}}"#,
+            esc(&self.label),
             esc(&self.url),
             self.status.map_or("null".into(), |s| s.to_string()),
             self.fetch_ms,
@@ -110,17 +129,40 @@ async fn main() {
         .take(limit)
         .collect();
 
+    let label = std::env::var("BENCH_LABEL").unwrap_or_else(|_| "direct".to_string());
+
+    // A proxy file builds the rotating pool; a single WEBCLAW_PROXY does not.
+    let proxy_pool: Vec<String> = match std::env::var("BENCH_PROXY_FILE") {
+        Ok(p) => std::fs::read_to_string(&p)
+            .expect("read BENCH_PROXY_FILE")
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_string)
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
     eprintln!(
-        "urls={} concurrency={} timeout={}s",
+        "label={} urls={} concurrency={} timeout={}s egress={}",
+        label,
         urls.len(),
         concurrency,
-        timeout_secs
+        timeout_secs,
+        if !proxy_pool.is_empty() {
+            format!("pool of {}", proxy_pool.len())
+        } else if std::env::var("WEBCLAW_PROXY").is_ok() {
+            "single proxy".to_string()
+        } else {
+            "direct".to_string()
+        }
     );
 
     let client = Arc::new(
         FetchClient::new(FetchConfig {
             browser: BrowserProfile::Chrome,
             proxy: std::env::var("WEBCLAW_PROXY").ok(),
+            proxy_pool,
             timeout: Duration::from_secs(timeout_secs),
             ..Default::default()
         })
@@ -134,6 +176,7 @@ async fn main() {
     for url in urls {
         let client = Arc::clone(&client);
         let sem = Arc::clone(&sem);
+        let label = label.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore open");
 
@@ -156,6 +199,7 @@ async fn main() {
                         .map(|e| e.content.plain_text.split_whitespace().count())
                         .unwrap_or(0);
                     Row {
+                        label,
                         url,
                         status: Some(r.status),
                         fetch_ms,
@@ -166,6 +210,7 @@ async fn main() {
                     }
                 }
                 Err(e) => Row {
+                    label,
                     url,
                     status: None,
                     fetch_ms,
@@ -210,8 +255,18 @@ async fn main() {
         0.0
     };
 
+    let total_bytes: usize = ok.iter().map(|r| r.bytes).sum();
     eprintln!("\n=== shape ===");
-    eprintln!("ok={} failed={}", ok.len(), failed);
+    eprintln!(
+        "ok={} failed={} success={:.1}%",
+        ok.len(),
+        failed,
+        100.0 * ok.len() as f64 / rows.len().max(1) as f64
+    );
+    eprintln!(
+        "bytes fetched: {:.1} MB (metered egress is billed on this)",
+        total_bytes as f64 / 1_048_576.0
+    );
     eprintln!("extract share of measured time: {cpu_share:.1}%");
     eprintln!(
         "wall={:.1}s  throughput={:.1} url/s",

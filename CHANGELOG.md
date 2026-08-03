@@ -11,6 +11,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 - **Healthy Cloudflare-fronted pages are no longer mistaken for challenge pages.** Cloudflare adds a small JavaScript-detection snippet to ordinary, successfully served pages. webclaw matched on part of that snippet's path, so any page carrying it was treated as a bot challenge and needlessly escalated to the cloud API — which then reported an unsolvable challenge that was never there. Detection now keys on markers that only appear on a real interstitial, and covers both path forms the snippet is served under.
 
+## [0.6.17] - 2026-08-03
+
+Reconciles the repo with what the MCP registry has been advertising since
+2026-07-22. The registry entry for 0.6.17 was published then, but no matching
+tag was ever cut, so `0.6.16` remained the newest release while the registry
+pointed at a version that did not exist.
+
+### Changed
+- **Dropped a competitor's name from the project description.** The MCP registry
+  manifest was reworded in 0.6.17 (already live); the Chinese README still
+  carried the same phrasing and is now aligned with the English one. Both now
+  describe webclaw on its own terms: open source and self-hostable.
+
 ## [0.6.16] - 2026-07-22
 
 ### Added

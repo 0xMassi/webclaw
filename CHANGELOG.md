@@ -18,6 +18,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Performance
 - **Response bodies are no longer copied twice.** Decoding a fetched page to text handed the existing buffer to `String` rather than allocating a second one and copying into it: 500 KB pages went 337 µs → 55 µs, 16 MB went 5.3 ms → 1.5 ms, and peak memory per in-flight fetch halved. The connection pool also no longer caps itself below the client default, which was forcing reconnects on HTTP/1.1 origins under concurrency.
 
+## [0.6.17] - 2026-08-03
+
+Reconciles the repo with what the MCP registry has been advertising since
+2026-07-22. The registry entry for 0.6.17 was published then, but no matching
+tag was ever cut, so `0.6.16` remained the newest release while the registry
+pointed at a version that did not exist.
+
+### Changed
+- **Dropped a competitor's name from the project description.** The MCP registry
+  manifest was reworded in 0.6.17 (already live); the Chinese README still
+  carried the same phrasing and is now aligned with the English one. Both now
+  describe webclaw on its own terms: open source and self-hostable.
+
 ## [0.6.16] - 2026-07-22
 
 ### Added

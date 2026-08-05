@@ -32,7 +32,31 @@ pub struct FetchConfig {
     /// random browser fingerprint. Same-host URLs reuse the same client
     /// for HTTP/2 connection multiplexing.
     pub proxy_pool: Vec<String>,
+    /// Per-attempt timeout handed to the HTTP client.
+    ///
+    /// NOTE: the underlying client applies this as two independent budgets —
+    /// one for the response head, then a *fresh* one for the body — so a single
+    /// attempt can take up to `2 * timeout`. Use [`total_timeout`](Self::total_timeout)
+    /// to bound the whole operation.
     pub timeout: Duration,
+    /// Ceiling on one complete `fetch`, covering every attempt, redirect and
+    /// body read.
+    ///
+    /// Without this the budget compounds and nothing states the real worst
+    /// case: `timeout` is applied twice per attempt by the client, and the
+    /// retry loop runs two attempts with a 1s pause, so a `timeout` of 12s
+    /// permits 49s. Callers reasonably read `timeout: 12s` as "this returns in
+    /// about 12 seconds"; a request that occupies a worker for 49s is a
+    /// reliability problem, not a slow page.
+    ///
+    /// Defaults to `2 * timeout`: one attempt keeps its full head+body budget,
+    /// so a slow-but-successful fetch is unaffected, while a retry can no
+    /// longer extend past it. Retries exist for transient failures, which fail
+    /// fast; retrying after a full-budget timeout rarely succeeds and always
+    /// costs the caller another full budget.
+    ///
+    /// `None` restores the old compounding behaviour.
+    pub total_timeout: Option<Duration>,
     pub follow_redirects: bool,
     pub max_redirects: u32,
     pub headers: HashMap<String, String>,
@@ -46,6 +70,7 @@ impl Default for FetchConfig {
             proxy: None,
             proxy_pool: Vec::new(),
             timeout: Duration::from_secs(12),
+            total_timeout: Some(Duration::from_secs(24)),
             follow_redirects: true,
             max_redirects: 10,
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
@@ -85,7 +110,9 @@ struct Response {
     status: u16,
     url: String,
     headers: http::HeaderMap,
-    body: bytes::Bytes,
+    /// Owned as `Vec<u8>` rather than `Bytes` so `into_text` can hand the
+    /// allocation straight to `String` instead of copying it (see `into_text`).
+    body: Vec<u8>,
 }
 
 /// Maximum fetched body size. A single 50 MB HTML document is already
@@ -134,7 +161,8 @@ impl Response {
         // wreq 6.0.0-rc.29 dropped `Response::chunk()`. Stream post-decompression
         // bytes via `bytes_stream()` and keep enforcing the running ceiling so a
         // compression bomb is aborted before it is fully buffered in memory.
-        let mut buf = bytes::BytesMut::new();
+        // No capacity hint on purpose — see `into_text` and the note below.
+        let mut buf: Vec<u8> = Vec::new();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| FetchError::BodyDecode(e.to_string()))?;
@@ -146,7 +174,7 @@ impl Response {
             status,
             url,
             headers,
-            body: buf.freeze(),
+            body: buf,
         })
     }
 
@@ -167,15 +195,32 @@ impl Response {
         String::from_utf8_lossy(&self.body)
     }
 
+    /// Decode the body to `String`, consuming the buffer.
+    ///
+    /// The valid-UTF-8 case — effectively every page — takes ownership of the
+    /// existing allocation, so this costs no allocation and no copy.
+    /// `from_utf8_lossy(&self.body).into_owned()` always allocated a second
+    /// full-size buffer and memcpy'd the whole body into it.
+    ///
+    /// The fallback must decode `e.as_bytes()`, i.e. the bytes handed back by
+    /// the failed conversion, so invalid-UTF-8 output stays byte-identical to
+    /// the previous implementation. Do NOT add `shrink_to_fit()` — it would
+    /// reintroduce exactly the copy this removes.
+    ///
+    /// Charset handling is unchanged and still ignores `Content-Type: charset`;
+    /// a page in a non-UTF-8 encoding produces the same mojibake it did before.
+    /// Fixing that is separate work with extraction-quality blast radius.
     fn into_text(self) -> String {
-        String::from_utf8_lossy(&self.body).into_owned()
+        String::from_utf8(self.body)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
     }
 
     /// Consume the response and return the raw, undecoded body bytes.
     /// Used by [`FetchClient::fetch_raw`] for binary payloads (e.g. gzipped
     /// sitemaps) that must not be run through lossy UTF-8 decoding.
     fn into_body(self) -> bytes::Bytes {
-        self.body
+        // `Bytes::from(Vec<u8>)` adopts the allocation; still no copy.
+        bytes::Bytes::from(self.body)
     }
 }
 
@@ -207,9 +252,43 @@ pub struct FetchClient {
     /// out. Stored as `Arc` so cloning a `FetchClient` (common in
     /// axum state) doesn't clone the underlying reqwest pool.
     cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
+    /// Ceiling on one complete `fetch`. See [`FetchConfig::total_timeout`].
+    total_timeout: Option<Duration>,
 }
 
 impl FetchClient {
+    /// Run one attempt under the remaining share of the total budget.
+    ///
+    /// Returns `Err(Timeout)` if the budget is already spent, so the caller
+    /// stops retrying rather than starting an attempt it cannot finish.
+    async fn within_budget<F, T>(
+        &self,
+        started: Instant,
+        url: &str,
+        attempt: F,
+    ) -> Result<T, FetchError>
+    where
+        F: std::future::Future<Output = Result<T, FetchError>>,
+    {
+        let Some(total) = self.total_timeout else {
+            return attempt.await;
+        };
+        let remaining = total.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(FetchError::Build(format!(
+                "fetch budget of {}ms exhausted for {url}",
+                total.as_millis()
+            )));
+        }
+        match tokio::time::timeout(remaining, attempt).await {
+            Ok(res) => res,
+            Err(_) => Err(FetchError::Build(format!(
+                "fetch exceeded its {}ms budget for {url}",
+                total.as_millis()
+            ))),
+        }
+    }
+
     /// Build a new client from config.
     pub fn new(config: FetchConfig) -> Result<Self, FetchError> {
         let variants = collect_variants(&config.browser);
@@ -268,6 +347,7 @@ impl FetchClient {
             pool,
             pdf_mode,
             cloud: None,
+            total_timeout: config.total_timeout,
         })
     }
 
@@ -341,13 +421,16 @@ impl FetchClient {
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
         let delays = [Duration::ZERO, Duration::from_secs(1)];
         let mut last_err = None;
+        // Clock starts before the first attempt so the retry pause and every
+        // attempt come out of one budget, rather than each getting a fresh one.
+        let started = Instant::now();
 
         for (attempt, delay) in delays.iter().enumerate() {
             if attempt > 0 {
                 tokio::time::sleep(*delay).await;
             }
 
-            match self.fetch_once(url).await {
+            match self.within_budget(started, url, self.fetch_once(url)).await {
                 Ok(result) => {
                     if is_retryable_status(result.status) && attempt < delays.len() - 1 {
                         warn!(
@@ -425,12 +508,17 @@ impl FetchClient {
     ) -> Result<FetchResult, FetchError> {
         let delays = [Duration::ZERO, Duration::from_secs(1)];
         let mut last_err = None;
+        // One budget across the whole call — see `within_budget`.
+        let started = Instant::now();
 
         for (attempt, delay) in delays.iter().enumerate() {
             if attempt > 0 {
                 tokio::time::sleep(*delay).await;
             }
-            match self.fetch_once_with_headers(url, extra).await {
+            match self
+                .within_budget(started, url, self.fetch_once_with_headers(url, extra))
+                .await
+            {
                 Ok(result) => {
                     if is_retryable_status(result.status) && attempt < delays.len() - 1 {
                         warn!(
@@ -537,9 +625,11 @@ impl FetchClient {
         let status = response.status();
         let final_url = response.url().to_string();
 
-        let headers = response.headers().clone();
+        // Borrowed, not cloned: both consumers below take `&HeaderMap`, and the
+        // borrow ends before `response` is moved into `into_text()`.
+        let headers = response.headers();
 
-        let is_pdf = is_pdf_content_type(&headers);
+        let is_pdf = is_pdf_content_type(headers);
 
         if is_pdf {
             debug!(status, "detected PDF response, using pdf extraction");
@@ -557,7 +647,7 @@ impl FetchClient {
             let pdf_result = webclaw_pdf::extract_pdf(bytes, self.pdf_mode.clone())?;
             Ok(pdf_to_extraction_result(&pdf_result, &final_url))
         } else if let Some(doc_type) =
-            crate::document::is_document_content_type(&headers, &final_url)
+            crate::document::is_document_content_type(headers, &final_url)
         {
             debug!(status, doc_type = ?doc_type, "detected document response, extracting");
 
@@ -665,6 +755,51 @@ impl FetchClient {
         }
 
         collect_ordered(handles, urls.len()).await
+    }
+
+    /// Fetch and extract many URLs, yielding each result as it completes.
+    ///
+    /// Prefer this over [`fetch_and_extract_batch`](Self::fetch_and_extract_batch)
+    /// for large inputs. That one spawns a task per URL up front and collects
+    /// everything into a `Vec`, so both task count and memory scale with the
+    /// input — which is what forces callers to impose an arbitrary maximum
+    /// batch size. This polls at most `concurrency` futures at a time and hands
+    /// each result straight to the consumer, so a batch of ten URLs and a batch
+    /// of ten thousand cost the same at rest and no cap is needed.
+    ///
+    /// Results arrive in **completion order**, not input order — that is the
+    /// point of streaming. Use `fetch_and_extract_batch` when order matters and
+    /// the input is small enough to buffer.
+    ///
+    /// ```ignore
+    /// use futures_util::StreamExt;
+    /// let mut s = client.fetch_and_extract_batch_stream(urls, 10, opts);
+    /// while let Some(res) = s.next().await {
+    ///     // write it out; nothing accumulates
+    /// }
+    /// ```
+    pub fn fetch_and_extract_batch_stream(
+        self: &Arc<Self>,
+        urls: Vec<String>,
+        concurrency: usize,
+        options: webclaw_core::ExtractionOptions,
+        // `use<>`: the stream clones the Arc internally and borrows nothing,
+        // so it must not capture `&self`'s lifetime — otherwise callers cannot
+        // return it from the scope that built it (e.g. an axum handler
+        // streaming a response body).
+    ) -> impl futures_util::Stream<Item = BatchExtractResult> + use<> {
+        let client = Arc::clone(self);
+        let options = Arc::new(options);
+        futures_util::stream::iter(urls.into_iter().map(move |url| {
+            let client = Arc::clone(&client);
+            let options = Arc::clone(&options);
+            async move {
+                let result = client.fetch_and_extract_with_options(&url, &options).await;
+                BatchExtractResult { url, result }
+            }
+        }))
+        // Bounds in-flight work without materialising a task per URL.
+        .buffer_unordered(concurrency.max(1))
     }
 
     /// Returns the number of proxies in the rotation pool, or 0 if static mode.
@@ -900,6 +1035,194 @@ async fn collect_ordered<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a `Response` around a raw body so the decode path can be tested
+    /// without a network round trip.
+    fn resp_with_body(body: Vec<u8>) -> Response {
+        Response {
+            status: 200,
+            url: "https://example.com/".to_string(),
+            headers: http::HeaderMap::new(),
+            body,
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_stream_yields_every_url_without_buffering_them() {
+        use futures_util::StreamExt;
+
+        // All unroutable, so each fails fast — the point here is the stream
+        // contract (every input yields exactly one result), not the fetching.
+        let urls: Vec<String> = (0..25)
+            .map(|i| format!("https://nonexistent-{i}.invalid/"))
+            .collect();
+        let expected: std::collections::HashSet<String> = urls.iter().cloned().collect();
+
+        let client = Arc::new(FetchClient::new(FetchConfig::default()).expect("build client"));
+        let mut seen = std::collections::HashSet::new();
+        let mut stream = client.fetch_and_extract_batch_stream(
+            urls,
+            8,
+            webclaw_core::ExtractionOptions::default(),
+        );
+        while let Some(res) = stream.next().await {
+            assert!(
+                seen.insert(res.url),
+                "each URL must be yielded exactly once"
+            );
+        }
+        assert_eq!(seen, expected, "every input URL must produce a result");
+    }
+
+    #[tokio::test]
+    async fn batch_stream_survives_zero_concurrency() {
+        use futures_util::StreamExt;
+        let client = Arc::new(FetchClient::new(FetchConfig::default()).expect("build client"));
+        // `buffer_unordered(0)` would stall forever; the API clamps it.
+        let mut stream = client.fetch_and_extract_batch_stream(
+            vec!["https://nonexistent.invalid/".to_string()],
+            0,
+            webclaw_core::ExtractionOptions::default(),
+        );
+        assert!(
+            stream.next().await.is_some(),
+            "must not deadlock at concurrency 0"
+        );
+    }
+
+    #[test]
+    fn total_timeout_defaults_to_twice_the_per_attempt_timeout() {
+        // The client applies `timeout` twice per attempt (head, then a fresh
+        // one for the body), so 2x keeps a single slow-but-successful fetch
+        // intact while stopping the retry loop from compounding it.
+        let c = FetchConfig::default();
+        assert_eq!(c.timeout, Duration::from_secs(12));
+        assert_eq!(c.total_timeout, Some(Duration::from_secs(24)));
+    }
+
+    #[tokio::test]
+    async fn within_budget_refuses_an_attempt_once_the_budget_is_spent() {
+        let client = FetchClient::new(FetchConfig {
+            total_timeout: Some(Duration::from_millis(50)),
+            ..Default::default()
+        })
+        .expect("build client");
+
+        // Pretend the call started long ago: the next attempt must not run.
+        let started = Instant::now() - Duration::from_secs(5);
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran2 = std::sync::Arc::clone(&ran);
+        let res: Result<(), FetchError> = client
+            .within_budget(started, "https://example.com", async move {
+                ran2.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            res.is_err(),
+            "an exhausted budget must not start an attempt"
+        );
+        assert!(
+            !ran.load(std::sync::atomic::Ordering::SeqCst),
+            "the attempt future must never be polled once the budget is gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn within_budget_bounds_a_hanging_attempt() {
+        let client = FetchClient::new(FetchConfig {
+            total_timeout: Some(Duration::from_millis(80)),
+            ..Default::default()
+        })
+        .expect("build client");
+
+        let began = Instant::now();
+        let res: Result<(), FetchError> = client
+            .within_budget(Instant::now(), "https://example.com", async {
+                // Far longer than the budget.
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok(())
+            })
+            .await;
+
+        assert!(res.is_err());
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "must abort at the budget, not run to completion"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_total_timeout_restores_uncapped_behaviour() {
+        let client = FetchClient::new(FetchConfig {
+            total_timeout: None,
+            ..Default::default()
+        })
+        .expect("build client");
+        let started = Instant::now() - Duration::from_secs(600);
+        let res: Result<u8, FetchError> = client
+            .within_budget(started, "https://example.com", async { Ok(7) })
+            .await;
+        assert_eq!(res.expect("should run"), 7);
+    }
+
+    #[test]
+    fn into_text_matches_lossy_decoding_byte_for_byte() {
+        // `into_text` swapped `from_utf8_lossy(..).into_owned()` for a
+        // consuming `String::from_utf8`. The valid case must be identical and
+        // the INVALID case must still produce the same replacement characters
+        // in the same positions — that is the whole hazard of the change.
+        let mut cases: Vec<Vec<u8>> = vec![
+            b"".to_vec(),
+            b"plain ascii".to_vec(),
+            "héllo wörld — em dash".as_bytes().to_vec(),
+            "日本語のテキスト".as_bytes().to_vec(),
+            b"\xEF\xBB\xBFleading BOM".to_vec(),
+            b"truncated 2-byte: \xC3".to_vec(),
+            b"truncated 3-byte: \xE2\x82".to_vec(),
+            b"truncated 4-byte: \xF0\x9F\x98".to_vec(),
+            b"lone surrogate: \xED\xA0\x80".to_vec(),
+            b"overlong NUL: \xC0\x80".to_vec(),
+            b"beyond U+10FFFF: \xF5\x80\x80\x80".to_vec(),
+            b"windows-1252 quotes: \x93hi\x94".to_vec(),
+            vec![0xFF, 0xFE, 0xFD],
+        ];
+        // A bad byte at several offsets, including around common buffer edges.
+        for off in [0usize, 1, 4095, 4096, 4097, 65535] {
+            let mut v = vec![b'a'; 70_000];
+            v[off] = 0xFF;
+            cases.push(v);
+        }
+
+        for body in cases {
+            let expected = String::from_utf8_lossy(&body).into_owned();
+            let got = resp_with_body(body.clone()).into_text();
+            assert_eq!(
+                got,
+                expected,
+                "decode diverged for body prefix {:?}",
+                &body[..body.len().min(24)]
+            );
+        }
+    }
+
+    #[test]
+    fn into_text_reuses_the_buffer_for_valid_utf8() {
+        // The point of the change: no second allocation, no copy. Proven by
+        // the String landing on the same address the Vec occupied.
+        let body = "a reasonably sized valid utf-8 body".repeat(4096);
+        let bytes = body.into_bytes();
+        let ptr = bytes.as_ptr();
+        let text = resp_with_body(bytes).into_text();
+        assert_eq!(text.as_ptr(), ptr, "valid UTF-8 must not be re-allocated");
+    }
+
+    #[test]
+    fn into_body_still_returns_the_bytes_unchanged() {
+        let raw = vec![0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe];
+        assert_eq!(resp_with_body(raw.clone()).into_body().as_ref(), &raw[..]);
+    }
 
     #[test]
     fn test_batch_result_struct() {

@@ -541,7 +541,17 @@ pub fn build_client(
         .timeout(timeout)
         .connect_timeout(Duration::from_secs(5))
         .pool_idle_timeout(Duration::from_secs(90))
-        .pool_max_idle_per_host(8)
+        // wreq's default here is `usize::MAX`, so any value we set REMOVES
+        // pooling capacity rather than adding it. At 8, a crawl running 20
+        // concurrent requests against an HTTP/1.1 origin pools 8 connections
+        // and closes the other 12 as they are released — a 60% reconnect rate
+        // in steady state, each costing a fresh TCP + TLS handshake. HTTP/2
+        // origins are unaffected (one shared pool entry per key).
+        //
+        // Kept bounded rather than removed: `BrowserProfile::Random` builds six
+        // clients, each with its own pool, so an unbounded per-host cap is
+        // really a 6x cap. 32 covers realistic crawl concurrency with headroom.
+        .pool_max_idle_per_host(32)
         .tcp_keepalive(Duration::from_secs(60));
 
     if let Some(proxy_url) = proxy {

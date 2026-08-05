@@ -32,8 +32,15 @@ pub struct CrawlConfig {
     pub fetch: FetchConfig,
     /// How deep to follow links. 1 = only immediate links from seed page.
     pub max_depth: usize,
-    /// Hard cap on total pages fetched (including the seed).
-    pub max_pages: usize,
+    /// Cap on total pages fetched (including the seed). `None` = no cap:
+    /// crawl until the frontier is exhausted, cancelled, or the caller stops
+    /// consuming.
+    ///
+    /// A page cap is a *policy* choice — quota, budget, patience — and belongs
+    /// to whoever is paying for the crawl, not to the engine. Callers that need
+    /// one set it; callers that want the whole site pass `None`. Pair `None`
+    /// with [`stream_only`](Self::stream_only) so memory stays flat.
+    pub max_pages: Option<usize>,
     /// Max concurrent in-flight requests.
     pub concurrency: usize,
     /// Minimum delay before each request (politeness).
@@ -60,6 +67,23 @@ pub struct CrawlConfig {
     /// When set to `true`, the crawler breaks out of the main loop early.
     /// Callers (e.g. a Ctrl+C handler) can flip this to request graceful cancellation.
     pub cancel_flag: Option<Arc<AtomicBool>>,
+    /// Drop each `PageResult` after reporting it instead of collecting it into
+    /// [`CrawlResult::pages`].
+    ///
+    /// This is what makes a large crawl possible at all. Retention is O(pages ×
+    /// page size), and an extracted page runs to ~90 KB, so a 5 000-page crawl
+    /// holds roughly 440 MB and a 50 000-page crawl roughly 4.4 GB — the crawl
+    /// only returns once it is finished, so that is all live at once. The page
+    /// ceiling exists to bound that, not because the crawl itself cannot go
+    /// further.
+    ///
+    /// Set this with [`progress_tx`](Self::progress_tx) to stream results to
+    /// the consumer as they complete and keep peak memory flat regardless of
+    /// page count. `total`/`ok`/`errors` are still counted, so the summary is
+    /// unaffected; only `pages` comes back empty.
+    ///
+    /// Defaults to `false`, so existing callers keep collecting.
+    pub stream_only: bool,
 }
 
 impl Default for CrawlConfig {
@@ -67,7 +91,7 @@ impl Default for CrawlConfig {
         Self {
             fetch: FetchConfig::default(),
             max_depth: 1,
-            max_pages: 50,
+            max_pages: Some(50),
             concurrency: 5,
             delay: Duration::from_millis(100),
             path_prefix: None,
@@ -78,6 +102,7 @@ impl Default for CrawlConfig {
             allow_external_links: false,
             progress_tx: None,
             cancel_flag: None,
+            stream_only: false,
         }
     }
 }
@@ -129,7 +154,23 @@ pub struct Crawler {
     seed_root_domain: String,
 }
 
+/// Frontier ceiling used when [`CrawlConfig::max_pages`] is `None`.
+///
+/// Not a page limit — see the frontier-trim comment in `crawl`. At roughly
+/// 100 bytes per queued URL this is on the order of 50 MB of pending
+/// frontier, which is the point at which holding more queued work costs more
+/// than it is worth.
+const UNCAPPED_FRONTIER_LIMIT: usize = 500_000;
+
 impl Crawler {
+    /// Whether the crawl may fetch another page.
+    ///
+    /// `None` means no cap, so this is always true and the crawl ends when the
+    /// frontier empties or the caller cancels.
+    fn under_page_cap(&self, completed: usize) -> bool {
+        self.config.max_pages.is_none_or(|max| completed < max)
+    }
+
     /// Build a new crawler from a seed URL and config.
     /// Constructs the underlying `FetchClient` from `config.fetch`.
     pub fn new(seed_url: &str, config: CrawlConfig) -> Result<Self, FetchError> {
@@ -240,6 +281,11 @@ impl Crawler {
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency));
         let mut visited: HashSet<String>;
         let mut pages: Vec<PageResult> = Vec::new();
+        // Counted independently of `pages`: in stream-only mode nothing is
+        // retained, so `pages.len()` can no longer stand in for progress.
+        let mut completed: usize = 0;
+        let mut ok_count: usize = 0;
+        let mut err_count: usize = 0;
         let mut frontier: Vec<(String, usize)>;
 
         // Resume from saved state or start fresh
@@ -284,7 +330,7 @@ impl Crawler {
             }
         }
 
-        while !frontier.is_empty() && pages.len() < self.config.max_pages {
+        while !frontier.is_empty() && self.under_page_cap(completed) {
             // Check cancel flag before processing each batch
             if self.is_cancelled() {
                 info!("crawl cancelled by user");
@@ -295,7 +341,11 @@ impl Crawler {
             let batch: Vec<(String, usize)> = frontier
                 .drain(..)
                 .filter(|(url, _)| visited.insert(url.clone()))
-                .take(self.config.max_pages.saturating_sub(pages.len()))
+                .take(
+                    self.config
+                        .max_pages
+                        .map_or(usize::MAX, |m| m.saturating_sub(completed)),
+                )
                 .collect();
 
             if batch.is_empty() {
@@ -388,14 +438,30 @@ impl Crawler {
                     }
                 }
 
-                // Stream progress if a channel is configured
-                if let Some(tx) = &self.config.progress_tx {
-                    let _ = tx.send(page.clone());
+                completed += 1;
+                if page.extraction.is_some() {
+                    ok_count += 1;
+                } else {
+                    err_count += 1;
                 }
 
-                pages.push(page);
+                // Stream progress if a channel is configured. In stream-only
+                // mode the page is moved into the channel rather than cloned —
+                // nothing downstream retains it, so the clone would be pure
+                // waste at exactly the page counts this mode exists to serve.
+                match (&self.config.progress_tx, self.config.stream_only) {
+                    (Some(tx), true) => {
+                        let _ = tx.send(page);
+                    }
+                    (Some(tx), false) => {
+                        let _ = tx.send(page.clone());
+                        pages.push(page);
+                    }
+                    (None, true) => {}
+                    (None, false) => pages.push(page),
+                }
 
-                if pages.len() >= self.config.max_pages {
+                if !self.under_page_cap(completed) {
                     break;
                 }
 
@@ -406,17 +472,26 @@ impl Crawler {
                 }
             }
 
-            // Cap frontier size independently of max_pages. Pages like
-            // search-result listings or tag clouds can emit thousands of
-            // links per page; without this a single dense page could push
-            // the frontier into the tens of thousands of entries and keep
-            // String allocations alive even after max_pages halts crawling.
-            // Trim aggressively once we exceed 10× max_pages, keeping the
-            // most recently discovered entries which are still on-topic
-            // (breadth-first = siblings of the last page we saw).
-            let frontier_cap = self.config.max_pages.saturating_mul(10).max(100);
+            // Bound the frontier. This is a MEMORY rail, not a page limit:
+            // it caps queued-but-unfetched URLs, which are owned Strings held
+            // live for the whole crawl. Search-result listings, tag clouds and
+            // faceted navigation emit thousands of links per page, and a
+            // calendar-style URL space is effectively infinite — so this has to
+            // hold even when there is no page cap, or an uncapped crawl grows
+            // the frontier without limit and dies on memory rather than on
+            // work. Keeps the most recently discovered entries, which
+            // breadth-first means siblings of the last page seen.
+            let (frontier_cap, keep) = match self.config.max_pages {
+                Some(max) => (
+                    max.saturating_mul(10).max(100),
+                    max.saturating_mul(5).max(50),
+                ),
+                // Uncapped: a fixed ceiling, sized so a genuinely large site
+                // crawls without truncation while a link explosion still cannot
+                // grow unbounded.
+                None => (UNCAPPED_FRONTIER_LIMIT, UNCAPPED_FRONTIER_LIMIT / 2),
+            };
             if next_frontier.len() > frontier_cap {
-                let keep = self.config.max_pages.saturating_mul(5).max(50);
                 warn!(
                     frontier = next_frontier.len(),
                     cap = frontier_cap,
@@ -430,10 +505,8 @@ impl Crawler {
         }
 
         let total_elapsed = start.elapsed();
-        let ok_count = pages.iter().filter(|p| p.extraction.is_some()).count();
-        let err_count = pages.len() - ok_count;
         info!(
-            total = pages.len(),
+            total = completed,
             ok = ok_count,
             errors = err_count,
             elapsed_ms = %total_elapsed.as_millis(),
@@ -441,7 +514,7 @@ impl Crawler {
         );
 
         CrawlResult {
-            total: pages.len(),
+            total: completed,
             ok: ok_count,
             errors: err_count,
             elapsed_secs: total_elapsed.as_secs_f64(),
@@ -700,6 +773,73 @@ fn glob_match_inner(pat: &[u8], text: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_page_cap_is_expressible_and_never_halts_the_crawl() {
+        // The whole point of `Option`: `None` must mean "keep going", not
+        // "stop at zero". A regression here would silently turn an uncapped
+        // crawl into a no-op.
+        let uncapped = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_pages: None,
+                ..Default::default()
+            },
+        )
+        .expect("build crawler");
+        assert!(uncapped.under_page_cap(0));
+        assert!(uncapped.under_page_cap(1_000_000));
+
+        let capped = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_pages: Some(3),
+                ..Default::default()
+            },
+        )
+        .expect("build crawler");
+        assert!(capped.under_page_cap(2));
+        assert!(!capped.under_page_cap(3));
+        assert!(!capped.under_page_cap(4));
+    }
+
+    #[test]
+    fn default_config_keeps_a_page_cap() {
+        // Uncapped has to be opt-in: a caller who says nothing should not get
+        // an unbounded crawl by accident.
+        assert_eq!(CrawlConfig::default().max_pages, Some(50));
+    }
+
+    #[test]
+    fn stream_only_defaults_off_so_existing_callers_keep_collecting() {
+        assert!(
+            !CrawlConfig::default().stream_only,
+            "flipping this default would silently empty CrawlResult::pages for every caller"
+        );
+    }
+
+    /// The seed-fetch failure path is the one place a `CrawlResult` is built
+    /// without running the main loop, so it is reachable without a network.
+    /// It must report the failure in the counters either way — those are what
+    /// a streaming consumer has left once `pages` is empty.
+    #[tokio::test]
+    async fn failed_seed_is_counted_not_just_collected() {
+        let cfg = CrawlConfig {
+            max_pages: Some(5),
+            ..Default::default()
+        };
+        let crawler = Crawler::new("https://invalid.invalid/", cfg).expect("build crawler");
+        let res = crawler.crawl("https://invalid.invalid/", None).await;
+
+        assert_eq!(res.total, 1);
+        assert_eq!(res.ok, 0);
+        assert_eq!(res.errors, 1);
+        assert_eq!(
+            res.total,
+            res.ok + res.errors,
+            "counters must reconcile independently of what `pages` retained"
+        );
+    }
 
     #[test]
     fn normalize_strips_fragment() {

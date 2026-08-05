@@ -268,7 +268,12 @@ impl WebclawMcp {
 
         let config = webclaw_fetch::CrawlConfig {
             max_depth: params.depth.unwrap_or(2) as usize,
-            max_pages: params.max_pages.unwrap_or(50),
+            // 0 = no cap; omitted keeps the modest default.
+            max_pages: match params.max_pages {
+                Some(0) => None,
+                Some(n) => Some(n),
+                None => Some(50),
+            },
             concurrency: params.concurrency.unwrap_or(5),
             use_sitemap: params.use_sitemap.unwrap_or(false),
             ..Default::default()

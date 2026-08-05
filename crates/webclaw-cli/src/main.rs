@@ -277,7 +277,8 @@ struct Cli {
     #[arg(long, default_value = "1")]
     depth: usize,
 
-    /// Max pages to crawl [default: 20]
+    /// Max pages to crawl. `0` = no limit: crawl until the site is exhausted
+    /// or you interrupt it [default: 20]
     #[arg(long, default_value = "20")]
     max_pages: usize,
 
@@ -1450,7 +1451,7 @@ fn print_map_output(entries: &[SitemapEntry], format: &OutputFormat) {
 }
 
 /// Format a streaming progress line for a completed page.
-fn format_progress(page: &PageResult, index: usize, max_pages: usize) -> String {
+fn format_progress(page: &PageResult, index: usize, max_pages: Option<usize>) -> String {
     let status = if page.error.is_some() { "ERR" } else { "OK " };
     let timing = format!("{}ms", page.elapsed.as_millis());
     let detail = if let Some(ref extraction) = page.extraction {
@@ -1460,10 +1461,9 @@ fn format_progress(page: &PageResult, index: usize, max_pages: usize) -> String 
     } else {
         String::new()
     };
-    format!(
-        "[{index}/{max_pages}] {status} {} ({timing}{detail})",
-        page.url
-    )
+    // Uncapped crawls have no denominator to show, so print a running count.
+    let of = max_pages.map_or(String::new(), |m| format!("/{m}"));
+    format!("[{index}{of}] {status} {} ({timing}{detail})", page.url)
 }
 
 async fn run_crawl(cli: &Cli) -> Result<(), String> {
@@ -1509,7 +1509,12 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     let config = CrawlConfig {
         fetch: build_fetch_config(cli),
         max_depth: cli.depth,
-        max_pages: cli.max_pages,
+        // `--max-pages 0` = no cap.
+        max_pages: (cli.max_pages > 0).then_some(cli.max_pages),
+        // The CLI renders a document from the collected pages at the end, so
+        // it keeps them. An uncapped crawl therefore grows with the site —
+        // acceptable on a workstation, and Ctrl+C saves resumable state.
+        stream_only: false,
         concurrency: cli.concurrency,
         delay: std::time::Duration::from_millis(cli.delay),
         path_prefix: cli.path_prefix.clone(),
@@ -1534,7 +1539,8 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
             );
         });
 
-    let max_pages = cli.max_pages;
+    // `None` = uncapped, so the progress line shows a running count only.
+    let max_pages = (cli.max_pages > 0).then_some(cli.max_pages);
     let completed_offset = resume_state.as_ref().map_or(0, |s| s.completed_pages);
 
     // Spawn background task to print streaming progress to stderr
@@ -1562,14 +1568,14 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 url,
                 &result.visited,
                 &result.remaining_frontier,
-                completed_offset + result.pages.len(),
+                completed_offset + result.total,
                 cli.max_pages,
                 cli.depth,
             )?;
             eprintln!(
                 "Crawl state saved to {} ({} pages completed). Resume with --crawl-state {}",
                 path.display(),
-                completed_offset + result.pages.len(),
+                completed_offset + result.total,
                 path.display(),
             );
         }

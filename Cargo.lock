@@ -3335,6 +3335,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "futures-util",
  "serde",
  "serde_json",
  "subtle",

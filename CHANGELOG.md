@@ -6,10 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Crawl without a page limit.** `CrawlConfig.max_pages` is now `Option<usize>`; `None` crawls until the site is exhausted or you cancel. Expose it as `--max-pages 0` on the CLI, `max_pages: 0` on the MCP `crawl` tool, and `max_pages: 0` on the self-host server, whose 500-page ceiling is gone. Defaults are unchanged, so a caller who says nothing still gets a bounded crawl.
+- **Streaming batch.** `POST /v1/batch` accepts `"stream": true` and answers with NDJSON — one result per line, written as each URL finishes — so a batch of ten and a batch of ten thousand cost the same in memory. The maximum batch size is gone with it. Backed by a new `FetchClient::fetch_and_extract_batch_stream`, which keeps at most `concurrency` fetches in flight instead of starting one task per URL up front.
+- **Crawl streaming mode.** `CrawlConfig.stream_only` drops each page after reporting it on `progress_tx` instead of collecting it, so peak memory stays flat regardless of page count. This is what makes an unbounded crawl practical; collecting callers are unaffected.
 - **Chronopost parcel tracking extractor.** `webclaw vertical chronopost <tracking-url>` — also available as the `vertical_scrape` MCP tool and `POST /v1/scrape/chronopost` — returns the current status, the milestone progress bar, and the full scan-event history as typed JSON. The tracking page itself renders its content after load, so a plain fetch of it returns an empty document; this extractor reads the underlying data directly.
 
 ### Fixed
+- **A fetch now honours one time budget instead of compounding several.** The HTTP client applies `timeout` twice per attempt — once for the response head, then again for the body — and the retry loop ran two attempts with a pause between them, so a 12-second timeout permitted 49 seconds of wall clock. A new `total_timeout` (default: twice `timeout`) bounds the whole operation, attempts included. A single slow-but-successful page is unaffected; a dead host stops costing four budgets.
 - **Healthy Cloudflare-fronted pages are no longer mistaken for challenge pages.** Cloudflare adds a small JavaScript-detection snippet to ordinary, successfully served pages. webclaw matched on part of that snippet's path, so any page carrying it was treated as a bot challenge and needlessly escalated to the cloud API — which then reported an unsolvable challenge that was never there. Detection now keys on markers that only appear on a real interstitial, and covers both path forms the snippet is served under.
+
+### Performance
+- **Response bodies are no longer copied twice.** Decoding a fetched page to text handed the existing buffer to `String` rather than allocating a second one and copying into it: 500 KB pages went 337 µs → 55 µs, 16 MB went 5.3 ms → 1.5 ms, and peak memory per in-flight fetch halved. The connection pool also no longer caps itself below the client default, which was forcing reconnects on HTTP/1.1 origins under concurrency.
 
 ## [0.6.17] - 2026-08-03
 

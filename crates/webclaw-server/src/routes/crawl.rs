@@ -1,7 +1,7 @@
 //! POST /v1/crawl — synchronous BFS crawl.
 //!
 //! NOTE: this server is stateless — there is no job queue. Crawls run
-//! inline and return when complete. `max_pages` is hard-capped at 500
+//! inline and return when complete. `max_pages` is the caller's choice;
 //! to avoid OOM on naive callers. For large crawls + async jobs, use
 //! the hosted API at api.webclaw.io.
 
@@ -12,8 +12,6 @@ use std::time::Duration;
 use webclaw_fetch::{CrawlConfig, Crawler, FetchConfig};
 
 use crate::{error::ApiError, state::AppState};
-
-const HARD_MAX_PAGES: usize = 500;
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
@@ -37,11 +35,20 @@ pub async fn crawl(
         return Err(ApiError::bad_request("`url` is required"));
     }
     let url = webclaw_fetch::url_security::validate_public_http_url(&req.url).await?;
-    let max_pages = req.max_pages.unwrap_or(50).min(HARD_MAX_PAGES);
+    // No hard ceiling: a page cap is the caller's budget decision, not the
+    // server's. `0` requests an uncapped crawl; omitting it keeps a modest
+    // default so an unspecified request cannot run forever.
+    let max_pages = match req.max_pages {
+        Some(0) => None,
+        Some(n) => Some(n),
+        None => Some(50),
+    };
     let max_depth = req.max_depth.unwrap_or(3);
     let concurrency = req.concurrency.unwrap_or(5).min(20);
 
     let config = CrawlConfig {
+        // This route returns the whole result inline, so it collects.
+        stream_only: false,
         fetch: FetchConfig::default(),
         max_depth,
         max_pages,

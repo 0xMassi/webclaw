@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.18] - 2026-08-06
+
 ### Added
 - **Crawl without a page limit.** `CrawlConfig.max_pages` is now `Option<usize>`; `None` crawls until the site is exhausted or you cancel. Expose it as `--max-pages 0` on the CLI, `max_pages: 0` on the MCP `crawl` tool, and `max_pages: 0` on the self-host server, whose 500-page ceiling is gone. Defaults are unchanged, so a caller who says nothing still gets a bounded crawl.
 - **Streaming batch.** `POST /v1/batch` accepts `"stream": true` and answers with NDJSON — one result per line, written as each URL finishes — so a batch of ten and a batch of ten thousand cost the same in memory. The maximum batch size is gone with it. Backed by a new `FetchClient::fetch_and_extract_batch_stream`, which keeps at most `concurrency` fetches in flight instead of starting one task per URL up front.

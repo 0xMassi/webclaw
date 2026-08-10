@@ -58,6 +58,24 @@ pub async fn discover(
     client: &FetchClient,
     base_url: &str,
 ) -> Result<Vec<SitemapEntry>, FetchError> {
+    discover_within(client, base_url, None).await
+}
+
+/// Like [`discover`], but stops walking once `budget` has elapsed and returns
+/// whatever was parsed so far.
+///
+/// Callers used to wrap `discover` in `tokio::time::timeout`. That cancels the
+/// future mid-walk and drops its local `entries` vec, so a site whose sitemaps
+/// were 90% parsed returned ZERO urls -- contiki.com discarded ~5,400 already-
+/// parsed entries this way on every call, which is also why its `url_index`
+/// row count sat at 14 instead of thousands. Checking the clock between fetches
+/// keeps the work.
+pub async fn discover_within(
+    client: &FetchClient,
+    base_url: &str,
+    budget: Option<std::time::Duration>,
+) -> Result<Vec<SitemapEntry>, FetchError> {
+    let deadline = budget.map(|b| std::time::Instant::now() + b);
     let base = base_url.trim_end_matches('/');
     let mut sitemap_urls: Vec<String> = Vec::new();
 
@@ -79,19 +97,36 @@ pub async fn discover(
         }
     }
 
-    // Step 2: Try common sitemap paths (skipping any already discovered via robots.txt)
-    for path in FALLBACK_SITEMAP_PATHS {
-        let candidate = format!("{base}{path}");
-        if !sitemap_urls.iter().any(|u| u == &candidate) {
-            sitemap_urls.push(candidate);
+    // Step 2: Guess common sitemap paths -- but only when robots.txt gave us
+    // nothing. The guesses are a fallback for sites that do not declare their
+    // sitemaps, and running them anyway costs real budget for no gain: on
+    // contiki.com, which declares 11 sitemaps in robots.txt, the 8 probes took
+    // 3 of the caller's 15 seconds and 5 of them 404'd or redirected. That is
+    // 20% of the budget spent re-discovering what robots.txt already said.
+    if sitemap_urls.is_empty() {
+        for path in FALLBACK_SITEMAP_PATHS {
+            sitemap_urls.push(format!("{base}{path}"));
         }
+    } else {
+        debug!(
+            count = sitemap_urls.len(),
+            "robots.txt declared sitemaps, skipping fallback path probes"
+        );
     }
 
     // Step 3: Fetch and parse each sitemap, handling indexes recursively
     let mut seen_urls: HashSet<String> = HashSet::new();
     let mut entries: Vec<SitemapEntry> = Vec::new();
 
-    fetch_sitemaps(client, &sitemap_urls, &mut entries, &mut seen_urls, 0).await;
+    fetch_sitemaps(
+        client,
+        &sitemap_urls,
+        &mut entries,
+        &mut seen_urls,
+        0,
+        deadline,
+    )
+    .await;
 
     debug!(total = entries.len(), "sitemap discovery complete");
     Ok(entries)
@@ -104,6 +139,7 @@ async fn fetch_sitemaps(
     entries: &mut Vec<SitemapEntry>,
     seen_urls: &mut HashSet<String>,
     depth: usize,
+    deadline: Option<std::time::Instant>,
 ) {
     if depth > MAX_RECURSION_DEPTH {
         warn!(depth, "sitemap recursion limit reached, stopping");
@@ -111,6 +147,15 @@ async fn fetch_sitemaps(
     }
 
     for sitemap_url in urls {
+        // Stop between fetches rather than being cancelled mid-flight, so
+        // everything parsed so far survives and reaches the caller.
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            debug!(
+                parsed = entries.len(),
+                depth, "sitemap budget spent, returning partial results"
+            );
+            return;
+        }
         debug!(url = %sitemap_url, depth, "fetching sitemap");
 
         // Fetch raw bytes so gzipped sitemaps survive intact. `fetch` runs
@@ -155,6 +200,7 @@ async fn fetch_sitemaps(
                     entries,
                     seen_urls,
                     depth + 1,
+                    deadline,
                 ))
                 .await;
             }

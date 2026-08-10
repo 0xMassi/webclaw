@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.19] - 2026-08-10
+
+### Performance
+- **Sitemap discovery skips redundant probes.** A site that declares its sitemaps in `robots.txt` was still having 8 guessed paths probed on top, which cost real time for no gain: on one site declaring 11 sitemaps, the probes took 3 seconds of a 15-second budget and most of them 404'd. Discovery on such sites is now 1.6–1.9x faster with identical results. Sites that declare no sitemaps are unaffected and still use the fallback paths.
+- **Partial sitemap results survive a timeout.** A caller that bounded discovery with a deadline previously got nothing back when the deadline passed, discarding everything already parsed. `discover_within` now returns what it found.
+
 ## [0.6.18] - 2026-08-06
 
 ### Added

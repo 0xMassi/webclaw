@@ -19,6 +19,12 @@ pub enum FetchError {
     #[error("PDF extraction failed: {0}")]
     Pdf(#[from] webclaw_pdf::PdfError),
 
+    #[error("PDF artifact is {actual_bytes} bytes, exceeding caller limit {max_bytes} bytes")]
+    PdfArtifactTooLarge {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
+
     #[error("client build failed: {0}")]
     Build(String),
 }

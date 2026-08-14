@@ -119,6 +119,9 @@ webclaw https://example.com/report.pdf
 # Control PDF mode
 webclaw --pdf-mode auto https://example.com/report.pdf  # Error if no non-whitespace text
 webclaw --pdf-mode fast https://example.com/report.pdf  # Return whatever text is found
+
+# Opt in to a bounded JSON/base64 handoff for empty scanned PDFs
+webclaw --format json --pdf-artifact-max-bytes 10485760 https://example.com/scanned.pdf
 ```
 
 ## Batch Processing

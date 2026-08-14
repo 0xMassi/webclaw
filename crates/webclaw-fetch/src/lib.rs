@@ -21,7 +21,10 @@ pub mod tls;
 pub mod url_security;
 
 pub use browser::BrowserProfile;
-pub use client::{BatchExtractResult, BatchResult, FetchClient, FetchConfig, FetchResult};
+pub use client::{
+    BatchExtractResult, BatchResult, FetchClient, FetchConfig, FetchExtractOutcome, FetchResult,
+    PdfArtifact, PdfArtifactReason,
+};
 pub use crawler::{CrawlConfig, CrawlResult, CrawlState, Crawler, PageResult};
 pub use error::FetchError;
 pub use fetcher::Fetcher;

@@ -2,6 +2,7 @@
 /// All extraction and fetching logic lives in sibling crates; this is pure plumbing.
 mod bench;
 
+use base64::Engine as _;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -16,7 +17,7 @@ use webclaw_core::{
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
-    FetchConfig, FetchResult, PageResult, SitemapEntry,
+    FetchConfig, FetchExtractOutcome, FetchResult, PageResult, PdfArtifact, SitemapEntry,
 };
 use webclaw_llm::LlmProvider;
 use webclaw_pdf::PdfMode;
@@ -267,6 +268,11 @@ struct Cli {
     /// PDF extraction mode: auto (error on empty) or fast (return whatever text is found)
     #[arg(long, default_value = "auto")]
     pdf_mode: PdfModeArg,
+
+    /// On an EmptyPdf result, return the exact fetched PDF as bounded JSON/base64.
+    /// Requires a single URL and --format json.
+    #[arg(long, value_name = "BYTES")]
+    pdf_artifact_max_bytes: Option<usize>,
 
     // -- Crawl options --
     /// Enable recursive crawling of same-domain links
@@ -880,6 +886,7 @@ fn backfill_single_file_url(urls: &mut Vec<String>, entries: &[(String, Option<S
 /// Result that can be either a local extraction or a cloud API JSON response.
 enum FetchOutput {
     Local(Box<ExtractionResult>),
+    PdfArtifact(Box<PdfArtifact>),
     Cloud(serde_json::Value),
 }
 
@@ -888,6 +895,9 @@ impl FetchOutput {
     fn into_extraction(self) -> Result<ExtractionResult, String> {
         match self {
             FetchOutput::Local(r) => Ok(*r),
+            FetchOutput::PdfArtifact(_) => {
+                Err("PDF artifact output cannot be used as extracted content".to_string())
+            }
             FetchOutput::Cloud(resp) => {
                 // Cloud response has an "extraction" field with the full ExtractionResult
                 resp.get("extraction")
@@ -971,10 +981,28 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     // M13: wrap with periodic stderr progress emitter. Fast fetches see
     // zero emissions (timer never fires in <10s); slow fetches get a
     // line every 10s of elapsed time so the CLI doesn't appear hung.
-    let fetch_fut = client.fetch_and_extract_with_options(url, &options);
-    let result = webclaw_fetch::with_progress(url, fetch_fut)
+    let fetch_fut = async {
+        match cli.pdf_artifact_max_bytes {
+            Some(max_bytes) => {
+                client
+                    .fetch_and_extract_with_pdf_artifact(url, &options, max_bytes)
+                    .await
+            }
+            None => client
+                .fetch_and_extract_with_options(url, &options)
+                .await
+                .map(FetchExtractOutcome::Extracted),
+        }
+    };
+    let outcome = webclaw_fetch::with_progress(url, fetch_fut)
         .await
         .map_err(|e| format!("fetch error: {e}"))?;
+    let result = match outcome {
+        FetchExtractOutcome::Extracted(result) => result,
+        FetchExtractOutcome::PdfArtifact(artifact) => {
+            return Ok(FetchOutput::PdfArtifact(Box::new(artifact)));
+        }
+    };
 
     // Check if we should fall back to cloud
     let reason = detect_empty(&result);
@@ -2510,6 +2538,37 @@ fn has_llm_flags(cli: &Cli) -> bool {
     cli.extract_json.is_some() || cli.extract_prompt.is_some() || cli.summarize.is_some()
 }
 
+fn validate_pdf_artifact_mode(cli: &Cli) -> Result<(), String> {
+    let Some(max_bytes) = cli.pdf_artifact_max_bytes else {
+        return Ok(());
+    };
+    if max_bytes == 0 {
+        return Err("--pdf-artifact-max-bytes must be greater than zero".into());
+    }
+    if !matches!(&cli.format, OutputFormat::Json) {
+        return Err("--pdf-artifact-max-bytes requires --format json".into());
+    }
+    if !matches!(&cli.pdf_mode, PdfModeArg::Auto) {
+        return Err("--pdf-artifact-max-bytes requires --pdf-mode auto".into());
+    }
+    if cli.map
+        || cli.command.is_some()
+        || cli.crawl
+        || cli.watch
+        || cli.diff_with.is_some()
+        || cli.brand
+        || cli.research.is_some()
+        || has_llm_flags(cli)
+        || cli.raw_html
+        || cli.cloud
+        || cli.file.is_some()
+        || cli.stdin
+    {
+        return Err("--pdf-artifact-max-bytes supports only one local URL extraction".into());
+    }
+    Ok(())
+}
+
 async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
     let api_key = cli
         .api_key
@@ -2647,12 +2706,49 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
     ))
 }
 
+fn pdf_artifact_json(artifact: &PdfArtifact) -> serde_json::Value {
+    pdf_artifact_json_parts(
+        artifact.reason().as_str(),
+        artifact.final_url(),
+        artifact.content_type(),
+        artifact.byte_length(),
+        artifact.sha256(),
+        artifact.bytes(),
+    )
+}
+
+fn pdf_artifact_json_parts(
+    reason: &str,
+    final_url: &str,
+    content_type: &str,
+    byte_length: usize,
+    sha256: &str,
+    bytes: &[u8],
+) -> serde_json::Value {
+    serde_json::json!({
+        "outcome": "artifact",
+        "artifact": {
+            "reason": reason,
+            "final_url": final_url,
+            "content_type": content_type,
+            "byte_length": byte_length,
+            "sha256": sha256,
+            "data_base64": base64::engine::general_purpose::STANDARD.encode(bytes),
+        }
+    })
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
 
     let mut cli = Cli::parse();
     init_logging(cli.verbose);
+
+    if let Err(error) = validate_pdf_artifact_mode(&cli) {
+        eprintln!("error: {error}");
+        process::exit(1);
+    }
 
     // Subcommand path. Handled before the flag dispatch so a subcommand
     // can't collide with a flag-based flow. When no subcommand is set
@@ -2807,6 +2903,10 @@ async fn main() {
         }
     };
     backfill_single_file_url(&mut cli.urls, &entries);
+    if cli.pdf_artifact_max_bytes.is_some() && entries.len() != 1 {
+        eprintln!("error: --pdf-artifact-max-bytes requires exactly one URL");
+        process::exit(1);
+    }
 
     // --crawl: recursive crawl mode
     if cli.crawl {
@@ -2910,6 +3010,25 @@ async fn main() {
                 print_output(&result, &cli.format, cli.metadata);
             }
         }
+        Ok(FetchOutput::PdfArtifact(artifact)) => {
+            let content = serde_json::to_string_pretty(&pdf_artifact_json(&artifact))
+                .expect("serialization failed");
+            if let Some(ref dir) = cli.output_dir {
+                let url = cli
+                    .urls
+                    .first()
+                    .map(|value| normalize_url(value))
+                    .unwrap_or_default();
+                let custom_name = entries.first().and_then(|(_, name)| name.clone());
+                let filename = custom_name.unwrap_or_else(|| url_to_filename(&url, &cli.format));
+                if let Err(error) = write_to_file(dir, &filename, &content) {
+                    eprintln!("error: {error}");
+                    process::exit(1);
+                }
+            } else {
+                println!("{content}");
+            }
+        }
         Ok(FetchOutput::Cloud(resp)) => {
             print_cloud_output(&resp, &cli.format);
         }
@@ -2941,6 +3060,82 @@ mod tests {
         let entries = vec![("https://a.com".to_string(), None)];
         backfill_single_file_url(&mut urls, &entries);
         assert_eq!(urls, vec!["https://a.com".to_string()]);
+    }
+
+    #[test]
+    fn pdf_artifact_mode_requires_explicit_safe_shape() {
+        let valid = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com/scanned.pdf",
+            "--format",
+            "json",
+            "--pdf-artifact-max-bytes",
+            "1048576",
+        ])
+        .expect("valid artifact CLI");
+        assert!(validate_pdf_artifact_mode(&valid).is_ok());
+
+        let non_json = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com/scanned.pdf",
+            "--pdf-artifact-max-bytes",
+            "1048576",
+        ])
+        .expect("CLI parses before semantic validation");
+        assert_eq!(
+            validate_pdf_artifact_mode(&non_json).unwrap_err(),
+            "--pdf-artifact-max-bytes requires --format json"
+        );
+
+        let zero = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com/scanned.pdf",
+            "--format",
+            "json",
+            "--pdf-artifact-max-bytes",
+            "0",
+        ])
+        .expect("CLI parses before semantic validation");
+        assert_eq!(
+            validate_pdf_artifact_mode(&zero).unwrap_err(),
+            "--pdf-artifact-max-bytes must be greater than zero"
+        );
+
+        let subcommand = Cli::try_parse_from([
+            "webclaw",
+            "--format",
+            "json",
+            "--pdf-artifact-max-bytes",
+            "1048576",
+            "extractors",
+        ])
+        .expect("CLI parses before semantic validation");
+        assert_eq!(
+            validate_pdf_artifact_mode(&subcommand).unwrap_err(),
+            "--pdf-artifact-max-bytes supports only one local URL extraction"
+        );
+    }
+
+    #[test]
+    fn pdf_artifact_json_is_stable_and_base64_encoded() {
+        let output = pdf_artifact_json_parts(
+            "empty_pdf",
+            "https://example.com/final.pdf",
+            "application/pdf",
+            4,
+            "0123abcd",
+            b"pdf!",
+        );
+        assert_eq!(output["outcome"], "artifact");
+        assert_eq!(output["artifact"]["reason"], "empty_pdf");
+        assert_eq!(
+            output["artifact"]["final_url"],
+            "https://example.com/final.pdf"
+        );
+        assert_eq!(output["artifact"]["content_type"], "application/pdf");
+        assert_eq!(output["artifact"]["byte_length"], 4);
+        assert_eq!(output["artifact"]["sha256"], "0123abcd");
+        assert_eq!(output["artifact"]["data_base64"], "cGRmIQ==");
     }
 
     #[test]

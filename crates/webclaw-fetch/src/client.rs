@@ -12,8 +12,10 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use futures_util::StreamExt;
 use rand::seq::SliceRandom;
+use serde::{Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 use tracing::{debug, instrument, warn};
@@ -21,6 +23,13 @@ use webclaw_pdf::PdfMode;
 
 use crate::browser::{self, BrowserProfile, BrowserVariant};
 use crate::error::FetchError;
+
+/// Hard upper bound for a PDF artifact handoff.
+pub const MAX_PDF_ARTIFACT_BYTES: usize = webclaw_pdf::MAX_PDF_SIZE;
+
+/// Conservative default for callers that explicitly opt into artifact output.
+/// The base64 representation and JSON envelope add memory on top of the PDF.
+pub const DEFAULT_PDF_ARTIFACT_MAX_BYTES: usize = 10 * 1024 * 1024;
 
 /// Configuration for building a [`FetchClient`].
 #[derive(Debug, Clone)]
@@ -62,6 +71,15 @@ pub struct FetchConfig {
     pub max_redirects: u32,
     pub headers: HashMap<String, String>,
     pub pdf_mode: PdfMode,
+    /// Optional ceiling for the explicit PDF artifact handoff API.
+    ///
+    /// `None` preserves the existing `EmptyPdf` error for the explicit
+    /// handoff method. The default is [`DEFAULT_PDF_ARTIFACT_MAX_BYTES`]. The
+    /// limit is checked after the response has been buffered and PDF parsing
+    /// has completed; the ordinary response-body ceiling still bounds the
+    /// work performed.
+    /// Values must be between 1 and [`MAX_PDF_ARTIFACT_BYTES`].
+    pub pdf_artifact_max_bytes: Option<usize>,
 }
 
 impl Default for FetchConfig {
@@ -76,6 +94,7 @@ impl Default for FetchConfig {
             max_redirects: 10,
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
             pdf_mode: PdfMode::default(),
+            pdf_artifact_max_bytes: Some(DEFAULT_PDF_ARTIFACT_MAX_BYTES),
         }
     }
 }
@@ -92,26 +111,17 @@ pub struct FetchResult {
 }
 
 /// Stable reason for returning a bounded PDF artifact instead of extracted text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PdfArtifactReason {
     /// The PDF was valid but contained no extractable text in auto mode.
     EmptyPdf,
 }
 
-impl PdfArtifactReason {
-    /// Machine-readable reason string.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::EmptyPdf => "empty_pdf",
-        }
-    }
-}
-
 /// Exact bytes from a fetched PDF that could not yield text.
 ///
 /// This value is returned only by the explicit artifact API and only when the
-/// caller-supplied size ceiling is satisfied. Its `Debug` output deliberately
+/// configured size ceiling is satisfied. Its `Debug` output deliberately
 /// omits the bytes so logs cannot accidentally contain document content.
 #[derive(Clone)]
 pub struct PdfArtifact {
@@ -144,7 +154,9 @@ impl PdfArtifact {
         self.byte_length
     }
 
-    /// Lowercase SHA-256 digest of the artifact bytes.
+    /// Lowercase SHA-256 digest of the artifact bytes, so downstream OCR or
+    /// vision queues can deduplicate the exact handoff without decoding the
+    /// base64 field first.
     pub fn sha256(&self) -> &str {
         &self.sha256
     }
@@ -164,6 +176,43 @@ impl std::fmt::Debug for PdfArtifact {
             .field("sha256", &self.sha256)
             .field("reason", &self.reason)
             .finish_non_exhaustive()
+    }
+}
+
+struct PdfArtifactBytes<'a>(&'a [u8]);
+
+fn serialize_bytes_base64<S>(bytes: &PdfArtifactBytes<'_>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes.0))
+}
+
+impl Serialize for PdfArtifact {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct SerializablePdfArtifact<'a> {
+            reason: PdfArtifactReason,
+            final_url: &'a str,
+            content_type: &'a str,
+            byte_length: usize,
+            sha256: &'a str,
+            #[serde(serialize_with = "serialize_bytes_base64")]
+            data_base64: PdfArtifactBytes<'a>,
+        }
+
+        SerializablePdfArtifact {
+            reason: self.reason,
+            final_url: &self.final_url,
+            content_type: &self.content_type,
+            byte_length: self.byte_length,
+            sha256: &self.sha256,
+            data_base64: PdfArtifactBytes(self.bytes.as_ref()),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -211,7 +260,7 @@ struct Response {
 /// bugs. Caps the blast radius of the HTML → markdown conversion
 /// downstream (which could otherwise allocate multiple full-size Strings
 /// per page in collapse_whitespace + strip_markdown).
-const MAX_BODY_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_BODY_BYTES: u64 = webclaw_pdf::MAX_PDF_SIZE as u64;
 
 /// Running decompression-bomb guard: reject as soon as the bytes already
 /// buffered plus the next decompressed chunk would cross [`MAX_BODY_BYTES`].
@@ -337,6 +386,7 @@ enum ClientPool {
 pub struct FetchClient {
     pool: ClientPool,
     pdf_mode: PdfMode,
+    pdf_artifact_max_bytes: Option<usize>,
     /// Optional cloud-fallback client. Extractors that need to
     /// escalate past bot protection call `client.cloud()` to get this
     /// out. Stored as `Arc` so cloning a `FetchClient` (common in
@@ -381,6 +431,14 @@ impl FetchClient {
 
     /// Build a new client from config.
     pub fn new(config: FetchConfig) -> Result<Self, FetchError> {
+        if let Some(max_bytes) = config.pdf_artifact_max_bytes
+            && (max_bytes == 0 || max_bytes > MAX_PDF_ARTIFACT_BYTES)
+        {
+            return Err(FetchError::Build(format!(
+                "pdf_artifact_max_bytes must be between 1 and {MAX_PDF_ARTIFACT_BYTES} bytes"
+            )));
+        }
+
         let variants = collect_variants(&config.browser);
         let pdf_mode = config.pdf_mode.clone();
 
@@ -436,6 +494,7 @@ impl FetchClient {
         Ok(Self {
             pool,
             pdf_mode,
+            pdf_artifact_max_bytes: config.pdf_artifact_max_bytes,
             cloud: None,
             total_timeout: config.total_timeout,
         })
@@ -681,36 +740,66 @@ impl FetchClient {
         url: &str,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        match self.fetch_and_extract_outcome(url, options, None).await? {
-            FetchExtractOutcome::Extracted(result) => Ok(result),
-            FetchExtractOutcome::PdfArtifact(_) => Err(FetchError::Build(
-                "unexpected PDF artifact on non-artifact extraction path".into(),
-            )),
+        let started = Instant::now();
+        let response = self.fetch_response(url).await?;
+        let status = response.status();
+        let final_url = response.url().to_string();
+
+        if is_pdf_content_type(response.headers()) {
+            debug!(status, "detected PDF response, using pdf extraction");
+            let bytes = response.body();
+            debug!(
+                status,
+                bytes = bytes.len(),
+                elapsed_ms = %started.elapsed().as_millis(),
+                "PDF fetch complete"
+            );
+            let pdf_result = webclaw_pdf::extract_pdf(bytes, self.pdf_mode.clone())?;
+            return Ok(pdf_to_extraction_result(&pdf_result, &final_url));
         }
+
+        self.extract_non_pdf_response(response, options, started)
     }
 
     /// Fetch and extract with an opt-in bounded handoff for text-empty PDFs.
     ///
     /// Existing extraction behaviour is unchanged. Only `PdfError::EmptyPdf`
     /// can produce an artifact, and only when its exact response body fits
-    /// `max_artifact_bytes`. No second request is performed.
-    #[instrument(skip(self, options), fields(url = %url, max_artifact_bytes))]
+    /// the ceiling configured on [`FetchConfig::pdf_artifact_max_bytes`]. No
+    /// second request is performed.
+    #[instrument(skip(self, options), fields(url = %url))]
     pub async fn fetch_and_extract_with_pdf_artifact(
         &self,
         url: &str,
         options: &webclaw_core::ExtractionOptions,
-        max_artifact_bytes: usize,
     ) -> Result<FetchExtractOutcome, FetchError> {
-        self.fetch_and_extract_outcome(url, options, Some(max_artifact_bytes))
-            .await
+        let started = Instant::now();
+        let response = self.fetch_response(url).await?;
+        let status = response.status();
+
+        if is_pdf_content_type(response.headers()) {
+            debug!(status, "detected PDF response, using pdf extraction");
+            let bytes = response.body();
+            debug!(
+                status,
+                bytes = bytes.len(),
+                elapsed_ms = %started.elapsed().as_millis(),
+                "PDF fetch complete"
+            );
+            return extract_pdf_response(
+                response,
+                self.pdf_mode.clone(),
+                self.pdf_artifact_max_bytes,
+            );
+        }
+
+        self.extract_non_pdf_response(response, options, started)
+            .map(FetchExtractOutcome::Extracted)
     }
 
-    async fn fetch_and_extract_outcome(
-        &self,
-        url: &str,
-        options: &webclaw_core::ExtractionOptions,
-        max_pdf_artifact_bytes: Option<usize>,
-    ) -> Result<FetchExtractOutcome, FetchError> {
+    /// Fetch one response, including the existing URL rescue and challenge
+    /// warm-up behaviour shared by the extraction entry points.
+    async fn fetch_response(&self, url: &str) -> Result<Response, FetchError> {
         let parsed_url = crate::url_security::validate_public_http_url(url).await?;
         let url = parsed_url.as_str();
 
@@ -725,7 +814,6 @@ impl FetchClient {
             url
         };
 
-        let start = Instant::now();
         let client = self.pick_client(url);
         let resp = client.get(url).send().await?;
         let mut response = Response::from_wreq(resp).await?;
@@ -742,37 +830,25 @@ impl FetchClient {
             debug!("retried after cookie warmup: status={}", response.status());
         }
 
+        Ok(response)
+    }
+
+    fn extract_non_pdf_response(
+        &self,
+        response: Response,
+        options: &webclaw_core::ExtractionOptions,
+        started: Instant,
+    ) -> Result<webclaw_core::ExtractionResult, FetchError> {
         let status = response.status();
         let final_url = response.url().to_string();
 
-        // Borrowed, not cloned: both consumers below take `&HeaderMap`, and the
-        // borrow ends before `response` is moved into `into_text()`.
         let headers = response.headers();
-
-        let is_pdf = is_pdf_content_type(headers);
-
-        if is_pdf {
-            debug!(status, "detected PDF response, using pdf extraction");
-
-            let bytes = response.body();
-
-            let elapsed = start.elapsed();
-            debug!(
-                status,
-                bytes = bytes.len(),
-                elapsed_ms = %elapsed.as_millis(),
-                "PDF fetch complete"
-            );
-
-            extract_pdf_response(response, self.pdf_mode.clone(), max_pdf_artifact_bytes)
-        } else if let Some(doc_type) =
-            crate::document::is_document_content_type(headers, &final_url)
-        {
+        if let Some(doc_type) = crate::document::is_document_content_type(headers, &final_url) {
             debug!(status, doc_type = ?doc_type, "detected document response, extracting");
 
             let bytes = response.body();
 
-            let elapsed = start.elapsed();
+            let elapsed = started.elapsed();
             debug!(
                 status,
                 bytes = bytes.len(),
@@ -782,25 +858,30 @@ impl FetchClient {
 
             let mut result = crate::document::extract_document(bytes, doc_type)?;
             result.metadata.url = Some(final_url);
-            Ok(FetchExtractOutcome::Extracted(result))
+            Ok(result)
         } else {
             let html = response.into_text();
 
-            let elapsed = start.elapsed();
-            debug!(status, elapsed_ms = %elapsed.as_millis(), "fetch complete");
+            debug!(
+                status,
+                elapsed_ms = %started.elapsed().as_millis(),
+                "fetch complete"
+            );
 
             // LinkedIn: extract from embedded <code> JSON blobs
             if crate::linkedin::is_linkedin_post(&final_url) {
                 if let Some(result) = crate::linkedin::extract_linkedin_post(&html, &final_url) {
                     debug!("linkedin extraction succeeded");
-                    return Ok(FetchExtractOutcome::Extracted(result));
+                    return Ok(result);
                 }
                 debug!("linkedin extraction failed, falling back to standard");
             }
 
-            let extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
-
-            Ok(FetchExtractOutcome::Extracted(extraction))
+            Ok(webclaw_core::extract_with_options(
+                &html,
+                Some(&final_url),
+                options,
+            )?)
         }
     }
 
@@ -1205,12 +1286,7 @@ mod tests {
     use super::*;
 
     fn blank_pdf() -> Vec<u8> {
-        use base64::Engine as _;
-
-        const BLANK_PDF: &str = "JVBERi0xLjUKMSAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDEvUmVzb3VyY2VzPDw+Pi9NZWRpYUJveFswIDAgNTk1IDg0Ml0+PgplbmRvYmoKMiAwIG9iago8PC9MZW5ndGggMD4+c3RyZWFtCgplbmRzdHJlYW0gCmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvQ29udGVudHMgMiAwIFI+PgplbmRvYmoKNCAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMSAwIFI+PgplbmRvYmoKNSAwIG9iago8PC9Sb290IDQgMCBSL1R5cGUvWFJlZi9TaXplIDYvV1sxIDQgMl0vSW5kZXhbMSA1XS9MZW5ndGggMzU+PnN0cmVhbQoBAAAACQAAAQAAAGAAAAEAAACPAAABAAAAyQAAAQAAAPYAAAplbmRzdHJlYW0gCmVuZG9iagoKc3RhcnR4cmVmCjI0NgolJUVPRg==";
-        base64::engine::general_purpose::STANDARD
-            .decode(BLANK_PDF)
-            .expect("valid blank PDF fixture")
+        include_bytes!("../testdata/blank.pdf").to_vec()
     }
 
     fn pdf_response(body: Vec<u8>) -> Response {
@@ -1291,6 +1367,10 @@ mod tests {
         let c = FetchConfig::default();
         assert_eq!(c.timeout, Duration::from_secs(12));
         assert_eq!(c.total_timeout, Some(Duration::from_secs(24)));
+        assert_eq!(
+            c.pdf_artifact_max_bytes,
+            Some(DEFAULT_PDF_ARTIFACT_MAX_BYTES)
+        );
     }
 
     #[tokio::test]
@@ -1420,7 +1500,7 @@ mod tests {
     #[test]
     fn empty_pdf_artifact_preserves_exact_response_and_metadata() {
         let bytes = blank_pdf();
-        let expected_sha256 = "0073b0ea0de081fee911056e2534b1cf9813821e7efb9f644496665cb3fb20bb";
+        let expected_sha256 = "c053eb237d043f105babfd4f0446864050c091dc05bf61fb6508347a9499e5ac";
 
         let old_error = extract_pdf_response(pdf_response(bytes.clone()), PdfMode::Auto, None)
             .expect_err("legacy path must keep returning EmptyPdf");
@@ -1471,6 +1551,33 @@ mod tests {
         let debug = format!("{artifact:?}");
         assert!(!debug.contains("secret-body-marker"));
         assert!(debug.contains("byte_length"));
+    }
+
+    #[test]
+    fn pdf_artifact_serializes_metadata_and_base64_without_raw_bytes() {
+        let artifact = into_pdf_artifact(pdf_response(b"%PDF-secret-body-marker".to_vec()), 1024)
+            .expect("artifact under limit");
+        let value = serde_json::to_value(&artifact).expect("artifact should serialize");
+
+        assert_eq!(value["reason"], "empty_pdf");
+        assert_eq!(value["final_url"], "https://example.com/final.pdf");
+        assert_eq!(value["content_type"], "application/pdf; charset=binary");
+        assert_eq!(value["byte_length"], 23);
+        assert_eq!(value["data_base64"], "JVBERi1zZWNyZXQtYm9keS1tYXJrZXI=");
+        assert!(value.get("bytes").is_none());
+    }
+
+    #[test]
+    fn pdf_artifact_limit_is_bounded_at_client_construction() {
+        for limit in [0, MAX_PDF_ARTIFACT_BYTES + 1] {
+            let error = FetchClient::new(FetchConfig {
+                pdf_artifact_max_bytes: Some(limit),
+                ..Default::default()
+            })
+            .err()
+            .expect("invalid artifact limits must fail before client construction");
+            assert!(error.to_string().contains("pdf_artifact_max_bytes"));
+        }
     }
 
     #[test]

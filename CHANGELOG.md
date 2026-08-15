@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Bounded PDF artifact handoff.** The Rust crate API (`FetchClient::fetch_and_extract_with_pdf_artifact` and `FetchClient::fetch_and_extract_with_pdf_artifact_limit`), CLI (`--pdf-artifact-max-bytes`), MCP `scrape` tool (`pdf_artifact_max_bytes`), and self-hosted server (`POST /v1/scrape` with `pdf_artifact_max_bytes`) can return the exact response bytes as a base64-encoded artifact envelope (`PdfArtifactEnvelope`) when an extracted PDF produces no non-whitespace text.
+  - Opt-in on all four surfaces (`FetchConfig::default().pdf_artifact_max_bytes` is `None`).
+  - Transport maximum is 50 MiB (`MAX_PDF_ARTIFACT_BYTES`), with MCP clamped to 5 MiB (`MAX_MCP_PDF_ARTIFACT_BYTES`) to avoid exceeding model context limits.
+  - Unified envelope serialization across all interfaces (`{"outcome": "artifact", "artifact": {...}}`).
+
+### Changed
+- **Semver safety with `#[non_exhaustive]`.**
+  - `FetchError` is now `#[non_exhaustive]`. External callers must include a wildcard arm when matching so future fetch errors can be added safely.
+  - `FetchExtractOutcome` and `PdfArtifactReason` are `#[non_exhaustive]`.
+
 ## [0.6.21] - 2026-08-16
 
 ### Fixed

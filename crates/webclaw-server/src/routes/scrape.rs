@@ -62,10 +62,20 @@ pub async fn scrape(
         include_raw_html: formats.iter().any(|f| f == "html"),
     };
 
-    let extraction = state
+    let outcome = state
         .fetch()
-        .fetch_and_extract_with_options(url.as_str(), &options)
+        .fetch_and_extract_with_pdf_artifact(url.as_str(), &options)
         .await?;
+
+    let extraction = match outcome {
+        webclaw_fetch::FetchExtractOutcome::Extracted(extraction) => extraction,
+        webclaw_fetch::FetchExtractOutcome::PdfArtifact(artifact) => {
+            return Ok(Json(json!({
+                "outcome": "artifact",
+                "artifact": artifact,
+            })));
+        }
+    };
 
     let mut body = json!({
         "url": extraction.metadata.url.clone().unwrap_or_else(|| url.to_string()),

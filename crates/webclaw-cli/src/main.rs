@@ -2,7 +2,6 @@
 /// All extraction and fetching logic lives in sibling crates; this is pure plumbing.
 mod bench;
 
-use base64::Engine as _;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -269,7 +268,7 @@ struct Cli {
     #[arg(long, default_value = "auto")]
     pdf_mode: PdfModeArg,
 
-    /// On an EmptyPdf result, return the exact fetched PDF as bounded JSON/base64.
+    /// On an auto-mode PDF with no extractable text, return the exact fetched PDF as bounded JSON/base64.
     /// Requires a single URL and --format json.
     #[arg(long, value_name = "BYTES")]
     pdf_artifact_max_bytes: Option<usize>,
@@ -606,6 +605,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
         proxy_pool,
         timeout: std::time::Duration::from_secs(cli.timeout),
         pdf_mode: cli.pdf_mode.clone().into(),
+        pdf_artifact_max_bytes: cli.pdf_artifact_max_bytes,
         headers,
         ..Default::default()
     }
@@ -983,9 +983,9 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     // line every 10s of elapsed time so the CLI doesn't appear hung.
     let fetch_fut = async {
         match cli.pdf_artifact_max_bytes {
-            Some(max_bytes) => {
+            Some(_) => {
                 client
-                    .fetch_and_extract_with_pdf_artifact(url, &options, max_bytes)
+                    .fetch_and_extract_with_pdf_artifact(url, &options)
                     .await
             }
             None => client
@@ -2545,6 +2545,12 @@ fn validate_pdf_artifact_mode(cli: &Cli) -> Result<(), String> {
     if max_bytes == 0 {
         return Err("--pdf-artifact-max-bytes must be greater than zero".into());
     }
+    if max_bytes > webclaw_fetch::MAX_PDF_ARTIFACT_BYTES {
+        return Err(format!(
+            "--pdf-artifact-max-bytes must not exceed {} bytes",
+            webclaw_fetch::MAX_PDF_ARTIFACT_BYTES
+        ));
+    }
     if !matches!(&cli.format, OutputFormat::Json) {
         return Err("--pdf-artifact-max-bytes requires --format json".into());
     }
@@ -2707,34 +2713,9 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
 }
 
 fn pdf_artifact_json(artifact: &PdfArtifact) -> serde_json::Value {
-    pdf_artifact_json_parts(
-        artifact.reason().as_str(),
-        artifact.final_url(),
-        artifact.content_type(),
-        artifact.byte_length(),
-        artifact.sha256(),
-        artifact.bytes(),
-    )
-}
-
-fn pdf_artifact_json_parts(
-    reason: &str,
-    final_url: &str,
-    content_type: &str,
-    byte_length: usize,
-    sha256: &str,
-    bytes: &[u8],
-) -> serde_json::Value {
     serde_json::json!({
         "outcome": "artifact",
-        "artifact": {
-            "reason": reason,
-            "final_url": final_url,
-            "content_type": content_type,
-            "byte_length": byte_length,
-            "sha256": sha256,
-            "data_base64": base64::engine::general_purpose::STANDARD.encode(bytes),
-        }
+        "artifact": artifact,
     })
 }
 
@@ -3114,28 +3095,6 @@ mod tests {
             validate_pdf_artifact_mode(&subcommand).unwrap_err(),
             "--pdf-artifact-max-bytes supports only one local URL extraction"
         );
-    }
-
-    #[test]
-    fn pdf_artifact_json_is_stable_and_base64_encoded() {
-        let output = pdf_artifact_json_parts(
-            "empty_pdf",
-            "https://example.com/final.pdf",
-            "application/pdf",
-            4,
-            "0123abcd",
-            b"pdf!",
-        );
-        assert_eq!(output["outcome"], "artifact");
-        assert_eq!(output["artifact"]["reason"], "empty_pdf");
-        assert_eq!(
-            output["artifact"]["final_url"],
-            "https://example.com/final.pdf"
-        );
-        assert_eq!(output["artifact"]["content_type"], "application/pdf");
-        assert_eq!(output["artifact"]["byte_length"], 4);
-        assert_eq!(output["artifact"]["sha256"], "0123abcd");
-        assert_eq!(output["artifact"]["data_base64"], "cGRmIQ==");
     }
 
     #[test]

@@ -38,7 +38,8 @@ pub struct PdfMetadata {
     pub creator: Option<String>,
 }
 
-const MAX_PDF_SIZE: usize = 50 * 1024 * 1024; // 50MB
+/// Maximum PDF body accepted by the parser.
+pub const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;
 
 /// Extract text content from raw PDF bytes.
 ///

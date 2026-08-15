@@ -4,6 +4,8 @@ description = "HTTP client with browser TLS fingerprint impersonation via wreq"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# The PDF fixture is only used by repository tests, not by published crates.
+exclude = ["testdata/blank.pdf"]
 
 [dependencies]
 webclaw-core = { workspace = true }
@@ -34,7 +36,7 @@ calamine = "0.34"
 zip = "2"
 flate2 = "1"
 sha2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
-base64 = "0.22"

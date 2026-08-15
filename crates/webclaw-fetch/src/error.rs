@@ -2,6 +2,7 @@
 /// that callers can match on without leaking transport details.
 use thiserror::Error;
 
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum FetchError {
     #[error("request failed: {0}")]

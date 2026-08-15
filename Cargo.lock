@@ -3260,7 +3260,6 @@ dependencies = [
 name = "webclaw-cli"
 version = "0.6.21"
 dependencies = [
- "base64",
  "clap",
  "dotenvy",
  "rand 0.8.5",

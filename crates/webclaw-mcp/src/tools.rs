@@ -104,6 +104,10 @@ pub struct ScrapeParams {
     pub browser: Option<String>,
     /// Cookies to send with the request (e.g. ["name=value", "session=abc123"])
     pub cookies: Option<Vec<String>>,
+    /// Opt in to returning a bounded exact PDF artifact as JSON/base64 when
+    /// auto extraction finds no non-whitespace text. Requires `format: json`.
+    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    pub pdf_artifact_max_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -270,6 +274,15 @@ mod tests {
     fn crawl_depth_non_numeric_string_errors() {
         let e = serde_json::from_str::<CrawlParams>(r#"{"url":"https://x.com","depth":"abc"}"#);
         assert!(e.is_err(), "expected Err, got {e:?}");
+    }
+
+    #[test]
+    fn scrape_pdf_artifact_limit_accepts_numeric_strings() {
+        let v: ScrapeParams = serde_json::from_str(
+            r#"{"url":"https://x.com/report.pdf","format":"json","pdf_artifact_max_bytes":"1024"}"#,
+        )
+        .unwrap();
+        assert_eq!(v.pdf_artifact_max_bytes, Some(1024));
     }
 
     // ── CrawlParams.max_pages (usize) ────────────────────────────────────────

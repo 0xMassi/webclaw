@@ -114,14 +114,14 @@ cargo test -p webclaw-core -- --exact <module>::tests::<fn_name>   # exactly one
 cargo test -p webclaw-fetch --lib -- --nocapture   # unit tests only, print stdout
 ```
 
-⚠️ **`cargo test --workspace` runs a live 1000-site network benchmark.**
-`crates/webclaw-fetch/tests/bench_1k.rs::bench_1k_sites` is a plain
-`#[tokio::test]` (not `#[ignore]`) that fetches every URL in the tracked
-`targets_1000.txt`. It's the only integration test in the workspace; everything
-else is inline unit tests. For a fast offline loop use `--lib`:
-`cargo test --workspace --lib`. Run the benchmark deliberately instead:
-`cargo test -p webclaw-fetch --test bench_1k --release -- --nocapture`
-(honors `TARGETS_FILE` and the proxy env vars).
+`crates/webclaw-fetch/tests/bench_1k.rs::bench_1k_sites` fetches every URL in
+the tracked `targets_1000.txt`. It's the only integration test in the
+workspace; everything else is inline unit tests. It is `#[ignore]`d, so
+`cargo test --workspace` skips it — it asserts nothing and its result depends
+on the network, so it is a measurement rather than a test. Run it deliberately:
+`cargo test -p webclaw-fetch --test bench_1k --release -- --ignored --nocapture`
+(honors `TARGETS_FILE` and the proxy env vars). Note the `--ignored`; without
+it the benchmark is skipped.
 
 CI (`.github/workflows/ci.yml`, with `RUSTFLAGS=--cfg reqwest_unstable`) runs four jobs — match them locally before pushing:
 - `cargo test --workspace`

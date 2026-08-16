@@ -80,7 +80,19 @@ fn classify(body: &str, len: usize, status: u16, kw: &[String]) -> &'static str 
     }
 }
 
+/// Fetches every URL in `targets_1000.txt` and prints a PASS/CHALLENGE/BLOCKED
+/// breakdown. It asserts nothing, so it can only fail by panicking.
+///
+/// `#[ignore]` because it is a measurement, not a test: without it
+/// `cargo test --workspace` spends around two minutes on live network traffic
+/// on every CI run and every local invocation, and its result depends on the
+/// network rather than on the code. Run it deliberately:
+///
+/// ```text
+/// cargo test -p webclaw-fetch --test bench_1k --release -- --ignored --nocapture
+/// ```
 #[tokio::test]
+#[ignore = "live 1000-site network benchmark; run deliberately with --ignored"]
 async fn bench_1k_sites() {
     let targets = load_targets();
     let proxy = load_proxy();

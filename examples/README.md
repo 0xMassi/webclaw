@@ -117,7 +117,7 @@ webclaw --diff-with snapshot.json https://example.com
 webclaw https://example.com/report.pdf
 
 # Control PDF mode
-webclaw --pdf-mode auto https://example.com/report.pdf  # Error on empty (catches scanned PDFs)
+webclaw --pdf-mode auto https://example.com/report.pdf  # Error if no non-whitespace text
 webclaw --pdf-mode fast https://example.com/report.pdf  # Return whatever text is found
 ```
 

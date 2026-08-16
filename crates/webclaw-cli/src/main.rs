@@ -1002,6 +1002,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         FetchExtractOutcome::PdfArtifact(artifact) => {
             return Ok(FetchOutput::PdfArtifact(Box::new(artifact)));
         }
+        _ => unreachable!("FetchExtractOutcome is non-exhaustive"),
     };
 
     // Check if we should fall back to cloud
@@ -2712,13 +2713,6 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
     ))
 }
 
-fn pdf_artifact_json(artifact: &PdfArtifact) -> serde_json::Value {
-    serde_json::json!({
-        "outcome": "artifact",
-        "artifact": artifact,
-    })
-}
-
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -2992,7 +2986,7 @@ async fn main() {
             }
         }
         Ok(FetchOutput::PdfArtifact(artifact)) => {
-            let content = serde_json::to_string_pretty(&pdf_artifact_json(&artifact))
+            let content = serde_json::to_string_pretty(&artifact.as_envelope())
                 .expect("serialization failed");
             if let Some(ref dir) = cli.output_dir {
                 let url = cli

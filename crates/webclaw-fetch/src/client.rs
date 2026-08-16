@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use futures_util::StreamExt;
 use rand::seq::SliceRandom;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 use tracing::{debug, instrument, warn};
@@ -94,7 +94,7 @@ impl Default for FetchConfig {
             max_redirects: 10,
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
             pdf_mode: PdfMode::default(),
-            pdf_artifact_max_bytes: Some(DEFAULT_PDF_ARTIFACT_MAX_BYTES),
+            pdf_artifact_max_bytes: None,
         }
     }
 }
@@ -111,7 +111,8 @@ pub struct FetchResult {
 }
 
 /// Stable reason for returning a bounded PDF artifact instead of extracted text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PdfArtifactReason {
     /// The PDF was valid but contained no extractable text in auto mode.
@@ -123,7 +124,7 @@ pub enum PdfArtifactReason {
 /// This value is returned only by the explicit artifact API and only when the
 /// configured size ceiling is satisfied. Its `Debug` output deliberately
 /// omits the bytes so logs cannot accidentally contain document content.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PdfArtifact {
     bytes: bytes::Bytes,
     final_url: String,
@@ -164,6 +165,16 @@ impl PdfArtifact {
     /// Stable reason the artifact was returned.
     pub fn reason(&self) -> PdfArtifactReason {
         self.reason
+    }
+
+    /// Return a borrowed canonical response envelope for serialization.
+    pub fn as_envelope(&self) -> PdfArtifactRefEnvelope<'_> {
+        PdfArtifactRefEnvelope::new(self)
+    }
+
+    /// Wrap this artifact in an owned canonical response envelope.
+    pub fn into_envelope(self) -> PdfArtifactEnvelope {
+        PdfArtifactEnvelope::new(self)
     }
 }
 
@@ -216,10 +227,74 @@ impl Serialize for PdfArtifact {
     }
 }
 
+impl<'de> Deserialize<'de> for PdfArtifact {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct DeHelper {
+            reason: PdfArtifactReason,
+            final_url: String,
+            content_type: String,
+            byte_length: usize,
+            sha256: String,
+            data_base64: String,
+        }
+
+        let helper = DeHelper::deserialize(deserializer)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(helper.data_base64.as_bytes())
+            .map_err(serde::de::Error::custom)?;
+
+        Ok(Self {
+            bytes: bytes::Bytes::from(bytes),
+            final_url: helper.final_url,
+            content_type: helper.content_type,
+            byte_length: helper.byte_length,
+            sha256: helper.sha256,
+            reason: helper.reason,
+        })
+    }
+}
+
+/// Canonical envelope emitted across CLI, MCP, and HTTP server for PDF artifact handoffs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PdfArtifactEnvelope {
+    pub outcome: String,
+    pub artifact: PdfArtifact,
+}
+
+impl PdfArtifactEnvelope {
+    pub fn new(artifact: PdfArtifact) -> Self {
+        Self {
+            outcome: "artifact".to_string(),
+            artifact,
+        }
+    }
+}
+
+/// Borrowed reference variant of [`PdfArtifactEnvelope`] for zero-copy serialization.
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfArtifactRefEnvelope<'a> {
+    pub outcome: &'static str,
+    pub artifact: &'a PdfArtifact,
+}
+
+impl<'a> PdfArtifactRefEnvelope<'a> {
+    pub fn new(artifact: &'a PdfArtifact) -> Self {
+        Self {
+            outcome: "artifact",
+            artifact,
+        }
+    }
+}
+
 /// Result of the opt-in fetch-and-extract API.
 ///
 /// ExtractionResult stays inline so existing extraction methods do not gain
 /// a heap allocation merely by routing through this outcome internally.
+#[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum FetchExtractOutcome {
@@ -773,6 +848,18 @@ impl FetchClient {
         url: &str,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<FetchExtractOutcome, FetchError> {
+        self.fetch_and_extract_with_pdf_artifact_limit(url, options, self.pdf_artifact_max_bytes)
+            .await
+    }
+
+    /// Fetch and extract with a caller-provided explicit ceiling for text-empty PDFs.
+    #[instrument(skip(self, options), fields(url = %url))]
+    pub async fn fetch_and_extract_with_pdf_artifact_limit(
+        &self,
+        url: &str,
+        options: &webclaw_core::ExtractionOptions,
+        max_artifact_bytes: Option<usize>,
+    ) -> Result<FetchExtractOutcome, FetchError> {
         let started = Instant::now();
         let response = self.fetch_response(url).await?;
         let status = response.status();
@@ -786,11 +873,7 @@ impl FetchClient {
                 elapsed_ms = %started.elapsed().as_millis(),
                 "PDF fetch complete"
             );
-            return extract_pdf_response(
-                response,
-                self.pdf_mode.clone(),
-                self.pdf_artifact_max_bytes,
-            );
+            return extract_pdf_response(response, self.pdf_mode.clone(), max_artifact_bytes);
         }
 
         self.extract_non_pdf_response(response, options, started)
@@ -1367,10 +1450,7 @@ mod tests {
         let c = FetchConfig::default();
         assert_eq!(c.timeout, Duration::from_secs(12));
         assert_eq!(c.total_timeout, Some(Duration::from_secs(24)));
-        assert_eq!(
-            c.pdf_artifact_max_bytes,
-            Some(DEFAULT_PDF_ARTIFACT_MAX_BYTES)
-        );
+        assert_eq!(c.pdf_artifact_max_bytes, None);
     }
 
     #[tokio::test]
@@ -1565,6 +1645,47 @@ mod tests {
         assert_eq!(value["byte_length"], 23);
         assert_eq!(value["data_base64"], "JVBERi1zZWNyZXQtYm9keS1tYXJrZXI=");
         assert!(value.get("bytes").is_none());
+
+        // Test round-trip deserialization
+        let deserialized: PdfArtifact =
+            serde_json::from_value(value).expect("artifact should deserialize");
+        assert_eq!(deserialized.bytes().as_ref(), b"%PDF-secret-body-marker");
+        assert_eq!(deserialized.final_url(), "https://example.com/final.pdf");
+        assert_eq!(
+            deserialized.content_type(),
+            "application/pdf; charset=binary"
+        );
+        assert_eq!(deserialized.byte_length(), 23);
+        assert_eq!(deserialized.reason(), PdfArtifactReason::EmptyPdf);
+    }
+
+    #[test]
+    fn pdf_artifact_envelope_serializes_and_deserializes() {
+        let artifact = into_pdf_artifact(pdf_response(b"%PDF-secret-body-marker".to_vec()), 1024)
+            .expect("artifact under limit");
+        let ref_envelope = artifact.as_envelope();
+        let value = serde_json::to_value(&ref_envelope).expect("envelope should serialize");
+
+        assert_eq!(value["outcome"], "artifact");
+        assert_eq!(value["artifact"]["reason"], "empty_pdf");
+        assert_eq!(
+            value["artifact"]["data_base64"],
+            "JVBERi1zZWNyZXQtYm9keS1tYXJrZXI="
+        );
+
+        let envelope: PdfArtifactEnvelope =
+            serde_json::from_value(value).expect("envelope should deserialize");
+        assert_eq!(envelope.outcome, "artifact");
+        assert_eq!(
+            envelope.artifact.bytes().as_ref(),
+            b"%PDF-secret-body-marker"
+        );
+    }
+
+    #[test]
+    fn default_fetch_config_has_no_artifact_override() {
+        let config = FetchConfig::default();
+        assert_eq!(config.pdf_artifact_max_bytes, None);
     }
 
     #[test]

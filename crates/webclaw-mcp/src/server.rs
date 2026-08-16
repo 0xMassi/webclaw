@@ -51,6 +51,11 @@ fn parse_browser(browser: Option<&str>) -> webclaw_fetch::BrowserProfile {
     }
 }
 
+/// Maximum PDF artifact size allowed on the MCP surface (5 MiB).
+/// MCP payloads are returned inline in model context windows, so this is
+/// clamped to a single-digit MiB ceiling rather than the 50 MiB transport maximum.
+pub const MAX_MCP_PDF_ARTIFACT_BYTES: usize = 5 * 1024 * 1024;
+
 fn validate_pdf_artifact_limit(format: &str, max_bytes: Option<usize>) -> Result<(), String> {
     let Some(max_bytes) = max_bytes else {
         return Ok(());
@@ -58,10 +63,9 @@ fn validate_pdf_artifact_limit(format: &str, max_bytes: Option<usize>) -> Result
     if max_bytes == 0 {
         return Err("pdf_artifact_max_bytes must be greater than zero".into());
     }
-    if max_bytes > webclaw_fetch::MAX_PDF_ARTIFACT_BYTES {
+    if max_bytes > MAX_MCP_PDF_ARTIFACT_BYTES {
         return Err(format!(
-            "pdf_artifact_max_bytes must not exceed {} bytes",
-            webclaw_fetch::MAX_PDF_ARTIFACT_BYTES
+            "pdf_artifact_max_bytes must not exceed {MAX_MCP_PDF_ARTIFACT_BYTES} bytes (5 MiB) for MCP tool calls"
         ));
     }
     if format != "json" {
@@ -153,10 +157,22 @@ impl WebclawMcp {
         if let Some(c) = self.firefox_client.get() {
             return Ok(c.clone());
         }
-        let config = webclaw_fetch::FetchConfig {
+        let mut config = webclaw_fetch::FetchConfig {
             browser: webclaw_fetch::BrowserProfile::Firefox,
             ..Default::default()
         };
+        if let Ok(proxy) = std::env::var("WEBCLAW_PROXY") {
+            config.proxy = Some(proxy);
+        }
+        let proxy_file = std::env::var("WEBCLAW_PROXY_FILE")
+            .ok()
+            .unwrap_or_else(|| "proxies.txt".to_string());
+        if std::path::Path::new(&proxy_file).exists()
+            && let Ok(pool) = webclaw_fetch::parse_proxy_file(&proxy_file)
+            && !pool.is_empty()
+        {
+            config.proxy_pool = pool;
+        }
         let client = Arc::new(
             webclaw_fetch::FetchClient::new(config)
                 .map_err(|e| format!("Failed to build firefox client: {e}"))?,
@@ -201,30 +217,14 @@ impl WebclawMcp {
             .filter(|c| !c.is_empty())
             .map(|c| c.join("; "));
 
-        // Use a custom client if non-default browser or cookies are provided
         // Pick the cheapest route to a FetchClient for this request:
         //   1. Default Chrome + no cookies → reuse the long-lived self.fetch_client
         //   2. Firefox + no cookies        → reuse the lazily-cached self.firefox_client
-        //   3. Anything with cookies, or Random                       → build ad-hoc
+        //   3. Anything with cookies, or Random → build ad-hoc with proxy configuration
         let is_default_browser = matches!(browser, webclaw_fetch::BrowserProfile::Chrome);
         let custom_client;
         let cached_firefox;
-        let client: &webclaw_fetch::FetchClient = if pdf_artifact_max_bytes.is_some() {
-            let mut headers = std::collections::HashMap::new();
-            headers.insert("Accept-Language".to_string(), "en-US,en;q=0.9".to_string());
-            if let Some(ref cookies) = cookie_header {
-                headers.insert("Cookie".to_string(), cookies.clone());
-            }
-            let config = webclaw_fetch::FetchConfig {
-                browser,
-                headers,
-                pdf_artifact_max_bytes,
-                ..Default::default()
-            };
-            custom_client = webclaw_fetch::FetchClient::new(config)
-                .map_err(|e| format!("Failed to build client: {e}"))?;
-            &custom_client
-        } else if cookie_header.is_none() && is_default_browser {
+        let client: &webclaw_fetch::FetchClient = if cookie_header.is_none() && is_default_browser {
             &self.fetch_client
         } else if cookie_header.is_none()
             && matches!(browser, webclaw_fetch::BrowserProfile::Firefox)
@@ -239,44 +239,101 @@ impl WebclawMcp {
             if let Some(ref cookies) = cookie_header {
                 headers.insert("Cookie".to_string(), cookies.clone());
             }
-            let config = webclaw_fetch::FetchConfig {
+            let mut config = webclaw_fetch::FetchConfig {
                 browser,
                 headers,
                 ..Default::default()
             };
+            if let Ok(proxy) = std::env::var("WEBCLAW_PROXY") {
+                config.proxy = Some(proxy);
+            }
+            let proxy_file = std::env::var("WEBCLAW_PROXY_FILE")
+                .ok()
+                .unwrap_or_else(|| "proxies.txt".to_string());
+            if std::path::Path::new(&proxy_file).exists()
+                && let Ok(pool) = webclaw_fetch::parse_proxy_file(&proxy_file)
+                && !pool.is_empty()
+            {
+                config.proxy_pool = pool;
+            }
             custom_client = webclaw_fetch::FetchClient::new(config)
                 .map_err(|e| format!("Failed to build client: {e}"))?;
             &custom_client
         };
 
-        if pdf_artifact_max_bytes.is_some() {
+        if let Some(max_bytes) = pdf_artifact_max_bytes {
             let options = webclaw_core::ExtractionOptions {
-                include_selectors: include,
-                exclude_selectors: exclude,
+                include_selectors: include.clone(),
+                exclude_selectors: exclude.clone(),
                 only_main_content: main_only,
-                include_raw_html: false,
+                include_raw_html: true,
             };
             let outcome = tokio::time::timeout(
                 LOCAL_FETCH_TIMEOUT,
-                client.fetch_and_extract_with_pdf_artifact(&params.url, &options),
+                client.fetch_and_extract_with_pdf_artifact_limit(
+                    &params.url,
+                    &options,
+                    Some(max_bytes),
+                ),
             )
             .await
             .map_err(|_| format!("Fetch timed out after 30s for {}", params.url))?
             .map_err(|e| format!("Fetch failed: {e}"))?;
 
             return match outcome {
-                webclaw_fetch::FetchExtractOutcome::Extracted(extraction) => {
-                    let output = serde_json::to_string_pretty(&extraction)
-                        .map_err(|e| format!("JSON serialization failed: {e}"))?;
-                    Ok(output)
-                }
                 webclaw_fetch::FetchExtractOutcome::PdfArtifact(artifact) => {
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "outcome": "artifact",
-                        "artifact": artifact,
-                    }))
-                    .map_err(|e| format!("JSON serialization failed: {e}"))
+                    serde_json::to_string_pretty(&artifact.as_envelope())
+                        .map_err(|e| format!("JSON serialization failed: {e}"))
                 }
+                webclaw_fetch::FetchExtractOutcome::Extracted(extraction) => {
+                    let is_bot = extraction
+                        .content
+                        .raw_html
+                        .as_deref()
+                        .map(|html| {
+                            let dummy_headers = webclaw_fetch::HeaderMap::new();
+                            webclaw_fetch::cloud::is_bot_protected(html, &dummy_headers)
+                        })
+                        .unwrap_or(false);
+                    let needs_js = extraction
+                        .content
+                        .raw_html
+                        .as_deref()
+                        .map(|html| {
+                            webclaw_fetch::cloud::needs_js_rendering(
+                                extraction.metadata.word_count,
+                                html,
+                            )
+                        })
+                        .unwrap_or(false);
+
+                    if let Some(cloud) = self.cloud.as_ref()
+                        && (is_bot || needs_js)
+                    {
+                        info!(url = %params.url, "bot protection or JS detected, escalating to cloud API");
+                        let result = cloud::smart_fetch(
+                            client,
+                            Some(cloud),
+                            &params.url,
+                            &include,
+                            &exclude,
+                            main_only,
+                            &[format],
+                        )
+                        .await?;
+                        match result {
+                            SmartFetchResult::Local(ext) => serde_json::to_string_pretty(&ext)
+                                .map_err(|e| format!("JSON serialization failed: {e}")),
+                            SmartFetchResult::Cloud(resp) => {
+                                Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
+                            }
+                        }
+                    } else {
+                        serde_json::to_string_pretty(&extraction)
+                            .map_err(|e| format!("JSON serialization failed: {e}"))
+                    }
+                }
+                _ => unreachable!("FetchExtractOutcome is non-exhaustive"),
             };
         }
 
@@ -1069,7 +1126,7 @@ fn save_research(dir: &std::path::Path, slug: &str, data: &serde_json::Value) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{slugify, validate_pdf_artifact_limit};
+    use super::{MAX_MCP_PDF_ARTIFACT_BYTES, slugify, validate_pdf_artifact_limit};
 
     #[test]
     fn slugify_multibyte_query_does_not_panic() {
@@ -1102,9 +1159,7 @@ mod tests {
             validate_pdf_artifact_limit("markdown", Some(1024)).unwrap_err(),
             "pdf_artifact_max_bytes requires format=json"
         );
-        assert!(
-            validate_pdf_artifact_limit("json", Some(webclaw_fetch::MAX_PDF_ARTIFACT_BYTES + 1))
-                .is_err()
-        );
+        assert!(validate_pdf_artifact_limit("json", Some(MAX_MCP_PDF_ARTIFACT_BYTES + 1)).is_err());
+        assert!(validate_pdf_artifact_limit("json", Some(MAX_MCP_PDF_ARTIFACT_BYTES)).is_ok());
     }
 }

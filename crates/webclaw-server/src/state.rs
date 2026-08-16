@@ -51,7 +51,6 @@ impl AppState {
     pub fn new(inbound_api_key: Option<String>) -> anyhow::Result<Self> {
         let config = FetchConfig {
             browser: BrowserProfile::Firefox,
-            pdf_artifact_max_bytes: Some(webclaw_fetch::DEFAULT_PDF_ARTIFACT_MAX_BYTES),
             ..FetchConfig::default()
         };
         let mut fetch = FetchClient::new(config)

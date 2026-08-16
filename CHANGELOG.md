@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **The MCP server no longer exits when a client speaks before the handshake.** A request sent ahead of `initialize` ended the process without a reply, so the client saw a closed pipe instead of an error. Newer MCP clients open a connection by asking the server which protocol era it supports, then fall back to the classic handshake on that same connection — a server that exits takes the connection with it, so the fallback never runs and the client cannot connect at all. Such requests are now answered with JSON-RPC `-32601`, the same answer an unknown method already gets once connected, and the connection stays up. Stray notifications before the handshake are ignored rather than fatal. Nothing is executed early, and clients that connect the classic way are unaffected.
+
 ## [0.6.19] - 2026-08-10
 
 ### Performance

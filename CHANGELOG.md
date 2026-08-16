@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **A single unreadable line no longer ends an MCP session.** One line the server could not parse, including a blank line, ended the connection and was reported as if the client had hung up — even when a perfectly valid request followed on the next line. Bad lines are now skipped and the session continues. A batched request, which the server does not accept, now answers with an explicit error instead of closing.
+
+### Changed
+- **The MCP server now speaks the current protocol revision (2026-07-28) with clients that ask for it.** Clients that negotiate an older revision are unaffected and continue to work exactly as before.
+
 ## [0.6.20] - 2026-08-16
 
 ### Fixed

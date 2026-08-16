@@ -36,13 +36,20 @@
 //! decides when the connection is initialized. Once it is, every message is
 //! passed straight through and rmcp's own dispatch answers unknown methods.
 //!
-//! This does not cover a malformed line. rmcp's codec maps a decode error to
-//! end-of-stream and the framed reader stays fused, so one bad line still ends
-//! the session before this wrapper can see it. That is a separate defect.
+//! One case is deliberately NOT answered here. rmcp serves a pre-`initialize`
+//! request statelessly when it carries every `_meta` key 2026-07-28 requires,
+//! and answering such a probe ourselves would tell a modern client we are a
+//! legacy server and cost it the newer protocol. `is_stateless_request` mirrors
+//! rmcp's own gate so those reach rmcp untouched; only the probes rmcp would
+//! die on are absorbed.
+//!
+//! A line the codec cannot decode is handled by rmcp itself since 1.7.0, which
+//! skips the bad frame and keeps reading rather than reporting end-of-stream
+//! (issue #109). This wrapper sits above the codec and never sees those.
 
 use rmcp::model::{
-    ClientJsonRpcMessage, ClientNotification, ClientRequest, ErrorCode, ErrorData,
-    ServerJsonRpcMessage,
+    ClientJsonRpcMessage, ClientNotification, ClientRequest, ErrorCode, ErrorData, GetMeta,
+    ProtocolVersion, ServerJsonRpcMessage,
 };
 use rmcp::service::{RoleServer, RxJsonRpcMessage, TxJsonRpcMessage};
 use rmcp::transport::Transport;
@@ -83,6 +90,15 @@ fn is_tolerated(msg: &ClientJsonRpcMessage, phase: Phase) -> bool {
         return true;
     }
     match msg {
+        // rmcp serves a request carrying the full 2026-07-28 `_meta` set
+        // statelessly, without an `initialize` first. Passing those through is
+        // what lets a modern client negotiate 2026-07-28 instead of falling
+        // back to the legacy handshake, so the guard must not answer them.
+        ClientJsonRpcMessage::Request(req)
+            if phase == Phase::AwaitingInitialize && is_stateless_request(&req.request) =>
+        {
+            true
+        }
         ClientJsonRpcMessage::Request(req) => matches!(
             (&req.request, phase),
             (ClientRequest::PingRequest(_), _)
@@ -104,6 +120,20 @@ fn is_tolerated(msg: &ClientJsonRpcMessage, phase: Phase) -> bool {
         }
         _ => false,
     }
+}
+
+/// Can rmcp serve this request without an `initialize` first?
+///
+/// Mirrors rmcp's own gate: a pre-`initialize` request is dispatched
+/// statelessly only when it carries every `_meta` key the 2026-07-28 revision
+/// requires. A request missing any of them takes rmcp's fatal path instead,
+/// which is the case this guard exists to absorb.
+fn is_stateless_request(request: &ClientRequest) -> bool {
+    !matches!(request, ClientRequest::InitializeRequest(_))
+        && request
+            .get_meta()
+            .missing_required_keys(&ProtocolVersion::V_2026_07_28)
+            .is_empty()
 }
 
 /// Advance the handshake state for a message we are about to pass through.
@@ -159,7 +189,7 @@ where
                     );
                     let reply = ServerJsonRpcMessage::error(
                         ErrorData::new(ErrorCode::METHOD_NOT_FOUND, method, None),
-                        req.id.clone(),
+                        Some(req.id.clone()),
                     );
                     if let Err(e) = self.inner.send(reply).await {
                         // The pipe is gone; the next receive reports EOF.
@@ -254,6 +284,10 @@ mod tests {
     const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"t","version":"1"},"capabilities":{}}}"#;
     const INITIALIZED: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
     const DISCOVER: &str = r#"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}"#;
+
+    /// A probe carrying the `_meta` keys 2026-07-28 requires. rmcp serves this
+    /// one itself, so the guard must not intercept it.
+    const DISCOVER_WITH_META: &str = r#"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#;
 
     fn method_of(msg: &ClientJsonRpcMessage) -> Option<String> {
         match msg {
@@ -394,6 +428,38 @@ mod tests {
             sent.lock().unwrap().is_empty(),
             "rmcp answers this after the handshake, not the guard"
         );
+    }
+
+    /// rmcp serves a fully-specified 2026-07-28 probe statelessly. Answering it
+    /// here would advertise us as a legacy server and cost a modern client the
+    /// newer protocol, so it has to reach rmcp untouched.
+    #[tokio::test]
+    async fn conformant_probe_is_passed_through_for_rmcp_to_serve() {
+        let (mock, sent) = MockTransport::new(&[DISCOVER_WITH_META]);
+        let mut guard = PreHandshakeGuard::new(mock);
+
+        let first = guard
+            .receive()
+            .await
+            .expect("a stateless-capable probe must reach rmcp");
+        assert_eq!(method_of(&first).as_deref(), Some("server/discover"));
+        assert!(
+            sent.lock().unwrap().is_empty(),
+            "rmcp answers this one, not the guard"
+        );
+    }
+
+    /// The same method WITHOUT the required `_meta` is the case rmcp dies on,
+    /// so it must still be absorbed. This is the pair that keeps both
+    /// behaviours honest.
+    #[tokio::test]
+    async fn probe_missing_required_meta_is_still_answered() {
+        let (mock, sent) = MockTransport::new(&[DISCOVER, INITIALIZE, INITIALIZED]);
+        let mut guard = PreHandshakeGuard::new(mock);
+
+        let first = guard.receive().await.expect("initialize must be delivered");
+        assert_eq!(method_of(&first).as_deref(), Some("initialize"));
+        assert_eq!(sent.lock().unwrap().len(), 1, "the bare probe was answered");
     }
 
     /// End of stream must still terminate the loop rather than spin.

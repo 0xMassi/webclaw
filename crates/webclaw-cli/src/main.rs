@@ -483,7 +483,7 @@ enum Browser {
 
 #[derive(Clone, ValueEnum, Default)]
 enum PdfModeArg {
-    /// Error if PDF has no extractable text (catches scanned PDFs)
+    /// Error if the PDF yields no non-whitespace text
     #[default]
     Auto,
     /// Return whatever text is found, even if empty

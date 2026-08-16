@@ -14,7 +14,7 @@ use tracing::debug;
 /// Controls how strictly we treat empty/sparse PDFs.
 #[derive(Debug, Clone, Default)]
 pub enum PdfMode {
-    /// Try text extraction; error if no text found (catches scanned PDFs early).
+    /// Try text extraction; error if the result has no non-whitespace text.
     #[default]
     Auto,
     /// Return whatever text is found, even if empty. Caller decides what to do.

@@ -1002,7 +1002,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         FetchExtractOutcome::PdfArtifact(artifact) => {
             return Ok(FetchOutput::PdfArtifact(Box::new(artifact)));
         }
-        _ => unreachable!("FetchExtractOutcome is non-exhaustive"),
+        _ => return Err("unsupported fetch outcome variant".into()),
     };
 
     // Check if we should fall back to cloud

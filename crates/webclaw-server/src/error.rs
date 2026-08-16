@@ -36,6 +36,9 @@ pub enum ApiError {
     #[error("LLM provider error: {0}")]
     Llm(String),
 
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
+
     #[error("internal: {0}")]
     Internal(String),
 
@@ -57,13 +60,14 @@ impl ApiError {
         Self::NotImplemented(msg.into())
     }
 
-    fn status(&self) -> StatusCode {
+    pub fn status(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Fetch(_) => StatusCode::BAD_GATEWAY,
             Self::Extract(_) | Self::Llm(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
         }
@@ -82,6 +86,9 @@ impl From<webclaw_fetch::FetchError> for ApiError {
         match e {
             webclaw_fetch::FetchError::InvalidUrl(msg) => {
                 Self::BadRequest(format!("invalid url: {msg}"))
+            }
+            webclaw_fetch::FetchError::PdfArtifactTooLarge { .. } => {
+                Self::PayloadTooLarge(e.to_string())
             }
             other => {
                 let msg = other.to_string();
@@ -106,5 +113,21 @@ impl From<webclaw_core::ExtractError> for ApiError {
 impl From<webclaw_llm::LlmError> for ApiError {
     fn from(e: webclaw_llm::LlmError) -> Self {
         Self::Llm(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pdf_artifact_too_large_maps_to_payload_too_large() {
+        let err = webclaw_fetch::FetchError::PdfArtifactTooLarge {
+            actual_bytes: 2048,
+            max_bytes: 1024,
+        };
+        let api_err = ApiError::from(err);
+        assert_eq!(api_err.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(matches!(api_err, ApiError::PayloadTooLarge(_)));
     }
 }

@@ -27,10 +27,6 @@ use crate::error::FetchError;
 /// Hard upper bound for a PDF artifact handoff.
 pub const MAX_PDF_ARTIFACT_BYTES: usize = webclaw_pdf::MAX_PDF_SIZE;
 
-/// Conservative default for callers that explicitly opt into artifact output.
-/// The base64 representation and JSON envelope add memory on top of the PDF.
-pub const DEFAULT_PDF_ARTIFACT_MAX_BYTES: usize = 10 * 1024 * 1024;
-
 /// Configuration for building a [`FetchClient`].
 #[derive(Debug, Clone)]
 pub struct FetchConfig {
@@ -73,11 +69,7 @@ pub struct FetchConfig {
     pub pdf_mode: PdfMode,
     /// Optional ceiling for the explicit PDF artifact handoff API.
     ///
-    /// `None` preserves the existing `EmptyPdf` error for the explicit
-    /// handoff method. The default is [`DEFAULT_PDF_ARTIFACT_MAX_BYTES`]. The
-    /// limit is checked after the response has been buffered and PDF parsing
-    /// has completed; the ordinary response-body ceiling still bounds the
-    /// work performed.
+    /// `None` (the default) preserves the existing `EmptyPdf` error.
     /// Values must be between 1 and [`MAX_PDF_ARTIFACT_BYTES`].
     pub pdf_artifact_max_bytes: Option<usize>,
 }

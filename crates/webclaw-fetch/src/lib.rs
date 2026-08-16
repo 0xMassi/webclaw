@@ -22,9 +22,9 @@ pub mod url_security;
 
 pub use browser::BrowserProfile;
 pub use client::{
-    BatchExtractResult, BatchResult, DEFAULT_PDF_ARTIFACT_MAX_BYTES, FetchClient, FetchConfig,
-    FetchExtractOutcome, FetchResult, MAX_PDF_ARTIFACT_BYTES, PdfArtifact, PdfArtifactEnvelope,
-    PdfArtifactReason, PdfArtifactRefEnvelope,
+    BatchExtractResult, BatchResult, FetchClient, FetchConfig, FetchExtractOutcome, FetchResult,
+    MAX_PDF_ARTIFACT_BYTES, PdfArtifact, PdfArtifactEnvelope, PdfArtifactReason,
+    PdfArtifactRefEnvelope,
 };
 pub use crawler::{CrawlConfig, CrawlResult, CrawlState, Crawler, PageResult};
 pub use error::FetchError;

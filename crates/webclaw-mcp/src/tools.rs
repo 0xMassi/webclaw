@@ -106,7 +106,7 @@ pub struct ScrapeParams {
     pub cookies: Option<Vec<String>>,
     /// Opt in to returning a bounded exact PDF artifact as JSON/base64 when
     /// auto extraction finds no non-whitespace text. Requires `format: json`.
-    /// Clamped to a maximum of 5 MiB (5,242,880 bytes) to fit model context windows.
+    /// Clamped to a maximum of 5 MiB (5,242,880 bytes) — base64 serialization yields ~7 MB of characters (~1.7M tokens) on the wire.
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub pdf_artifact_max_bytes: Option<usize>,
 }

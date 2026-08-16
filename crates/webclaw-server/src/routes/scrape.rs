@@ -88,7 +88,9 @@ pub async fn scrape(
                     })?;
                     return Ok(Json(value));
                 }
-                _ => unreachable!("FetchExtractOutcome is non-exhaustive"),
+                _ => {
+                    return Err(ApiError::internal("unsupported fetch outcome variant"));
+                }
             }
         }
         None => {

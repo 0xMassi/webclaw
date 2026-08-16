@@ -3300,7 +3300,7 @@ name = "webclaw-fetch"
 version = "0.6.21"
 dependencies = [
  "async-trait",
- "base64",
+ "base64 0.22.1",
  "bytes",
  "calamine",
  "flate2",

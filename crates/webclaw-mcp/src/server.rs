@@ -266,7 +266,7 @@ impl WebclawMcp {
                 include_selectors: include.clone(),
                 exclude_selectors: exclude.clone(),
                 only_main_content: main_only,
-                include_raw_html: true,
+                include_raw_html: false,
             };
             let outcome = tokio::time::timeout(
                 LOCAL_FETCH_TIMEOUT,
@@ -285,55 +285,27 @@ impl WebclawMcp {
                     serde_json::to_string_pretty(&artifact.as_envelope())
                         .map_err(|e| format!("JSON serialization failed: {e}"))
                 }
-                webclaw_fetch::FetchExtractOutcome::Extracted(extraction) => {
-                    let is_bot = extraction
-                        .content
-                        .raw_html
-                        .as_deref()
-                        .map(|html| {
-                            let dummy_headers = webclaw_fetch::HeaderMap::new();
-                            webclaw_fetch::cloud::is_bot_protected(html, &dummy_headers)
-                        })
-                        .unwrap_or(false);
-                    let needs_js = extraction
-                        .content
-                        .raw_html
-                        .as_deref()
-                        .map(|html| {
-                            webclaw_fetch::cloud::needs_js_rendering(
-                                extraction.metadata.word_count,
-                                html,
-                            )
-                        })
-                        .unwrap_or(false);
-
-                    if let Some(cloud) = self.cloud.as_ref()
-                        && (is_bot || needs_js)
-                    {
-                        info!(url = %params.url, "bot protection or JS detected, escalating to cloud API");
-                        let result = cloud::smart_fetch(
-                            client,
-                            Some(cloud),
-                            &params.url,
-                            &include,
-                            &exclude,
-                            main_only,
-                            &[format],
-                        )
-                        .await?;
-                        match result {
-                            SmartFetchResult::Local(ext) => serde_json::to_string_pretty(&ext)
-                                .map_err(|e| format!("JSON serialization failed: {e}")),
-                            SmartFetchResult::Cloud(resp) => {
-                                Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
-                            }
+                webclaw_fetch::FetchExtractOutcome::Extracted(_) => {
+                    let formats = [format];
+                    let result = cloud::smart_fetch(
+                        client,
+                        self.cloud.as_ref(),
+                        &params.url,
+                        &include,
+                        &exclude,
+                        main_only,
+                        &formats,
+                    )
+                    .await?;
+                    match result {
+                        SmartFetchResult::Local(ext) => serde_json::to_string_pretty(&ext)
+                            .map_err(|e| format!("JSON serialization failed: {e}")),
+                        SmartFetchResult::Cloud(resp) => {
+                            Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
                         }
-                    } else {
-                        serde_json::to_string_pretty(&extraction)
-                            .map_err(|e| format!("JSON serialization failed: {e}"))
                     }
                 }
-                _ => unreachable!("FetchExtractOutcome is non-exhaustive"),
+                _ => Err("unsupported fetch outcome variant".into()),
             };
         }
 

@@ -1,7 +1,8 @@
 /// PDF text extraction for webclaw.
 ///
 /// Uses pdf-extract (backed by lopdf) to pull text from PDF bytes.
-/// No OCR -- text-based PDFs only. Scanned PDFs return EmptyPdf in Auto mode.
+/// No OCR -- text-based PDFs only. In Auto mode, PDFs with no extracted
+/// non-whitespace text return EmptyPdf.
 pub mod error;
 
 pub use error::PdfError;
@@ -43,7 +44,9 @@ const MAX_PDF_SIZE: usize = 50 * 1024 * 1024; // 50MB
 ///
 /// Uses pdf-extract for text extraction and lopdf (transitive dep) for
 /// metadata and page count. In `Auto` mode, returns `PdfError::EmptyPdf`
-/// if no text is found (likely a scanned/image-only PDF).
+/// when the normalized extraction contains no non-whitespace text. This is
+/// narrower than detecting every scanned or image-only document: any text layer,
+/// page number, footer, or OCR residue that survives normalization returns `Ok`.
 pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
     if bytes.len() > MAX_PDF_SIZE {
         return Err(PdfError::InvalidPdf(format!(

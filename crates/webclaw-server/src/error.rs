@@ -60,7 +60,7 @@ impl ApiError {
         Self::NotImplemented(msg.into())
     }
 
-    pub fn status(&self) -> StatusCode {
+    fn status(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -96,6 +96,8 @@ impl From<webclaw_fetch::FetchError> for ApiError {
                     || msg.contains("blocked private or internal address")
                 {
                     Self::BadRequest(msg)
+                } else if msg.contains("too large") || msg.contains("exceeds cap") {
+                    Self::PayloadTooLarge(msg)
                 } else {
                     Self::Fetch(msg)
                 }
@@ -121,13 +123,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_pdf_error_maps_to_bad_gateway() {
+        let err = webclaw_fetch::FetchError::Pdf(webclaw_pdf::PdfError::EmptyPdf);
+        let api_err = ApiError::from(err);
+        let resp = api_err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
     fn pdf_artifact_too_large_maps_to_payload_too_large() {
         let err = webclaw_fetch::FetchError::PdfArtifactTooLarge {
             actual_bytes: 2048,
             max_bytes: 1024,
         };
         let api_err = ApiError::from(err);
-        assert_eq!(api_err.status(), StatusCode::PAYLOAD_TOO_LARGE);
         assert!(matches!(api_err, ApiError::PayloadTooLarge(_)));
+        let resp = api_err.into_response();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

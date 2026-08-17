@@ -285,16 +285,20 @@ impl WebclawMcp {
                     serde_json::to_string_pretty(&artifact.as_envelope())
                         .map_err(|e| format!("JSON serialization failed: {e}"))
                 }
-                webclaw_fetch::FetchExtractOutcome::Extracted(_) => {
+                webclaw_fetch::FetchExtractOutcome::Extracted {
+                    extraction,
+                    fetched,
+                } => {
                     let formats = [format];
-                    let result = cloud::smart_fetch(
-                        client,
+                    let result = cloud::smart_fetch_with(
                         self.cloud.as_ref(),
                         &params.url,
                         &include,
                         &exclude,
                         main_only,
                         &formats,
+                        extraction,
+                        fetched.as_ref(),
                     )
                     .await?;
                     match result {

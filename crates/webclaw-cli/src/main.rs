@@ -991,14 +991,17 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
             None => client
                 .fetch_and_extract_with_options(url, &options)
                 .await
-                .map(FetchExtractOutcome::Extracted),
+                .map(|extraction| FetchExtractOutcome::Extracted {
+                    extraction,
+                    fetched: None,
+                }),
         }
     };
     let outcome = webclaw_fetch::with_progress(url, fetch_fut)
         .await
         .map_err(|e| format!("fetch error: {e}"))?;
     let result = match outcome {
-        FetchExtractOutcome::Extracted(result) => result,
+        FetchExtractOutcome::Extracted { extraction, .. } => extraction,
         FetchExtractOutcome::PdfArtifact(artifact) => {
             return Ok(FetchOutput::PdfArtifact(Box::new(artifact)));
         }

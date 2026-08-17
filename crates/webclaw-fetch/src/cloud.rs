@@ -66,6 +66,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
+use crate::FetchResult;
+
 // Client type isn't needed here anymore now that smart_fetch* takes
 // `&dyn Fetcher`. Kept as a comment for historical context: this
 // module used to import FetchClient directly before v0.5.1.
@@ -540,6 +542,8 @@ pub enum SmartFetchResult {
 ///
 /// Prefer [`smart_fetch_html`] for new callers — it surfaces the typed
 /// [`CloudError`] so you can render precise UX.
+/// Fetch and extract locally; on bot protection or JS rendering, fall back to
+/// the cloud API.
 pub async fn smart_fetch(
     client: &dyn crate::fetcher::Fetcher,
     cloud: Option<&CloudClient>,
@@ -554,19 +558,6 @@ pub async fn smart_fetch(
         .map_err(|_| format!("Fetch timed out after 30s for {url}"))?
         .map_err(|e| format!("Fetch failed: {e}"))?;
 
-    if is_bot_protected(&fetch_result.html, &fetch_result.headers) {
-        info!(url, "bot protection detected, falling back to cloud API");
-        return cloud_scrape_fallback(
-            cloud,
-            url,
-            include_selectors,
-            exclude_selectors,
-            only_main_content,
-            formats,
-        )
-        .await;
-    }
-
     let options = webclaw_core::ExtractionOptions {
         include_selectors: include_selectors.to_vec(),
         exclude_selectors: exclude_selectors.to_vec(),
@@ -577,22 +568,67 @@ pub async fn smart_fetch(
         webclaw_core::extract_with_options(&fetch_result.html, Some(&fetch_result.url), &options)
             .map_err(|e| format!("Extraction failed: {e}"))?;
 
-    if needs_js_rendering(extraction.metadata.word_count, &fetch_result.html) {
-        info!(
-            url,
-            word_count = extraction.metadata.word_count,
-            html_len = fetch_result.html.len(),
-            "JS-rendered page detected, falling back to cloud API"
-        );
-        return cloud_scrape_fallback(
-            cloud,
-            url,
-            include_selectors,
-            exclude_selectors,
-            only_main_content,
-            formats,
-        )
-        .await;
+    smart_fetch_with(
+        cloud,
+        url,
+        include_selectors,
+        exclude_selectors,
+        only_main_content,
+        formats,
+        extraction,
+        Some(&fetch_result),
+    )
+    .await
+}
+
+/// Smart fetch using pre-fetched response data and pre-extracted result when available.
+///
+/// Skips redundant HTTP fetch and extraction when the caller already fetched the URL
+/// (e.g. during artifact-limit extraction). If `fetched` is `None` (such as a text-bearing PDF
+/// or binary document), returns `SmartFetchResult::Local` immediately without re-fetching
+/// or re-running HTML extraction.
+#[allow(clippy::too_many_arguments)]
+pub async fn smart_fetch_with(
+    cloud: Option<&CloudClient>,
+    url: &str,
+    include_selectors: &[String],
+    exclude_selectors: &[String],
+    only_main_content: bool,
+    formats: &[&str],
+    extraction: webclaw_core::ExtractionResult,
+    fetched: Option<&FetchResult>,
+) -> Result<SmartFetchResult, String> {
+    if let Some(fetch_result) = fetched {
+        if is_bot_protected(&fetch_result.html, &fetch_result.headers) {
+            info!(url, "bot protection detected, falling back to cloud API");
+            return cloud_scrape_fallback(
+                cloud,
+                url,
+                include_selectors,
+                exclude_selectors,
+                only_main_content,
+                formats,
+            )
+            .await;
+        }
+
+        if needs_js_rendering(extraction.metadata.word_count, &fetch_result.html) {
+            info!(
+                url,
+                word_count = extraction.metadata.word_count,
+                html_len = fetch_result.html.len(),
+                "JS-rendered page detected, falling back to cloud API"
+            );
+            return cloud_scrape_fallback(
+                cloud,
+                url,
+                include_selectors,
+                exclude_selectors,
+                only_main_content,
+                formats,
+            )
+            .await;
+        }
     }
 
     Ok(SmartFetchResult::Local(Box::new(extraction)))
@@ -988,5 +1024,70 @@ mod tests {
         let s = "a".repeat(10) + "é"; // é is 2 bytes
         let out = truncate(&s, 11);
         assert_eq!(out.chars().count(), 11);
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_with_none_fetched_returns_local_immediately() {
+        let extraction = webclaw_core::extract_with_options(
+            "<h1>Extracted</h1><p>Content</p>",
+            Some("https://example.com/doc.pdf"),
+            &webclaw_core::ExtractionOptions::default(),
+        )
+        .expect("valid extraction");
+
+        let result = smart_fetch_with(
+            None,
+            "https://example.com/doc.pdf",
+            &[],
+            &[],
+            false,
+            &["json"],
+            extraction.clone(),
+            None,
+        )
+        .await
+        .expect("smart_fetch_with succeeds");
+
+        match result {
+            SmartFetchResult::Local(ext) => {
+                assert_eq!(ext.content.markdown, extraction.content.markdown);
+            }
+            SmartFetchResult::Cloud(_) => panic!("expected Local result when fetched is None"),
+        }
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_with_clean_fetched_html_returns_local() {
+        let html =
+            "<html><body><h1>Clean Page</h1><p>Enough text to avoid JS trigger</p></body></html>";
+        let extraction = webclaw_core::extract_with_options(
+            html,
+            Some("https://example.com/page"),
+            &webclaw_core::ExtractionOptions::default(),
+        )
+        .expect("valid extraction");
+
+        let fetched = FetchResult {
+            html: html.to_string(),
+            status: 200,
+            url: "https://example.com/page".to_string(),
+            headers: HeaderMap::new(),
+            elapsed: Duration::from_millis(10),
+        };
+
+        let result = smart_fetch_with(
+            None,
+            "https://example.com/page",
+            &[],
+            &[],
+            false,
+            &["json"],
+            extraction,
+            Some(&fetched),
+        )
+        .await
+        .expect("smart_fetch_with succeeds");
+
+        assert!(matches!(result, SmartFetchResult::Local(_)));
     }
 }

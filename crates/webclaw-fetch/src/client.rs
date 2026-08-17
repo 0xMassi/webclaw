@@ -283,17 +283,37 @@ impl<'a> PdfArtifactRefEnvelope<'a> {
 }
 
 /// Result of the opt-in fetch-and-extract API.
-///
-/// ExtractionResult stays inline so existing extraction methods do not gain
-/// a heap allocation merely by routing through this outcome internally.
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum FetchExtractOutcome {
     /// Normal extraction succeeded.
-    Extracted(webclaw_core::ExtractionResult),
+    Extracted {
+        extraction: webclaw_core::ExtractionResult,
+        /// Underlying fetch result if the response was HTML, preserved for
+        /// downstream bot-detection and JS-rendering escalation without refetching.
+        fetched: Option<FetchResult>,
+    },
     /// A bounded, exact PDF artifact is available for caller-owned OCR/vision.
     PdfArtifact(PdfArtifact),
+}
+
+impl FetchExtractOutcome {
+    /// Returns the extraction result, discarding artifact data if any.
+    pub fn into_extraction(self) -> Option<webclaw_core::ExtractionResult> {
+        match self {
+            Self::Extracted { extraction, .. } => Some(extraction),
+            Self::PdfArtifact(_) => None,
+        }
+    }
+
+    /// Returns a reference to the extraction result, if available.
+    pub fn extraction(&self) -> Option<&webclaw_core::ExtractionResult> {
+        match self {
+            Self::Extracted { extraction, .. } => Some(extraction),
+            Self::PdfArtifact(_) => None,
+        }
+    }
 }
 
 /// Result for a single URL in a batch fetch operation.
@@ -826,6 +846,7 @@ impl FetchClient {
         }
 
         self.extract_non_pdf_response(response, options, started)
+            .map(|(extraction, _)| extraction)
     }
 
     /// Fetch and extract with an opt-in bounded handoff for text-empty PDFs.
@@ -868,8 +889,11 @@ impl FetchClient {
             return extract_pdf_response(response, self.pdf_mode.clone(), max_artifact_bytes);
         }
 
-        self.extract_non_pdf_response(response, options, started)
-            .map(FetchExtractOutcome::Extracted)
+        let (extraction, fetched) = self.extract_non_pdf_response(response, options, started)?;
+        Ok(FetchExtractOutcome::Extracted {
+            extraction,
+            fetched,
+        })
     }
 
     /// Fetch one response, including the existing URL rescue and challenge
@@ -913,7 +937,7 @@ impl FetchClient {
         response: Response,
         options: &webclaw_core::ExtractionOptions,
         started: Instant,
-    ) -> Result<webclaw_core::ExtractionResult, FetchError> {
+    ) -> Result<(webclaw_core::ExtractionResult, Option<FetchResult>), FetchError> {
         let status = response.status();
         let final_url = response.url().to_string();
 
@@ -933,13 +957,15 @@ impl FetchClient {
 
             let mut result = crate::document::extract_document(bytes, doc_type)?;
             result.metadata.url = Some(final_url);
-            Ok(result)
+            Ok((result, None))
         } else {
+            let headers = response.headers().clone();
             let html = response.into_text();
 
+            let elapsed = started.elapsed();
             debug!(
                 status,
-                elapsed_ms = %started.elapsed().as_millis(),
+                elapsed_ms = %elapsed.as_millis(),
                 "fetch complete"
             );
 
@@ -947,16 +973,27 @@ impl FetchClient {
             if crate::linkedin::is_linkedin_post(&final_url) {
                 if let Some(result) = crate::linkedin::extract_linkedin_post(&html, &final_url) {
                     debug!("linkedin extraction succeeded");
-                    return Ok(result);
+                    let fetched = FetchResult {
+                        html,
+                        status,
+                        url: final_url,
+                        headers,
+                        elapsed,
+                    };
+                    return Ok((result, Some(fetched)));
                 }
                 debug!("linkedin extraction failed, falling back to standard");
             }
 
-            Ok(webclaw_core::extract_with_options(
-                &html,
-                Some(&final_url),
-                options,
-            )?)
+            let result = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
+            let fetched = FetchResult {
+                html,
+                status,
+                url: final_url,
+                headers,
+                elapsed,
+            };
+            Ok((result, Some(fetched)))
         }
     }
 
@@ -1292,10 +1329,10 @@ fn extract_pdf_response(
     max_artifact_bytes: Option<usize>,
 ) -> Result<FetchExtractOutcome, FetchError> {
     match webclaw_pdf::extract_pdf(response.body(), mode) {
-        Ok(pdf_result) => Ok(FetchExtractOutcome::Extracted(pdf_to_extraction_result(
-            &pdf_result,
-            response.url(),
-        ))),
+        Ok(pdf_result) => Ok(FetchExtractOutcome::Extracted {
+            extraction: pdf_to_extraction_result(&pdf_result, response.url()),
+            fetched: None,
+        }),
         Err(webclaw_pdf::PdfError::EmptyPdf) => match max_artifact_bytes {
             Some(max_bytes) => {
                 into_pdf_artifact(response, max_bytes).map(FetchExtractOutcome::PdfArtifact)
@@ -1614,6 +1651,17 @@ mod tests {
                 max_bytes,
             } if actual_bytes == bytes.len() && max_bytes == bytes.len() - 1
         ));
+    }
+
+    #[test]
+    fn text_bearing_pdf_returns_extracted_outcome() {
+        let outcome = extract_pdf_response(
+            pdf_response(blank_pdf()),
+            PdfMode::Auto,
+            Some(blank_pdf().len()),
+        )
+        .expect("blank pdf should return artifact when requested");
+        assert!(matches!(outcome, FetchExtractOutcome::PdfArtifact(_)));
     }
 
     #[test]

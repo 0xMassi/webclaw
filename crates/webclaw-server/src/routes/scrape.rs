@@ -81,7 +81,7 @@ pub async fn scrape(
                 .fetch_and_extract_with_pdf_artifact_limit(url.as_str(), &options, Some(max_bytes))
                 .await?;
             match outcome {
-                webclaw_fetch::FetchExtractOutcome::Extracted(extraction) => extraction,
+                webclaw_fetch::FetchExtractOutcome::Extracted { extraction, .. } => extraction,
                 webclaw_fetch::FetchExtractOutcome::PdfArtifact(artifact) => {
                     let value = serde_json::to_value(artifact.as_envelope()).map_err(|e| {
                         ApiError::internal(format!("JSON serialization failed: {e}"))

@@ -8,7 +8,7 @@ use crate::error::LlmError;
 use crate::provider::{CompletionRequest, LlmProvider};
 use crate::providers::{
     anthropic::AnthropicProvider, atlascloud::AtlasCloudProvider, gemini::GeminiProvider,
-    ollama::OllamaProvider, openai::OpenAiProvider,
+    ollama::OllamaProvider, openai::OpenAiProvider, orcarouter::OrcaRouterProvider,
 };
 
 pub struct ProviderChain {
@@ -16,13 +16,14 @@ pub struct ProviderChain {
 }
 
 impl ProviderChain {
-    /// Build the default chain: Ollama -> OpenAI -> Gemini -> Anthropic -> Atlas Cloud.
+    /// Build the default chain: Ollama -> OpenAI -> Gemini -> Anthropic -> Atlas Cloud -> OrcaRouter.
     /// Ollama is always added (availability checked at call time).
     /// Cloud providers are only added if their API keys are configured.
     /// Gemini sits ahead of Anthropic so Google Cloud credits are preferred,
     /// with Anthropic as the last-resort fallback. Atlas Cloud is opt-in and
     /// added last (only when `ATLASCLOUD_API_KEY` is set), so it never preempts
-    /// an already-configured provider.
+    /// an already-configured provider. OrcaRouter is also opt-in and added last,
+    /// only when `ORCAROUTER_API_KEY` is set.
     pub async fn default() -> Self {
         let mut providers: Vec<Box<dyn LlmProvider>> = Vec::new();
 
@@ -52,6 +53,11 @@ impl ProviderChain {
         if let Some(atlas) = AtlasCloudProvider::new(None, None, None) {
             debug!("atlascloud configured, adding to chain");
             providers.push(Box::new(atlas));
+        }
+
+        if let Some(orcarouter) = OrcaRouterProvider::new(None, None, None) {
+            debug!("orcarouter configured, adding to chain");
+            providers.push(Box::new(orcarouter));
         }
 
         Self { providers }

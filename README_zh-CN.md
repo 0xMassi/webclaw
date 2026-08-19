@@ -362,6 +362,8 @@ webclaw/
 | `OPENAI_BASE_URL` | 兼容 OpenAI 的接口地址 |
 | `ANTHROPIC_API_KEY` | 兼容 Anthropic 的 LLM 提供方密钥 |
 | `ANTHROPIC_BASE_URL` | 兼容 Anthropic 的接口地址 |
+| `ORCAROUTER_API_KEY` | OrcaRouter LLM 提供方密钥 |
+| `ORCAROUTER_BASE_URL` | OrcaRouter 接口地址（默认 https://api.orcarouter.ai/v1） |
 | `WEBCLAW_PROXY` | 单个代理 URL |
 | `WEBCLAW_PROXY_FILE` | 代理池文件 |
 

@@ -144,8 +144,11 @@ fn info_string(dict: &Dictionary, key: &[u8]) -> Option<String> {
     let text = if raw.len() >= 2 && raw[0] == 0xFE && raw[1] == 0xFF {
         // UTF-16BE: skip BOM, decode pairs
         let pairs: Vec<u16> = raw[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_be_bytes)
             .collect();
         String::from_utf16_lossy(&pairs)
     } else {

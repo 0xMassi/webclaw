@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **OrcaRouter provider in the LLM chain (opt-in).** Set `ORCAROUTER_API_KEY` to add [OrcaRouter](https://www.orcarouter.ai) as a provider for the LLM features (extraction, summarization). It's added at the end of the chain — Ollama → OpenAI → Gemini → Anthropic → Atlas Cloud → OrcaRouter — so it only runs when you configure it and never preempts an already-configured provider. Override the model with `ORCAROUTER_MODEL` (default `orcarouter/auto`) and the endpoint with `ORCAROUTER_BASE_URL` (default `https://api.orcarouter.ai/v1`).
+
 ## [0.6.21] - 2026-08-16
 
 ### Fixed

@@ -3,6 +3,7 @@ pub mod atlascloud;
 pub mod gemini;
 pub mod ollama;
 pub mod openai;
+pub mod orcarouter;
 
 use crate::error::LlmError;
 

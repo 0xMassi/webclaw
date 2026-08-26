@@ -39,7 +39,7 @@ pub async fn summarize_route(
     let chain = ProviderChain::default().await;
     if chain.is_empty() {
         return Err(ApiError::Llm(
-            "no LLM providers configured (set OLLAMA_HOST, OPENAI_API_KEY, or ANTHROPIC_API_KEY)"
+            "no LLM providers configured (set OLLAMA_HOST, OPENAI_API_KEY, or ANTHROPIC_API_KEY / ORCAROUTER_API_KEY)"
                 .to_string(),
         ));
     }

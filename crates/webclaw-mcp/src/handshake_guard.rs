@@ -27,8 +27,8 @@
 //! This wrapper sits between rmcp and the real transport and answers those
 //! messages itself, so rmcp's state machine only ever sees what it expects:
 //!
-//! - a request rmcp would reject gets JSON-RPC `-32601`, matching what the
-//!   server already returns for an unknown method *after* the handshake;
+//! - a request rmcp would reject gets JSON-RPC `-32602` when the method exists
+//!   and only the request is malformed, and `-32601` when it does not;
 //! - a notification, response or error gets dropped, since JSON-RPC forbids
 //!   replying to those and dropping is enough to keep the handshake alive.
 //!
@@ -136,6 +136,36 @@ fn is_stateless_request(request: &ClientRequest) -> bool {
             .is_empty()
 }
 
+/// Which JSON-RPC error to refuse a pre-handshake request with.
+///
+/// The two cases are genuinely different and a client can act on the
+/// difference. A method rmcp has no type for does not exist here, so
+/// `-32601 Method not found` is the honest answer. A method it does know
+/// reached us in a state it cannot serve, which for a request outside the
+/// handshake means the required `_meta` is missing: revision 2026-07-28 makes
+/// `io.modelcontextprotocol/protocolVersion` and
+/// `io.modelcontextprotocol/clientCapabilities` mandatory on every request.
+/// The method exists, so the request is what is wrong, and `-32602 Invalid
+/// params` says so.
+///
+/// Telling a caller "method not found" for a method we implement sends them
+/// looking for a missing feature instead of at their own request.
+fn refusal_for(request: &ClientRequest, method: &str) -> (ErrorCode, String) {
+    if matches!(request, ClientRequest::CustomRequest(_)) {
+        (ErrorCode::METHOD_NOT_FOUND, method.to_string())
+    } else {
+        (
+            ErrorCode::INVALID_PARAMS,
+            format!(
+                "{method} requires the 2026-07-28 request _meta \
+                 (io.modelcontextprotocol/protocolVersion and \
+                 io.modelcontextprotocol/clientCapabilities), or an \
+                 initialize handshake first"
+            ),
+        )
+    }
+}
+
 /// Advance the handshake state for a message we are about to pass through.
 fn advance(phase: Phase, msg: &ClientJsonRpcMessage) -> Phase {
     match (phase, msg) {
@@ -182,18 +212,20 @@ where
             match &msg {
                 ClientJsonRpcMessage::Request(req) => {
                     let method = req.request.method().to_string();
+                    let (code, message) = refusal_for(&req.request, &method);
                     tracing::debug!(
                         method = %method,
                         phase = ?self.phase,
-                        "answering pre-handshake request with -32601"
+                        code = code.0,
+                        "answering pre-handshake request"
                     );
                     let reply = ServerJsonRpcMessage::error(
-                        ErrorData::new(ErrorCode::METHOD_NOT_FOUND, method, None),
+                        ErrorData::new(code, message, None),
                         Some(req.id.clone()),
                     );
                     if let Err(e) = self.inner.send(reply).await {
                         // The pipe is gone; the next receive reports EOF.
-                        tracing::debug!(error = %e, "failed to send -32601");
+                        tracing::debug!(error = %e, "failed to send refusal");
                     }
                 }
                 // No reply is owed for these, and dropping them is what keeps
@@ -315,8 +347,13 @@ mod tests {
         let sent = sent.lock().unwrap();
         assert_eq!(sent.len(), 1, "exactly one reply, for the probe");
         let json = serde_json::to_value(&sent[0]).unwrap();
-        assert_eq!(json["error"]["code"], -32601);
-        assert_eq!(json["error"]["message"], "server/discover");
+        assert_eq!(json["error"]["code"], -32602, "the method exists here");
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("server/discover")
+        );
         assert_eq!(json["id"], 1, "reply must carry the probe's id");
     }
 
@@ -337,7 +374,8 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert_eq!(
             serde_json::to_value(&sent[0]).unwrap()["error"]["code"],
-            -32601
+            -32602,
+            "tools/list exists; the request is what was wrong"
         );
     }
 
@@ -460,6 +498,47 @@ mod tests {
         let first = guard.receive().await.expect("initialize must be delivered");
         assert_eq!(method_of(&first).as_deref(), Some("initialize"));
         assert_eq!(sent.lock().unwrap().len(), 1, "the bare probe was answered");
+    }
+
+    /// A method the server implements, refused because the request lacks the
+    /// `_meta` 2026-07-28 requires, is a params problem and not a missing
+    /// method. Reporting -32601 sent a conformance tester looking for an
+    /// unimplemented feature instead of at its own request.
+    #[tokio::test]
+    async fn known_method_without_required_meta_is_invalid_params() {
+        let (mock, sent) = MockTransport::new(&[DISCOVER, INITIALIZE, INITIALIZED]);
+        let mut guard = PreHandshakeGuard::new(mock);
+        let _ = guard.receive().await.expect("initialize must be delivered");
+
+        let sent = sent.lock().unwrap();
+        let json = serde_json::to_value(&sent[0]).unwrap();
+        assert_eq!(json["error"]["code"], -32602, "server/discover exists here");
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("clientCapabilities"),
+            "the message should name what is missing, got {}",
+            json["error"]["message"]
+        );
+    }
+
+    /// A method that genuinely does not exist still gets -32601, so the two
+    /// cases stay distinguishable to a caller.
+    #[tokio::test]
+    async fn unknown_method_is_still_method_not_found() {
+        let (mock, sent) = MockTransport::new(&[
+            r#"{"jsonrpc":"2.0","id":1,"method":"nonsense/method","params":{}}"#,
+            INITIALIZE,
+            INITIALIZED,
+        ]);
+        let mut guard = PreHandshakeGuard::new(mock);
+        let _ = guard.receive().await.expect("initialize must be delivered");
+
+        let sent = sent.lock().unwrap();
+        let json = serde_json::to_value(&sent[0]).unwrap();
+        assert_eq!(json["error"]["code"], -32601);
+        assert_eq!(json["error"]["message"], "nonsense/method");
     }
 
     /// End of stream must still terminate the loop rather than spin.

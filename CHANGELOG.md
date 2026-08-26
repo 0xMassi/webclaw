@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **A request the MCP server understands but cannot serve yet now says so accurately.** A request arriving before the connection is set up was refused with "method not found", even when the server implements that method and the request was simply missing information the newest protocol revision requires. It now answers "invalid params" and names what was missing, so a caller is pointed at their own request rather than at a feature they think is unimplemented. A method the server genuinely does not have still answers "method not found".
+
 ### Added
 - **OrcaRouter provider in the LLM chain (opt-in).** Set `ORCAROUTER_API_KEY` to add [OrcaRouter](https://www.orcarouter.ai) as a provider for the LLM features (extraction, summarization). It's added at the end of the chain — Ollama → OpenAI → Gemini → Anthropic → Atlas Cloud → OrcaRouter — so it only runs when you configure it and never preempts an already-configured provider. Override the model with `ORCAROUTER_MODEL` (default `orcarouter/auto`) and the endpoint with `ORCAROUTER_BASE_URL` (default `https://api.orcarouter.ai/v1`).
 

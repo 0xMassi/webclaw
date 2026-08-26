@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Bounded PDF artifact handoff.** The Rust crate API (`FetchClient::fetch_and_extract_with_pdf_artifact` and `FetchClient::fetch_and_extract_with_pdf_artifact_limit`), CLI (`--pdf-artifact-max-bytes`), MCP `scrape` tool (`pdf_artifact_max_bytes`), and self-hosted server (`POST /v1/scrape` with `pdf_artifact_max_bytes`) can return the exact response bytes as a base64-encoded artifact envelope (`PdfArtifactEnvelope`) when an extracted PDF produces no non-whitespace text.
+  - Opt-in on all four surfaces (`FetchConfig::default().pdf_artifact_max_bytes` is `None`).
+  - Transport maximum is 50 MiB (`MAX_PDF_ARTIFACT_BYTES`), with MCP clamped to 5 MiB (`MAX_MCP_PDF_ARTIFACT_BYTES`) because base64 wire expansion (~7 MB characters / ~1.75M tokens) would exceed LLM context window limits.
+  - Unified envelope serialization across all interfaces (`{"outcome": "artifact", "artifact": {...}}`).
+
+### Fixed
+- **MCP client paths preserve proxy settings.** `WEBCLAW_PROXY` and `WEBCLAW_PROXY_FILE` environment configurations are now preserved when constructing the cached Firefox client (`firefox_or_build`) and ad-hoc custom browser clients in the MCP server.
+
+### Changed
+- **Semver safety with `#[non_exhaustive]`.**
+  - `FetchError` is now `#[non_exhaustive]`. External callers must include a wildcard arm when matching so future fetch errors can be added safely.
+  - `FetchExtractOutcome` and `PdfArtifactReason` are `#[non_exhaustive]`.
+
 ## [0.6.21] - 2026-08-16
 
 ### Fixed

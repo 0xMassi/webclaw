@@ -36,6 +36,9 @@ pub enum ApiError {
     #[error("LLM provider error: {0}")]
     Llm(String),
 
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
+
     #[error("internal: {0}")]
     Internal(String),
 
@@ -64,6 +67,7 @@ impl ApiError {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Fetch(_) => StatusCode::BAD_GATEWAY,
             Self::Extract(_) | Self::Llm(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
         }
@@ -83,12 +87,17 @@ impl From<webclaw_fetch::FetchError> for ApiError {
             webclaw_fetch::FetchError::InvalidUrl(msg) => {
                 Self::BadRequest(format!("invalid url: {msg}"))
             }
+            webclaw_fetch::FetchError::PdfArtifactTooLarge { .. } => {
+                Self::PayloadTooLarge(e.to_string())
+            }
             other => {
                 let msg = other.to_string();
                 if msg.contains("invalid url:")
                     || msg.contains("blocked private or internal address")
                 {
                     Self::BadRequest(msg)
+                } else if msg.contains("too large") || msg.contains("exceeds cap") {
+                    Self::PayloadTooLarge(msg)
                 } else {
                     Self::Fetch(msg)
                 }
@@ -106,5 +115,30 @@ impl From<webclaw_core::ExtractError> for ApiError {
 impl From<webclaw_llm::LlmError> for ApiError {
     fn from(e: webclaw_llm::LlmError) -> Self {
         Self::Llm(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_pdf_error_maps_to_bad_gateway() {
+        let err = webclaw_fetch::FetchError::Pdf(webclaw_pdf::PdfError::EmptyPdf);
+        let api_err = ApiError::from(err);
+        let resp = api_err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn pdf_artifact_too_large_maps_to_payload_too_large() {
+        let err = webclaw_fetch::FetchError::PdfArtifactTooLarge {
+            actual_bytes: 2048,
+            max_bytes: 1024,
+        };
+        let api_err = ApiError::from(err);
+        assert!(matches!(api_err, ApiError::PayloadTooLarge(_)));
+        let resp = api_err.into_response();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

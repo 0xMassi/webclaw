@@ -21,6 +21,9 @@ pub struct ScrapeRequest {
     pub include_selectors: Vec<String>,
     pub exclude_selectors: Vec<String>,
     pub only_main_content: bool,
+    /// Opt-in ceiling in bytes for returning an exact PDF artifact when
+    /// auto extraction finds no text. Bounded between 1 and 52,428,800 bytes (50 MiB).
+    pub pdf_artifact_max_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +58,15 @@ pub async fn scrape(
     let url = webclaw_fetch::url_security::validate_public_http_url(&req.url).await?;
     let formats = req.formats.as_vec();
 
+    if let Some(max_bytes) = req.pdf_artifact_max_bytes
+        && (max_bytes == 0 || max_bytes > webclaw_fetch::MAX_PDF_ARTIFACT_BYTES)
+    {
+        return Err(ApiError::bad_request(format!(
+            "pdf_artifact_max_bytes must be between 1 and {} bytes",
+            webclaw_fetch::MAX_PDF_ARTIFACT_BYTES
+        )));
+    }
+
     let options = ExtractionOptions {
         include_selectors: req.include_selectors,
         exclude_selectors: req.exclude_selectors,
@@ -62,10 +74,32 @@ pub async fn scrape(
         include_raw_html: formats.iter().any(|f| f == "html"),
     };
 
-    let extraction = state
-        .fetch()
-        .fetch_and_extract_with_options(url.as_str(), &options)
-        .await?;
+    let extraction = match req.pdf_artifact_max_bytes {
+        Some(max_bytes) => {
+            let outcome = state
+                .fetch()
+                .fetch_and_extract_with_pdf_artifact_limit(url.as_str(), &options, Some(max_bytes))
+                .await?;
+            match outcome {
+                webclaw_fetch::FetchExtractOutcome::Extracted { extraction, .. } => extraction,
+                webclaw_fetch::FetchExtractOutcome::PdfArtifact(artifact) => {
+                    let value = serde_json::to_value(artifact.as_envelope()).map_err(|e| {
+                        ApiError::internal(format!("JSON serialization failed: {e}"))
+                    })?;
+                    return Ok(Json(value));
+                }
+                _ => {
+                    return Err(ApiError::internal("unsupported fetch outcome variant"));
+                }
+            }
+        }
+        None => {
+            state
+                .fetch()
+                .fetch_and_extract_with_options(url.as_str(), &options)
+                .await?
+        }
+    };
 
     let mut body = json!({
         "url": extraction.metadata.url.clone().unwrap_or_else(|| url.to_string()),
@@ -106,4 +140,21 @@ pub async fn scrape(
     }
 
     Ok(Json(body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrape_request_deserializes_pdf_artifact_max_bytes() {
+        let json = r#"{"url": "https://example.com/test.pdf", "pdf_artifact_max_bytes": 1048576}"#;
+        let req: ScrapeRequest = serde_json::from_str(json).expect("valid json");
+        assert_eq!(req.url, "https://example.com/test.pdf");
+        assert_eq!(req.pdf_artifact_max_bytes, Some(1048576));
+
+        let default_req: ScrapeRequest =
+            serde_json::from_str(r#"{"url": "https://example.com"}"#).expect("valid json");
+        assert_eq!(default_req.pdf_artifact_max_bytes, None);
+    }
 }

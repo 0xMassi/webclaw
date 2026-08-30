@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Optional LiteLLM gateway provider.** Extraction and summarization can route through a self-hosted LiteLLM proxy (OpenAI-compatible), reaching many upstream models behind one endpoint. Opt-in via `LITELLM_API_KEY`; it is added last in the provider chain, so it never changes provider priority for existing users.
+
 ## [0.6.22] - 2026-08-30
 
 ### Added

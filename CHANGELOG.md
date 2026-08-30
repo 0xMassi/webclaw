@@ -5,11 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Fixed
-- **A request the MCP server understands but cannot serve yet now says so accurately.** A request arriving before the connection is set up was refused with "method not found", even when the server implements that method and the request was simply missing information the newest protocol revision requires. It now answers "invalid params" and names what was missing, so a caller is pointed at their own request rather than at a feature they think is unimplemented. A method the server genuinely does not have still answers "method not found".
+## [0.6.22] - 2026-08-30
 
 ### Added
-- **OrcaRouter provider in the LLM chain (opt-in).** Set `ORCAROUTER_API_KEY` to add [OrcaRouter](https://www.orcarouter.ai) as a provider for the LLM features (extraction, summarization). It's added at the end of the chain — Ollama → OpenAI → Gemini → Anthropic → Atlas Cloud → OrcaRouter — so it only runs when you configure it and never preempts an already-configured provider. Override the model with `ORCAROUTER_MODEL` (default `orcarouter/auto`) and the endpoint with `ORCAROUTER_BASE_URL` (default `https://api.orcarouter.ai/v1`).
+- **An additional optional hosted model provider.** Extraction and summarization can use another OpenAI-compatible routing service when it is configured, without changing provider priority for existing users.
+- **Cleaner managed-service model discovery.** Hosted deployments can now avoid probing local inference services that are not part of their configuration. Local CLI and self-hosted behavior is unchanged.
+
+### Fixed
+- **A request the MCP server understands but cannot serve yet now says so accurately.** A request arriving before the connection is set up was refused with "method not found", even when the server implements that method and the request was simply missing information the newest protocol revision requires. It now answers "invalid params" and names what was missing, so a caller is pointed at their own request rather than at a feature they think is unimplemented. A method the server genuinely does not have still answers "method not found".
+- **Encoded characters survive document and sitemap parsing.** DOCX text, metadata, sitemap URLs, and attributes no longer lose decoded entity references.
+- **Valid PDFs with a late header are accepted.** Files whose PDF marker appears near the end of the permitted prefix are no longer rejected at the boundary.
+
+### Security
+- **Document parsing is patched and bounded.** PDF, spreadsheet, and XML dependencies were upgraded, and pathological PDFs are rejected before page processing can grow without a practical limit.
 
 ## [0.6.21] - 2026-08-16
 

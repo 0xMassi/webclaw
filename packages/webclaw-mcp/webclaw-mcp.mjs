@@ -38,7 +38,7 @@ import https from "node:https";
 const REPO = "0xMassi/webclaw";
 // Release the wrapper installs. Bump this (and the package version) on each
 // core release, or override at runtime with WEBCLAW_MCP_VERSION.
-const RELEASE_TAG = process.env.WEBCLAW_MCP_VERSION || "v0.6.15";
+const RELEASE_TAG = process.env.WEBCLAW_MCP_VERSION || "v0.6.22";
 
 const IS_WINDOWS = platform() === "win32";
 const BIN_NAME = IS_WINDOWS ? "webclaw-mcp.exe" : "webclaw-mcp";

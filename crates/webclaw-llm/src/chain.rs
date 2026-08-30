@@ -25,14 +25,27 @@ impl ProviderChain {
     /// an already-configured provider. OrcaRouter is also opt-in and added last,
     /// only when `ORCAROUTER_API_KEY` is set.
     pub async fn default() -> Self {
+        Self::build_default(true).await
+    }
+
+    /// Build the configured cloud-provider chain without probing localhost for
+    /// Ollama. Hosted services should use this constructor when local inference
+    /// is deliberately not part of their architecture.
+    pub async fn cloud_default() -> Self {
+        Self::build_default(false).await
+    }
+
+    async fn build_default(include_ollama: bool) -> Self {
         let mut providers: Vec<Box<dyn LlmProvider>> = Vec::new();
 
-        let ollama = OllamaProvider::new(None, None);
-        if ollama.is_available().await {
-            debug!("ollama is available, adding to chain");
-            providers.push(Box::new(ollama));
-        } else {
-            debug!("ollama not available, skipping");
+        if include_ollama {
+            let ollama = OllamaProvider::new(None, None);
+            if ollama.is_available().await {
+                debug!("ollama is available, adding to chain");
+                providers.push(Box::new(ollama));
+            } else {
+                debug!("ollama not available, skipping");
+            }
         }
 
         if let Some(openai) = OpenAiProvider::new(None, None, None) {

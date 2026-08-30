@@ -155,6 +155,7 @@ fn parse_atom_entry(xml: &str) -> Option<AtomEntry> {
                     b"name" if in_author => {
                         in_author_name = true;
                         current = Some("author_name");
+                        entry.authors.push(String::new());
                     }
                     b"category" if in_entry => {
                         // primary_category is namespaced (arxiv:primary_category)
@@ -163,9 +164,10 @@ fn parse_atom_entry(xml: &str) -> Option<AtomEntry> {
                         // primary.
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"term"
-                                && let Ok(v) = attr.unescape_value()
+                                && let Some(v) =
+                                    crate::xml::decode_attribute(&attr, reader.decoder())
                             {
-                                let term = v.to_string();
+                                let term = v;
                                 if entry.primary_category.is_none() {
                                     entry.primary_category = Some(term.clone());
                                 }
@@ -179,9 +181,15 @@ fn parse_atom_entry(xml: &str) -> Option<AtomEntry> {
                         let mut typ = None;
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"href" => href = attr.unescape_value().ok().map(|s| s.to_string()),
-                                b"rel" => rel = attr.unescape_value().ok().map(|s| s.to_string()),
-                                b"type" => typ = attr.unescape_value().ok().map(|s| s.to_string()),
+                                b"href" => {
+                                    href = crate::xml::decode_attribute(&attr, reader.decoder())
+                                }
+                                b"rel" => {
+                                    rel = crate::xml::decode_attribute(&attr, reader.decoder())
+                                }
+                                b"type" => {
+                                    typ = crate::xml::decode_attribute(&attr, reader.decoder())
+                                }
                                 _ => {}
                             }
                         }
@@ -207,10 +215,10 @@ fn parse_atom_entry(xml: &str) -> Option<AtomEntry> {
                     let mut term = None;
                     for attr in e.attributes().flatten() {
                         match attr.key.as_ref() {
-                            b"href" => href = attr.unescape_value().ok().map(|s| s.to_string()),
-                            b"rel" => rel = attr.unescape_value().ok().map(|s| s.to_string()),
-                            b"type" => typ = attr.unescape_value().ok().map(|s| s.to_string()),
-                            b"term" => term = attr.unescape_value().ok().map(|s| s.to_string()),
+                            b"href" => href = crate::xml::decode_attribute(&attr, reader.decoder()),
+                            b"rel" => rel = crate::xml::decode_attribute(&attr, reader.decoder()),
+                            b"type" => typ = crate::xml::decode_attribute(&attr, reader.decoder()),
+                            b"term" => term = crate::xml::decode_attribute(&attr, reader.decoder()),
                             _ => {}
                         }
                     }
@@ -231,17 +239,13 @@ fn parse_atom_entry(xml: &str) -> Option<AtomEntry> {
                 }
             }
             Ok(Event::Text(ref e)) => {
-                if let (Some(field), Ok(text)) = (current, e.unescape()) {
-                    let text = text.to_string();
-                    match field {
-                        "id" => entry.id = Some(text.trim().to_string()),
-                        "title" => entry.title = append_text(entry.title.take(), &text),
-                        "summary" => entry.summary = append_text(entry.summary.take(), &text),
-                        "published" => entry.published = Some(text.trim().to_string()),
-                        "updated" => entry.updated = Some(text.trim().to_string()),
-                        "author_name" => entry.authors.push(text.trim().to_string()),
-                        _ => {}
-                    }
+                if let (Some(field), Some(text)) = (current, crate::xml::decode_text(e)) {
+                    append_atom_text(&mut entry, field, &text);
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) => {
+                if let (Some(field), Some(text)) = (current, crate::xml::decode_reference(e)) {
+                    append_atom_text(&mut entry, field, &text);
                 }
             }
             Ok(Event::End(ref e)) => {
@@ -249,7 +253,15 @@ fn parse_atom_entry(xml: &str) -> Option<AtomEntry> {
                 match local.as_ref() {
                     b"entry" => break,
                     b"author" => in_author = false,
-                    b"name" => in_author_name = false,
+                    b"name" => {
+                        in_author_name = false;
+                        if let Some(author) = entry.authors.last_mut() {
+                            *author = author.trim().to_string();
+                            if author.is_empty() {
+                                entry.authors.pop();
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 if !in_author_name {
@@ -263,7 +275,39 @@ fn parse_atom_entry(xml: &str) -> Option<AtomEntry> {
         buf.clear();
     }
 
-    if in_entry { Some(entry) } else { None }
+    if in_entry {
+        trim_atom_field(&mut entry.id);
+        trim_atom_field(&mut entry.published);
+        trim_atom_field(&mut entry.updated);
+        Some(entry)
+    } else {
+        None
+    }
+}
+
+fn trim_atom_field(field: &mut Option<String>) {
+    if let Some(value) = field {
+        *value = value.trim().to_string();
+        if value.is_empty() {
+            *field = None;
+        }
+    }
+}
+
+fn append_atom_text(entry: &mut AtomEntry, field: &str, text: &str) {
+    match field {
+        "id" => entry.id = append_text(entry.id.take(), text),
+        "title" => entry.title = append_text(entry.title.take(), text),
+        "summary" => entry.summary = append_text(entry.summary.take(), text),
+        "published" => entry.published = append_text(entry.published.take(), text),
+        "updated" => entry.updated = append_text(entry.updated.take(), text),
+        "author_name" => {
+            if let Some(author) = entry.authors.last_mut() {
+                author.push_str(text);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Concatenate text fragments (long fields can be split across multiple
@@ -310,5 +354,13 @@ mod tests {
     #[test]
     fn collapse_whitespace_handles_newlines_and_tabs() {
         assert_eq!(collapse_whitespace("a   b\n\tc  "), "a b c");
+    }
+
+    #[test]
+    fn parse_atom_entry_preserves_entities_in_text_fields() {
+        let xml = r#"<feed><entry><title>Research &amp; Development</title><author><name>A &amp; B</name></author></entry></feed>"#;
+        let entry = parse_atom_entry(xml).unwrap();
+        assert_eq!(entry.title.as_deref(), Some("Research & Development"));
+        assert_eq!(entry.authors, ["A & B"]);
     }
 }

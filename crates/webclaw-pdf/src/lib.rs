@@ -58,14 +58,17 @@ pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
         )));
     }
 
-    let header_window = &bytes[..bytes.len().min(PDF_HEADER_WINDOW)];
+    // The PDF header may *begin* anywhere in the first 1,024 bytes. Include
+    // enough trailing bytes to match a marker that starts at the last allowed
+    // offset without accepting a marker that starts after that boundary.
+    let header_window = &bytes[..bytes.len().min(PDF_HEADER_WINDOW + 4)];
     if !header_window.windows(5).any(|window| window == b"%PDF-") {
         return Err(PdfError::InvalidPdf("missing PDF header".into()));
     }
 
     let doc = Document::load_mem(bytes).map_err(|e| PdfError::InvalidPdf(e.to_string()))?;
 
-    let page_count = doc.get_pages().len();
+    let page_count = doc.page_iter().take(MAX_PDF_PAGES + 1).count();
     if page_count > MAX_PDF_PAGES {
         return Err(PdfError::InvalidPdf(format!(
             "PDF has too many pages ({page_count}, max {MAX_PDF_PAGES})"
@@ -287,6 +290,26 @@ mod tests {
         let result = extract_pdf(&bytes, PdfMode::Auto);
         assert!(
             matches!(result, Err(PdfError::InvalidPdf(msg)) if !msg.contains("missing PDF header"))
+        );
+    }
+
+    #[test]
+    fn test_pdf_header_at_last_allowed_offset_reaches_parser() {
+        let mut bytes = vec![b' '; PDF_HEADER_WINDOW - 1];
+        bytes.extend_from_slice(b"%PDF-1.7\n");
+        let result = extract_pdf(&bytes, PdfMode::Auto);
+        assert!(
+            matches!(result, Err(PdfError::InvalidPdf(msg)) if !msg.contains("missing PDF header"))
+        );
+    }
+
+    #[test]
+    fn test_pdf_header_immediately_after_spec_window_is_rejected() {
+        let mut bytes = vec![b' '; PDF_HEADER_WINDOW];
+        bytes.extend_from_slice(b"%PDF-1.7\n");
+        let result = extract_pdf(&bytes, PdfMode::Auto);
+        assert!(
+            matches!(result, Err(PdfError::InvalidPdf(msg)) if msg.contains("missing PDF header"))
         );
     }
 

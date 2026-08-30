@@ -67,16 +67,25 @@ import sys
 expected = sys.argv[1]
 with open("packages/create-webclaw/server.json", encoding="utf-8") as source:
     manifest = json.load(source)
+with open("packages/webclaw-mcp/package.json", encoding="utf-8") as source:
+    launcher = json.load(source)
 
 observed = {
     manifest.get("version"),
     *(package.get("version") for package in manifest.get("packages", [])),
+    launcher.get("version"),
 }
 if observed != {expected}:
     raise SystemExit(
-        "packages/create-webclaw/server.json versions do not all match " + expected
+        "release, registry, and launcher versions do not all match " + expected
     )
 ' "$version"
+
+  if ! grep -Fq "const RELEASE_TAG = process.env.WEBCLAW_MCP_VERSION || \"$tag\";" \
+    packages/webclaw-mcp/webclaw-mcp.mjs; then
+    echo "MCP launcher is not pinned to $tag" >&2
+    exit 1
+  fi
 fi
 
 if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then

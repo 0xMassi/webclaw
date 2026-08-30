@@ -29,12 +29,15 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Fetch main for ancestry verification
         run: git fetch origin main:refs/remotes/origin/main
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
       - name: Validate release metadata
         run: ./scripts/release-preflight.sh "${GITHUB_REF_NAME}"
       - name: Check formatting
@@ -84,6 +87,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -225,6 +230,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -235,15 +242,12 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"   # e.g. v0.6.17 (core release)
-          # Pin which prebuilt binary this launcher downloads to the just-released tag.
-          sed -i -E "/const RELEASE_TAG =/ s|\"v[0-9.]+\"|\"${tag}\"|" webclaw-mcp.mjs
-          # The launcher is versioned INDEPENDENTLY of the core release (a
-          # launcher-only fix must be shippable without a core bump). Publish the
-          # next patch above whatever is currently on npm — no commit-back needed.
-          cur="$(npm view @webclaw/mcp version 2>/dev/null || echo 0.0.0)"
-          npm version "$cur" --no-git-tag-version --allow-same-version >/dev/null
-          npm version patch --no-git-tag-version >/dev/null
-          echo "publishing @webclaw/mcp@$(node -p "require('./package.json').version") pinned to ${tag}:"
+          version="$(node -p "require('./package.json').version")"
+          if [[ "v${version}" != "${tag}" ]]; then
+            echo "launcher version ${version} does not match release ${tag}" >&2
+            exit 1
+          fi
+          echo "publishing @webclaw/mcp@${version} pinned to ${tag}:"
           grep -n "RELEASE_TAG =" webclaw-mcp.mjs
           npm publish --access public
 
@@ -260,6 +264,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-qemu-action@v3
         with:

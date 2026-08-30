@@ -18,12 +18,37 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "--cfg reqwest_unstable"
 
 jobs:
+  preflight:
+    name: Release preflight
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Fetch main for ancestry verification
+        run: git fetch origin main:refs/remotes/origin/main
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate release metadata
+        run: ./scripts/release-preflight.sh "${GITHUB_REF_NAME}"
+      - name: Check formatting
+        run: cargo fmt --check --all
+      - name: Lint workspace
+        run: cargo clippy --all -- -D warnings
+      - name: Test workspace
+        run: cargo test --workspace
+
   build:
     # Binaries are only built when a tag is pushed. A manual dispatch reuses
     # the existing release's binaries, so it skips this job entirely.
     if: github.event_name == 'push'
+    needs: preflight
     permissions:
       contents: read
     name: Build ${{ matrix.target }}

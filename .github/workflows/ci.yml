@@ -10,6 +10,17 @@ env:
   RUSTFLAGS: "--cfg reqwest_unstable"
 
 jobs:
+  release-metadata:
+    name: Release metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate release metadata contract
+        run: |
+          version="$(awk '/^\[workspace.package\]$/{found=1; next} found && /^version = /{gsub(/"/, "", $3); print $3; exit}' Cargo.toml)"
+          ./scripts/release-preflight.sh "v${version}"
+
   test:
     name: Test
     runs-on: ubuntu-latest

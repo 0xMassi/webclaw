@@ -5,11 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Fixed
-- **A request the MCP server understands but cannot serve yet now says so accurately.** A request arriving before the connection is set up was refused with "method not found", even when the server implements that method and the request was simply missing information the newest protocol revision requires. It now answers "invalid params" and names what was missing, so a caller is pointed at their own request rather than at a feature they think is unimplemented. A method the server genuinely does not have still answers "method not found".
+## [0.6.22] - 2026-08-30
 
 ### Added
-- **OrcaRouter provider in the LLM chain (opt-in).** Set `ORCAROUTER_API_KEY` to add [OrcaRouter](https://www.orcarouter.ai) as a provider for the LLM features (extraction, summarization). It's added at the end of the chain — Ollama → OpenAI → Gemini → Anthropic → Atlas Cloud → OrcaRouter — so it only runs when you configure it and never preempts an already-configured provider. Override the model with `ORCAROUTER_MODEL` (default `orcarouter/auto`) and the endpoint with `ORCAROUTER_BASE_URL` (default `https://api.orcarouter.ai/v1`).
+- **OrcaRouter provider in the LLM chain (opt-in).** Set `ORCAROUTER_API_KEY` to add [OrcaRouter](https://www.orcarouter.ai) as a provider for extraction and summarization. It is appended after the existing configured providers, so it never preempts them. `ORCAROUTER_MODEL` and `ORCAROUTER_BASE_URL` override its model and endpoint.
+- **Cloud-only provider-chain construction.** Hosted services can use `ProviderChain::cloud_default()` when local Ollama discovery is deliberately not part of their deployment. The existing `ProviderChain::default()` behavior is unchanged for local CLI and self-hosted users.
+
+### Fixed
+- **A request the MCP server understands but cannot serve yet now says so accurately.** A request arriving before the connection is set up was refused with "method not found", even when the server implements that method and the request was simply missing information the newest protocol revision requires. It now answers "invalid params" and names what was missing, so a caller is pointed at their own request rather than at a feature they think is unimplemented. A method the server genuinely does not have still answers "method not found".
+- **XML entities survive document and sitemap parsing.** DOCX text, arXiv metadata, sitemap URLs, and XML attributes now preserve decoded entity references even when the XML reader reports them as separate events.
+- **Valid PDF headers near the end of the permitted prefix are accepted.** The preflight check now recognizes a `%PDF-` marker beginning anywhere in the first 1,024 bytes, including the final allowed offset.
+
+### Security
+- **Document parsers were upgraded and bounded.** The PDF, spreadsheet, and XML dependency chain was updated to patched releases. PDF parsing now rejects documents above 10,000 pages using a bounded count, while the existing 50 MiB input limit remains in force.
 
 ## [0.6.21] - 2026-08-16
 

@@ -17,7 +17,7 @@ pub struct ProviderChain {
 }
 
 impl ProviderChain {
-    /// Build the default chain: Ollama -> OpenAI -> Gemini -> Anthropic -> Atlas Cloud -> OrcaRouter.
+    /// Build the default chain: Ollama -> OpenAI -> Gemini -> Anthropic -> Atlas Cloud -> OrcaRouter -> LiteLLM.
     /// Ollama is always added (availability checked at call time).
     /// Cloud providers are only added if their API keys are configured.
     /// Gemini sits ahead of Anthropic so Google Cloud credits are preferred,

@@ -371,6 +371,8 @@ webclaw/
 | `ANTHROPIC_BASE_URL` | Anthropic-compatible base URL |
 | `ORCAROUTER_API_KEY` | OrcaRouter LLM provider key |
 | `ORCAROUTER_BASE_URL` | OrcaRouter base URL (defaults to https://api.orcarouter.ai/v1) |
+| `LITELLM_API_KEY` | LiteLLM proxy key (OpenAI-compatible gateway) |
+| `LITELLM_BASE_URL` | LiteLLM proxy base URL (defaults to http://localhost:4000/v1) |
 | `WEBCLAW_PROXY` | Single proxy URL |
 | `WEBCLAW_PROXY_FILE` | Proxy pool file |
 

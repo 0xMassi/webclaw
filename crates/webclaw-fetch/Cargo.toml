@@ -26,11 +26,11 @@ bytes = "1"
 futures-util = "0.3"
 url = "2"
 rand = "0.8"
-quick-xml = { version = "0.37", features = ["serde"] }
+quick-xml = { version = "0.41", features = ["serde"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json.workspace = true
-calamine = "0.34"
+calamine = "0.36"
 zip = "2"
 flate2 = "1"
 

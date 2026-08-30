@@ -6,6 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-pdf-extract = "0.7"
+pdf-extract = "0.12"
 thiserror = { workspace = true }
 tracing = { workspace = true }

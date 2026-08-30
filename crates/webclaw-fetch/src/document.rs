@@ -219,7 +219,12 @@ fn parse_docx_xml(xml: &str) -> Result<String, FetchError> {
                 }
             }
             Ok(Event::Text(ref e)) if in_text => {
-                if let Ok(text) = e.unescape() {
+                if let Some(text) = crate::xml::decode_text(e) {
+                    current_text.push_str(&text);
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) if in_text => {
+                if let Some(text) = crate::xml::decode_reference(e) {
                     current_text.push_str(&text);
                 }
             }
@@ -680,6 +685,12 @@ mod tests {
 </w:document>"#;
         let result = parse_docx_xml(xml).unwrap();
         assert_eq!(result, "Hello world");
+    }
+
+    #[test]
+    fn test_docx_xml_preserves_entities_across_events() {
+        let xml = r#"<w:document><w:body><w:p><w:r><w:t>A &amp; B &lt; C</w:t></w:r></w:p></w:body></w:document>"#;
+        assert_eq!(parse_docx_xml(xml).unwrap(), "A & B < C");
     }
 
     #[test]

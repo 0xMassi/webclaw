@@ -19,6 +19,7 @@ pub mod search;
 pub mod sitemap;
 pub mod tls;
 pub mod url_security;
+mod xml;
 
 pub use browser::BrowserProfile;
 pub use client::{BatchExtractResult, BatchResult, FetchClient, FetchConfig, FetchResult};

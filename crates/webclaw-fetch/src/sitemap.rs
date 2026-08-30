@@ -338,7 +338,7 @@ fn parse_urlset(xml: &str) -> Vec<SitemapEntry> {
     let mut current_tag: Option<UrlTag> = None;
     let mut loc: Option<String> = None;
     let mut lastmod: Option<String> = None;
-    let mut priority: Option<f64> = None;
+    let mut priority: Option<String> = None;
     let mut changefreq: Option<String> = None;
 
     loop {
@@ -362,28 +362,43 @@ fn parse_urlset(xml: &str) -> Vec<SitemapEntry> {
             }
             Ok(Event::Text(ref e)) => {
                 if let Some(ref tag) = current_tag
-                    && let Ok(text) = e.unescape()
+                    && let Some(text) = crate::xml::decode_text(e)
                 {
-                    let text = text.trim().to_string();
-                    if !text.is_empty() {
-                        match tag {
-                            UrlTag::Loc => loc = Some(text),
-                            UrlTag::LastMod => lastmod = Some(text),
-                            UrlTag::Priority => priority = text.parse().ok(),
-                            UrlTag::ChangeFreq => changefreq = Some(text),
-                        }
-                    }
+                    append_url_text(
+                        tag,
+                        &text,
+                        &mut loc,
+                        &mut lastmod,
+                        &mut priority,
+                        &mut changefreq,
+                    );
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) => {
+                if let Some(ref tag) = current_tag
+                    && let Some(text) = crate::xml::decode_reference(e)
+                {
+                    append_url_text(
+                        tag,
+                        &text,
+                        &mut loc,
+                        &mut lastmod,
+                        &mut priority,
+                        &mut changefreq,
+                    );
                 }
             }
             Ok(Event::End(ref e)) => {
                 let name = e.local_name();
                 if name.as_ref() == b"url" && in_url {
-                    if let Some(url) = loc.take() {
+                    if let Some(url) = loc.take().map(|value| value.trim().to_string())
+                        && !url.is_empty()
+                    {
                         entries.push(SitemapEntry {
                             url,
-                            last_modified: lastmod.take(),
-                            priority: priority.take(),
-                            change_freq: changefreq.take(),
+                            last_modified: lastmod.take().map(|value| value.trim().to_string()),
+                            priority: priority.take().and_then(|value| value.trim().parse().ok()),
+                            change_freq: changefreq.take().map(|value| value.trim().to_string()),
                         });
                     }
                     in_url = false;
@@ -411,6 +426,23 @@ enum UrlTag {
     ChangeFreq,
 }
 
+fn append_url_text(
+    tag: &UrlTag,
+    text: &str,
+    loc: &mut Option<String>,
+    lastmod: &mut Option<String>,
+    priority: &mut Option<String>,
+    changefreq: &mut Option<String>,
+) {
+    let field = match tag {
+        UrlTag::Loc => loc,
+        UrlTag::LastMod => lastmod,
+        UrlTag::Priority => priority,
+        UrlTag::ChangeFreq => changefreq,
+    };
+    field.get_or_insert_with(String::new).push_str(text);
+}
+
 /// Parse `<sitemap>` entries from a `<sitemapindex>`, returning child sitemap URLs.
 fn parse_sitemap_index(xml: &str) -> Vec<String> {
     let mut reader = Reader::from_str(xml);
@@ -419,6 +451,7 @@ fn parse_sitemap_index(xml: &str) -> Vec<String> {
 
     let mut in_sitemap = false;
     let mut in_loc = false;
+    let mut current_loc = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -426,16 +459,21 @@ fn parse_sitemap_index(xml: &str) -> Vec<String> {
                 let name = e.local_name();
                 match name.as_ref() {
                     b"sitemap" => in_sitemap = true,
-                    b"loc" if in_sitemap => in_loc = true,
+                    b"loc" if in_sitemap => {
+                        in_loc = true;
+                        current_loc.clear();
+                    }
                     _ => {}
                 }
             }
             Ok(Event::Text(ref e)) => {
-                if in_loc && let Ok(text) = e.unescape() {
-                    let text = text.trim().to_string();
-                    if !text.is_empty() {
-                        urls.push(text);
-                    }
+                if in_loc && let Some(text) = crate::xml::decode_text(e) {
+                    current_loc.push_str(&text);
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) => {
+                if in_loc && let Some(text) = crate::xml::decode_reference(e) {
+                    current_loc.push_str(&text);
                 }
             }
             Ok(Event::End(ref e)) => {
@@ -445,7 +483,13 @@ fn parse_sitemap_index(xml: &str) -> Vec<String> {
                         in_sitemap = false;
                         in_loc = false;
                     }
-                    b"loc" => in_loc = false,
+                    b"loc" => {
+                        let url = current_loc.trim();
+                        if in_loc && !url.is_empty() {
+                            urls.push(url.to_string());
+                        }
+                        in_loc = false;
+                    }
                     _ => {}
                 }
             }
@@ -584,6 +628,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parsers_preserve_entities_across_xml_events() {
+        let urlset = r#"<urlset><url><loc>https://example.com/?a=1&amp;b=2</loc></url></urlset>"#;
+        assert_eq!(parse_urlset(urlset)[0].url, "https://example.com/?a=1&b=2");
+
+        let index = r#"<sitemapindex><sitemap><loc>https://example.com/sitemap?a=1&amp;b=2</loc></sitemap></sitemapindex>"#;
+        assert_eq!(
+            parse_sitemap_index(index),
+            ["https://example.com/sitemap?a=1&b=2"]
+        );
+    }
+
+    #[test]
     fn test_parse_sitemap_xml_dispatches_urlset() {
         let xml = r#"<?xml version="1.0"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -688,7 +744,7 @@ mod tests {
 "#;
         let entries = parse_sitemap_xml(xml);
         // Should return at least the successfully parsed entry
-        assert!(entries.len() >= 1);
+        assert!(!entries.is_empty());
         assert_eq!(entries[0].url, "https://example.com/good");
     }
 

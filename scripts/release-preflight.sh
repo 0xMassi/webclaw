@@ -2,15 +2,18 @@
 set -euo pipefail
 
 tag="${1:-${GITHUB_REF_NAME:-}}"
-if [[ -z "$tag" || "$tag" != v* ]]; then
+if [[ ! "$tag" =~ ^v ]]; then
   echo "release preflight requires a v-prefixed tag" >&2
   exit 1
 fi
 
 version="${tag#v}"
-semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
-if [[ ! "$version" =~ $semver_pattern ]]; then
-  echo "release tag is not valid SemVer: $tag" >&2
+# Docker tags cannot contain SemVer's optional `+build.metadata` suffix. Keep
+# the shared release version portable across GitHub, Cargo, npm, and GHCR by
+# supporting strict numeric SemVer with an optional prerelease suffix only.
+release_version_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+if [[ ! "$version" =~ $release_version_pattern ]]; then
+  echo "unsupported release tag: $tag (expected vMAJOR.MINOR.PATCH with optional prerelease identifiers)" >&2
   exit 1
 fi
 

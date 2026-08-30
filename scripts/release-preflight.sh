@@ -8,7 +8,8 @@ if [[ -z "$tag" || "$tag" != v* ]]; then
 fi
 
 version="${tag#v}"
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+if [[ ! "$version" =~ $semver_pattern ]]; then
   echo "release tag is not valid SemVer: $tag" >&2
   exit 1
 fi

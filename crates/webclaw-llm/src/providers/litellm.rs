@@ -63,6 +63,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads LITELLM_MODEL from the process env; run with --test-threads=1"]
     fn explicit_key_constructs_with_litellm_defaults() {
         let provider =
             LiteLlmProvider::new(Some("test-key".into()), None, None).expect("should construct");

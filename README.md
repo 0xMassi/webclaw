@@ -373,6 +373,7 @@ webclaw/
 | `ORCAROUTER_BASE_URL` | OrcaRouter base URL (defaults to https://api.orcarouter.ai/v1) |
 | `LITELLM_API_KEY` | LiteLLM proxy key (OpenAI-compatible gateway) |
 | `LITELLM_BASE_URL` | LiteLLM proxy base URL (defaults to http://localhost:4000/v1) |
+| `LITELLM_MODEL` | LiteLLM default model (defaults to gpt-4o-mini) |
 | `WEBCLAW_PROXY` | Single proxy URL |
 | `WEBCLAW_PROXY_FILE` | Proxy pool file |
 

@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod atlascloud;
 pub mod gemini;
+pub mod litellm;
 pub mod ollama;
 pub mod openai;
 pub mod orcarouter;

@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **LiteLLM support for AI features.** Point webclaw at your own LiteLLM setup to use many different models for extraction and summarization through a single connection. Enable it by setting `LITELLM_API_KEY`; existing model choices are unaffected.
+
 ## [0.6.22] - 2026-08-30
 
 ### Added

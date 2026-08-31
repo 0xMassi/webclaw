@@ -339,7 +339,7 @@ struct Cli {
     #[arg(long, num_args = 0..=1, default_missing_value = "3")]
     summarize: Option<usize>,
 
-    /// Force a specific LLM provider (ollama, openai, atlascloud, anthropic, orcarouter)
+    /// Force a specific LLM provider (ollama, openai, atlascloud, anthropic, orcarouter, litellm)
     #[arg(long, env = "WEBCLAW_LLM_PROVIDER")]
     llm_provider: Option<String>,
 
@@ -2284,15 +2284,24 @@ async fn build_llm_provider(cli: &Cli) -> Result<Box<dyn LlmProvider>, String> {
                 .ok_or("ANTHROPIC_API_KEY not set")?;
                 Ok(Box::new(provider))
             }
+            "litellm" => {
+                let provider = webclaw_llm::providers::litellm::LiteLlmProvider::new(
+                    None,
+                    cli.llm_base_url.clone(),
+                    cli.llm_model.clone(),
+                )
+                .ok_or("LITELLM_API_KEY not set")?;
+                Ok(Box::new(provider))
+            }
             other => Err(format!(
-                "unknown LLM provider: {other} (use ollama, openai, atlascloud, anthropic, or orcarouter)"
+                "unknown LLM provider: {other} (use ollama, openai, atlascloud, anthropic, orcarouter, or litellm)"
             )),
         }
     } else {
         let chain = webclaw_llm::ProviderChain::default().await;
         if chain.is_empty() {
             return Err(
-                "no LLM providers available -- start Ollama or set OPENAI_API_KEY / ANTHROPIC_API_KEY / ORCAROUTER_API_KEY"
+                "no LLM providers available -- start Ollama or set OPENAI_API_KEY / ANTHROPIC_API_KEY / ORCAROUTER_API_KEY / LITELLM_API_KEY"
                     .into(),
             );
         }

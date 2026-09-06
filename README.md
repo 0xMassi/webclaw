@@ -85,6 +85,43 @@ brew install webclaw
 
 Download macOS, Linux, and Windows binaries from [GitHub Releases](https://github.com/0xMassi/webclaw/releases).
 
+#### Windows (x64)
+
+The prebuilt ZIP is the easiest installation and does not require Rust. On the
+[v0.6.22 release page](https://github.com/0xMassi/webclaw/releases/tag/v0.6.22),
+download `webclaw-v0.6.22-x86_64-pc-windows-msvc.zip`. Extract it in File Explorer,
+open PowerShell in the extracted folder containing `webclaw.exe`, and run:
+
+```powershell
+.\webclaw.exe --version
+.\webclaw.exe https://example.com --format markdown
+```
+
+PowerShell requires the `.\` prefix for programs in the current directory.
+Add that directory to your user PATH only if you want to run `webclaw` from
+other folders. If Windows reports a missing Visual C++ runtime DLL, install the
+Microsoft Visual C++ Redistributable for x64. The ZIP contains x64 binaries;
+Windows ARM64 is not covered by the native installation check.
+
+To build from source on Windows, install Rust with the `x86_64-pc-windows-msvc`
+toolchain, Visual Studio Build Tools with **Desktop development with C++** and
+the Windows SDK, Git, CMake 3.22 or newer, LLVM (including `libclang.dll`), and
+NASM. Open a fresh Developer PowerShell for Visual Studio after installation.
+Ensure CMake and NASM are on PATH and set `LIBCLANG_PATH` to your LLVM `bin`
+directory if bindgen cannot find it, for example:
+
+```powershell
+$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
+cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.6.22 --locked webclaw-cli
+webclaw --version
+```
+
+The Cargo package is `webclaw-cli`; the executable is `webclaw`. These packages
+are installed from Git, not crates.io. A first source build can take several
+minutes. The Windows CI workflow checks the Git installation and published ZIP
+on a hosted runner with preinstalled build tools; it does not model a clean PC.
+Linux containers, including Docker on macOS, do not validate Windows support.
+
 ### Docker
 
 ```bash
@@ -94,8 +131,8 @@ docker run --rm ghcr.io/0xmassi/webclaw https://example.com
 ### Cargo
 
 ```bash
-cargo install --git https://github.com/0xMassi/webclaw.git webclaw-cli
-cargo install --git https://github.com/0xMassi/webclaw.git webclaw-mcp
+cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.6.22 --locked webclaw-cli
+cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.6.22 --locked webclaw-mcp
 ```
 
 If building from source fails because native build tools are missing, install the platform prerequisites:

@@ -1,0 +1,67 @@
+name: Windows installation
+
+on:
+  push:
+    branches: [main, 'codex/italian-findings-core']
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'Cargo.*'
+      - '.cargo/**'
+      - '.github/workflows/windows-install.yml'
+      - 'scripts/windows-install-smoke.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: '--cfg reqwest_unstable'
+      LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install native build prerequisite
+        shell: pwsh
+        run: |
+          choco install nasm -y
+          if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
+          'C:\Program Files\NASM' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Verify build tools supplied by the hosted Windows image
+        shell: pwsh
+        run: |
+          Get-Command cargo, cmake, nasm
+          if (!(Test-Path "$env:LIBCLANG_PATH\libclang.dll")) { throw 'libclang.dll not found' }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'Visual Studio C++ build tools not found' }
+          cmake --version
+          rustc --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install this exact commit and run it
+        shell: pwsh
+        run: |
+          cargo install --git https://github.com/0xMassi/webclaw.git --rev "$env:GITHUB_SHA" --locked --root "$env:RUNNER_TEMP\source-install" webclaw-cli
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo installation failed' }
+          ./scripts/windows-install-smoke.ps1 -Binary "$env:RUNNER_TEMP\source-install\bin\webclaw.exe"
+      - name: Extract the published Windows ZIP and run it
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $download = "$env:RUNNER_TEMP\release-download"
+          New-Item -ItemType Directory -Path $download | Out-Null
+          gh release download v0.6.22 --repo 0xMassi/webclaw --pattern '*x86_64-pc-windows-msvc.zip' --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          Expand-Archive -Path "$download\*.zip" -DestinationPath "$env:RUNNER_TEMP\release-install"
+          $binary = Get-ChildItem "$env:RUNNER_TEMP\release-install" -Filter webclaw.exe -Recurse | Select-Object -First 1
+          if (!$binary) { throw 'CLI missing from Windows archive' }
+          ./scripts/windows-install-smoke.ps1 -Binary $binary.FullName

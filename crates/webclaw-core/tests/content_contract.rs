@@ -194,3 +194,18 @@ fn modal_substrings_do_not_hide_legitimate_hero_wrappers() {
     let result = extract("<div class='free-modal-container'><header><h1>Useful hero title</h1></header></div><main><p>A short article.</p></main>", None).unwrap();
     assert!(result.content.markdown.contains("Useful hero title"));
 }
+
+#[test]
+fn overlay_headings_are_not_recovered() {
+    for token in ["overlay", "modal-overlay", "modal-dialog"] {
+        let html = format!(
+            "<div class='{token}'><header><h1>Cookie settings</h1></header></div><main><p>Short article.</p></main>"
+        );
+        let result = extract(&html, None).unwrap();
+        assert!(
+            !result.content.markdown.contains("Cookie settings"),
+            "{token}"
+        );
+        assert!(result.content.markdown.contains("Short article"));
+    }
+}

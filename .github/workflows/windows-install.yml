@@ -49,7 +49,11 @@ jobs:
       - name: Install this exact commit and run it
         shell: pwsh
         run: |
-          cargo install --git https://github.com/0xMassi/webclaw.git --rev "$env:GITHUB_SHA" --locked --root "$env:RUNNER_TEMP\source-install" webclaw-cli
+          if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+            cargo install --path crates/webclaw-cli --locked --root "$env:RUNNER_TEMP\source-install"
+          } else {
+            cargo install --git https://github.com/0xMassi/webclaw.git --rev "$env:GITHUB_SHA" --locked --root "$env:RUNNER_TEMP\source-install" webclaw-cli
+          }
           if ($LASTEXITCODE -ne 0) { throw 'Cargo installation failed' }
           ./scripts/windows-install-smoke.ps1 -Binary "$env:RUNNER_TEMP\source-install\bin\webclaw.exe"
       - name: Extract the published Windows ZIP and run it

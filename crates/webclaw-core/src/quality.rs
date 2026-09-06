@@ -30,7 +30,6 @@ impl ContentIssue {
 /// Main-content mode without a matching region falls back to automatic extraction.
 pub fn allows_empty_content(html: &str, options: &crate::ExtractionOptions) -> bool {
     !options.include_selectors.is_empty()
-        || !options.exclude_selectors.is_empty()
         || (options.only_main_content
             && crate::extractor::has_main_content(&scraper::Html::parse_document(html)))
 }
@@ -93,6 +92,11 @@ mod tests {
             "<body><div id='app'></div></body>",
             &options
         ));
+        let options = crate::ExtractionOptions {
+            exclude_selectors: vec![".cookie-banner".into()],
+            ..Default::default()
+        };
+        assert!(!allows_empty_content("<div id='app'></div>", &options));
     }
 
     #[test]

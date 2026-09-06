@@ -37,6 +37,7 @@ pub(crate) fn has_main_content(doc: &Html) -> bool {
 // A no-script version can be the only readable representation of a page. Keep
 // recovery inside the selected subtree and apply exclusions again to its HTML.
 fn convert_selected(
+    doc: &Html,
     element: ElementRef<'_>,
     base_url: Option<&Url>,
     exclude: &HashSet<NodeId>,
@@ -56,9 +57,42 @@ fn convert_selected(
         } else {
             fallback.inner_html()
         };
+        // Decode in the original ancestry so selectors such as `main .omit`
+        // and `noscript > .omit` keep their meaning. Fragment parsing alone loses it.
+        let mut decoded = doc.clone();
+        for child in fallback.children() {
+            decoded.tree.get_mut(child.id()).unwrap().detach();
+        }
         let fragment = Html::parse_fragment(&html);
-        let fragment_exclude = build_exclude_set(&fragment, &options.exclude_selectors);
-        let candidate = markdown::convert(fragment.root_element(), base_url, &fragment_exclude);
+        let fragment_id = decoded
+            .tree
+            .get_mut(fallback.id())
+            .unwrap()
+            .append_subtree(fragment.tree)
+            .id();
+        let wrapper_id = decoded
+            .tree
+            .get(fragment_id)
+            .unwrap()
+            .first_child()
+            .unwrap()
+            .id();
+        decoded
+            .tree
+            .get_mut(fallback.id())
+            .unwrap()
+            .reparent_from_id_append(wrapper_id);
+        decoded.tree.get_mut(fragment_id).unwrap().detach();
+        decoded.tree.get_mut(wrapper_id).unwrap().detach();
+        let decoded_exclude = build_exclude_set(&decoded, &options.exclude_selectors);
+        // After matching selectors, make this fallback an ordinary content container.
+        if let scraper::node::Node::Element(element) =
+            decoded.tree.get_mut(fallback.id()).unwrap().value()
+        {
+            element.name.local = "section".into();
+        }
+        let decoded_fallback = ElementRef::wrap(decoded.tree.get(fallback.id()).unwrap()).unwrap();
+        let candidate = markdown::convert(decoded_fallback, base_url, &decoded_exclude);
         let words = word_count(&candidate.0);
         if words >= 5 && words > word_count(&result.0) {
             result = candidate;
@@ -131,7 +165,7 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
                 "only_main_content: selected element"
             );
             let (markdown, plain_text, assets) =
-                convert_selected(main_el, base_url, &exclude, options);
+                convert_selected(doc, main_el, base_url, &exclude, options);
 
             let raw_html = if options.include_raw_html {
                 Some(main_el.html())
@@ -156,16 +190,16 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
 
     let (content_element, mut markdown, _plain_text, mut assets) = if let Some(node) = best {
         debug!(tag = node.value().name(), "selected content node");
-        let (md, pt, a) = convert_selected(node, base_url, &exclude, options);
+        let (md, pt, a) = convert_selected(doc, node, base_url, &exclude, options);
         (Some(node), md, pt, a)
     } else {
         debug!("no strong candidate, falling back to body");
         if let Some(body) = doc.select(&BODY_SELECTOR).next() {
-            let (md, pt, a) = convert_selected(body, base_url, &exclude, options);
+            let (md, pt, a) = convert_selected(doc, body, base_url, &exclude, options);
             (Some(body), md, pt, a)
         } else {
             let root = doc.root_element();
-            let (md, pt, a) = convert_selected(root, base_url, &exclude, options);
+            let (md, pt, a) = convert_selected(doc, root, base_url, &exclude, options);
             (Some(root), md, pt, a)
         }
     };
@@ -272,7 +306,7 @@ fn extract_with_include(
                 continue;
             }
 
-            let (md, plain, assets) = convert_selected(el, base_url, exclude, options);
+            let (md, plain, assets) = convert_selected(doc, el, base_url, exclude, options);
 
             if !md.is_empty() {
                 if !all_md.is_empty() {
@@ -315,10 +349,21 @@ fn is_inside_overlay(element: ElementRef<'_>) -> bool {
                 .into_iter()
                 .flatten()
                 .any(|value| {
-                    let lower = value.to_ascii_lowercase();
-                    ["cookie", "consent", "onetrust", "didomi", "modal", "popup"]
-                        .iter()
-                        .any(|marker| lower.contains(marker))
+                    value.split_whitespace().any(|token| {
+                        let token = token.to_ascii_lowercase();
+                        matches!(
+                            token.as_str(),
+                            "cookie"
+                                | "consent"
+                                | "modal"
+                                | "popup"
+                                | "cookie-banner"
+                                | "cookie-consent"
+                                | "consent-banner"
+                        ) || ["onetrust-", "didomi-", "cookiebot"]
+                            .iter()
+                            .any(|prefix| token.starts_with(prefix))
+                    })
                 })
     })
 }

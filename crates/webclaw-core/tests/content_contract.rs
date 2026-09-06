@@ -165,3 +165,32 @@ fn unrelated_exclusions_preserve_recovered_hero_content() {
     );
     assert!(!result.content.markdown.contains("Hidden cookie text"));
 }
+
+#[test]
+fn noscript_exclusions_keep_ancestor_context() {
+    let html = "<main><noscript><h1>Useful community categories</h1><p>Browse questions and answers from the community.</p><p class='omit'>Secret excluded fallback text</p></noscript></main>";
+    for selector in ["main .omit", "noscript > .omit", "main > noscript .omit"] {
+        let result = extract_with_options(
+            html,
+            None,
+            &ExtractionOptions {
+                only_main_content: true,
+                exclude_selectors: vec![selector.into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(result.content.markdown.contains("Useful community"));
+        assert!(
+            !result.content.markdown.contains("Secret"),
+            "{selector}: {}",
+            result.content.markdown
+        );
+    }
+}
+
+#[test]
+fn modal_substrings_do_not_hide_legitimate_hero_wrappers() {
+    let result = extract("<div class='free-modal-container'><header><h1>Useful hero title</h1></header></div><main><p>A short article.</p></main>", None).unwrap();
+    assert!(result.content.markdown.contains("Useful hero title"));
+}

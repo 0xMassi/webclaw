@@ -554,7 +554,7 @@ pub async fn smart_fetch(
         .map_err(|_| format!("Fetch timed out after 30s for {url}"))?
         .map_err(|e| format!("Fetch failed: {e}"))?;
 
-    if is_bot_protected(&fetch_result.html, &fetch_result.headers) {
+    if fetch_result.status >= 400 || is_bot_protected(&fetch_result.html, &fetch_result.headers) {
         info!(url, "bot protection detected, falling back to cloud API");
         return cloud_scrape_fallback(
             cloud,
@@ -577,7 +577,16 @@ pub async fn smart_fetch(
         webclaw_core::extract_with_options(&fetch_result.html, Some(&fetch_result.url), &options)
             .map_err(|e| format!("Extraction failed: {e}"))?;
 
-    if needs_js_rendering(extraction.metadata.word_count, &fetch_result.html) {
+    let issue = webclaw_core::quality::content_issue(&extraction).filter(|issue| {
+        *issue != webclaw_core::quality::ContentIssue::Empty
+            || !webclaw_core::quality::allows_empty_content(&fetch_result.html, &options)
+    });
+    if issue.is_some()
+        || (include_selectors.is_empty()
+            && exclude_selectors.is_empty()
+            && !only_main_content
+            && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html))
+    {
         info!(
             url,
             word_count = extraction.metadata.word_count,

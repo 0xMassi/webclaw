@@ -950,7 +950,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
             OutputFormat::Json => "json",
             OutputFormat::Text => "text",
             OutputFormat::Llm => "llm",
-            OutputFormat::Html => "html",
+            OutputFormat::Html => "rawHtml",
         };
         let resp = c
             .scrape(
@@ -972,9 +972,35 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     // zero emissions (timer never fires in <10s); slow fetches get a
     // line every 10s of elapsed time so the CLI doesn't appear hung.
     let fetch_fut = client.fetch_and_extract_with_options(url, &options);
-    let result = webclaw_fetch::with_progress(url, fetch_fut)
-        .await
-        .map_err(|e| format!("fetch error: {e}"))?;
+    let result = match webclaw_fetch::with_progress(url, fetch_fut).await {
+        Ok(result) => result,
+        Err(
+            error @ (webclaw_fetch::FetchError::Content(_)
+            | webclaw_fetch::FetchError::UpstreamStatus(_)),
+        ) => {
+            if let Some(ref c) = cloud_client {
+                let format = match cli.format {
+                    OutputFormat::Markdown => "markdown",
+                    OutputFormat::Json => "json",
+                    OutputFormat::Text => "text",
+                    OutputFormat::Llm => "llm",
+                    OutputFormat::Html => "rawHtml",
+                };
+                let response = c
+                    .scrape(
+                        url,
+                        &[format],
+                        &options.include_selectors,
+                        &options.exclude_selectors,
+                        options.only_main_content,
+                    )
+                    .await?;
+                return Ok(FetchOutput::Cloud(response));
+            }
+            return Err(error.to_string());
+        }
+        Err(error) => return Err(format!("fetch error: {error}")),
+    };
 
     // Check if we should fall back to cloud
     let reason = detect_empty(&result);
@@ -986,7 +1012,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
                 OutputFormat::Json => "json",
                 OutputFormat::Text => "text",
                 OutputFormat::Llm => "llm",
-                OutputFormat::Html => "html",
+                OutputFormat::Html => "rawHtml",
             };
             match c
                 .scrape(
@@ -1181,6 +1207,12 @@ fn print_output(result: &ExtractionResult, format: &OutputFormat, show_metadata:
     }
 }
 
+fn cloud_text<'a>(resp: &'a serde_json::Value, field: &str, legacy: &str) -> Option<&'a str> {
+    resp.get(field)
+        .and_then(|v| v.as_str())
+        .or_else(|| resp.get("content")?.get(legacy)?.as_str())
+}
+
 /// Print cloud API response in the requested format.
 fn print_cloud_output(resp: &serde_json::Value, format: &OutputFormat) {
     match format {
@@ -1208,11 +1240,7 @@ fn print_cloud_output(resp: &serde_json::Value, format: &OutputFormat) {
             }
         }
         OutputFormat::Text => {
-            if let Some(txt) = resp
-                .get("content")
-                .and_then(|c| c.get("plain_text"))
-                .and_then(|t| t.as_str())
-            {
+            if let Some(txt) = cloud_text(resp, "text", "plain_text") {
                 println!("{txt}");
             } else {
                 // Fallback to markdown or raw JSON
@@ -1220,22 +1248,14 @@ fn print_cloud_output(resp: &serde_json::Value, format: &OutputFormat) {
             }
         }
         OutputFormat::Llm => {
-            if let Some(llm) = resp
-                .get("content")
-                .and_then(|c| c.get("llm_text"))
-                .and_then(|t| t.as_str())
-            {
+            if let Some(llm) = cloud_text(resp, "llm", "llm_text") {
                 println!("{llm}");
             } else {
                 print_cloud_output(resp, &OutputFormat::Markdown);
             }
         }
         OutputFormat::Html => {
-            if let Some(html) = resp
-                .get("content")
-                .and_then(|c| c.get("raw_html"))
-                .and_then(|h| h.as_str())
-            {
+            if let Some(html) = cloud_text(resp, "rawHtml", "raw_html") {
                 println!("{html}");
             } else {
                 print_cloud_output(resp, &OutputFormat::Markdown);
@@ -2936,6 +2956,22 @@ mod tests {
 
     // issue #86: a single URL sourced only from --urls-file must be promoted to
     // a positional URL so it takes the single-scrape path (batch gates need >1).
+    #[test]
+    fn cloud_renderer_uses_requested_top_level_formats() {
+        let response = serde_json::json!({"markdown": "**Markdown**", "text": "Plain text", "llm": "LLM text", "rawHtml": "<p>HTML</p>", "content": {"plain_text": "Old text"}});
+        assert_eq!(
+            cloud_text(&response, "text", "plain_text"),
+            Some("Plain text")
+        );
+        assert_eq!(cloud_text(&response, "llm", "llm_text"), Some("LLM text"));
+        assert_eq!(
+            cloud_text(&response, "rawHtml", "raw_html"),
+            Some("<p>HTML</p>")
+        );
+        let legacy = serde_json::json!({"content": {"plain_text": "Old text"}});
+        assert_eq!(cloud_text(&legacy, "text", "plain_text"), Some("Old text"));
+    }
+
     #[test]
     fn single_file_url_backfilled_into_positional() {
         let mut urls: Vec<String> = Vec::new();

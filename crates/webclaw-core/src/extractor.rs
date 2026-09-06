@@ -30,6 +30,43 @@ static FOOTER_HEADING_SELECTOR: Lazy<Selector> =
 static MAIN_CONTENT_SELECTOR: Lazy<Selector> =
     Lazy::new(|| Selector::parse("article, main, [role='main']").unwrap());
 
+pub(crate) fn has_main_content(doc: &Html) -> bool {
+    doc.select(&MAIN_CONTENT_SELECTOR).next().is_some()
+}
+
+// A no-script version can be the only readable representation of a page. Keep
+// recovery inside the selected subtree and apply exclusions again to its HTML.
+fn convert_selected(
+    element: ElementRef<'_>,
+    base_url: Option<&Url>,
+    exclude: &HashSet<NodeId>,
+    options: &ExtractionOptions,
+) -> (String, String, markdown::ConvertedAssets) {
+    let mut result = markdown::convert(element, base_url, exclude);
+    if word_count(&result.0) >= 30 || exclude.contains(&element.id()) {
+        return result;
+    }
+    let selector = Selector::parse("noscript").unwrap();
+    for fallback in element.select(&selector) {
+        if exclude.contains(&fallback.id()) || noise::is_noise_descendant(fallback) {
+            continue;
+        }
+        let html = if fallback.child_elements().next().is_none() {
+            fallback.text().collect::<String>()
+        } else {
+            fallback.inner_html()
+        };
+        let fragment = Html::parse_fragment(&html);
+        let fragment_exclude = build_exclude_set(&fragment, &options.exclude_selectors);
+        let candidate = markdown::convert(fragment.root_element(), base_url, &fragment_exclude);
+        let words = word_count(&candidate.0);
+        if words >= 5 && words > word_count(&result.0) {
+            result = candidate;
+        }
+    }
+    result
+}
+
 const MAX_SELECTORS: usize = 100;
 
 /// Build a HashSet of NodeIds to exclude based on CSS selector strings.
@@ -93,7 +130,8 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
                 tag = main_el.value().name(),
                 "only_main_content: selected element"
             );
-            let (markdown, plain_text, assets) = markdown::convert(main_el, base_url, &exclude);
+            let (markdown, plain_text, assets) =
+                convert_selected(main_el, base_url, &exclude, options);
 
             let raw_html = if options.include_raw_html {
                 Some(main_el.html())
@@ -116,61 +154,78 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
     // Path 3: Default scoring algorithm
     let best = find_best_node(doc);
 
-    let (content_element, mut markdown, plain_text, mut assets) = if let Some(node) = best {
+    let (content_element, mut markdown, _plain_text, mut assets) = if let Some(node) = best {
         debug!(tag = node.value().name(), "selected content node");
-        let (md, pt, a) = markdown::convert(node, base_url, &exclude);
+        let (md, pt, a) = convert_selected(node, base_url, &exclude, options);
         (Some(node), md, pt, a)
     } else {
         debug!("no strong candidate, falling back to body");
         if let Some(body) = doc.select(&BODY_SELECTOR).next() {
-            let (md, pt, a) = markdown::convert(body, base_url, &exclude);
+            let (md, pt, a) = convert_selected(body, base_url, &exclude, options);
             (Some(body), md, pt, a)
         } else {
             let root = doc.root_element();
-            let (md, pt, a) = markdown::convert(root, base_url, &exclude);
+            let (md, pt, a) = convert_selected(root, base_url, &exclude, options);
             (Some(root), md, pt, a)
         }
     };
 
-    // The best content node often excludes the page's primary H1 (e.g., in a
-    // hero/banner section). If the document has an H1 and its text isn't already
-    // in the markdown, prepend it so the output always starts with the title.
-    if let Some(h1) = doc.select(&H1_SELECTOR).next() {
-        let h1_text = h1
-            .text()
-            .collect::<String>()
-            .trim()
-            .trim_end_matches(|c: char| !c.is_alphanumeric())
-            .trim()
-            .to_string();
-        if !h1_text.is_empty() && !markdown.contains(&h1_text) {
-            markdown = format!("# {h1_text}\n\n{markdown}");
-            // Recover hero paragraph: H1 was outside the content node (noise-stripped),
-            // so adjacent tagline/mission paragraphs are also lost. Recover them.
-            recover_hero_paragraph(h1, &mut markdown);
+    {
+        // Recovery reads whole subtrees, so remove excluded nodes from a private
+        // recovery document. Unrelated exclusions must not disable useful recovery.
+        let filtered;
+        let doc = if exclude.is_empty() {
+            doc
+        } else {
+            let mut copy = doc.clone();
+            for id in &exclude {
+                if let Some(mut node) = copy.tree.get_mut(*id) {
+                    node.detach();
+                }
+            }
+            filtered = copy;
+            &filtered
+        };
+        // The best content node often excludes the page's primary H1 (e.g., in a
+        // hero/banner section). If the document has an H1 and its text isn't already
+        // in the markdown, prepend it so the output always starts with the title.
+        if let Some(h1) = doc.select(&H1_SELECTOR).find(|h1| !is_inside_overlay(*h1)) {
+            let h1_text = h1
+                .text()
+                .collect::<String>()
+                .trim()
+                .trim_end_matches(|c: char| !c.is_alphanumeric())
+                .trim()
+                .to_string();
+            if !h1_text.is_empty() && !markdown.contains(&h1_text) {
+                markdown = format!("# {h1_text}\n\n{markdown}");
+                // Recover hero paragraph: H1 was outside the content node (noise-stripped),
+                // so adjacent tagline/mission paragraphs are also lost. Recover them.
+                recover_hero_paragraph(h1, &mut markdown);
+            }
         }
+
+        // Recover announcement banners (role="region" with announcement-like aria-label).
+        // These are often stripped by class-based noise filters ("banner" class) but
+        // contain genuinely important content like product announcements.
+        recover_announcements(doc, base_url, &mut markdown, &mut assets.links);
+
+        // Recover section headings that were stripped because their wrapper had a
+        // noise class (e.g., <div class="section-header">). If an <h2> is missing
+        // from the markdown but nearby content from the same section IS present,
+        // the heading was likely a false-positive noise strip.
+        recover_section_headings(doc, &mut markdown);
+
+        // Recover prominent CTA links from the footer (e.g., documentation links).
+        // The footer tag is noise, but "call to action" sections inside it often
+        // contain high-value links and headings worth capturing.
+        recover_footer_cta(doc, base_url, &mut markdown, &mut assets.links);
+
+        // Recover structured site navigation from footer (product/service listings).
+        // Many homepages have organized footer sitemaps (Products, Solutions, etc.)
+        // that are genuinely useful for LLM consumption.
+        recover_footer_sitemap(doc, base_url, &mut markdown, &mut assets.links);
     }
-
-    // Recover announcement banners (role="region" with announcement-like aria-label).
-    // These are often stripped by class-based noise filters ("banner" class) but
-    // contain genuinely important content like product announcements.
-    recover_announcements(doc, base_url, &mut markdown, &mut assets.links);
-
-    // Recover section headings that were stripped because their wrapper had a
-    // noise class (e.g., <div class="section-header">). If an <h2> is missing
-    // from the markdown but nearby content from the same section IS present,
-    // the heading was likely a false-positive noise strip.
-    recover_section_headings(doc, &mut markdown);
-
-    // Recover prominent CTA links from the footer (e.g., documentation links).
-    // The footer tag is noise, but "call to action" sections inside it often
-    // contain high-value links and headings worth capturing.
-    recover_footer_cta(doc, base_url, &mut markdown, &mut assets.links);
-
-    // Recover structured site navigation from footer (product/service listings).
-    // Many homepages have organized footer sitemaps (Products, Solutions, etc.)
-    // that are genuinely useful for LLM consumption.
-    recover_footer_sitemap(doc, base_url, &mut markdown, &mut assets.links);
 
     let raw_html = if options.include_raw_html {
         content_element.map(|el| el.html())
@@ -178,6 +233,7 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
         None
     };
 
+    let plain_text = markdown::strip_markdown(&markdown);
     Content {
         markdown,
         plain_text,
@@ -216,7 +272,7 @@ fn extract_with_include(
                 continue;
             }
 
-            let (md, plain, assets) = markdown::convert(el, base_url, exclude);
+            let (md, plain, assets) = convert_selected(el, base_url, exclude, options);
 
             if !md.is_empty() {
                 if !all_md.is_empty() {
@@ -249,6 +305,22 @@ fn extract_with_include(
         code_blocks: all_code_blocks,
         raw_html: all_raw_html,
     }
+}
+
+fn is_inside_overlay(element: ElementRef<'_>) -> bool {
+    element.ancestors().filter_map(ElementRef::wrap).any(|el| {
+        el.value().attr("role") == Some("dialog")
+            || el.value().attr("aria-modal") == Some("true")
+            || [el.value().attr("id"), el.value().attr("class")]
+                .into_iter()
+                .flatten()
+                .any(|value| {
+                    let lower = value.to_ascii_lowercase();
+                    ["cookie", "consent", "onetrust", "didomi", "modal", "popup"]
+                        .iter()
+                        .any(|marker| lower.contains(marker))
+                })
+    })
 }
 
 /// Recover announcement banners that were stripped as noise.
@@ -312,7 +384,7 @@ fn recover_hero_paragraph(h1: ElementRef<'_>, markdown: &mut String) {
             let Some(el) = ElementRef::wrap(descendant) else {
                 continue;
             };
-            if el.value().name() != "p" {
+            if el.value().name() != "p" || is_inside_overlay(el) {
                 continue;
             }
             let text = el

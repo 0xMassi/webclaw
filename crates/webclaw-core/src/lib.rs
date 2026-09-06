@@ -17,6 +17,7 @@ pub mod markdown;
 pub mod metadata;
 #[allow(dead_code)]
 pub(crate) mod noise;
+pub mod quality;
 pub mod reddit;
 pub mod structured_data;
 pub mod types;
@@ -95,10 +96,16 @@ fn extract_with_options_inner(
         return Err(ExtractError::NoContent);
     }
 
+    // Explicit DOM selection must also constrain recovery and specialized parsers.
+    let has_selectors =
+        !options.include_selectors.is_empty() || !options.exclude_selectors.is_empty();
+
     // Reddit fast path: parse old.reddit.com HTML directly.
     // The fetch layer rewrites all Reddit hosts to old.reddit.com before
     // calling extract, so we always get stable server-rendered HTML here.
     if let Some(u) = url
+        && !has_selectors
+        && !options.only_main_content
         && reddit::is_reddit_url(u)
     {
         if let Some(result) = reddit::try_extract(html, u) {
@@ -117,6 +124,8 @@ fn extract_with_options_inner(
     // structured metadata from ytInitialPlayerResponse before DOM scoring.
     // This gives LLMs a clean, structured view of video metadata.
     if let Some(u) = url
+        && !has_selectors
+        && !options.only_main_content
         && youtube::is_youtube_url(u)
         && let Some(yt_md) = youtube::try_extract(html)
     {
@@ -170,30 +179,15 @@ fn extract_with_options_inner(
     let md_wc = extractor::word_count(&content.markdown);
     meta.word_count = pt_wc.max(md_wc);
 
-    // Retry fallback: if extraction captured too little of the page's visible content,
-    // retry with wider strategies. The scorer sometimes picks a tiny node (e.g., an
-    // <article> with 52 words when the body has 1300 words of real content).
-    //
-    // Strategy 1: retry without only_main_content restriction
-    if options.only_main_content && meta.word_count < 30 {
-        let relaxed = ExtractionOptions {
-            only_main_content: false,
-            ..options.clone()
-        };
-        let retry = extractor::extract_content(&doc, base_url.as_ref(), &relaxed);
-        let retry_wc =
-            extractor::word_count(&retry.plain_text).max(extractor::word_count(&retry.markdown));
-        if retry_wc > meta.word_count {
-            content = retry;
-            meta.word_count = retry_wc;
-        }
-    }
+    // Never widen a selected main region, even when it is empty or very short.
+    let scoped = !options.include_selectors.is_empty()
+        || (options.only_main_content && extractor::has_main_content(&doc));
 
     // Strategy 2: if scored extraction is sparse (<200 words) AND the page has
     // significantly more visible text, retry with include_selectors: ["body"].
     // This bypasses the readability scorer entirely — catches blogs, pricing
     // pages, and modern sites where no single element scores well.
-    if meta.word_count < 200 && options.include_selectors.is_empty() {
+    if meta.word_count < 200 && !scoped {
         let body_opts = ExtractionOptions {
             include_selectors: vec!["body".to_string()],
             exclude_selectors: options.exclude_selectors.clone(),
@@ -212,7 +206,10 @@ fn extract_with_options_inner(
 
     // Fallback: if DOM extraction was sparse, try JSON data islands
     // (React SPAs, Next.js, Contentful CMS embed page data in <script> tags)
-    if let Some(island_md) = data_island::try_extract(&doc, meta.word_count, &content.markdown) {
+    if !scoped
+        && !has_selectors
+        && let Some(island_md) = data_island::try_extract(&doc, meta.word_count, &content.markdown)
+    {
         content.markdown.push_str("\n\n");
         content.markdown.push_str(&island_md);
         meta.word_count = extractor::word_count(&content.markdown);
@@ -222,7 +219,7 @@ fn extract_with_options_inner(
     // (e.g., window.__PRELOADED_STATE__, self.__next_f). This supplements the
     // static JSON data island extraction above with runtime-evaluated data.
     #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
-    if js_eval::has_js_candidate_data(html) {
+    if !scoped && !has_selectors && js_eval::has_js_candidate_data(html) {
         let blobs = js_eval::extract_js_data_from_doc(&doc);
         if !blobs.is_empty() {
             let js_text = js_eval::extract_readable_text(&blobs);
@@ -233,6 +230,9 @@ fn extract_with_options_inner(
             }
         }
     }
+
+    // Derive both text formats from the final content, including recovered sections.
+    content.plain_text = markdown::strip_markdown(&content.markdown);
 
     // Domain detection from URL patterns and DOM heuristics
     let domain_type = domain::detect(url, html);

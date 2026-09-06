@@ -623,6 +623,9 @@ impl FetchClient {
         }
 
         let status = response.status();
+        if status >= 400 {
+            return Err(FetchError::UpstreamStatus(status));
+        }
         let final_url = response.url().to_string();
 
         // Borrowed, not cloned: both consumers below take `&HeaderMap`, and the
@@ -681,6 +684,14 @@ impl FetchClient {
 
             let extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
 
+            if let Some(issue) = webclaw_core::quality::content_issue(&extraction) {
+                // An explicit selector may intentionally match no readable text.
+                if issue != webclaw_core::quality::ContentIssue::Empty
+                    || !webclaw_core::quality::allows_empty_content(&html, options)
+                {
+                    return Err(issue.into());
+                }
+            }
             Ok(extraction)
         }
     }

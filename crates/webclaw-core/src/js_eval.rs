@@ -237,6 +237,9 @@ pub fn extract_readable_text(blobs: &[JsDataBlob]) -> String {
     let mut seen = std::collections::HashSet::new();
 
     for blob in blobs {
+        if crate::data_island::is_configuration_key(&blob.name) {
+            continue;
+        }
         if blob.name == "__next_f" {
             let rsc_texts = extract_next_f_text(&blob.data);
             for t in rsc_texts {
@@ -283,7 +286,10 @@ fn walk_json_for_text(value: &serde_json::Value, out: &mut Vec<String>, depth: u
             }
         }
         serde_json::Value::Object(map) => {
-            for (_, v) in map {
+            for (key, v) in map {
+                if crate::data_island::is_configuration_key(key) {
+                    continue;
+                }
                 walk_json_for_text(v, out, depth + 1);
             }
         }

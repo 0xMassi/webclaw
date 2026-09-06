@@ -40,6 +40,9 @@ pub fn try_extract(doc: &Html, dom_word_count: usize, existing_markdown: &str) -
 
     // 1. Standard JSON data islands (application/json script tags)
     for script in doc.select(&SCRIPT_JSON_SELECTOR) {
+        if is_configuration_key(script.value().attr("id").unwrap_or("")) {
+            continue;
+        }
         if all_chunks.len() >= MAX_CHUNKS {
             break;
         }
@@ -117,6 +120,26 @@ pub fn try_extract(doc: &Html, dom_word_count: usize, existing_markdown: &str) -
     }
 }
 
+/// Application dictionaries and instrumentation are not page content.
+pub(crate) fn is_configuration_key(key: &str) -> bool {
+    let key = key.trim_matches('_').to_ascii_lowercase();
+    // Exact application dictionaries, not arbitrary product fields containing
+    // words such as "configuration" or "metrics".
+    matches!(
+        key.as_str(),
+        "i18n"
+            | "translations"
+            | "dictionary"
+            | "telemetry"
+            | "initiali18nstore"
+            | "delayinitiali18nstore"
+            | "privacy_config"
+            | "npm_package_config"
+            | "region_config"
+            | "metricscontext"
+    )
+}
+
 /// Recursively walk a JSON value and extract text content.
 fn walk_json(value: &serde_json::Value, chunks: &mut Vec<TextChunk>, depth: usize) {
     if depth > 15 {
@@ -153,7 +176,7 @@ fn walk_json(value: &serde_json::Value, chunks: &mut Vec<TextChunk>, depth: usiz
 
             // Recurse into all values, skipping image/media/asset fields
             for (key, v) in map {
-                if is_media_key(key) {
+                if is_media_key(key) || is_configuration_key(key) {
                     continue;
                 }
                 walk_json(v, chunks, depth + 1);

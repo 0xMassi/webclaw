@@ -945,7 +945,7 @@ fn collapse_whitespace(s: &str) -> String {
 }
 
 /// Crude markdown stripping for plain_text output.
-fn strip_markdown(md: &str) -> String {
+pub(crate) fn strip_markdown(md: &str) -> String {
     use once_cell::sync::Lazy;
     use regex::Regex;
 

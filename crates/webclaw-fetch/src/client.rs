@@ -175,7 +175,11 @@ impl Response {
     /// negotiated), so a tiny compressed payload that inflates to
     /// gigabytes is aborted as soon as the accumulated size crosses the
     /// cap — it never gets fully buffered in memory.
-    async fn from_wreq(resp: wreq::Response) -> Result<Self, FetchError> {
+    async fn from_wreq(
+        resp: wreq::Response,
+        mut attempt: crate::transfer::Attempt,
+    ) -> Result<Self, FetchError> {
+        attempt.transfer.status = Some(resp.status().as_u16());
         if let Some(len) = resp.content_length()
             && len > MAX_BODY_BYTES
         {
@@ -195,10 +199,15 @@ impl Response {
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| FetchError::BodyDecode(e.to_string()))?;
+            attempt.transfer.decoded_bytes = attempt
+                .transfer
+                .decoded_bytes
+                .saturating_add(chunk.len() as u64);
             check_body_ceiling(buf.len(), chunk.len())?;
             buf.extend_from_slice(&chunk);
         }
 
+        attempt.transfer.complete = true;
         Ok(Self {
             status,
             url,
@@ -254,16 +263,27 @@ impl Response {
 }
 
 /// Internal representation of the client pool strategy.
+struct ObservedClient {
+    client: wreq::Client,
+    proxy: Option<String>,
+}
+impl std::ops::Deref for ObservedClient {
+    type Target = wreq::Client;
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
 enum ClientPool {
     /// Pre-built clients with a fixed proxy (or no proxy).
     /// Fingerprint rotation still works via the pool when `random` is true.
     Static {
-        clients: Vec<wreq::Client>,
+        clients: Vec<ObservedClient>,
         random: bool,
     },
     /// Pre-built pool of clients, each with a different proxy + fingerprint.
     /// Requests pick a client deterministically by host for HTTP/2 connection reuse.
-    Rotating { clients: Vec<wreq::Client> },
+    Rotating { clients: Vec<ObservedClient> },
 }
 
 /// HTTP client with browser TLS + HTTP/2 fingerprinting via wreq.
@@ -335,6 +355,10 @@ impl FetchClient {
                         config.follow_redirects,
                         config.max_redirects,
                     )
+                    .map(|client| ObservedClient {
+                        client,
+                        proxy: config.proxy.as_deref().and_then(crate::transfer::authority),
+                    })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
@@ -361,6 +385,10 @@ impl FetchClient {
                         config.follow_redirects,
                         config.max_redirects,
                     )
+                    .map(|client| ObservedClient {
+                        client,
+                        proxy: crate::transfer::authority(proxy),
+                    })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
@@ -526,8 +554,9 @@ impl FetchClient {
         for (k, v) in extra {
             req = req.header(*k, *v);
         }
+        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
         let resp = req.send().await?;
-        let response = Response::from_wreq(resp).await?;
+        let response = Response::from_wreq(resp, attempt).await?;
         response_to_result(response, start)
     }
 
@@ -607,8 +636,9 @@ impl FetchClient {
         let parsed_url = crate::url_security::validate_public_http_url(url).await?;
         let url = parsed_url.as_str();
         let client = self.pick_client(url);
+        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
         let resp = client.get(url).send().await?;
-        let response = Response::from_wreq(resp).await?;
+        let response = Response::from_wreq(resp, attempt).await?;
         Ok((response.status(), response.into_body()))
     }
 
@@ -645,8 +675,9 @@ impl FetchClient {
 
         let start = Instant::now();
         let client = self.pick_client(url);
+        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
         let resp = client.get(url).send().await?;
-        let mut response = Response::from_wreq(resp).await?;
+        let mut response = Response::from_wreq(resp, attempt).await?;
 
         // Cookie warmup: if we get a challenge page, visit the homepage first
         // to collect Akamai cookies (_abck, bm_sz, etc.), then retry.
@@ -655,8 +686,9 @@ impl FetchClient {
         {
             debug!("challenge detected, warming cookies via {homepage}");
             let _ = self.fetch(&homepage).await;
+            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
             let resp = client.get(url).send().await?;
-            response = Response::from_wreq(resp).await?;
+            response = Response::from_wreq(resp, attempt).await?;
             debug!("retried after cookie warmup: status={}", response.status());
         }
 
@@ -748,7 +780,7 @@ impl FetchClient {
             let client = Arc::clone(self);
             let url = url.to_string();
 
-            handles.push(tokio::spawn(async move {
+            handles.push(crate::transfer::spawn(async move {
                 // Don't panic if the semaphore has been closed under us
                 // (adversarial runtime state or shutdown race). Surface a
                 // typed error instead so the caller sees one failed URL in
@@ -794,7 +826,7 @@ impl FetchClient {
             let url = url.to_string();
             let opts = options.clone();
 
-            handles.push(tokio::spawn(async move {
+            handles.push(crate::transfer::spawn(async move {
                 let result = match permit.acquire().await {
                     Ok(_permit) => client.fetch_and_extract_with_options(&url, &opts).await,
                     Err(_) => Err(FetchError::Build("semaphore closed before acquire".into())),
@@ -860,7 +892,7 @@ impl FetchClient {
     }
 
     /// Pick a client from the pool for a given URL.
-    fn pick_client(&self, url: &str) -> &wreq::Client {
+    fn pick_client(&self, url: &str) -> &ObservedClient {
         match &self.pool {
             ClientPool::Static { clients, random } => {
                 if *random {
@@ -952,7 +984,7 @@ fn extract_host(url: &str) -> String {
 
 /// Pick a client deterministically based on a host string.
 /// Same host always gets the same client, enabling HTTP/2 connection reuse.
-fn pick_for_host<'a>(clients: &'a [wreq::Client], host: &str) -> &'a wreq::Client {
+fn pick_for_host<'a>(clients: &'a [ObservedClient], host: &str) -> &'a ObservedClient {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     host.hash(&mut hasher);
     let idx = (hasher.finish() as usize) % clients.len();
@@ -960,7 +992,7 @@ fn pick_for_host<'a>(clients: &'a [wreq::Client], host: &str) -> &'a wreq::Clien
 }
 
 /// Pick a random client from the pool for per-request rotation.
-fn pick_random(clients: &[wreq::Client]) -> &wreq::Client {
+fn pick_random(clients: &[ObservedClient]) -> &ObservedClient {
     use rand::Rng;
     let idx = rand::thread_rng().gen_range(0..clients.len());
     &clients[idx]
@@ -1121,6 +1153,48 @@ mod tests {
                 .await,
             Err(FetchError::InvalidUrl(_))
         ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets"]
+    async fn transfer_observer_counts_partial_body_when_stream_fails() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n")
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            // Missing terminator: the body read must fail after these 3 bytes.
+        });
+        let rows = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = rows.clone();
+        let observer: crate::transfer::Observer = Arc::new(move |t| sink.lock().unwrap().push(t));
+        crate::transfer::observe(Some(observer), async {
+            let url = format!("http://{addr}/");
+            let attempt = crate::transfer::Attempt::new(&url, Some("proxy.example:123"));
+            let response = wreq::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .get(&url)
+                .send()
+                .await
+                .unwrap();
+            assert!(Response::from_wreq(response, attempt).await.is_err());
+        })
+        .await;
+        server.await.unwrap();
+        let rows = rows.lock().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].decoded_bytes, 3);
+        assert_eq!(rows[0].status, Some(200));
+        assert!(!rows[0].complete);
     }
 
     /// Build a `Response` around a raw body so the decode path can be tested

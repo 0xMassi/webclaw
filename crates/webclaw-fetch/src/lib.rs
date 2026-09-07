@@ -18,6 +18,7 @@ pub mod reddit;
 pub mod search;
 pub mod sitemap;
 pub mod tls;
+pub mod transfer;
 pub mod url_security;
 mod xml;
 

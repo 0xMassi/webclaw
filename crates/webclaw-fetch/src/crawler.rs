@@ -362,7 +362,7 @@ impl Crawler {
                 let depth = *depth;
                 let delay = self.config.delay;
 
-                handles.push(tokio::spawn(async move {
+                handles.push(crate::transfer::spawn(async move {
                     // Acquire permit -- blocks if concurrency limit reached.
                     // Surface semaphore-closed as a failed PageResult rather
                     // than panicking the spawned task and silently dropping

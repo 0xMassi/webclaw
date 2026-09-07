@@ -4,7 +4,8 @@
 /// as JSON inside script tags rather than in visible DOM elements. This module
 /// walks those JSON blobs and recovers text content as a fallback when normal
 /// DOM extraction yields sparse results.
-use once_cell::sync::Lazy;
+use std::sync::LazyLock as Lazy;
+
 use scraper::{Html, Selector};
 use tracing::debug;
 

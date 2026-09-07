@@ -40,7 +40,13 @@ pub fn extract_json_ld(html: &str) -> Vec<Value> {
         // Find the closing </script>
         let content_start = abs_start + tag_end_offset + 1;
         let remaining = &html[content_start..];
-        let Some(close_offset) = remaining.to_lowercase().find("</script>") else {
+        // Match on the original bytes: lowercasing the remaining page copies it
+        // for every block and can change UTF-8 offsets (for example, İ -> i̇).
+        let Some((close_offset, _)) = remaining.match_indices('<').find(|(offset, _)| {
+            remaining[*offset..]
+                .get(..9)
+                .is_some_and(|tag| tag.eq_ignore_ascii_case("</script>"))
+        }) else {
             search_from = content_start;
             continue;
         };
@@ -399,6 +405,36 @@ mod tests {
         "#;
         let results = extract_json_ld(html);
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn closing_tags_preserve_unicode_and_block_order() {
+        let html = r#"
+            <script type="application/ld+json">{"name":"İstanbul 🦀"}</ScRiPt>
+            <script type="application/ld+json">[{"name":"ẞtraße"},{"name":"東京"}]</SCRIPT>
+            <script type="application/ld+json">{"name":"last"}</script>
+        "#;
+        assert_eq!(
+            extract_json_ld(html),
+            serde_json::json!([
+                {"name":"İstanbul 🦀"}, {"name":"ẞtraße"}, {"name":"東京"}, {"name":"last"}
+            ])
+            .as_array()
+            .unwrap()
+            .clone()
+        );
+    }
+
+    #[test]
+    fn unterminated_json_ld_is_skipped() {
+        let html = r#"
+            <script type="application/ld+json">{"name":"complete"}</script>
+            <script type="application/ld+json">{"name":"unterminated"}
+        "#;
+        assert_eq!(
+            extract_json_ld(html),
+            vec![serde_json::json!({"name":"complete"})]
+        );
     }
 
     #[test]

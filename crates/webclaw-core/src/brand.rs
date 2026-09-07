@@ -3,8 +3,8 @@
 /// from style blocks, inline styles, and semantic HTML patterns.
 /// No network calls, no LLM — WASM-safe.
 use std::collections::HashMap;
+use std::sync::LazyLock as Lazy;
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 use scraper::{Html, Selector};
 use serde::Serialize;

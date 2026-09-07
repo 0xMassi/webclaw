@@ -4,10 +4,10 @@ use scraper::{Html, Selector};
 
 use crate::types::Metadata;
 
-/// Selectors are cheap to compile but we call them often — cache with once_cell.
+/// Selectors are cheap to compile but we call them often — cache with LazyLock.
 macro_rules! selector {
     ($s:expr) => {{
-        use once_cell::sync::Lazy;
+        use std::sync::LazyLock as Lazy;
         static SEL: Lazy<Selector> = Lazy::new(|| Selector::parse($s).unwrap());
         &*SEL
     }};

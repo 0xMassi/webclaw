@@ -16,7 +16,7 @@ Thanks for your interest in contributing. This document covers the essentials.
    cargo build --release
    ```
 
-   RUSTFLAGS are configured in `.cargo/config.toml` -- no manual flags needed.
+   No local RUSTFLAGS are needed; `.cargo/config.toml` contains comments only.
 
 3. Optional: run `./setup.sh` for environment bootstrapping.
 
@@ -97,7 +97,8 @@ webclaw (this repo)
     ├── webclaw-llm/     # LLM provider chain (Ollama → OpenAI → Anthropic)
     ├── webclaw-pdf/     # PDF text extraction
     ├── webclaw-cli/     # CLI binary
-    └── webclaw-mcp/     # MCP server binary
+    ├── webclaw-mcp/     # MCP server binary
+    └── webclaw-server/  # Self-hosted REST server binary
 ```
 
 TLS fingerprinting is handled in-process by [wreq](https://crates.io/crates/wreq) (BoringSSL), so `webclaw-fetch` impersonates real browser TLS directly. There are no `[patch.crates-io]` forks or external TLS dependencies.
@@ -114,3 +115,4 @@ Changes that cross crate boundaries need extra care:
 | webclaw-pdf | No | Minimal, wraps pdf-extract |
 | webclaw-cli | Yes | Depends on all above |
 | webclaw-mcp | Yes | MCP server via rmcp |
+| webclaw-server | Yes | Stateless self-hosted REST API |

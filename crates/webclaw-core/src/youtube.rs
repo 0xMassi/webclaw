@@ -1,4 +1,5 @@
-use once_cell::sync::Lazy;
+use std::sync::LazyLock as Lazy;
+
 /// YouTube video metadata extraction from `ytInitialPlayerResponse` embedded JSON.
 ///
 /// YouTube embeds the full player config (title, author, view count, description,

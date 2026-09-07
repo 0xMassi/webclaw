@@ -1,8 +1,8 @@
 /// Link extraction, deduplication, noise filtering, and label formatting
 /// for the LLM output's deduplicated links section.
 use std::collections::HashSet;
+use std::sync::LazyLock as Lazy;
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 
 // ---------------------------------------------------------------------------

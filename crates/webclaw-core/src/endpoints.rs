@@ -8,10 +8,11 @@
 //! Heuristic by design: regex over string literals, not JS dataflow.
 //! High-signal patterns only; bounded for DoS safety.
 
-use once_cell::sync::Lazy;
+use std::collections::BTreeSet;
+use std::sync::LazyLock as Lazy;
+
 use regex::Regex;
 use scraper::{Html, Selector};
-use std::collections::BTreeSet;
 use url::Url;
 
 /// Hard caps so a hostile/huge bundle set can't blow up CPU or memory.

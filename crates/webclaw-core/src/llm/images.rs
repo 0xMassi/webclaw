@@ -1,6 +1,7 @@
 /// Image handling for LLM output: linked image conversion, logo detection,
 /// standalone image stripping, and bare image reference removal.
-use once_cell::sync::Lazy;
+use std::sync::LazyLock as Lazy;
+
 use regex::Regex;
 
 use super::cleanup::is_asset_label;

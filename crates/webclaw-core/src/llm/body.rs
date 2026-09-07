@@ -4,8 +4,8 @@
 /// token-efficient LLM text. Each step is implemented in a sibling module
 /// (cleanup, images, links) -- this module just wires them together in order.
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock as Lazy;
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 
 use super::cleanup;

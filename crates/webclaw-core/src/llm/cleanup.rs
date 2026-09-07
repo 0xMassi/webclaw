@@ -1,6 +1,7 @@
 /// Whitespace cleanup, HTML entity decoding, invisible Unicode stripping,
 /// leaked JS removal, CSS artifact filtering, and text-level noise removal.
-use once_cell::sync::Lazy;
+use std::sync::LazyLock as Lazy;
+
 use regex::Regex;
 
 use crate::noise;
@@ -928,7 +929,7 @@ fn strip_trailing_css_classes(line: &str) -> String {
     // Find the last non-CSS-class word
     let mut last_content = words.len();
     for i in (0..words.len()).rev() {
-        if noise::is_css_class_word_pub(words[i]) {
+        if noise::is_css_class_word(words[i]) {
             last_content = i;
         } else {
             break;

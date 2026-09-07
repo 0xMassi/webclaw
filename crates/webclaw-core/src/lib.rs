@@ -15,7 +15,6 @@ pub mod js_eval;
 pub mod llm;
 pub mod markdown;
 pub mod metadata;
-#[allow(dead_code)]
 pub(crate) mod noise;
 pub mod quality;
 pub mod reddit;

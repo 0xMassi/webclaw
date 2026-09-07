@@ -20,73 +20,6 @@ const NOISE_TAGS: &[&str] = &[
 
 const NOISE_ROLES: &[&str] = &["navigation", "banner", "complementary", "contentinfo"];
 
-const NOISE_CLASS_PATTERNS: &[&str] = &[
-    "sidebar",
-    "side",
-    "nav",
-    "navbar",
-    "navigation",
-    "menu",
-    "footer",
-    "header",
-    "top",
-    "bottom",
-    "advertisement",
-    "advert",
-    "social",
-    "social-media",
-    "social-links",
-    "share",
-    "comment",
-    "cookie",
-    "popup",
-    "modal",
-    "overlay",
-    "banner",
-    "breadcrumb",
-    "breadcrumbs",
-    "widget",
-    "lang-selector",
-    "language",
-    "newsletter",
-    "subscribe",
-    "related-posts",
-    "recommended",
-    "pagination",
-    "pager",
-    "signup",
-    "login-form",
-    "search-form",
-    "notification",
-    "alert",
-    "toast",
-    "skip-link",
-    "sr-only",
-    "visually-hidden",
-];
-
-const NOISE_ID_PATTERNS: &[&str] = &[
-    "sidebar",
-    "nav",
-    "menu",
-    "footer",
-    "header",
-    "cookie",
-    "popup",
-    "modal",
-    "breadcrumbs",
-    "widget",
-    "language-selector",
-    "ad",
-    "social",
-    "share",
-    "newsletter",
-    "subscribe",
-    "comments",
-    "related",
-    "recommended",
-];
-
 /// Exact class tokens that indicate noise.
 /// Unlike substring matching, these only match when the EXACT class token
 /// is present — ".modal" matches `class="modal"` but NOT `class="free-modal-container"`.
@@ -311,130 +244,6 @@ pub fn is_noise_descendant(el: ElementRef<'_>) -> bool {
     false
 }
 
-fn has_noise_class(class: &str) -> bool {
-    // Match noise patterns against individual class tokens, with safeguards
-    // against Tailwind CSS utility classes that contain noise keywords as
-    // substrings (e.g., "pt-header-h" is padding, not a header class).
-    class.split_whitespace().any(is_noise_token) || is_ad_class(class)
-}
-
-/// Check if a single class token is a noise indicator.
-/// Requires the noise pattern to be the *semantic core* of the token,
-/// not embedded inside a Tailwind utility prefix or CSS variable.
-fn is_noise_token(token: &str) -> bool {
-    let t = token.to_lowercase();
-
-    // Skip Tailwind arbitrary values and CSS variable references entirely
-    if t.contains("[--") || t.contains("var(") {
-        return false;
-    }
-
-    // Strip common Tailwind responsive/state prefixes (e.g., "lg:", "hover:", "md:")
-    let core = t.rsplit_once(':').map_or(t.as_str(), |(_, c)| c);
-
-    // The noise pattern should match the semantic name, not be buried inside
-    // a utility like "pt-header-h" (padding) or "mt-nav-offset" (margin).
-    // Tailwind utilities start with known prefixes; if the token starts with one,
-    // it's a utility class, not a semantic class.
-    const UTILITY_PREFIXES: &[&str] = &[
-        "p-",
-        "pt-",
-        "pb-",
-        "pl-",
-        "pr-",
-        "px-",
-        "py-",
-        "m-",
-        "mt-",
-        "mb-",
-        "ml-",
-        "mr-",
-        "mx-",
-        "my-",
-        "w-",
-        "h-",
-        "min-",
-        "max-",
-        "top-",
-        "left-",
-        "right-",
-        "bottom-",
-        "z-",
-        "gap-",
-        "text-",
-        "bg-",
-        "border-",
-        "rounded-",
-        "flex-",
-        "grid-",
-        "col-",
-        "row-",
-        "opacity-",
-        "transition-",
-        "duration-",
-        "delay-",
-        "ease-",
-        "translate-",
-        "scale-",
-        "rotate-",
-        "origin-",
-        "overflow-",
-        "inset-",
-        "space-",
-        "divide-",
-        "ring-",
-        "shadow-",
-        "outline-",
-        "font-",
-        "leading-",
-        "tracking-",
-        "decoration-",
-    ];
-    if UTILITY_PREFIXES.iter().any(|pfx| core.starts_with(pfx)) {
-        return false;
-    }
-
-    // "banner" and "overlay" only match as prefix — they false-positive as
-    // suffixes in BEM/Webflow component names (e.g., "package_banner" is a
-    // product card, not an ad banner; "planet-overlay" is a visual effect).
-    const PREFIX_ONLY: &[&str] = &["banner", "overlay"];
-
-    // Short patterns (≤6 chars like "nav", "top", "header", "widget") require
-    // word-boundary matching to avoid false positives on compound CSS class
-    // names (e.g., "desktop" ≠ "top", "celwidget" ≠ "widget",
-    // "_categoriesheader_active" ≠ semantic "header").
-    // A word boundary is `-`, `_`, or start/end of string.
-    // Longer patterns (7+ chars like "sidebar", "breadcrumb") are specific
-    // enough that substring matching is safe.
-    NOISE_CLASS_PATTERNS.iter().any(|p| {
-        if PREFIX_ONLY.contains(p) {
-            core == *p || core.starts_with(&format!("{p}-")) || core.starts_with(&format!("{p}_"))
-        } else if p.len() <= 6 {
-            is_word_boundary_match(core, p)
-        } else {
-            core.contains(p)
-        }
-    })
-}
-
-/// Check if `pattern` appears in `text` at a word boundary.
-/// Word boundaries are `-`, `_`, or start/end of string.
-/// e.g., "nav" matches "main-nav", "nav-bar", "nav" but NOT "canvas", "navbar".
-fn is_word_boundary_match(text: &str, pattern: &str) -> bool {
-    let mut start = 0;
-    while let Some(pos) = text[start..].find(pattern) {
-        let abs = start + pos;
-        let before_ok = abs == 0 || matches!(text.as_bytes()[abs - 1], b'-' | b'_');
-        let end = abs + pattern.len();
-        let after_ok = end == text.len() || matches!(text.as_bytes()[end], b'-' | b'_');
-        if before_ok && after_ok {
-            return true;
-        }
-        start = abs + 1;
-    }
-    false
-}
-
 /// IDs like "modal-portal", "nav-root", "header-container" are structural
 /// wrappers (React portals, app roots), not actual noise elements.
 fn is_structural_id(id: &str) -> bool {
@@ -556,7 +365,7 @@ fn strip_tw_variant_prefix(word: &str) -> &str {
 }
 
 /// Check if a single whitespace-delimited word looks like a CSS utility class.
-fn is_css_class_word(word: &str) -> bool {
+pub(crate) fn is_css_class_word(word: &str) -> bool {
     let core = strip_tw_variant_prefix(word);
     let lower = core.to_lowercase();
 
@@ -584,12 +393,6 @@ fn is_css_class_word(word: &str) -> bool {
     }
 
     false
-}
-
-/// Public wrapper for single-word CSS class detection (used by LLM pipeline
-/// for stripping trailing CSS classes from mixed-content lines).
-pub fn is_css_class_word_pub(word: &str) -> bool {
-    is_css_class_word(word)
 }
 
 /// Check if a text block is predominantly CSS class names.
@@ -641,80 +444,6 @@ mod tests {
     }
 
     #[test]
-    fn noise_class_patterns() {
-        assert!(has_noise_class("main-sidebar"));
-        assert!(has_noise_class("cookie-banner")); // "cookie" substring match
-        assert!(has_noise_class("modal-overlay")); // "modal" substring match
-        assert!(has_noise_class("banner-top")); // "banner" as prefix
-        assert!(has_noise_class("overlay-popup")); // "overlay" as prefix
-        assert!(!has_noise_class("article-content"));
-        assert!(!has_noise_class("post-body"));
-    }
-
-    #[test]
-    fn short_patterns_require_word_boundary() {
-        // "nav" (3 chars) — must be a standalone word segment
-        assert!(has_noise_class("main-nav"));
-        assert!(has_noise_class("nav-bar"));
-        assert!(has_noise_class("nav"));
-        assert!(!has_noise_class("canvas")); // "nav" is substring, not word
-        assert!(has_noise_class("icp-nav-flag")); // "nav" IS between word boundaries
-        // "top" (3 chars) — note: "top-bar" starts with Tailwind prefix "top-" → filtered out
-        assert!(has_noise_class("page-top")); // "top" at word boundary
-        assert!(!has_noise_class("desktop")); // "top" is substring inside word
-        assert!(!has_noise_class("stop-motion")); // "top" inside word
-        // "side" (4 chars) — "left-side" starts with Tailwind prefix "left-" → filtered
-        assert!(has_noise_class("page-side"));
-        assert!(!has_noise_class("inside-content"));
-        assert!(!has_noise_class("consider"));
-    }
-
-    #[test]
-    fn amazon_classes_not_noise() {
-        // Amazon CSS module class names that were false-positiving
-        assert!(!has_noise_class("desktop")); // contains "top"
-        assert!(!has_noise_class("celwidget")); // contains "widget"
-        // a-alert-container: "alert" IS a proper word segment → still matches (correct for UI alerts)
-        assert!(has_noise_class("a-alert-container"));
-        assert!(!has_noise_class(
-            "_haul-cx-images-carousel_style_desktop-card__fid8k"
-        ));
-        assert!(!has_noise_class(
-            "_haul-cx-infinite-scroll-body_categoriesheader_active__2j-4u"
-        ));
-        // But actual noise classes still work
-        assert!(has_noise_class("site-header"));
-        assert!(has_noise_class("main-nav"));
-        assert!(has_noise_class("footer-links"));
-        assert!(has_noise_class("cookie-consent"));
-    }
-
-    #[test]
-    fn word_boundary_match_works() {
-        assert!(is_word_boundary_match("main-nav", "nav"));
-        assert!(is_word_boundary_match("nav-bar", "nav"));
-        assert!(is_word_boundary_match("nav", "nav"));
-        assert!(is_word_boundary_match("top-nav_bar", "nav"));
-        assert!(!is_word_boundary_match("canvas", "nav"));
-        assert!(!is_word_boundary_match("navbar", "nav"));
-        assert!(!is_word_boundary_match("navigate", "nav"));
-        assert!(is_word_boundary_match("top-bar", "top"));
-        assert!(!is_word_boundary_match("desktop", "top"));
-        assert!(!is_word_boundary_match("stopper", "top"));
-    }
-
-    #[test]
-    fn bem_component_names_not_noise() {
-        // BEM/Webflow component names where noise keyword is a suffix
-        assert!(!has_noise_class("package_banner"));
-        assert!(!has_noise_class("mars-cta_planet-overlay"));
-        assert!(!has_noise_class("hero_banner_wrap"));
-        // But actual noise classes still work
-        assert!(has_noise_class("banner-dismiss"));
-        assert!(has_noise_class("overlay-backdrop"));
-    }
-
-    #[test]
     fn structural_ids_not_noise() {
         assert!(is_structural_id("modal-portal"));
         assert!(is_structural_id("nav-root"));
@@ -726,30 +455,6 @@ mod tests {
         assert!(!is_structural_id("main-sidebar"));
         assert!(!is_structural_id("cookie-consent"));
         assert!(!is_structural_id("popup-overlay"));
-    }
-
-    #[test]
-    fn tailwind_animation_utilities_not_noise() {
-        // Tailwind transition/animation utilities with noise keywords as values
-        assert!(!has_noise_class("ease-curve-sidebar"));
-        assert!(!has_noise_class("duration-sidebar"));
-        assert!(!has_noise_class("delay-modal-open"));
-        // But actual sidebar/modal classes still work
-        assert!(has_noise_class("sidebar-panel"));
-        assert!(has_noise_class("modal-dialog"));
-    }
-
-    #[test]
-    fn tailwind_css_vars_not_noise() {
-        // Tailwind arbitrary values and CSS variables should NOT trigger noise
-        assert!(!has_noise_class("[--content-top-offset:var(--header-h)]"));
-        assert!(!has_noise_class(
-            "pt-[var(--content-top-offset)] [--content-top-offset:var(--header-h)]"
-        ));
-        assert!(!has_noise_class("[--nav-width:200px]"));
-        // But actual noise classes still work
-        assert!(has_noise_class("[--offset:10px] header-bar"));
-        assert!(has_noise_class("sidebar [--x:1]"));
     }
 
     // -----------------------------------------------------------------------

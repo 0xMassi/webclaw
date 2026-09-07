@@ -15,11 +15,9 @@ webclaw-fetch = { workspace = true }
 webclaw-llm = { workspace = true }
 webclaw-pdf = { workspace = true }
 dotenvy = { workspace = true }
-rand = "0.8"
 serde_json = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
-tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 regex = "1"

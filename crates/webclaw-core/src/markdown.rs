@@ -2,9 +2,9 @@
 /// Walks the DOM tree and emits clean markdown, resolving relative URLs
 /// against the provided base URL when available.
 use std::collections::HashSet;
+use std::sync::LazyLock as Lazy;
 
 use ego_tree::NodeId;
-use once_cell::sync::Lazy;
 use scraper::node::Node;
 use scraper::{ElementRef, Selector};
 use url::Url;
@@ -946,8 +946,8 @@ fn collapse_whitespace(s: &str) -> String {
 
 /// Crude markdown stripping for plain_text output.
 pub(crate) fn strip_markdown(md: &str) -> String {
-    use once_cell::sync::Lazy;
     use regex::Regex;
+    use std::sync::LazyLock as Lazy;
 
     static LINK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[([^\]]*)\]\([^)]*\)").unwrap());
     static IMG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"!\[([^\]]*)\]\([^)]*\)").unwrap());

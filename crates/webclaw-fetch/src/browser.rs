@@ -1,5 +1,5 @@
 //! Browser fingerprint selection and rotation.
-//! Maps our BrowserProfile enum to webclaw-http client builder methods.
+//! Browser identities used by the wreq emulation builder in `tls`.
 
 /// Which browser identity to present at the TLS/HTTP layer.
 #[derive(Debug, Clone, Default)]
@@ -15,7 +15,7 @@ pub enum BrowserProfile {
     Random,
 }
 
-/// A browser variant for building webclaw-http clients.
+/// A browser variant for building wreq clients.
 #[derive(Debug, Clone, Copy)]
 pub enum BrowserVariant {
     Chrome,

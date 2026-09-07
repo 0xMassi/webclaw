@@ -22,7 +22,6 @@ scraper = "0.22"
 ego-tree = "0.10"
 url = { version = "2", features = ["serde"] }
 regex = "1"
-once_cell = "1"
 similar = "2"
 
 # rquickjs links a C library and cannot build for wasm32. Gating it per

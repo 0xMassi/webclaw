@@ -2,9 +2,9 @@
 /// Strips noise (nav, ads, sidebars), scores remaining nodes by text density
 /// and structural signals, then converts the best candidate to markdown.
 use std::collections::HashSet;
+use std::sync::LazyLock as Lazy;
 
 use ego_tree::NodeId;
-use once_cell::sync::Lazy;
 use scraper::{ElementRef, Html, Selector};
 use tracing::{debug, warn};
 use url::Url;

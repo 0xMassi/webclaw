@@ -5,11 +5,12 @@
 /// JSON data island approach (`data_island.rs`) only handles `<script type="application/json">`.
 /// This module executes inline `<script>` tags in a sandboxed QuickJS runtime
 /// to capture those JS-assigned data blobs.
-use once_cell::sync::Lazy;
+use std::sync::LazyLock as Lazy;
+use std::time::{Duration, Instant};
+
 use regex::Regex;
 use rquickjs::{Context, Runtime};
 use scraper::{Html, Selector};
-use std::time::{Duration, Instant};
 use tracing::debug;
 
 static SCRIPT_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("script").unwrap());

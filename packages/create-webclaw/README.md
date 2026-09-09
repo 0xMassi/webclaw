@@ -89,7 +89,7 @@ Add this one block to your client's `mcpServers` config — it's identical to wh
 
 ## MCP Tools
 
-After setup, your AI agent has access to these 14 tools:
+After setup, your AI agent has access to these 12 tools:
 
 | Tool | What it does | API key needed? |
 |------|-------------|-----------------|
@@ -105,10 +105,8 @@ After setup, your AI agent has access to these 14 tools:
 | **research** | Deep multi-page research | Yes |
 | **list_extractors** | List the built-in vertical extractors | No |
 | **vertical_scrape** | Scrape with a built-in vertical extractor | No |
-| **lead** | Enrich a company URL into an outreach-ready lead (leadership + socials, tech, pricing, public emails) | Yes (webclaw) |
-| **lead_batch** | Enrich up to 25 company URLs at once | Yes (webclaw) |
 
-**8 of the 14 tools work fully offline** — no API key, no cloud, no tracking.
+**8 of the 12 tools need no API key** and fetch pages locally.
 
 ## Supported Tools
 

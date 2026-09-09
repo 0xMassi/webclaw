@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Removed
+- The MCP `lead` and `lead_batch` tools and their input schemas. The 12 remaining tools, including Research, are unchanged.
+
 ## [0.6.22] - 2026-08-30
 
 ### Added

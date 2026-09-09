@@ -18,7 +18,7 @@ async-trait = "0.1"
 # `cargo install` (which ignores Cargo.lock), and the release workflow all on the
 # version that compiles.
 wreq = { version = "=6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd", "deflate", "stream"] }
-wreq-util = "=3.0.0-rc.12"
+wreq-util = "=3.0.0-rc.14"
 http = "1"
 bytes = "1"
 # Stream adapter for `wreq::Response::bytes_stream()` (wreq 6.0.0-rc.29 dropped

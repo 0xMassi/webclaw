@@ -41,7 +41,7 @@ claude mcp add webclaw -- npx -y @webclaw/mcp
 
 Or run `npx create-webclaw` to auto-detect your AI tools and write their configs for you.
 
-## Tools (14)
+## Tools (12)
 
 scrape, search, crawl, map, batch, extract, summarize, diff, brand, research, plus `list_extractors` / `vertical_scrape` for 30+ site-specific extractors (Amazon, GitHub, Reddit, YouTube, npm, PyPI, and more).
 

@@ -255,7 +255,7 @@ against already-published assets — use it to re-push an image without cutting 
 version.
 
 `packages/create-webclaw/` has its **own** `package.json` version (currently
-0.1.7) and is bumped separately from the workspace.
+0.1.8) and is bumped separately from the workspace.
 
 ## Git
 

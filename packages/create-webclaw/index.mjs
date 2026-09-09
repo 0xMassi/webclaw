@@ -308,7 +308,7 @@ async function main() {
     c("dim", "  An API key unlocks the cloud tools (bot bypass, JS rendering,"),
   );
   console.log(
-    c("dim", "  search, research, leads). Without one, webclaw runs locally."),
+    c("dim", "  search, research). Without one, webclaw runs locally."),
   );
   console.log();
 
@@ -354,7 +354,7 @@ async function main() {
   console.log(
     c(
       "dim",
-      "  diff, brand, research, lead, lead_batch, + 30 site extractors.",
+      "  diff, brand, research, + 30 site extractors.",
     ),
   );
   console.log();

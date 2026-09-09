@@ -19,7 +19,7 @@ Point any stdio MCP client at the npx command — Claude Desktop, Cursor, Windsu
 }
 ```
 
-Add a key to unlock the cloud-backed tools (bot-protection bypass, JS rendering, web search, research, lead enrichment):
+Add a key to unlock the cloud-backed tools (bot-protection bypass, JS rendering, web search, research):
 
 ```json
 {
@@ -41,13 +41,13 @@ claude mcp add webclaw -- npx -y @webclaw/mcp
 
 Or run `npx create-webclaw` to auto-detect your AI tools and write their configs for you.
 
-## Tools (14)
+## Tools (12)
 
-scrape, search, crawl, map, batch, extract, summarize, diff, brand, research, lead, lead_batch, plus `list_extractors` / `vertical_scrape` for 30+ site-specific extractors (Amazon, GitHub, Reddit, YouTube, npm, PyPI, and more).
+scrape, search, crawl, map, batch, extract, summarize, diff, brand, research, plus `list_extractors` / `vertical_scrape` for 30+ site-specific extractors (Amazon, GitHub, Reddit, YouTube, npm, PyPI, and more).
 
 - **No key needed:** scrape, crawl, map, batch, diff, brand, list_extractors, vertical_scrape.
 - **Needs an LLM** (local Ollama or a provider key): extract, summarize.
-- **Needs `WEBCLAW_API_KEY`:** search, research, lead, lead_batch — plus automatic bot-protection bypass and JS rendering for the fetch tools.
+- **Needs `WEBCLAW_API_KEY`:** research, and search when `SERPER_API_KEY` is unset — plus automatic bot-protection bypass and JS rendering for the fetch tools.
 
 Get a key at [webclaw.io](https://webclaw.io).
 

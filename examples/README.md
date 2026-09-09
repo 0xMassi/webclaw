@@ -289,7 +289,7 @@ npx -y @webclaw/mcp
 #   }
 # }
 
-# Available tools: scrape, search, crawl, map, batch, extract, summarize, diff, brand, research, lead, lead_batch, list_extractors, vertical_scrape
+# Available tools: scrape, search, crawl, map, batch, extract, summarize, diff, brand, research, list_extractors, vertical_scrape
 ```
 
 ## Real-World Recipes

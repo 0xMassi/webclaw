@@ -5,8 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.23] - 2026-09-11
+
+### Added
+- **Content in `<noscript>` fallbacks is recovered.** When the selected region has almost no visible text, readable text from a `<noscript>` block inside it is used instead. Exclude selectors still apply, and the text appears once.
+
+### Changed
+- **Unusable pages fail with a reason.** When a target answers with an HTTP error status, returns no readable text, or serves a sign-in wall, an access check, or an error screen, extraction returns an error that names the cause instead of passing that screen off as the page. An explicit selection that matches no text still succeeds with empty content. With a webclaw API key configured, the CLI and the MCP server retry these pages through the cloud API. Library callers get two new `FetchError` variants, `UpstreamStatus` and `Content`, so an exhaustive `match` on `FetchError` needs new arms.
+- **Selectors and main-content mode are final.** A short selected region no longer widens to the whole page, and text recovered from embedded page data, script state, or the Reddit and YouTube shortcuts no longer adds content from outside your selection. Main-content mode on a page without a main region still falls back to automatic extraction.
+- **Windows installation is documented and tested.** The README walks through the prebuilt ZIP and a source build, and CI installs both on a hosted Windows runner and runs a smoke test.
+
 ### Removed
-- The MCP `lead` and `lead_batch` tools and their input schemas. The 12 remaining tools, including Research, are unchanged.
+- **The MCP `lead` and `lead_batch` tools.** Lead enrichment is retired, so the MCP server no longer advertises these tools or their input schemas, and `create-webclaw` no longer lists them. The 12 remaining tools, including `research`, work as before.
+
+### Fixed
+- **Excluding one element keeps the page's hero.** An exclude selector aimed elsewhere no longer drops the recovered hero title and tagline.
+- **Cookie banners, modals, and overlays stay out of recovered headings.** A class name that only contains "modal", such as `free-modal-container`, no longer hides a real hero section.
+- **Translation tables and privacy settings embedded in scripts are not treated as page text.**
+- **Plain text matches the markdown.** The plain-text format is derived from the final content, so it includes the same recovered sections and leaves out the same excluded ones.
+- **JSON-LD with some non-ASCII characters parses whole.** Structured data containing characters whose lowercase form has a different byte length, such as `İ` or `ẞ`, is no longer cut at the wrong place.
+- **The CLI cloud fallback prints the format you asked for.** `--format html` requests raw HTML from the cloud API, and text, LLM, and HTML output read the matching fields of the cloud response.
+
+### Performance
+- **Faster JSON-LD parsing on long pages.** Finding the end of each block no longer lowercases a copy of the rest of the page, work that grew with the number of blocks times the page size.
+
+### Security
+- **Release artifacts are checked before reuse.** The Docker and Homebrew release jobs verify every downloaded binary against the release `SHA256SUMS`, a release tag must match the workspace version, changelog, and launcher metadata before anything publishes, and every workflow pins its actions to a commit.
 
 ## [0.6.22] - 2026-08-30
 

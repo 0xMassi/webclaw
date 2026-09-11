@@ -429,15 +429,25 @@ URL:
 <table>
   <tr>
     <td width="340" align="center">
-      <a href="https://go.nodemaven.com/webclawgh">
+      <a href="https://go.nodemaven.com/webclawrmaugust">
         <img src="./assets/sponsors/nodemaven-banner.png" alt="NodeMaven" width="300" />
       </a>
     </td>
     <td>
-      <strong>NodeMaven</strong> 提供市场上最可靠、IP 质量最高的代理服务。适用于自动化、网页抓取、SEO 研究
-      与社媒管理：99.9% 在线率、最长 7 天的粘性会话、IP 过滤（所有代理欺诈评分低于 97%）、无需 KYC，
-      并提供最高 10% 的流量返现。在 <a href="https://go.nodemaven.com/webclawgh">NodeMaven</a> 使用
-      <code>WEBCLAW35</code> 享移动与住宅代理 35% 折扣，或用 <code>WEBCLAW40</code> 享 ISP（静态）代理 40% 折扣。
+      <p><a href="https://go.nodemaven.com/webclawrmaugust"><strong>NodeMaven</strong></a>：最高效的网页抓取与自动化代理服务商，提供市场上最高质量的 IP。</p>
+      <p><a href="https://go.nodemaven.com/webclawrmaugust"><strong>为什么选择 NodeMaven？</strong></a></p>
+      <ul>
+        <li>邮政编码定位</li>
+        <li>99.9% 在线率</li>
+        <li>IP 过滤：所有代理的欺诈评分均 &lt;97%</li>
+        <li>无需 KYC 验证</li>
+        <li>独家免费工具：Proxy Bandwidth Checker、Meta Tag Checker、IP Lookup 等！</li>
+      </ul>
+      <p><strong>Webclaw 用户专属优惠码：</strong></p>
+      <ul>
+        <li><code>WEBCLAW35</code> - 移动与住宅代理享 35% 折扣</li>
+        <li><code>WEBCLAW40</code> - ISP（静态）代理享 40% 折扣</li>
+      </ul>
     </td>
   </tr>
   <tr>

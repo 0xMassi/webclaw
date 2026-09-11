@@ -508,17 +508,25 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 <table>
   <tr>
     <td width="340" align="center">
-      <a href="https://go.nodemaven.com/webclawgh">
+      <a href="https://go.nodemaven.com/webclawrmaugust">
         <img src="./assets/sponsors/nodemaven-banner.png" alt="NodeMaven" width="300" />
       </a>
     </td>
     <td>
-      <strong>NodeMaven</strong> is the most reliable proxy provider with the highest-quality IPs on the market.
-      Best solution for automation, web scraping, SEO research, and social media management: 99.9% uptime,
-      sticky sessions up to 7 days, IP filtering (all proxies under a 97% fraud score), no KYC, and cashback up
-      to 10% on traffic. Use <code>WEBCLAW35</code> for 35% off Mobile and Residential proxies, or
-      <code>WEBCLAW40</code> for 40% off ISP (Static) proxies at
-      <a href="https://go.nodemaven.com/webclawgh">NodeMaven</a>.
+      <p><a href="https://go.nodemaven.com/webclawrmaugust"><strong>NodeMaven</strong></a>: The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market.</p>
+      <p><a href="https://go.nodemaven.com/webclawrmaugust"><strong>Why NodeMaven?</strong></a></p>
+      <ul>
+        <li>ZIP targeting</li>
+        <li>99.9% uptime</li>
+        <li>IP filtering: all proxies have fraud score &lt;97%</li>
+        <li>No KYC required</li>
+        <li>Unique free tools: Proxy Bandwidth Checker, Meta Tag Checker, IP Lookup and others!</li>
+      </ul>
+      <p><strong>Special codes for Webclaw users:</strong></p>
+      <ul>
+        <li><code>WEBCLAW35</code> - 35% off to Mobile and Residential Proxies</li>
+        <li><code>WEBCLAW40</code> - 40% off to ISP (Static) Proxies</li>
+      </ul>
     </td>
   </tr>
   <tr>

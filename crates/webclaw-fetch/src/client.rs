@@ -1156,6 +1156,70 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn reused_client_applies_headers_and_counts_each_proxy_response() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let peer = tokio::spawn(async move {
+            for (language, cookie) in [("it-IT", "fixture=one"), ("fr-FR", "fixture=two")] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = Vec::new();
+                loop {
+                    let mut chunk = [0; 1024];
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert!(n > 0);
+                    buffer.extend_from_slice(&chunk[..n]);
+                    if buffer.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                    assert!(buffer.len() < 8192);
+                }
+                let request = String::from_utf8(buffer).unwrap().to_ascii_lowercase();
+                assert!(request.contains(&format!(
+                    "accept-language: {}\r\n",
+                    language.to_ascii_lowercase()
+                )));
+                assert!(request.contains(&format!("cookie: {cookie}\r\n")));
+                assert_eq!(request.matches("accept-language:").count(), 1);
+                assert_eq!(request.matches("cookie:").count(), 1);
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 16\r\nConnection: close\r\n\r\n<p>Fixture</p>  ").await.unwrap();
+            }
+        });
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::new(),
+            ..Default::default()
+        })
+        .unwrap();
+        let rows = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = rows.clone();
+        crate::transfer::observe(
+            Some(Arc::new(move |row| sink.lock().unwrap().push(row))),
+            async {
+                for (language, cookie) in [("it-IT", "fixture=one"), ("fr-FR", "fixture=two")] {
+                    let response = client
+                        .fetch_smart_with_headers(
+                            "http://example.com/headers",
+                            &[("Accept-Language", language), ("Cookie", cookie)],
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(response.html, "<p>Fixture</p>  ");
+                }
+            },
+        )
+        .await;
+        peer.await.unwrap();
+        let rows = rows.lock().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .all(|row| row.complete && row.decoded_bytes == 16 && row.proxy.is_some())
+        );
+    }
+
+    #[tokio::test]
     #[ignore = "requires local TCP sockets"]
     async fn transfer_observer_counts_partial_body_when_stream_fails() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

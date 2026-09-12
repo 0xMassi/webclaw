@@ -78,9 +78,22 @@ pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
 
     debug!(pages = page_count, "PDF document loaded");
 
-    // Extract text via pdf-extract (higher-level API over lopdf)
-    let text = pdf_extract::extract_text_from_mem(bytes)
-        .map_err(|e| PdfError::ExtractionFailed(e.to_string()))?;
+    // Some real PDFs contain drawing operators that panic pdf-extract's layout
+    // interpreter. Reuse lopdf's text-only reader on the already loaded document.
+    let text = match std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes)) {
+        Ok(Ok(text)) => text,
+        _ => {
+            tracing::warn!("PDF layout extraction failed; trying text-only extraction");
+            let pages: Vec<_> = doc.get_pages().into_keys().collect();
+            // The document is owned here and discarded on unwind; no parser state
+            // is reused after a panic, including its opaque encryption filters.
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                doc.extract_text(&pages)
+            }))
+            .map_err(|_| PdfError::ExtractionFailed("text parser panicked".into()))?
+            .map_err(|e| PdfError::ExtractionFailed(e.to_string()))?
+        }
+    };
 
     let text = normalize_text(&text);
 
@@ -265,6 +278,32 @@ mod tests {
     fn test_empty_bytes_returns_error() {
         let result = extract_pdf(&[], PdfMode::Auto);
         assert!(matches!(result, Err(PdfError::InvalidPdf(_))));
+    }
+
+    #[test]
+    fn malformed_drawing_operator_preserves_text_without_panicking() {
+        use pdf_extract::{Stream, dictionary};
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font = doc.add_object(
+            dictionary! {"Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"},
+        );
+        let resources = doc.add_object(dictionary! {"Font" => dictionary! {"F1" => font}});
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 10 10 Td (Readable fallback text) Tj ET m".to_vec(),
+        ));
+        let page = doc.add_object(
+            dictionary! {"Type" => "Page", "Parent" => pages_id, "Contents" => content},
+        );
+        doc.objects.insert(pages_id, dictionary! {"Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1, "Resources" => resources, "MediaBox" => vec![0.into(), 0.into(), 600.into(), 800.into()]}.into());
+        let catalog = doc.add_object(dictionary! {"Type" => "Catalog", "Pages" => pages_id});
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let result = extract_pdf(&bytes, PdfMode::Auto).unwrap();
+        assert!(result.text.contains("Readable fallback text"));
+        assert_eq!(result.page_count, 1);
     }
 
     #[test]

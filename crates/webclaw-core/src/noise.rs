@@ -166,6 +166,25 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
         let mut class_matched = false;
         for token in class.split_whitespace() {
             let lower = token.to_lowercase();
+            // mdBook uses `a.header` for the text of a heading's permalink.
+            if lower == "header"
+                && tag == "a"
+                && el
+                    .value()
+                    .attr("href")
+                    .is_some_and(|href| href.starts_with('#'))
+                && el
+                    .parent()
+                    .and_then(ElementRef::wrap)
+                    .is_some_and(|parent| {
+                        matches!(
+                            parent.value().name(),
+                            "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                        )
+                    })
+            {
+                continue;
+            }
             if NOISE_CLASSES.contains(&lower.as_str()) {
                 class_matched = true;
                 break;

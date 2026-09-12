@@ -986,6 +986,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn heading_permalink_text_survives_noise_filter() {
+        let doc = Html::parse_document(
+            "<main><h2 id='variables'><a class='header' href='#variables'>Variables and Mutability</a></h2><p>Variables retain their values unless declared mutable.</p><a class='header' href='/'>Site navigation</a><h3><a class='header cookie' href='#cookie'>Cookie overlay</a></h3></main>",
+        );
+        for main in [false, true] {
+            let options = ExtractionOptions {
+                only_main_content: main,
+                ..Default::default()
+            };
+            let result = extract_content(&doc, None, &options);
+            assert!(result.markdown.contains("Variables and Mutability"));
+            assert!(!result.markdown.contains("Site navigation"));
+            if main {
+                assert!(!result.markdown.contains("Cookie overlay"));
+            }
+            let excluded = ExtractionOptions {
+                exclude_selectors: vec!["a.header".into()],
+                ..options
+            };
+            assert!(
+                !extract_content(&doc, None, &excluded)
+                    .markdown
+                    .contains("Variables and Mutability")
+            );
+        }
+    }
+
     fn parse(html: &str) -> Html {
         Html::parse_document(html)
     }

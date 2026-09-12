@@ -157,36 +157,15 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
         return extract_with_include(doc, base_url, &options.include_selectors, &exclude, options);
     }
 
-    // Path 2: only_main_content — pick first article/main/[role="main"]
-    if options.only_main_content {
-        if let Some(main_el) = doc.select(&MAIN_CONTENT_SELECTOR).next() {
-            debug!(
-                tag = main_el.value().name(),
-                "only_main_content: selected element"
-            );
-            let (markdown, plain_text, assets) =
-                convert_selected(doc, main_el, base_url, &exclude, options);
-
-            let raw_html = if options.include_raw_html {
-                Some(main_el.html())
-            } else {
-                None
-            };
-
-            return Content {
-                markdown,
-                plain_text,
-                links: assets.links,
-                images: assets.images,
-                code_blocks: assets.code_blocks,
-                raw_html,
-            };
-        }
-        debug!("only_main_content: no article/main found, falling back to scoring");
-    }
-
-    // Path 3: Default scoring algorithm
-    let best = find_best_node(doc);
+    // Main-only shares title recovery, but does not recover navigation/footer content.
+    let best = options
+        .only_main_content
+        .then(|| {
+            doc.select(&MAIN_CONTENT_SELECTOR)
+                .find(|el| !exclude.contains(&el.id()))
+        })
+        .flatten()
+        .or_else(|| find_best_node(doc));
 
     let (content_element, mut markdown, _plain_text, mut assets) = if let Some(node) = best {
         debug!(tag = node.value().name(), "selected content node");
@@ -235,30 +214,34 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
                 markdown = format!("# {h1_text}\n\n{markdown}");
                 // Recover hero paragraph: H1 was outside the content node (noise-stripped),
                 // so adjacent tagline/mission paragraphs are also lost. Recover them.
-                recover_hero_paragraph(h1, &mut markdown);
+                if !options.only_main_content {
+                    recover_hero_paragraph(h1, &mut markdown);
+                }
             }
         }
 
-        // Recover announcement banners (role="region" with announcement-like aria-label).
-        // These are often stripped by class-based noise filters ("banner" class) but
-        // contain genuinely important content like product announcements.
-        recover_announcements(doc, base_url, &mut markdown, &mut assets.links);
+        if !options.only_main_content {
+            // Recover announcement banners (role="region" with announcement-like aria-label).
+            // These are often stripped by class-based noise filters ("banner" class) but
+            // contain genuinely important content like product announcements.
+            recover_announcements(doc, base_url, &mut markdown, &mut assets.links);
 
-        // Recover section headings that were stripped because their wrapper had a
-        // noise class (e.g., <div class="section-header">). If an <h2> is missing
-        // from the markdown but nearby content from the same section IS present,
-        // the heading was likely a false-positive noise strip.
-        recover_section_headings(doc, &mut markdown);
+            // Recover section headings that were stripped because their wrapper had a
+            // noise class (e.g., <div class="section-header">). If an <h2> is missing
+            // from the markdown but nearby content from the same section IS present,
+            // the heading was likely a false-positive noise strip.
+            recover_section_headings(doc, &mut markdown);
 
-        // Recover prominent CTA links from the footer (e.g., documentation links).
-        // The footer tag is noise, but "call to action" sections inside it often
-        // contain high-value links and headings worth capturing.
-        recover_footer_cta(doc, base_url, &mut markdown, &mut assets.links);
+            // Recover prominent CTA links from the footer (e.g., documentation links).
+            // The footer tag is noise, but "call to action" sections inside it often
+            // contain high-value links and headings worth capturing.
+            recover_footer_cta(doc, base_url, &mut markdown, &mut assets.links);
 
-        // Recover structured site navigation from footer (product/service listings).
-        // Many homepages have organized footer sitemaps (Products, Solutions, etc.)
-        // that are genuinely useful for LLM consumption.
-        recover_footer_sitemap(doc, base_url, &mut markdown, &mut assets.links);
+            // Recover structured site navigation from footer (product/service listings).
+            // Many homepages have organized footer sitemaps (Products, Solutions, etc.)
+            // that are genuinely useful for LLM consumption.
+            recover_footer_sitemap(doc, base_url, &mut markdown, &mut assets.links);
+        }
     }
 
     let raw_html = if options.include_raw_html {
@@ -978,6 +961,30 @@ pub fn word_count(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_content_preserves_title_but_respects_exclusions() {
+        let doc = Html::parse_document(
+            "<html><body><header><h1>Variables and Mutability</h1></header><main><p>Variables retain their values unless declared mutable.</p></main><footer>Footer navigation</footer></body></html>",
+        );
+        let options = ExtractionOptions {
+            only_main_content: true,
+            ..Default::default()
+        };
+        let result = extract_content(&doc, None, &options);
+        assert!(result.markdown.contains("# Variables and Mutability"));
+        assert!(result.plain_text.contains("Variables and Mutability"));
+        assert!(!result.markdown.contains("Footer navigation"));
+        let excluded = ExtractionOptions {
+            exclude_selectors: vec!["h1".into()],
+            ..options
+        };
+        assert!(
+            !extract_content(&doc, None, &excluded)
+                .markdown
+                .contains("Variables and Mutability")
+        );
+    }
 
     fn parse(html: &str) -> Html {
         Html::parse_document(html)

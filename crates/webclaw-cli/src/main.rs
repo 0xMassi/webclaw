@@ -1045,6 +1045,7 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
             .read_to_string(&mut buf)
             .map_err(|e| format!("failed to read stdin: {e}"))?;
         return Ok(FetchResult {
+            document_bytes: None,
             html: buf,
             url: String::new(),
             status: 200,
@@ -1057,6 +1058,7 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
         let html =
             std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
         return Ok(FetchResult {
+            document_bytes: None,
             html,
             url: String::new(),
             status: 200,

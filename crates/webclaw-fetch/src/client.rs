@@ -83,11 +83,40 @@ impl Default for FetchConfig {
 #[derive(Debug, Clone)]
 pub struct FetchResult {
     pub html: String,
+    /// Original bytes for recognized binary documents; never lossily decoded as HTML.
+    pub document_bytes: Option<bytes::Bytes>,
     pub status: u16,
     /// Final URL after any redirects.
     pub url: String,
     pub headers: http::HeaderMap,
     pub elapsed: Duration,
+}
+
+impl FetchResult {
+    /// Extract an already fetched response without another network request.
+    /// Call on a blocking worker when used by an async request handler.
+    pub fn extract_with_options(
+        &self,
+        options: &webclaw_core::ExtractionOptions,
+    ) -> Result<webclaw_core::ExtractionResult, FetchError> {
+        if let Some(bytes) = &self.document_bytes {
+            if is_pdf_content_type(&self.headers) || bytes.starts_with(b"%PDF-") {
+                let pdf = webclaw_pdf::extract_pdf(bytes, PdfMode::default())?;
+                return Ok(pdf_to_extraction_result(&pdf, &self.url));
+            }
+            if let Some(kind) = crate::document::is_document_content_type(&self.headers, &self.url)
+            {
+                let mut result = crate::document::extract_document(bytes, kind)?;
+                result.metadata.url = Some(self.url.clone());
+                return Ok(result);
+            }
+        }
+        Ok(webclaw_core::extract_with_options(
+            &self.html,
+            Some(&self.url),
+            options,
+        )?)
+    }
 }
 
 /// Result for a single URL in a batch fetch operation.
@@ -385,6 +414,15 @@ impl FetchClient {
     /// when you need literal no-rescue behavior (e.g. inside the rescue
     /// logic itself to avoid recursion).
     pub async fn fetch_smart(&self, url: &str) -> Result<FetchResult, FetchError> {
+        self.fetch_smart_with_headers(url, &[]).await
+    }
+
+    /// Smart fetch with request-specific headers, including rescue retries.
+    pub async fn fetch_smart_with_headers(
+        &self,
+        url: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
         // Reddit: fetch old.reddit.com for stable server-rendered HTML.
         // The JSON API is blocked; old.reddit.com works without JS or auth.
         let owned;
@@ -395,7 +433,7 @@ impl FetchClient {
             url
         };
 
-        let resp = self.fetch(url).await?;
+        let resp = self.fetch_with_headers(url, extra).await?;
 
         // Akamai / bazadebezolkohpepadr challenge: visit the homepage to
         // collect warmup cookies (_abck, bm_sz, etc.), then retry.
@@ -403,8 +441,8 @@ impl FetchClient {
             && let Some(homepage) = extract_homepage(url)
         {
             debug!("challenge detected, warming cookies via {homepage}");
-            let _ = self.fetch(&homepage).await;
-            if let Ok(retry) = self.fetch(url).await {
+            let _ = self.fetch_with_headers(&homepage, extra).await;
+            if let Ok(retry) = self.fetch_with_headers(url, extra).await {
                 return Ok(retry);
             }
         }
@@ -882,12 +920,20 @@ fn response_to_result(response: Response, start: Instant) -> Result<FetchResult,
     let status = response.status();
     let final_url = response.url().to_string();
     let headers = response.headers().clone();
-    let html = response.into_text();
+    let binary = is_pdf_content_type(&headers)
+        || response.body().starts_with(b"%PDF-")
+        || crate::document::is_document_content_type(&headers, &final_url).is_some();
+    let (html, document_bytes) = if binary {
+        (String::new(), Some(bytes::Bytes::from(response.body)))
+    } else {
+        (response.into_text(), None)
+    };
     let elapsed = start.elapsed();
 
     debug!(status, elapsed_ms = %elapsed.as_millis(), "fetch complete");
 
     Ok(FetchResult {
+        document_bytes,
         html,
         status,
         url: final_url,
@@ -1046,6 +1092,36 @@ async fn collect_ordered<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binary_response_retains_original_bytes_and_rejects_invalid_pdf() {
+        for content_type in ["application/pdf", "application/octet-stream"] {
+            let bytes = b"%PDF-1.7\n\xFF\xFE malformed".to_vec();
+            let mut response = resp_with_body(bytes.clone());
+            response
+                .headers
+                .insert("content-type", content_type.parse().unwrap());
+            let fetched = response_to_result(response, Instant::now()).unwrap();
+            assert!(fetched.html.is_empty());
+            assert_eq!(fetched.document_bytes.as_deref(), Some(bytes.as_slice()));
+            assert!(fetched.extract_with_options(&Default::default()).is_err());
+        }
+        let fetched =
+            response_to_result(resp_with_body(b"<h1>Hello</h1>".to_vec()), Instant::now()).unwrap();
+        assert!(fetched.document_bytes.is_none());
+        assert_eq!(fetched.html, "<h1>Hello</h1>");
+    }
+
+    #[tokio::test]
+    async fn smart_request_headers_keep_url_safety_guard() {
+        let client = FetchClient::new(FetchConfig::default()).unwrap();
+        assert!(matches!(
+            client
+                .fetch_smart_with_headers("http://127.0.0.1/", &[("Cookie", "fixture=1")])
+                .await,
+            Err(FetchError::InvalidUrl(_))
+        ));
+    }
 
     /// Build a `Response` around a raw body so the decode path can be tested
     /// without a network round trip.
@@ -1240,6 +1316,7 @@ mod tests {
         let ok = BatchResult {
             url: "https://example.com".to_string(),
             result: Ok(FetchResult {
+                document_bytes: None,
                 html: "<html></html>".to_string(),
                 status: 200,
                 url: "https://example.com".to_string(),

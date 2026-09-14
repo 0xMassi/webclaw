@@ -454,12 +454,14 @@ impl WebclawMcp {
             SmartFetchResult::Local(extraction) => {
                 webclaw_core::to_llm_text(&extraction, Some(&params.url))
             }
-            SmartFetchResult::Cloud(resp) => resp
-                .get("llm")
-                .or_else(|| resp.get("markdown"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            SmartFetchResult::Cloud(resp) => format!(
+                "Source URL: {}\n\n{}",
+                params.url,
+                resp.get("llm")
+                    .or_else(|| resp.get("markdown"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            ),
         };
 
         webclaw_llm::summarize::summarize(&llm_content, params.max_sentences, chain, None)

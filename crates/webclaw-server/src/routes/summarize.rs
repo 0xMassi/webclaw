@@ -44,6 +44,7 @@ pub async fn summarize_route(
         ));
     }
 
+    let content = webclaw_core::to_llm_text(&extraction, Some(url.as_str()));
     let summary = summarize(&content, req.max_sentences, &chain, req.model.as_deref()).await?;
 
     Ok(Json(json!({

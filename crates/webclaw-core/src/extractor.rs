@@ -157,7 +157,7 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
         return extract_with_include(doc, base_url, &options.include_selectors, &exclude, options);
     }
 
-    // Main-only shares title recovery, but does not recover navigation/footer content.
+    // Main-only recovery stays inside the selected content node.
     let best = options
         .only_main_content
         .then(|| {
@@ -202,7 +202,14 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
         // The best content node often excludes the page's primary H1 (e.g., in a
         // hero/banner section). If the document has an H1 and its text isn't already
         // in the markdown, prepend it so the output always starts with the title.
-        if let Some(h1) = doc.select(&H1_SELECTOR).find(|h1| !is_inside_overlay(*h1)) {
+        if let Some(h1) = doc.select(&H1_SELECTOR).find(|h1| {
+            !is_inside_overlay(*h1)
+                && (!options.only_main_content
+                    || content_element.is_some_and(|selected| {
+                        h1.ancestors()
+                            .any(|ancestor| ancestor.id() == selected.id())
+                    }))
+        }) {
             let h1_text = h1
                 .text()
                 .collect::<String>()
@@ -963,9 +970,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn main_content_preserves_title_but_respects_exclusions() {
+    fn main_content_recovers_only_scoped_titles_and_respects_exclusions() {
         let doc = Html::parse_document(
-            "<html><body><header><h1>Variables and Mutability</h1></header><main><p>Variables retain their values unless declared mutable.</p></main><footer>Footer navigation</footer></body></html>",
+            "<html><body><header><h1>Outside site title</h1></header><main><header><h1>Variables and Mutability</h1></header><p>Variables retain their values unless declared mutable.</p></main><footer>Footer navigation</footer></body></html>",
         );
         let options = ExtractionOptions {
             only_main_content: true,
@@ -975,6 +982,7 @@ mod tests {
         assert!(result.markdown.contains("# Variables and Mutability"));
         assert!(result.plain_text.contains("Variables and Mutability"));
         assert!(!result.markdown.contains("Footer navigation"));
+        assert!(!result.markdown.contains("Outside site title"));
         let excluded = ExtractionOptions {
             exclude_selectors: vec!["h1".into()],
             ..options

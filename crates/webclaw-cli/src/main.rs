@@ -2370,7 +2370,7 @@ async fn run_llm(cli: &Cli) -> Result<(), String> {
         );
     } else if let Some(sentences) = cli.summarize {
         let summary = webclaw_llm::summarize::summarize(
-            &result.content.plain_text,
+            &webclaw_core::to_llm_text(&result, None),
             Some(sentences),
             provider.as_ref(),
             model,
@@ -2448,9 +2448,14 @@ async fn run_batch_llm(cli: &Cli, entries: &[(String, Option<String>)]) -> Resul
                 .await
                 .map(LlmOutput::Json)
         } else if let Some(sentences) = cli.summarize {
-            webclaw_llm::summarize::summarize(text, Some(sentences), provider.as_ref(), model)
-                .await
-                .map(LlmOutput::Text)
+            webclaw_llm::summarize::summarize(
+                &webclaw_core::to_llm_text(&extraction, Some(url)),
+                Some(sentences),
+                provider.as_ref(),
+                model,
+            )
+            .await
+            .map(LlmOutput::Text)
         } else {
             unreachable!("run_batch_llm called without LLM flags")
         };

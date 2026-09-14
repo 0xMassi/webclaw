@@ -255,6 +255,36 @@ impl Crawler {
     /// If `resume_state` is provided, the crawl resumes from the saved state
     /// (pre-populated visited set and frontier) instead of starting fresh.
     pub async fn crawl(&self, start_url: &str, resume_state: Option<CrawlState>) -> CrawlResult {
+        let client = Arc::clone(&self.client);
+        self.crawl_with_fetcher(start_url, resume_state, move |url| {
+            let client = Arc::clone(&client);
+            async move {
+                client
+                    .fetch_and_extract(&url)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+        })
+        .await
+    }
+
+    /// Crawl using one caller-supplied extraction path for every content page,
+    /// including the seed. Links in each returned extraction drive the frontier.
+    /// Existing scope, sitemap, cancellation and concurrency rules remain
+    /// in effect; sitemap discovery still uses the configured fetch client.
+    pub async fn crawl_with_fetcher<F, Fut>(
+        &self,
+        start_url: &str,
+        resume_state: Option<CrawlState>,
+        fetcher: F,
+    ) -> CrawlResult
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<webclaw_core::ExtractionResult, String>>
+            + Send
+            + 'static,
+    {
+        let fetcher = Arc::new(fetcher);
         let start = Instant::now();
 
         let seed = match Url::parse(start_url) {
@@ -357,10 +387,11 @@ impl Crawler {
 
             for (url, depth) in &batch {
                 let permit = Arc::clone(&semaphore);
-                let client = Arc::clone(&self.client);
+                let fetcher = Arc::clone(&fetcher);
                 let url = url.clone();
                 let depth = *depth;
                 let delay = self.config.delay;
+                let cancel_flag = self.config.cancel_flag.clone();
 
                 handles.push(crate::transfer::spawn(async move {
                     // Acquire permit -- blocks if concurrency limit reached.
@@ -371,7 +402,14 @@ impl Crawler {
                     let result = match permit.acquire().await {
                         Ok(_permit) => {
                             tokio::time::sleep(delay).await;
-                            client.fetch_and_extract(&url).await
+                            if cancel_flag
+                                .as_ref()
+                                .is_some_and(|flag| flag.load(Ordering::Relaxed))
+                            {
+                                Err("crawl cancelled before fetch".to_string())
+                            } else {
+                                fetcher(url.clone()).await
+                            }
                         }
                         Err(_) => {
                             warn!(url = %url, depth, "semaphore closed before acquire");
@@ -461,15 +499,9 @@ impl Crawler {
                     (None, false) => pages.push(page),
                 }
 
-                if !self.under_page_cap(completed) {
-                    break;
-                }
-
-                // Check cancel flag between page results
-                if self.is_cancelled() {
-                    info!("crawl cancelled by user (mid-batch)");
-                    break;
-                }
+                // Drain every started task even after cancellation. A sibling
+                // may already have completed useful work; dropping its handle
+                // would lose its result and leave other tasks detached.
             }
 
             // Bound the frontier. This is a MEMORY rail, not a page limit:
@@ -773,6 +805,98 @@ fn glob_match_inner(pat: &[u8], text: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancellation_retains_all_already_started_successful_results() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let flag = stopped.clone();
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                cancel_flag: Some(stopped),
+                use_sitemap: false,
+                concurrency: 3,
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let resume = CrawlState {
+            seed_url: "https://example.com/".into(),
+            visited: vec![],
+            frontier: ["slow", "success", "stop"]
+                .map(|p| (format!("https://example.com/{p}"), 0))
+                .to_vec(),
+            completed_pages: 0,
+            max_pages: 50,
+            max_depth: 2,
+        };
+        let result = crawler
+            .crawl_with_fetcher("https://example.com/", Some(resume), move |url| {
+                let barrier = barrier.clone();
+                let flag = flag.clone();
+                async move {
+                    barrier.wait().await;
+                    if url.ends_with("stop") {
+                        flag.store(true, Ordering::Relaxed);
+                        return Err("budget exhausted".into());
+                    }
+                    if url.ends_with("slow") {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    webclaw_core::extract_with_options(
+                        "<main><h1>Completed</h1><p>Useful completed content.</p></main>",
+                        Some(&url),
+                        &Default::default(),
+                    )
+                    .map_err(|e| e.to_string())
+                }
+            })
+            .await;
+        assert_eq!(
+            result.ok, 2,
+            "completed siblings must survive mid-batch cancellation"
+        );
+        assert_eq!(result.pages.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn supplied_fetcher_handles_seed_and_discovered_children_once() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                use_sitemap: false,
+                max_depth: 2,
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result=crawler.crawl_with_fetcher("https://example.com/",None,move |url| {
+            recorded.lock().unwrap().push(url.clone());
+            async move {
+                let html=match url.as_str() {
+                    "https://example.com/" => "<main><h1>Seed</h1><p>Rendered seed content.</p><a href='/child'>Child</a><a href='https://other.test/'>Outside</a></main>",
+                    "https://example.com/child" => "<main><h1>Child</h1><p>Child content.</p><a href='/grandchild'>Grandchild</a><a href='/'>Seed</a></main>",
+                    "https://example.com/grandchild" => "<main><h1>Grandchild</h1><p>Grandchild content.</p></main>",
+                    _ => return Err("unexpected URL".into()),
+                };
+                webclaw_core::extract_with_options(html,Some(&url),&Default::default()).map_err(|e|e.to_string())
+            }
+        }).await;
+        assert_eq!(result.ok, 3);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                "https://example.com/",
+                "https://example.com/child",
+                "https://example.com/grandchild"
+            ]
+        );
+    }
 
     #[test]
     fn no_page_cap_is_expressible_and_never_halts_the_crawl() {

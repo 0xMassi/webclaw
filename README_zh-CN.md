@@ -463,6 +463,27 @@ URL:
       使用优惠码 <code>0XMASSI</code> 享 ISP（静态）代理 8% 折扣。
     </td>
   </tr>
+  <tr>
+    <td width="340" align="center">
+      <a href="https://www.thordata.com/?ls=dww&lk=dww">
+        <img src="./assets/sponsors/thordata-banner.png" alt="Thordata" width="300" />
+      </a>
+    </td>
+    <td>
+      <p><a href="https://www.thordata.com/?ls=dww&lk=dww"><strong>Thordata</strong></a>：面向开发者的高级住宅代理。借助纯净的住宅 IP 与稳定的代理基础设施，构建可靠的爬虫、AI 智能体与自动化工作流。</p>
+      <p><a href="https://www.thordata.com/?ls=dww&lk=dww"><strong>为什么选择 Thordata？</strong></a></p>
+      <ul>
+        <li>覆盖 195+ 地区的 1 亿+ IP</li>
+        <li>不限并发连接数</li>
+        <li>99.99% 在线率，连接稳定</li>
+        <li>轮换会话 + 粘性会话</li>
+      </ul>
+      <p><strong>Webclaw 专属优惠：</strong>免费试用 3 天</p>
+      <ul>
+        <li><code>WEBCLAW</code> - 享 10% 折扣</li>
+      </ul>
+    </td>
+  </tr>
 </table>
 
 ---

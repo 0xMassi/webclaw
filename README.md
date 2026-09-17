@@ -541,6 +541,27 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
       <a href="https://mangoproxy.com/?utm_source=github&utm_medium=partner&utm_campaign=0xmassi">mangoproxy.com</a>.
     </td>
   </tr>
+  <tr>
+    <td width="340" align="center">
+      <a href="https://www.thordata.com/?ls=dww&lk=dww">
+        <img src="./assets/sponsors/thordata-banner.png" alt="Thordata" width="300" />
+      </a>
+    </td>
+    <td>
+      <p><a href="https://www.thordata.com/?ls=dww&lk=dww"><strong>Thordata</strong></a>: Premium Residential Proxies for Developers. Build reliable crawlers, AI agents, and automation workflows with clean residential IPs and stable proxy infrastructure.</p>
+      <p><a href="https://www.thordata.com/?ls=dww&lk=dww"><strong>Why Thordata?</strong></a></p>
+      <ul>
+        <li>100M+ IPs across 195+ GEOs</li>
+        <li>Unlimited concurrent connections</li>
+        <li>99.99% uptime &amp; stable connections</li>
+        <li>Rotating + Sticky Sessions</li>
+      </ul>
+      <p><strong>Webclaw Special Offer:</strong> Free 3-Day Trial</p>
+      <ul>
+        <li><code>WEBCLAW</code> - 10% OFF</li>
+      </ul>
+    </td>
+  </tr>
 </table>
 
 ---

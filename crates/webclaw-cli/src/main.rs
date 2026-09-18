@@ -899,6 +899,20 @@ impl FetchOutput {
     }
 }
 
+/// Operations that consume ExtractionResult need the complete cloud JSON payload.
+fn cloud_scrape_format(cli: &Cli) -> &'static str {
+    if cli.diff_with.is_some() || has_llm_flags(cli) {
+        return "json";
+    }
+    match cli.format {
+        OutputFormat::Markdown => "markdown",
+        OutputFormat::Json => "json",
+        OutputFormat::Text => "text",
+        OutputFormat::Llm => "llm",
+        OutputFormat::Html => "rawHtml",
+    }
+}
+
 /// Fetch a URL and extract content, handling PDF detection automatically.
 /// Falls back to cloud API when bot protection or JS rendering is detected.
 async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
@@ -945,13 +959,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         let c =
             cloud_client.ok_or("--cloud requires WEBCLAW_API_KEY (set via env or --api-key)")?;
         let options = build_extraction_options(cli);
-        let format_str = match cli.format {
-            OutputFormat::Markdown => "markdown",
-            OutputFormat::Json => "json",
-            OutputFormat::Text => "text",
-            OutputFormat::Llm => "llm",
-            OutputFormat::Html => "rawHtml",
-        };
+        let format_str = cloud_scrape_format(cli);
         let resp = c
             .scrape(
                 url,
@@ -979,13 +987,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
             | webclaw_fetch::FetchError::UpstreamStatus(_)),
         ) => {
             if let Some(ref c) = cloud_client {
-                let format = match cli.format {
-                    OutputFormat::Markdown => "markdown",
-                    OutputFormat::Json => "json",
-                    OutputFormat::Text => "text",
-                    OutputFormat::Llm => "llm",
-                    OutputFormat::Html => "rawHtml",
-                };
+                let format = cloud_scrape_format(cli);
                 let response = c
                     .scrape(
                         url,
@@ -1007,13 +1009,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     if !matches!(reason, EmptyReason::None) {
         if let Some(ref c) = cloud_client {
             eprintln!("\x1b[36minfo:\x1b[0m falling back to cloud API...");
-            let format_str = match cli.format {
-                OutputFormat::Markdown => "markdown",
-                OutputFormat::Json => "json",
-                OutputFormat::Text => "text",
-                OutputFormat::Llm => "llm",
-                OutputFormat::Html => "rawHtml",
-            };
+            let format_str = cloud_scrape_format(cli);
             match c
                 .scrape(
                     url,
@@ -2960,6 +2956,32 @@ async fn main() {
 mod tests {
     use super::*;
     use webclaw_core::Content;
+
+    #[test]
+    fn cloud_format_preserves_extraction_for_diff_and_llm_modes() {
+        for args in [
+            vec![
+                "webclaw",
+                "https://example.com",
+                "--diff-with",
+                "before.json",
+            ],
+            vec!["webclaw", "https://example.com", "--summarize", "2"],
+            vec!["webclaw", "https://example.com", "--extract-json", "{}"],
+            vec![
+                "webclaw",
+                "https://example.com",
+                "--extract-prompt",
+                "Title",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(cloud_scrape_format(&cli), "json");
+        }
+        let cli =
+            Cli::try_parse_from(["webclaw", "https://example.com", "--format", "text"]).unwrap();
+        assert_eq!(cloud_scrape_format(&cli), "text");
+    }
 
     // issue #86: a single URL sourced only from --urls-file must be promoted to
     // a positional URL so it takes the single-scrape path (batch gates need >1).

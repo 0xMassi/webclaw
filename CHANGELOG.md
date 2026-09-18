@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.24] - 2026-09-18
+
+### Fixed
+- **Cloud fallback keeps the data later steps need.** When a scrape runs through the cloud API and the command also asks for a diff, a summary or an extraction, the cloud request now asks for the full structured result instead of the display format, so those steps no longer fail on a response that never carried their input.
+- **The cloud API base can be pointed elsewhere.** `WEBCLAW_API_URL` now applies when a key is supplied directly, not only when the client is built with an explicit base, so the CLI and the MCP server can run against a different endpoint.
+
+
 ## [0.6.23] - 2026-09-11
 
 ### Added

@@ -212,9 +212,13 @@ impl CloudClient {
 
     /// Build with an explicit key. Useful when the caller already has
     /// a key from somewhere other than env or a flag (e.g. loaded from
-    /// config).
+    /// config). `WEBCLAW_API_URL` overrides the API base, including `/v1`.
     pub fn with_key(api_key: impl Into<String>) -> Self {
-        Self::with_key_and_base(api_key, API_BASE_DEFAULT)
+        let base = std::env::var("WEBCLAW_API_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+            .unwrap_or_else(|| API_BASE_DEFAULT.into());
+        Self::with_key_and_base(api_key, base)
     }
 
     /// Build with an explicit key and base URL. Used by integration
@@ -964,11 +968,14 @@ mod tests {
         // are unsafe on the 2024 toolchain. Explicit key must beat the env.
         unsafe {
             std::env::set_var("WEBCLAW_API_KEY", "from-env");
+            std::env::set_var("WEBCLAW_API_URL", "http://127.0.0.1:8099/v1/");
         }
         let client = CloudClient::new(Some("from-flag")).expect("client built");
         assert_eq!(client.api_key, "from-flag");
+        assert_eq!(client.base_url(), "http://127.0.0.1:8099/v1");
         unsafe {
             std::env::remove_var("WEBCLAW_API_KEY");
+            std::env::remove_var("WEBCLAW_API_URL");
         }
     }
 

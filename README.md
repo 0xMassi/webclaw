@@ -508,13 +508,13 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
 <table>
   <tr>
     <td width="340" align="center">
-      <a href="https://go.nodemaven.com/webclawrmaugust">
-        <img src="./assets/sponsors/nodemaven-banner.png" alt="NodeMaven" width="300" />
+      <a href="https://go.nodemaven.com/webclawGHsept">
+        <img src="./assets/sponsors/nodemaven-banner-20260923.png" alt="NodeMaven" width="300" />
       </a>
     </td>
     <td>
-      <p><a href="https://go.nodemaven.com/webclawrmaugust"><strong>NodeMaven</strong></a>: The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market.</p>
-      <p><a href="https://go.nodemaven.com/webclawrmaugust"><strong>Why NodeMaven?</strong></a></p>
+      <p><a href="https://go.nodemaven.com/webclawGHsept"><strong>NodeMaven</strong></a>: The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market.</p>
+      <p><a href="https://go.nodemaven.com/webclawGHsept"><strong>Why NodeMaven?</strong></a></p>
       <ul>
         <li>ZIP targeting</li>
         <li>99.9% uptime</li>

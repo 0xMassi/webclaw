@@ -296,6 +296,9 @@ enum ClientPool {
 pub struct FetchClient {
     pool: ClientPool,
     pdf_mode: PdfMode,
+    /// Optional single bounded browser-profile rescue used only after this
+    /// client returns a typed access-denied content issue.
+    rescue: Option<std::sync::Arc<FetchClient>>,
     /// Optional cloud-fallback client. Extractors that need to
     /// escalate past bot protection call `client.cloud()` to get this
     /// out. Stored as `Arc` so cloning a `FetchClient` (common in
@@ -403,9 +406,18 @@ impl FetchClient {
         Ok(Self {
             pool,
             pdf_mode,
+            rescue: None,
             cloud: None,
             total_timeout: config.total_timeout,
         })
+    }
+
+    /// Attach one independent rescue client. The rescue is attempted at most
+    /// once after a typed access-denied result and is never recursively
+    /// applied to the rescue client itself.
+    pub fn with_rescue(mut self, rescue: FetchClient) -> Self {
+        self.rescue = Some(std::sync::Arc::new(rescue));
+        self
     }
 
     /// Attach a cloud-fallback client. Returns `self` so it composes in
@@ -655,6 +667,27 @@ impl FetchClient {
     /// Fetch a URL then extract structured content with custom extraction options.
     #[instrument(skip(self, options), fields(url = %url))]
     pub async fn fetch_and_extract_with_options(
+        &self,
+        url: &str,
+        options: &webclaw_core::ExtractionOptions,
+    ) -> Result<webclaw_core::ExtractionResult, FetchError> {
+        match self.fetch_and_extract_once_with_options(url, options).await {
+            Err(FetchError::Content(webclaw_core::quality::ContentIssue::AccessDenied))
+                if self.rescue.is_some() =>
+            {
+                // The rescue calls the non-rescuing implementation directly:
+                // exactly one separate browser attempt, with no recursion.
+                self.rescue
+                    .as_ref()
+                    .expect("rescue checked above")
+                    .fetch_and_extract_once_with_options(url, options)
+                    .await
+            }
+            result => result,
+        }
+    }
+
+    async fn fetch_and_extract_once_with_options(
         &self,
         url: &str,
         options: &webclaw_core::ExtractionOptions,

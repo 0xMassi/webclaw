@@ -52,6 +52,9 @@ pub fn content_issue(result: &ExtractionResult) -> Option<ContentIssue> {
         .to_lowercase();
     // Phrase mentions inside substantial articles are not error screens.
     if text.split_whitespace().count() < 200 {
+        if text.contains("current user-agent") && text.contains("automated process") {
+            return Some(ContentIssue::AccessDenied);
+        }
         if matches!(
             title.as_str(),
             "just a moment" | "access denied" | "attention required" | "security check"

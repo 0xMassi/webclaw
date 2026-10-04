@@ -55,6 +55,12 @@ impl AppState {
         };
         let mut fetch = FetchClient::new(config)
             .map_err(|e| anyhow::anyhow!("failed to build fetch client: {e}"))?;
+        let rescue = FetchClient::new(FetchConfig {
+            browser: BrowserProfile::Chrome,
+            ..FetchConfig::default()
+        })
+        .map_err(|e| anyhow::anyhow!("failed to build rescue fetch client: {e}"))?;
+        fetch = fetch.with_rescue(rescue);
 
         // Cloud fallback: only activates when the operator has provided
         // an api.webclaw.io key. Supports both WEBCLAW_CLOUD_API_KEY

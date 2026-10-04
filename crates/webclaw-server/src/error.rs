@@ -30,6 +30,9 @@ pub enum ApiError {
     #[error("upstream fetch failed: {0}")]
     Fetch(String),
 
+    #[error("The target returned an access challenge instead of page content.")]
+    AccessDenied,
+
     #[error("extraction failed: {0}")]
     Extract(String),
 
@@ -63,6 +66,7 @@ impl ApiError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Fetch(_) => StatusCode::BAD_GATEWAY,
+            Self::AccessDenied => StatusCode::BAD_GATEWAY,
             Self::Extract(_) | Self::Llm(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
@@ -72,14 +76,25 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = Json(json!({ "error": self.to_string() }));
-        (self.status(), body).into_response()
+        let status = self.status();
+        let body = match self {
+            Self::AccessDenied => Json(json!({
+                "error": "The target returned an access challenge instead of page content.",
+                "code": "bot_protection_unbypassed",
+                "retryable": false
+            })),
+            other => Json(json!({ "error": other.to_string() })),
+        };
+        (status, body).into_response()
     }
 }
 
 impl From<webclaw_fetch::FetchError> for ApiError {
     fn from(e: webclaw_fetch::FetchError) -> Self {
         match e {
+            webclaw_fetch::FetchError::Content(
+                webclaw_core::quality::ContentIssue::AccessDenied,
+            ) => Self::AccessDenied,
             webclaw_fetch::FetchError::InvalidUrl(msg) => {
                 Self::BadRequest(format!("invalid url: {msg}"))
             }

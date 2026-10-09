@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **New opt-in LLM provider.** An OpenAI-compatible provider is available for the LLM features (extraction, summarization). It is added at the end of the chain, so it runs only when you set its API key and never preempts an already-configured provider. `env.example` lists its settings.
+
 ## [0.6.24] - 2026-09-18
 
 ### Fixed

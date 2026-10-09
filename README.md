@@ -408,6 +408,8 @@ webclaw/
 | `ANTHROPIC_BASE_URL` | Anthropic-compatible base URL |
 | `ORCAROUTER_API_KEY` | OrcaRouter LLM provider key |
 | `ORCAROUTER_BASE_URL` | OrcaRouter base URL (defaults to https://api.orcarouter.ai/v1) |
+| `CHEAPER_INFERENCE_API_KEY` | Cheaper Inference LLM provider key |
+| `CHEAPER_INFERENCE_BASE_URL` | Cheaper Inference base URL (defaults to https://api.cheaperinference.com/v1) |
 | `WEBCLAW_PROXY` | Single proxy URL |
 | `WEBCLAW_PROXY_FILE` | Proxy pool file |
 

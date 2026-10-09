@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod atlascloud;
+pub mod cheaperinference;
 pub mod gemini;
 pub mod ollama;
 pub mod openai;

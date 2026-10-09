@@ -364,6 +364,8 @@ webclaw/
 | `ANTHROPIC_BASE_URL` | 兼容 Anthropic 的接口地址 |
 | `ORCAROUTER_API_KEY` | OrcaRouter LLM 提供方密钥 |
 | `ORCAROUTER_BASE_URL` | OrcaRouter 接口地址（默认 https://api.orcarouter.ai/v1） |
+| `CHEAPER_INFERENCE_API_KEY` | Cheaper Inference LLM 提供方密钥 |
+| `CHEAPER_INFERENCE_BASE_URL` | Cheaper Inference 接口地址（默认 https://api.cheaperinference.com/v1） |
 | `WEBCLAW_PROXY` | 单个代理 URL |
 | `WEBCLAW_PROXY_FILE` | 代理池文件 |
 

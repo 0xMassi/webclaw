@@ -49,17 +49,18 @@ impl RobotsRules {
                     group_agents.clear();
                     in_rules = false;
                 }
-                group_agents.push(value.to_ascii_lowercase());
+                let named = value.to_ascii_lowercase();
+                found_specific |= named == agent;
+                group_agents.push(named);
                 continue;
             }
-            if group_agents.is_empty() {
+            if group_agents.is_empty()
+                || !matches!(key.as_str(), "allow" | "disallow" | "crawl-delay")
+            {
                 continue;
             }
             in_rules = true;
             let matches_us = group_agents.iter().any(|a| a == &agent);
-            if matches_us {
-                found_specific = true;
-            }
             let target = if matches_us {
                 &mut specific
             } else if group_agents.iter().any(|a| a == "*") {
@@ -74,8 +75,7 @@ impl RobotsRules {
                     target.crawl_delay = value
                         .parse::<f64>()
                         .ok()
-                        .filter(|s| s.is_finite() && *s >= 0.0)
-                        .map(Duration::from_secs_f64);
+                        .and_then(|s| Duration::try_from_secs_f64(s).ok());
                 }
                 _ => {}
             }
@@ -198,6 +198,24 @@ Disallow: /
     fn disallow_all_and_allow_all() {
         assert!(!RobotsRules::disallow_all().is_allowed("/"));
         assert!(RobotsRules::allow_all().is_allowed("/anything"));
+    }
+
+    #[test]
+    fn an_empty_webclaw_group_allows_everything() {
+        let body = "User-agent: *\nDisallow: /\n\nUser-agent: webclaw\n";
+        assert!(RobotsRules::parse(body, USER_AGENT_TOKEN).is_allowed("/page"));
+    }
+
+    #[test]
+    fn non_group_lines_do_not_split_a_group() {
+        let body = "User-agent: webclaw\nSitemap: https://example.com/sitemap.xml\nUser-agent: other\nDisallow: /private\n";
+        assert!(!RobotsRules::parse(body, USER_AGENT_TOKEN).is_allowed("/private"));
+    }
+
+    #[test]
+    fn a_huge_crawl_delay_does_not_panic() {
+        let rules = RobotsRules::parse("User-agent: *\nCrawl-delay: 1e100\n", USER_AGENT_TOKEN);
+        assert_eq!(rules.crawl_delay, None);
     }
 
     #[test]

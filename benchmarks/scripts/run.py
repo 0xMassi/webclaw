@@ -40,6 +40,9 @@ def prepare():
 
 
 def run(label, runs, arms):
+    version = subprocess.run([WEBCLAW, "--version"], capture_output=True, text=True).stdout
+    if URL_ONLY & set(arms) and "+browser" not in version:
+        sys.exit(f"{WEBCLAW} was built without the browser feature; the rendering arms need it")
     res = ROOT / "results" / label
     out = WORK / "out" / label
     res.mkdir(parents=True, exist_ok=True)

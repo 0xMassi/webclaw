@@ -15,16 +15,7 @@ fi
 [ -x "$bin" ] || { echo "no webclaw binary at $bin" >&2; exit 1; }
 export WEBCLAW_BIN=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 
-venv() {
-  local name=$1; shift
-  [ -x ".work/venv-$name/bin/python" ] && return
-  uv venv -q -p 3.12 ".work/venv-$name"
-  uv pip install -q -p ".work/venv-$name" "$@"
-}
-venv base trafilatura==2.3.1 tiktoken==0.14.0
-venv scrapling "scrapling[fetchers] @ git+https://github.com/D4Vinci/Scrapling@7a68493" markdownify==1.2.3
-venv crawl4ai crawl4ai==0.9.4
-[ -f .work/venv-crawl4ai/.setup-done ] || { .work/venv-crawl4ai/bin/crawl4ai-setup && touch .work/venv-crawl4ai/.setup-done; }
+source ./envs.sh
 
 [ -f .work/cases-html.jsonl ] || .work/venv-base/bin/python scripts/run.py prepare
 rm -rf "results/$label" ".work/out/$label"

@@ -10,7 +10,7 @@
 ///
 /// When `use_sitemap` is enabled, the crawler first discovers URLs from the
 /// site's sitemaps and seeds the BFS frontier before crawling.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +23,7 @@ use url::Url;
 
 use crate::client::{FetchClient, FetchConfig};
 use crate::error::FetchError;
+use crate::robots::{RobotsRules, USER_AGENT_TOKEN};
 use crate::sitemap;
 
 /// Controls crawl scope, depth, concurrency, and politeness.
@@ -84,6 +85,9 @@ pub struct CrawlConfig {
     ///
     /// Defaults to `false`, so existing callers keep collecting.
     pub stream_only: bool,
+    /// Skip URLs that the site's robots.txt disallows for webclaw, and honour
+    /// its `Crawl-delay`. Defaults to `true`.
+    pub respect_robots: bool,
 }
 
 impl Default for CrawlConfig {
@@ -103,6 +107,7 @@ impl Default for CrawlConfig {
             progress_tx: None,
             cancel_flag: None,
             stream_only: false,
+            respect_robots: true,
         }
     }
 }
@@ -114,6 +119,9 @@ pub struct CrawlResult {
     pub total: usize,
     pub ok: usize,
     pub errors: usize,
+    /// URLs left unfetched because robots.txt disallows them.
+    #[serde(default)]
+    pub skipped_by_robots: usize,
     pub elapsed_secs: f64,
     /// URLs visited during this crawl (for resume state).
     #[serde(skip)]
@@ -152,6 +160,7 @@ pub struct Crawler {
     seed_origin: String,
     /// Root domain of the seed URL for subdomain matching (e.g. "example.com").
     seed_root_domain: String,
+    robots: std::sync::Mutex<HashMap<String, Arc<RobotsRules>>>,
 }
 
 /// Frontier ceiling used when [`CrawlConfig::max_pages`] is `None`.
@@ -198,7 +207,55 @@ impl Crawler {
             config,
             seed_origin,
             seed_root_domain,
+            robots: Default::default(),
         })
+    }
+
+    /// Use `rules` for `origin` (e.g. `https://example.com`) instead of
+    /// fetching its robots.txt.
+    pub fn preload_robots(&self, origin: &str, rules: RobotsRules) {
+        self.robots
+            .lock()
+            .unwrap()
+            .insert(origin.to_string(), Arc::new(rules));
+    }
+
+    async fn robots_for(&self, url: &Url) -> Arc<RobotsRules> {
+        let origin = url.origin().ascii_serialization();
+        if let Some(rules) = self.robots.lock().unwrap().get(&origin) {
+            return Arc::clone(rules);
+        }
+        let rules = match self.client.fetch_raw(&format!("{origin}/robots.txt")).await {
+            Ok((status, body)) if (200..300).contains(&status) => {
+                RobotsRules::parse(&String::from_utf8_lossy(&body), USER_AGENT_TOKEN)
+            }
+            Ok((status, _)) if (400..500).contains(&status) => RobotsRules::allow_all(),
+            Ok((status, _)) => {
+                warn!(%origin, status, "robots.txt unavailable, treating the site as disallowed");
+                RobotsRules::disallow_all()
+            }
+            Err(e) => {
+                debug!(%origin, error = %e, "robots.txt fetch failed, page fetches will report the error");
+                RobotsRules::allow_all()
+            }
+        };
+        let rules = Arc::new(rules);
+        self.robots
+            .lock()
+            .unwrap()
+            .insert(origin, Arc::clone(&rules));
+        rules
+    }
+
+    async fn robots_allow(&self, url: &str) -> bool {
+        let Ok(parsed) = Url::parse(url) else {
+            return true;
+        };
+        let path = match parsed.query() {
+            Some(q) => format!("{}?{q}", parsed.path()),
+            None => parsed.path().to_string(),
+        };
+        self.robots_for(&parsed).await.is_allowed(&path)
     }
 
     /// Save current crawl state to a JSON file for later resume.
@@ -301,6 +358,7 @@ impl Crawler {
                     total: 1,
                     ok: 0,
                     errors: 1,
+                    skipped_by_robots: 0,
                     elapsed_secs: 0.0,
                     visited: HashSet::new(),
                     remaining_frontier: Vec::new(),
@@ -308,7 +366,15 @@ impl Crawler {
             }
         };
 
-        let semaphore = Arc::new(Semaphore::new(self.config.concurrency));
+        let seed_rules = if self.config.respect_robots {
+            self.robots_for(&seed).await
+        } else {
+            Arc::new(RobotsRules::allow_all())
+        };
+        let (concurrency, delay) = pacing(&self.config, &seed_rules);
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+        let mut skipped_by_robots: usize = 0;
+        let mut denied: HashSet<String> = HashSet::new();
         let mut visited: HashSet<String>;
         let mut pages: Vec<PageResult> = Vec::new();
         // Counted independently of `pages`: in stream-only mode nothing is
@@ -329,22 +395,17 @@ impl Crawler {
             );
         } else {
             visited = HashSet::new();
-            frontier = vec![(normalize(&seed), 0)];
+            frontier = vec![(without_fragment(&seed), 0)];
 
             // Seed frontier from sitemap if enabled
-            if self.config.use_sitemap {
+            if self.config.use_sitemap && seed_rules.is_allowed("/sitemap.xml") {
                 let base_url = format!("{}://{}", seed.scheme(), seed.host_str().unwrap_or(""));
                 match sitemap::discover(&self.client, &base_url).await {
                     Ok(entries) => {
                         let before = frontier.len();
                         for entry in entries {
-                            if self.qualify_link(&entry.url, &visited).is_some() {
-                                let parsed = match Url::parse(&entry.url) {
-                                    Ok(u) => u,
-                                    Err(_) => continue,
-                                };
-                                let norm = normalize(&parsed);
-                                frontier.push((norm, 0));
+                            if let Some(url) = self.qualify_link(&entry.url, &visited) {
+                                frontier.push((url, 0));
                             }
                         }
                         let added = frontier.len() - before;
@@ -367,16 +428,30 @@ impl Crawler {
                 break;
             }
 
-            // Dedup this level's frontier against the visited set and page cap
-            let batch: Vec<(String, usize)> = frontier
-                .drain(..)
-                .filter(|(url, _)| visited.insert(url.clone()))
-                .take(
-                    self.config
-                        .max_pages
-                        .map_or(usize::MAX, |m| m.saturating_sub(completed)),
-                )
-                .collect();
+            let room = self
+                .config
+                .max_pages
+                .map_or(usize::MAX, |m| m.saturating_sub(completed));
+            let mut batch: Vec<(String, usize)> = Vec::new();
+            let mut pending = std::mem::take(&mut frontier).into_iter();
+            while let Some((url, depth)) = pending.next() {
+                if batch.len() >= room || self.is_cancelled() {
+                    frontier.push((url, depth));
+                    frontier.extend(pending);
+                    break;
+                }
+                if visited.contains(&dedup_key(&url)) || denied.contains(&url) {
+                    continue;
+                }
+                if self.config.respect_robots && !self.robots_allow(&url).await {
+                    debug!(url = %url, "skipped: disallowed by robots.txt");
+                    skipped_by_robots += 1;
+                    denied.insert(url);
+                    continue;
+                }
+                visited.insert(dedup_key(&url));
+                batch.push((url, depth));
+            }
 
             if batch.is_empty() {
                 break;
@@ -390,7 +465,6 @@ impl Crawler {
                 let fetcher = Arc::clone(&fetcher);
                 let url = url.clone();
                 let depth = *depth;
-                let delay = self.config.delay;
                 let cancel_flag = self.config.cancel_flag.clone();
 
                 handles.push(crate::transfer::spawn(async move {
@@ -533,7 +607,7 @@ impl Crawler {
                 next_frontier.truncate(keep);
             }
 
-            frontier = next_frontier;
+            frontier.extend(next_frontier);
         }
 
         let total_elapsed = start.elapsed();
@@ -549,6 +623,7 @@ impl Crawler {
             total: completed,
             ok: ok_count,
             errors: err_count,
+            skipped_by_robots,
             elapsed_secs: total_elapsed.as_secs_f64(),
             remaining_frontier: frontier,
             visited,
@@ -622,17 +697,24 @@ impl Crawler {
             return None;
         }
 
-        let normalized = normalize(&parsed);
-
-        if visited.contains(&normalized) {
+        if visited.contains(&normalize(&parsed)) {
             return None;
         }
 
-        Some(normalized)
+        Some(without_fragment(&parsed))
     }
 }
 
 /// Canonical origin string for comparing same-origin: "scheme://host[:port]".
+const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
+
+fn pacing(config: &CrawlConfig, rules: &RobotsRules) -> (usize, Duration) {
+    match rules.crawl_delay {
+        Some(wait) => (1, config.delay.max(wait.min(MAX_CRAWL_DELAY))),
+        None => (config.concurrency, config.delay),
+    }
+}
+
 pub(crate) fn origin_key(url: &Url) -> String {
     let port_suffix = match url.port() {
         Some(p) => format!(":{p}"),
@@ -668,6 +750,16 @@ fn root_domain(url: &Url) -> String {
 
 /// Normalize a URL for dedup: strip fragment, remove trailing slash (except root "/"),
 /// lowercase scheme + host. Preserves query params and path case.
+fn without_fragment(url: &Url) -> String {
+    let mut url = url.clone();
+    url.set_fragment(None);
+    url.to_string()
+}
+
+fn dedup_key(url: &str) -> String {
+    Url::parse(url).map_or_else(|_| url.to_string(), |u| normalize(&u))
+}
+
 pub(crate) fn normalize(url: &Url) -> String {
     let scheme = url.scheme();
     let host = url.host_str().unwrap_or("").to_ascii_lowercase();
@@ -805,6 +897,150 @@ fn glob_match_inner(pat: &[u8], text: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::robots::{RobotsRules, USER_AGENT_TOKEN};
+
+    async fn crawl_site(respect_robots: bool, robots: &str) -> (CrawlResult, Vec<String>) {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                use_sitemap: false,
+                max_depth: 2,
+                delay: Duration::ZERO,
+                respect_robots,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse(robots, USER_AGENT_TOKEN),
+        );
+        let result = crawler
+            .crawl_with_fetcher("https://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    let html = match url.as_str() {
+                        "https://example.com/" => "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/private/report'>Report</a><a href='/public'>Public</a></main>",
+                        _ => "<main><h1>Leaf</h1><p>Leaf content for the crawl.</p></main>",
+                    };
+                    webclaw_core::extract_with_options(html, Some(&url), &Default::default())
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await;
+        let calls = calls.lock().unwrap().clone();
+        (result, calls)
+    }
+
+    #[tokio::test]
+    async fn never_fetches_what_robots_txt_disallows() {
+        let (result, calls) = crawl_site(true, "User-agent: *\nDisallow: /private\n").await;
+        assert_eq!(
+            calls,
+            vec!["https://example.com/", "https://example.com/public"]
+        );
+        assert_eq!(result.skipped_by_robots, 1);
+    }
+
+    #[tokio::test]
+    async fn checks_robots_and_fetches_the_url_as_linked() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                use_sitemap: false,
+                max_depth: 1,
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nDisallow: /lessons/\n", USER_AGENT_TOKEN),
+        );
+        crawler
+            .crawl_with_fetcher("https://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    let html = "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/lessons/'>Lessons</a><a href='/public/#top'>Public</a></main>";
+                    webclaw_core::extract_with_options(html, Some(&url), &Default::default())
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await;
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["https://example.com/", "https://example.com/public/"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_disallowed_variant_does_not_hide_an_allowed_url() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                use_sitemap: false,
+                max_depth: 1,
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nDisallow: /lessons/\n", USER_AGENT_TOKEN),
+        );
+        crawler
+            .crawl_with_fetcher("https://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    let html = "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/lessons/'>Denied</a><a href='/lessons'>Allowed</a></main>";
+                    webclaw_core::extract_with_options(html, Some(&url), &Default::default())
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await;
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["https://example.com/", "https://example.com/lessons"]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetches_disallowed_urls_when_robots_is_ignored() {
+        let (result, calls) = crawl_site(false, "User-agent: *\nDisallow: /\n").await;
+        assert_eq!(calls.len(), 3);
+        assert_eq!(result.skipped_by_robots, 0);
+    }
+
+    #[tokio::test]
+    async fn a_disallowed_seed_fetches_nothing() {
+        let (result, calls) = crawl_site(true, "User-agent: *\nDisallow: /\n").await;
+        assert!(calls.is_empty());
+        assert_eq!(result.skipped_by_robots, 1);
+        assert_eq!(result.total, 0);
+    }
+
+    #[test]
+    fn crawl_delay_serialises_requests_and_stretches_the_delay() {
+        let config = CrawlConfig {
+            concurrency: 5,
+            delay: Duration::from_millis(100),
+            ..Default::default()
+        };
+        let mut rules = RobotsRules::allow_all();
+        assert_eq!(pacing(&config, &rules), (5, Duration::from_millis(100)));
+        rules.crawl_delay = Some(Duration::from_secs(2));
+        assert_eq!(pacing(&config, &rules), (1, Duration::from_secs(2)));
+        rules.crawl_delay = Some(Duration::from_secs(3600));
+        assert_eq!(pacing(&config, &rules), (1, MAX_CRAWL_DELAY));
+    }
 
     #[tokio::test]
     async fn cancellation_retains_all_already_started_successful_results() {
@@ -816,6 +1052,7 @@ mod tests {
             CrawlConfig {
                 cancel_flag: Some(stopped),
                 use_sitemap: false,
+                respect_robots: false,
                 concurrency: 3,
                 delay: Duration::ZERO,
                 ..Default::default()
@@ -871,6 +1108,7 @@ mod tests {
                 use_sitemap: false,
                 max_depth: 2,
                 delay: Duration::ZERO,
+                respect_robots: false,
                 ..Default::default()
             },
         )

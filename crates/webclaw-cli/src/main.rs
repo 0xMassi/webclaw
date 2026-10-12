@@ -306,6 +306,10 @@ struct Cli {
     #[arg(long)]
     crawl_state: Option<PathBuf>,
 
+    /// Crawl URLs that robots.txt disallows, and ignore its Crawl-delay
+    #[arg(long)]
+    ignore_robots: bool,
+
     /// Seed crawl frontier from sitemap discovery (robots.txt + /sitemap.xml)
     #[arg(long)]
     sitemap: bool,
@@ -1543,6 +1547,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         cancel_flag: Some(Arc::clone(&cancel_flag)),
         allow_subdomains: false,
         allow_external_links: false,
+        respect_robots: !cli.ignore_robots,
     };
 
     // Load resume state if --crawl-state file exists
@@ -1635,6 +1640,12 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         "Crawled {} pages ({} ok, {} errors) in {:.1}s",
         result.total, result.ok, result.errors, result.elapsed_secs,
     );
+    if result.skipped_by_robots > 0 {
+        eprintln!(
+            "Skipped {} URLs disallowed by robots.txt (--ignore-robots to crawl them)",
+            result.skipped_by_robots
+        );
+    }
 
     // Fire webhook on crawl complete
     if let Some(ref webhook_url) = cli.webhook {
@@ -1646,6 +1657,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 "total": result.total,
                 "ok": result.ok,
                 "errors": result.errors,
+                "skipped_by_robots": result.skipped_by_robots,
                 "elapsed_secs": result.elapsed_secs,
                 "urls": urls,
             }),

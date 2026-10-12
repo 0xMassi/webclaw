@@ -25,7 +25,7 @@ mod xml;
 
 pub use browser::BrowserProfile;
 pub use client::{BatchExtractResult, BatchResult, FetchClient, FetchConfig, FetchResult};
-pub use crawler::{CrawlConfig, CrawlResult, CrawlState, Crawler, PageResult};
+pub use crawler::{CrawlConfig, CrawlResult, CrawlState, Crawler, PageResult, PageSink};
 pub use error::FetchError;
 pub use fetcher::Fetcher;
 pub use http::HeaderMap;

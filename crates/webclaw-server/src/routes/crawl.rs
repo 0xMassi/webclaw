@@ -64,6 +64,8 @@ pub async fn crawl(
         progress_tx: None,
         cancel_flag: None,
         respect_robots: !req.ignore_robots,
+        checkpoint: None,
+        on_page: None,
     };
 
     let crawler = Crawler::new(url.as_str(), config).map_err(ApiError::from)?;

@@ -1,6 +1,7 @@
 """Crawl benchmark orchestrator, driven by ../crawl.sh. Runs under .work/venv-base (needs psutil).
 
-usage: crawl.py <label> [rounds]
+usage: crawl.py <label> [rounds]      crawl, then score
+       crawl.py <label> --rescore     score the saved outputs again
 Every arm crawls every site in SITES with the same page cap, depth and concurrency, all obeying robots.txt.
 """
 import json, os, statistics, subprocess, sys, time
@@ -42,31 +43,49 @@ def run_arm(arm, site, out):
     return time.time() - start, peak / 2**20
 
 
+def robots_judge(site):
+    origin = f"https://{urlparse(site['seed']).netloc}"
+    r = subprocess.run([os.environ["WEBCLAW_BIN"], f"{origin}/robots.txt", "--raw-html"],
+                       capture_output=True, text=True)
+    judge = RobotFileParser()
+    judge.parse(r.stdout.splitlines() if r.returncode == 0 else [])
+    return judge
+
+
+def score(row, out, judge):
+    pages = json.loads(out.read_text())["pages"] if out.exists() else []
+    urls = [norm(p["url"]) for p in pages]
+    row.update(pages=len(pages), ok=sum(p["ok"] for p in pages), duplicates=len(urls) - len(set(urls)),
+               disallowed=sum(p["ok"] and not judge.can_fetch("*", p["url"]) for p in pages))
+    return row
+
+
 def main(label, rounds):
     res = ROOT / "results" / label
     res.mkdir(parents=True, exist_ok=True)
+    rescore = rounds is None
+    saved = {(r["site"], r["arm"], r["round"]): r for r in map(json.loads, open(res / "crawl-rows.jsonl"))} if rescore else {}
     rows = []
     for site in SITES:
-        robots = RobotFileParser(f"https://{urlparse(site['seed']).netloc}/robots.txt")
-        robots.read()
-        for rnd in range(rounds):
+        judge = robots_judge(site)
+        for rnd in range(rounds or 1 + max(k[2] for k in saved)):
             for arm in ARM_VENV:
                 out = WORK / "crawl-out" / label / f"{site['name']}-{arm}-{rnd}.json"
-                out.parent.mkdir(parents=True, exist_ok=True)
-                secs, peak_mb = run_arm(arm, site, out)
-                pages = json.loads(out.read_text())["pages"] if out.exists() else []
-                urls = [norm(p["url"]) for p in pages]
-                row = {"site": site["name"], "arm": arm, "round": rnd, "seconds": round(secs, 2),
-                       "peak_mb": round(peak_mb), "pages": len(pages), "ok": sum(p["ok"] for p in pages),
-                       "duplicates": len(urls) - len(set(urls)),
-                       "disallowed": sum(p["ok"] and not robots.can_fetch("*", p["url"]) for p in pages)}
-                rows.append(row)
+                if rescore:
+                    row = saved[(site["name"], arm, rnd)]
+                else:
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    secs, peak_mb = run_arm(arm, site, out)
+                    row = {"site": site["name"], "arm": arm, "round": rnd, "seconds": round(secs, 2),
+                           "peak_mb": round(peak_mb)}
+                rows.append(score(row, out, judge))
                 print(json.dumps(row), flush=True)
     (res / "crawl-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     lines = [f"# Crawl benchmark {label}", "",
              f"Each arm crawls each site with the same page cap and depth, concurrency {CONCURRENCY}, "
              "robots.txt obeyed. Medians over rounds. `disallowed` counts fetched URLs that the site's "
              "robots.txt disallows and that returned content, judged by Python's urllib.robotparser.", "",
+             "`pages ok` can exceed the cap when a tool does not enforce it.", "",
              "| site | arm | rounds | pages ok | seconds | pages/s | peak MB | duplicates | disallowed |",
              "|---|---|---:|---:|---:|---:|---:|---:|---:|"]
     for site in SITES:
@@ -81,4 +100,5 @@ def main(label, rounds):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 3)
+    arg = sys.argv[2] if len(sys.argv) > 2 else "3"
+    main(sys.argv[1], None if arg == "--rescore" else int(arg))

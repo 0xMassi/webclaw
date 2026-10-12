@@ -180,6 +180,8 @@ webclaw https://example.com \
 webclaw https://docs.rust-lang.org --crawl --depth 2 --max-pages 50
 ```
 
+The crawler follows the site's robots.txt: it skips disallowed URLs and honours `Crawl-delay`. Pass `--ignore-robots` to turn that off.
+
 ### Workflow examples
 
 - [HTML to Markdown for RAG](examples/html-to-markdown-rag/)

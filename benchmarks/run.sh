@@ -30,5 +30,5 @@ venv crawl4ai crawl4ai==0.9.4
 rm -rf "results/$label" ".work/out/$label"
 .work/venv-base/bin/python scripts/run.py run "$label" "$runs"
 for v in base scrapling crawl4ai; do uv pip list -p ".work/venv-$v" 2>/dev/null; done \
-  | grep -iE '^(trafilatura|tiktoken|scrapling|curl.cffi|markdownify|crawl4ai|playwright) ' | sort -u > "results/$label/versions.txt"
+  | grep -iE '^(trafilatura|tiktoken|scrapling|curl.cffi|markdownify|crawl4ai|playwright) ' | awk '{print $1, $2}' | sort -u > "results/$label/versions.txt"
 .work/venv-base/bin/python scripts/run.py summary "$label"

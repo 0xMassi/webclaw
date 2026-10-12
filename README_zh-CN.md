@@ -429,13 +429,13 @@ URL:
 <table>
   <tr>
     <td width="340" align="center">
-      <a href="https://go.nodemaven.com/webclawrmaugust">
-        <img src="./assets/sponsors/nodemaven-banner.png" alt="NodeMaven" width="300" />
+      <a href="https://go.nodemaven.com/webclawGHsept">
+        <img src="./assets/sponsors/nodemaven-banner-20260923.png" alt="NodeMaven" width="300" />
       </a>
     </td>
     <td>
-      <p><a href="https://go.nodemaven.com/webclawrmaugust"><strong>NodeMaven</strong></a>：最高效的网页抓取与自动化代理服务商，提供市场上最高质量的 IP。</p>
-      <p><a href="https://go.nodemaven.com/webclawrmaugust"><strong>为什么选择 NodeMaven？</strong></a></p>
+      <p><a href="https://go.nodemaven.com/webclawGHsept"><strong>NodeMaven</strong></a>：最高效的网页抓取与自动化代理服务商，提供市场上最高质量的 IP。</p>
+      <p><a href="https://go.nodemaven.com/webclawGHsept"><strong>为什么选择 NodeMaven？</strong></a></p>
       <ul>
         <li>邮政编码定位</li>
         <li>99.9% 在线率</li>

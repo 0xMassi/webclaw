@@ -499,14 +499,15 @@ pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
 
 /// Whether a page fetched over HTTP probably needs a browser to show its
 /// content: it loads scripts, and it has almost no text (under 50 words), or
-/// little text (under 200 words) next to an empty app root or a `<noscript>`
+/// little text (under 200 words) next to an empty app root (`<div id="root"></div>`) or a `<noscript>`
 /// asking for JavaScript. Bundle names alone never count, so server-rendered
 /// pages that also ship scripts are left alone.
 pub fn needs_js_rendering(word_count: usize, html: &str) -> bool {
     if !contains_ignore_case(html, "<script") {
         return false;
     }
-    word_count < 50 || (word_count < 200 && (has_app_root(html) || noscript_asks_for_js(html)))
+    word_count < 50
+        || (word_count < 200 && (has_empty_app_root(html) || noscript_asks_for_js(html)))
 }
 
 fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
@@ -516,7 +517,8 @@ fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
         .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
-fn has_app_root(html: &str) -> bool {
+fn has_empty_app_root(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
     [
         "id=\"root\"",
         "id=\"app\"",
@@ -525,11 +527,15 @@ fn has_app_root(html: &str) -> bool {
         "id=\"___gatsby\"",
         "id='root'",
         "id='app'",
-        "ng-app",
-        "data-reactroot",
     ]
     .iter()
-    .any(|marker| contains_ignore_case(html, marker))
+    .any(|marker| {
+        lower.match_indices(marker).any(|(at, _)| {
+            lower[at..]
+                .split_once('>')
+                .is_some_and(|(_, inner)| inner.trim_start().starts_with("</"))
+        })
+    })
 }
 
 fn noscript_asks_for_js(html: &str) -> bool {
@@ -604,12 +610,14 @@ pub async fn smart_fetch(
         *issue != webclaw_core::quality::ContentIssue::Empty
             || !webclaw_core::quality::allows_empty_content(&fetch_result.html, &options)
     });
-    if issue.is_some()
-        || (include_selectors.is_empty()
-            && exclude_selectors.is_empty()
-            && !only_main_content
-            && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html))
-    {
+    let looks_unrendered = include_selectors.is_empty()
+        && exclude_selectors.is_empty()
+        && !only_main_content
+        && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html);
+    if issue.is_none() && looks_unrendered && cloud.is_none() {
+        return Ok(SmartFetchResult::Local(Box::new(extraction)));
+    }
+    if issue.is_some() || looks_unrendered {
         info!(
             url,
             word_count = extraction.metadata.word_count,
@@ -935,6 +943,60 @@ mod tests {
             "parola ".repeat(80)
         );
         assert!(needs_js_rendering(80, &accented));
+    }
+
+    struct StaticPage(&'static str);
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for StaticPage {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            Ok(crate::client::FetchResult {
+                html: self.0.to_string(),
+                document_bytes: None,
+                status: 200,
+                url: url.to_string(),
+                headers: http::HeaderMap::new(),
+                elapsed: std::time::Duration::ZERO,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_keeps_local_content_without_a_cloud_key() {
+        let page = StaticPage(
+            "<html><body><noscript>Please enable JavaScript.</noscript><main><h1>Plans</h1><p>Starter costs ten dollars a month and includes five projects with unlimited members and email support for every workspace on the plan.</p></main><script src=\"/app.js\"></script></body></html>",
+        );
+        let result = smart_fetch(
+            &page,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .expect("local extraction should be returned");
+        assert!(
+            matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("Starter costs"))
+        );
+    }
+
+    #[test]
+    fn needs_js_rendering_ignores_a_populated_app_root() {
+        let ssr = format!(
+            "<html><body><div id=\"app\"><main><h1>Docs</h1><p>{}</p></main></div><script src=\"/app.js\"></script></body></html>",
+            "short server rendered text ".repeat(30)
+        );
+        assert!(!needs_js_rendering(120, &ssr));
+        let empty = format!(
+            "<html><body><nav>{}</nav><div id=\"app\">\n  </div><script src=\"/app.js\"></script></body></html>",
+            "menu ".repeat(120)
+        );
+        assert!(needs_js_rendering(120, &empty));
     }
 
     #[test]

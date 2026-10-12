@@ -257,6 +257,9 @@ const HIDDEN_TEXT_CEILING: usize = 5000;
 
 fn is_hidden(el: ElementRef<'_>) -> bool {
     let v = el.value();
+    if v.attr("role") == Some("tabpanel") {
+        return false;
+    }
     if v.name() == "template"
         || v.attr("hidden")
             .is_some_and(|h| !h.eq_ignore_ascii_case("until-found"))
@@ -639,6 +642,9 @@ mod hidden_tests {
         for visible in [
             r#"<div hidden="until-found"><p>Expandable answer text</p></div>"#,
             r#"<p aria-hidden="false">Expandable answer text</p>"#,
+            r#"<div role="tabpanel" aria-hidden="true" inert><p>Expandable answer text</p></div>"#,
+            r#"<div role="tabpanel" hidden><p>Expandable answer text</p></div>"#,
+            r#"<div role="tabpanel" style="display:none"><p>Expandable answer text</p></div>"#,
         ] {
             let (markdown, llm) = outputs(visible);
             assert!(

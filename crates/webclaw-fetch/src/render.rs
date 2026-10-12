@@ -294,14 +294,26 @@ fn response_headers(headers: &http::HeaderMap) -> Vec<HeaderEntry> {
         .filter(|(name, _)| {
             !matches!(
                 name.as_str(),
-                "content-encoding" | "content-length" | "transfer-encoding" | "connection"
+                "content-encoding"
+                    | "content-length"
+                    | "transfer-encoding"
+                    | "connection"
+                    | "content-type"
             )
         })
         .filter_map(|(name, value)| Some(HeaderEntry::new(name.as_str(), value.to_str().ok()?)))
         .collect();
-    if !headers.contains_key(http::header::CONTENT_TYPE) {
-        entries.push(HeaderEntry::new("content-type", "text/html; charset=utf-8"));
-    }
+    let mime = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("text/html");
+    entries.push(HeaderEntry::new(
+        "content-type",
+        format!("{mime}; charset=utf-8"),
+    ));
     entries
 }
 
@@ -411,7 +423,17 @@ mod tests {
         headers.append("set-cookie", "a=1".parse().unwrap());
         headers.append("set-cookie", "b=2".parse().unwrap());
         headers.insert("content-encoding", "br".parse().unwrap());
+        headers.insert(
+            "content-type",
+            "text/html; charset=iso-8859-1".parse().unwrap(),
+        );
         let entries = super::response_headers(&headers);
+        let types: Vec<_> = entries
+            .iter()
+            .filter(|e| e.name == "content-type")
+            .collect();
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].value, "text/html; charset=utf-8");
         let cookies: Vec<_> = entries.iter().filter(|e| e.name == "set-cookie").collect();
         assert_eq!(cookies.len(), 2);
         assert!(!entries.iter().any(|e| e.name == "content-encoding"));

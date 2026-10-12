@@ -2,11 +2,10 @@
 
 use std::time::{Duration, Instant};
 
+use chromiumoxide::auth::Credentials;
 use chromiumoxide::browser::{Browser, BrowserConfig, HeadlessMode};
 use chromiumoxide::cdp::browser_protocol::fetch::{
-    AuthChallengeResponse, AuthChallengeResponseResponse, ContinueRequestParams,
-    ContinueWithAuthParams, EnableParams, EventAuthRequired, EventRequestPaused, FailRequestParams,
-    FulfillRequestParams, HeaderEntry,
+    ContinueRequestParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType, SetCookieParams};
 use futures_util::StreamExt;
@@ -73,6 +72,9 @@ impl Renderer {
         ));
         let mut config = BrowserConfig::builder()
             .headless_mode(HeadlessMode::New)
+            .enable_request_intercept()
+            .arg("--disable-background-networking")
+            .arg("--disable-component-update")
             .user_data_dir(&profile);
         let installed = std::env::var("WEBCLAW_CHROME").ok().or_else(|| {
             INSTALL_PATHS
@@ -114,7 +116,13 @@ impl Renderer {
     /// Use a browser that is already running with its DevTools endpoint at
     /// `cdp_url` (`ws://...` or `http://host:port`). Its own proxy settings apply.
     pub async fn connect(cdp_url: &str) -> Result<Self, FetchError> {
-        let (browser, handler) = Browser::connect(cdp_url).await.map_err(browser_error)?;
+        let config = chromiumoxide::handler::HandlerConfig {
+            request_intercept: true,
+            ..Default::default()
+        };
+        let (browser, handler) = Browser::connect_with_config(cdp_url, config)
+            .await
+            .map_err(browser_error)?;
         Ok(Self::start(browser, handler, None, None))
     }
 
@@ -180,17 +188,14 @@ impl Renderer {
             .event_listener::<EventRequestPaused>()
             .await
             .map_err(browser_error)?;
-        let mut auth = page
-            .event_listener::<EventAuthRequired>()
+        if let Some((username, password)) = &self.proxy_login {
+            page.authenticate(Credentials {
+                username: username.clone(),
+                password: password.clone(),
+            })
             .await
             .map_err(browser_error)?;
-        page.execute(
-            EnableParams::builder()
-                .handle_auth_requests(self.proxy_login.is_some())
-                .build(),
-        )
-        .await
-        .map_err(browser_error)?;
+        }
 
         let mut main_document =
             prefetched.map(|p| (base64(p.html.as_bytes()), response_headers(p.headers)));
@@ -231,31 +236,6 @@ impl Renderer {
                 let _ = guard_page.execute(resume).await;
             }
         });
-        let login = self.proxy_login.clone();
-        let auth_page = page.clone();
-        let auth_guard = tokio::spawn(async move {
-            while let Some(event) = auth.next().await {
-                let response = match &login {
-                    Some((user, pass)) => AuthChallengeResponse {
-                        response: AuthChallengeResponseResponse::ProvideCredentials,
-                        username: Some(user.clone()),
-                        password: Some(pass.clone()),
-                    },
-                    None => AuthChallengeResponse {
-                        response: AuthChallengeResponseResponse::CancelAuth,
-                        username: None,
-                        password: None,
-                    },
-                };
-                let _ = auth_page
-                    .execute(ContinueWithAuthParams::new(
-                        event.request_id.clone(),
-                        response,
-                    ))
-                    .await;
-            }
-        });
-
         let outcome = tokio::time::timeout(options.timeout, async {
             page.goto(url.as_str()).await?;
             page.wait_for_network_almost_idle_with_timeout(options.timeout / 3)
@@ -270,7 +250,6 @@ impl Renderer {
         })
         .await;
         guard.abort();
-        auth_guard.abort();
         let _ = page.close().await;
 
         let (html, final_url) = outcome
@@ -371,6 +350,46 @@ fn browser_error(e: impl std::fmt::Display) -> FetchError {
 
 #[cfg(test)]
 mod tests {
+    use super::{Prefetched, RenderOptions, Renderer};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_rendered_page_cannot_reach_loopback() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counted = hits.clone();
+        tokio::spawn(async move {
+            while listener.accept().await.is_ok() {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let html = format!(
+            r#"<html><body><p id="msg">rendered</p><img src="http://127.0.0.1:{port}/img"><script>fetch("http://127.0.0.1:{port}/xhr").catch(() => {{}}); document.getElementById("msg").textContent = "scripts ran";</script></body></html>"#
+        );
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let rendered = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: &html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        let rendered = rendered.expect("render succeeds");
+        assert!(rendered.html.contains("scripts ran"), "{}", rendered.html);
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "the page reached loopback");
+    }
+
     #[test]
     fn base64_matches_the_rfc_vectors() {
         for (input, encoded) in [

@@ -4,12 +4,13 @@ use std::time::{Duration, Instant};
 
 use chromiumoxide::browser::{Browser, BrowserConfig, HeadlessMode};
 use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
+    AuthChallengeResponse, AuthChallengeResponseResponse, ContinueRequestParams,
+    ContinueWithAuthParams, EnableParams, EventAuthRequired, EventRequestPaused, FailRequestParams,
     FulfillRequestParams, HeaderEntry,
 };
-use chromiumoxide::cdp::browser_protocol::network::ErrorReason;
-use chromiumoxide::cdp::browser_protocol::network::ResourceType;
+use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType, SetCookieParams};
 use futures_util::StreamExt;
+use url::Url;
 
 use crate::client::FetchResult;
 use crate::error::FetchError;
@@ -21,6 +22,10 @@ pub struct RenderOptions {
     pub wait_for: Option<String>,
     /// Upper bound for navigating, waiting and reading the page.
     pub timeout: Duration,
+    /// Headers added to the page's requests to its own origin, such as
+    /// `Authorization` or `Accept-Language`. A `Cookie` header is set as
+    /// cookies for the page's URL instead.
+    pub headers: Vec<(String, String)>,
 }
 
 impl Default for RenderOptions {
@@ -28,8 +33,16 @@ impl Default for RenderOptions {
         Self {
             wait_for: None,
             timeout: Duration::from_secs(30),
+            headers: Vec::new(),
         }
     }
+}
+
+/// A page already fetched over HTTP, handed to the browser so it does not
+/// request the document a second time.
+pub struct Prefetched<'a> {
+    pub html: &'a str,
+    pub headers: &'a http::HeaderMap,
 }
 
 /// A Chrome that renders pages so their JavaScript-built content can be extracted.
@@ -41,14 +54,16 @@ pub struct Renderer {
     browser: Browser,
     events: tokio::task::JoinHandle<()>,
     profile: Option<std::path::PathBuf>,
+    proxy_login: Option<(String, String)>,
 }
 
 impl Renderer {
     /// Launch a local headless Chrome with a throwaway profile, so several
-    /// webclaw processes can render at once. `WEBCLAW_CHROME` points at the
-    /// executable; without it the standard install locations are tried, then
-    /// the browsers on `PATH`.
-    pub async fn launch() -> Result<Self, FetchError> {
+    /// webclaw processes can render at once. `proxy` is an `http://` or
+    /// `https://` proxy URL, credentials included. `WEBCLAW_CHROME` points at
+    /// the executable; without it the standard install locations are tried,
+    /// then the browsers on `PATH`.
+    pub async fn launch(proxy: Option<&str>) -> Result<Self, FetchError> {
         let profile = std::env::temp_dir().join(format!(
             "webclaw-chrome-{}-{}",
             std::process::id(),
@@ -68,6 +83,23 @@ impl Renderer {
         if let Some(path) = installed {
             config = config.chrome_executable(path);
         }
+        let mut proxy_login = None;
+        if let Some(proxy) = proxy {
+            let parsed = Url::parse(proxy)
+                .map_err(|_| FetchError::Build("invalid proxy for the browser".into()))?;
+            let host = parsed.host_str().unwrap_or_default();
+            let port = parsed.port_or_known_default().unwrap_or(80);
+            config = config.arg(format!(
+                "--proxy-server={}://{host}:{port}",
+                parsed.scheme()
+            ));
+            if !parsed.username().is_empty() {
+                proxy_login = Some((
+                    percent_decode(parsed.username()),
+                    percent_decode(parsed.password().unwrap_or_default()),
+                ));
+            }
+        }
         let config = config.build().map_err(browser_error)?;
         let (browser, handler) = match Browser::launch(config).await {
             Ok(launched) => launched,
@@ -76,20 +108,21 @@ impl Renderer {
                 return Err(browser_error(e));
             }
         };
-        Ok(Self::start(browser, handler, Some(profile)))
+        Ok(Self::start(browser, handler, Some(profile), proxy_login))
     }
 
     /// Use a browser that is already running with its DevTools endpoint at
-    /// `cdp_url` (`ws://...` or `http://host:port`).
+    /// `cdp_url` (`ws://...` or `http://host:port`). Its own proxy settings apply.
     pub async fn connect(cdp_url: &str) -> Result<Self, FetchError> {
         let (browser, handler) = Browser::connect(cdp_url).await.map_err(browser_error)?;
-        Ok(Self::start(browser, handler, None))
+        Ok(Self::start(browser, handler, None, None))
     }
 
     fn start(
         browser: Browser,
         mut handler: chromiumoxide::Handler,
         profile: Option<std::path::PathBuf>,
+        proxy_login: Option<(String, String)>,
     ) -> Self {
         let events = tokio::spawn(async move {
             while let Some(event) = handler.next().await {
@@ -102,74 +135,124 @@ impl Renderer {
             browser,
             events,
             profile,
+            proxy_login,
         }
     }
 
     /// Render `url` and return the DOM after its scripts ran. The result has
     /// status 200 and no headers; extract it with [`crate::FetchClient::extract`].
     ///
-    /// With `html`, the browser gets that body for the page itself instead of
-    /// requesting it again, so a page already fetched over HTTP costs only
-    /// its scripts and other subresources.
+    /// With `prefetched`, the browser gets that response for the page itself
+    /// (body and headers, `Set-Cookie` included) instead of requesting it
+    /// again, so a page already fetched over HTTP costs only its scripts and
+    /// other subresources.
     pub async fn render(
         &self,
         url: &str,
-        html: Option<&str>,
+        prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
     ) -> Result<FetchResult, FetchError> {
         let start = Instant::now();
-        let url = crate::url_security::validate_public_http_url(url)
-            .await?
-            .to_string();
+        let target = crate::url_security::validate_public_http_url(url).await?;
+        let url = target.to_string();
         let page = self
             .browser
             .new_page("about:blank")
             .await
             .map_err(browser_error)?;
+
+        let mut extra = Vec::new();
+        for (name, value) in &options.headers {
+            if name.eq_ignore_ascii_case("cookie") {
+                for pair in value.split(';') {
+                    if let Some((cookie, cookie_value)) = pair.trim().split_once('=') {
+                        let mut set = SetCookieParams::new(cookie.trim(), cookie_value.trim());
+                        set.url = Some(url.clone());
+                        page.execute(set).await.map_err(browser_error)?;
+                    }
+                }
+            } else {
+                extra.push((name.clone(), value.clone()));
+            }
+        }
+
         let mut paused = page
             .event_listener::<EventRequestPaused>()
             .await
             .map_err(browser_error)?;
-        page.execute(EnableParams::default())
+        let mut auth = page
+            .event_listener::<EventAuthRequired>()
             .await
             .map_err(browser_error)?;
+        page.execute(
+            EnableParams::builder()
+                .handle_auth_requests(self.proxy_login.is_some())
+                .build(),
+        )
+        .await
+        .map_err(browser_error)?;
+
+        let mut main_document =
+            prefetched.map(|p| (base64(p.html.as_bytes()), response_headers(p.headers)));
+        let origin = target.origin();
         let guard_page = page.clone();
-        let mut prefetched = html.map(|body| (url.clone(), base64(body.as_bytes())));
         let guard = tokio::spawn(async move {
             while let Some(event) = paused.next().await {
-                let target = event.request.url.as_str();
+                let request_url = event.request.url.as_str();
+                let id = event.request_id.clone();
                 if event.resource_type == ResourceType::Document
-                    && prefetched.as_ref().is_some_and(|(main, _)| main == target)
-                    && let Some((_, body)) = prefetched.take()
+                    && request_url == target.as_str()
+                    && let Some((body, headers)) = main_document.take()
                     && let Ok(fulfill) = FulfillRequestParams::builder()
-                        .request_id(event.request_id.clone())
+                        .request_id(id.clone())
                         .response_code(200)
-                        .response_header(HeaderEntry::new(
-                            "content-type",
-                            "text/html; charset=utf-8",
-                        ))
+                        .response_headers(headers)
                         .body(body)
                         .build()
                 {
                     let _ = guard_page.execute(fulfill).await;
                     continue;
                 }
-                let allowed = !target.starts_with("http")
-                    || crate::url_security::validate_public_http_url(target)
+                let parsed = Url::parse(request_url).ok();
+                let allowed = !request_url.starts_with("http")
+                    || crate::url_security::validate_public_http_url(request_url)
                         .await
                         .is_ok();
-                let id = event.request_id.clone();
-                let _ = if allowed {
-                    guard_page
-                        .execute(ContinueRequestParams::new(id))
-                        .await
-                        .map(drop)
-                } else {
-                    guard_page
+                if !allowed {
+                    let _ = guard_page
                         .execute(FailRequestParams::new(id, ErrorReason::BlockedByClient))
-                        .await
-                        .map(drop)
+                        .await;
+                    continue;
+                }
+                let mut resume = ContinueRequestParams::new(id);
+                if !extra.is_empty() && parsed.is_some_and(|u| u.origin() == origin) {
+                    resume.headers = Some(merged_headers(event.request.headers.inner(), &extra));
+                }
+                let _ = guard_page.execute(resume).await;
+            }
+        });
+        let login = self.proxy_login.clone();
+        let auth_page = page.clone();
+        let auth_guard = tokio::spawn(async move {
+            while let Some(event) = auth.next().await {
+                let response = match &login {
+                    Some((user, pass)) => AuthChallengeResponse {
+                        response: AuthChallengeResponseResponse::ProvideCredentials,
+                        username: Some(user.clone()),
+                        password: Some(pass.clone()),
+                    },
+                    None => AuthChallengeResponse {
+                        response: AuthChallengeResponseResponse::CancelAuth,
+                        username: None,
+                        password: None,
+                    },
                 };
+                let _ = auth_page
+                    .execute(ContinueWithAuthParams::new(
+                        event.request_id.clone(),
+                        response,
+                    ))
+                    .await;
             }
         });
 
@@ -187,6 +270,7 @@ impl Renderer {
         })
         .await;
         guard.abort();
+        auth_guard.abort();
         let _ = page.close().await;
 
         let (html, final_url) = outcome
@@ -225,6 +309,45 @@ const INSTALL_PATHS: &[&str] = &[
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
 ];
 
+fn response_headers(headers: &http::HeaderMap) -> Vec<HeaderEntry> {
+    let mut entries: Vec<HeaderEntry> = headers
+        .iter()
+        .filter(|(name, _)| {
+            !matches!(
+                name.as_str(),
+                "content-encoding" | "content-length" | "transfer-encoding" | "connection"
+            )
+        })
+        .filter_map(|(name, value)| Some(HeaderEntry::new(name.as_str(), value.to_str().ok()?)))
+        .collect();
+    if !headers.contains_key(http::header::CONTENT_TYPE) {
+        entries.push(HeaderEntry::new("content-type", "text/html; charset=utf-8"));
+    }
+    entries
+}
+
+fn merged_headers(original: &serde_json::Value, extra: &[(String, String)]) -> Vec<HeaderEntry> {
+    let mut entries: Vec<HeaderEntry> = original
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(name, _)| !extra.iter().any(|(e, _)| e.eq_ignore_ascii_case(name)))
+        .filter_map(|(name, value)| Some(HeaderEntry::new(name.as_str(), value.as_str()?)))
+        .collect();
+    entries.extend(
+        extra
+            .iter()
+            .map(|(n, v)| HeaderEntry::new(n.as_str(), v.as_str())),
+    );
+    entries
+}
+
+fn percent_decode(text: &str) -> String {
+    url::form_urlencoded::parse(format!("x={}", text.replace('+', "%2B")).as_bytes())
+        .next()
+        .map_or_else(|| text.to_string(), |(_, v)| v.into_owned())
+}
+
 fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -261,5 +384,44 @@ mod tests {
         ] {
             assert_eq!(super::base64(input.as_bytes()), encoded);
         }
+    }
+
+    #[test]
+    fn prefetched_headers_keep_cookies_and_drop_transfer_encoding() {
+        let mut headers = http::HeaderMap::new();
+        headers.append("set-cookie", "a=1".parse().unwrap());
+        headers.append("set-cookie", "b=2".parse().unwrap());
+        headers.insert("content-encoding", "br".parse().unwrap());
+        let entries = super::response_headers(&headers);
+        let cookies: Vec<_> = entries.iter().filter(|e| e.name == "set-cookie").collect();
+        assert_eq!(cookies.len(), 2);
+        assert!(!entries.iter().any(|e| e.name == "content-encoding"));
+        assert!(entries.iter().any(|e| e.name == "content-type"));
+    }
+
+    #[test]
+    fn extra_headers_override_the_originals() {
+        let original = serde_json::json!({"accept-language": "fr", "user-agent": "x"});
+        let merged = super::merged_headers(
+            &original,
+            &[
+                ("Accept-Language".into(), "it-IT".into()),
+                ("Authorization".into(), "Bearer t".into()),
+            ],
+        );
+        assert!(
+            merged
+                .iter()
+                .any(|e| e.name == "Accept-Language" && e.value == "it-IT")
+        );
+        assert!(!merged.iter().any(|e| e.value == "fr"));
+        assert!(merged.iter().any(|e| e.name == "user-agent"));
+        assert!(merged.iter().any(|e| e.name == "Authorization"));
+    }
+
+    #[test]
+    fn proxy_credentials_are_percent_decoded() {
+        assert_eq!(super::percent_decode("p%40ss%3Aword"), "p@ss:word");
+        assert_eq!(super::percent_decode("plain"), "plain");
     }
 }

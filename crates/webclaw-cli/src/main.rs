@@ -150,7 +150,7 @@ fn warn_empty(url: &str, reason: &EmptyReason) {
 }
 
 #[derive(Parser)]
-#[command(name = "webclaw", about = "Extract web content for LLMs", version)]
+#[command(name = "webclaw", about = "Extract web content for LLMs", version = VERSION)]
 struct Cli {
     /// Optional subcommand. When omitted, the CLI falls back to the
     /// traditional flag-based flow (URL + --format, --crawl, etc.).
@@ -945,6 +945,11 @@ fn cloud_scrape_format(cli: &Cli) -> &'static str {
 /// Fetch a URL and extract content, handling PDF detection automatically.
 /// Falls back to cloud API when bot protection or JS rendering is detected.
 const BROWSER_BUILD: bool = cfg!(feature = "browser");
+const VERSION: &str = if BROWSER_BUILD {
+    concat!(env!("CARGO_PKG_VERSION"), " +browser")
+} else {
+    env!("CARGO_PKG_VERSION")
+};
 
 fn needs_rendering(
     fetched: &FetchResult,
@@ -974,24 +979,45 @@ fn better_extraction(
 }
 
 #[cfg(feature = "browser")]
-async fn render_page(cli: &Cli, url: &str, html: Option<&str>) -> Result<FetchResult, String> {
-    use webclaw_fetch::render::{RenderOptions, Renderer};
+async fn render_page(
+    cli: &Cli,
+    url: &str,
+    prefetched: Option<&FetchResult>,
+) -> Result<FetchResult, String> {
+    use webclaw_fetch::render::{Prefetched, RenderOptions, Renderer};
+    let config = build_fetch_config(cli);
+    let pick = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos() as usize);
+    let proxy = config.proxy.clone().or_else(|| {
+        (!config.proxy_pool.is_empty())
+            .then(|| config.proxy_pool[pick % config.proxy_pool.len()].clone())
+    });
     let renderer = match &cli.cdp_url {
         Some(endpoint) => Renderer::connect(endpoint).await,
-        None => Renderer::launch().await,
+        None => Renderer::launch(proxy.as_deref()).await,
     }
     .map_err(|e| format!("render error: {e}"))?;
     let options = RenderOptions {
         wait_for: cli.wait_for.clone(),
         timeout: std::time::Duration::from_secs(cli.timeout),
+        headers: config.headers.into_iter().collect(),
     };
-    let rendered = renderer.render(url, html, &options).await;
+    let prefetched = prefetched.map(|f| Prefetched {
+        html: &f.html,
+        headers: &f.headers,
+    });
+    let rendered = renderer.render(url, prefetched, &options).await;
     renderer.close().await;
     rendered.map_err(|e| format!("render error: {e}"))
 }
 
 #[cfg(not(feature = "browser"))]
-async fn render_page(_cli: &Cli, _url: &str, _html: Option<&str>) -> Result<FetchResult, String> {
+async fn render_page(
+    _cli: &Cli,
+    _url: &str,
+    _prefetched: Option<&FetchResult>,
+) -> Result<FetchResult, String> {
     Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
@@ -1060,7 +1086,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         let extracted = client.extract(&fetched, &options);
         if cli.render == RenderMode::Auto && BROWSER_BUILD && needs_rendering(&fetched, &extracted)
         {
-            let render = render_page(cli, &fetched.url, Some(&fetched.html));
+            let render = render_page(cli, &fetched.url, Some(&fetched));
             match webclaw_fetch::with_progress(url, render).await {
                 Ok(rendered) => better_extraction(extracted, client.extract(&rendered, &options)),
                 Err(e) => {

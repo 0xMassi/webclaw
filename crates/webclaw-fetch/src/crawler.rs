@@ -93,6 +93,20 @@ pub struct CrawlConfig {
     /// so a crash or kill can resume from it via [`Crawler::load_state`].
     /// Pages still in flight are saved back into the frontier.
     pub checkpoint: Option<std::path::PathBuf>,
+    /// Called for every finished page, in order, before the page counts as
+    /// done in a checkpoint. Unlike `progress_tx` it never drops a page, so
+    /// output written here survives a crash together with the checkpoint.
+    pub on_page: Option<PageSink>,
+}
+
+/// A callback that receives each finished page; see [`CrawlConfig::on_page`].
+#[derive(Clone)]
+pub struct PageSink(pub Arc<dyn Fn(&PageResult) + Send + Sync>);
+
+impl std::fmt::Debug for PageSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PageSink")
+    }
 }
 
 impl Default for CrawlConfig {
@@ -114,6 +128,7 @@ impl Default for CrawlConfig {
             stream_only: false,
             respect_robots: true,
             checkpoint: None,
+            on_page: None,
         }
     }
 }
@@ -295,7 +310,11 @@ impl Crawler {
             max_depth,
         };
         let json = serde_json::to_string(&state).map_err(|e| format!("serialize state: {e}"))?;
-        let tmp = path.with_extension("tmp");
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
         std::fs::write(&tmp, json)
             .and_then(|()| std::fs::rename(&tmp, path))
             .map_err(|e| format!("write state to {}: {e}", path.display()))
@@ -477,6 +496,7 @@ impl Crawler {
         let mut in_flight_depths: BTreeMap<usize, usize> = BTreeMap::new();
         let mut in_flight_urls: HashMap<String, usize> = HashMap::new();
         let mut last_checkpoint = Instant::now();
+        let mut dirty = false;
         let mut redirect_hops: HashMap<String, usize> = HashMap::new();
 
         loop {
@@ -533,9 +553,32 @@ impl Crawler {
                 });
             }
 
-            let Some((url, depth, page, elapsed)) = in_flight.next().await else {
+            let next = match &self.config.checkpoint {
+                Some(path) if dirty => {
+                    let wait = CHECKPOINT_INTERVAL.saturating_sub(last_checkpoint.elapsed());
+                    tokio::select! {
+                        next = in_flight.next() => next,
+                        () = tokio::time::sleep(wait) => {
+                            self.write_checkpoint(
+                                path,
+                                start_url,
+                                &visited,
+                                &frontier,
+                                &in_flight_urls,
+                                resumed_pages + completed,
+                            );
+                            last_checkpoint = Instant::now();
+                            dirty = false;
+                            continue;
+                        }
+                    }
+                }
+                _ => in_flight.next().await,
+            };
+            let Some((url, depth, page, elapsed)) = next else {
                 break;
             };
+            dirty = true;
             if let Some(n) = in_flight_depths.get_mut(&depth) {
                 *n -= 1;
                 if *n == 0 {
@@ -606,6 +649,9 @@ impl Crawler {
                     }
                 }
             };
+            if let Some(sink) = &self.config.on_page {
+                (sink.0)(&page);
+            }
             match (&self.config.progress_tx, self.config.stream_only) {
                 (Some(tx), true) => {
                     let _ = tx.send(page);
@@ -630,6 +676,7 @@ impl Crawler {
                     resumed_pages + completed,
                 );
                 last_checkpoint = Instant::now();
+                dirty = false;
             }
         }
 
@@ -1287,6 +1334,33 @@ mod tests {
             })
             .await;
         assert_eq!(*done.lock().unwrap(), vec!["/", "/fast", "/child", "/slow"]);
+    }
+
+    #[tokio::test]
+    async fn on_page_sees_every_page_when_streaming() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_seen = seen.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_depth: 1,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                stream_only: true,
+                on_page: Some(PageSink(Arc::new(move |page: &PageResult| {
+                    sink_seen.lock().unwrap().push(page.url.clone());
+                }))),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result = crawler
+            .run("https://example.com/", None, |url| async move {
+                html_page(&url, "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/a'>A</a><a href='/b'>B</a></main>")
+            })
+            .await;
+        assert!(result.pages.is_empty());
+        assert_eq!(seen.lock().unwrap().len(), 3);
     }
 
     #[test]

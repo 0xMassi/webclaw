@@ -16,7 +16,7 @@ use webclaw_core::{
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
-    FetchConfig, FetchResult, PageResult, SitemapEntry,
+    FetchConfig, FetchResult, PageResult, PageSink, SitemapEntry,
 };
 use webclaw_llm::LlmProvider;
 use webclaw_pdf::PdfMode;
@@ -831,7 +831,10 @@ fn format_output(result: &ExtractionResult, format: &OutputFormat, show_metadata
             out
         }
         OutputFormat::Json => serde_json::to_string_pretty(result).expect("serialization failed"),
-        OutputFormat::Jsonl => serde_json::to_string(result).expect("serialization failed"),
+        OutputFormat::Jsonl => format!(
+            "{}\n",
+            serde_json::to_string(result).expect("serialization failed")
+        ),
         OutputFormat::Text => result.content.plain_text.clone(),
         OutputFormat::Llm => to_llm_text(result, result.metadata.url.as_deref()),
         OutputFormat::Html => raw_html_or_markdown(result).to_string(),
@@ -1529,6 +1532,17 @@ fn format_progress(page: &PageResult, index: usize, max_pages: Option<usize>) ->
     format!("[{index}{of}] {status} {} ({timing}{detail})", page.url)
 }
 
+fn report_page_problems(page: &PageResult) {
+    if let Some(ref err) = page.error {
+        eprintln!("error: {} -- {}", page.url, err);
+    } else if let Some(ref extraction) = page.extraction {
+        let reason = detect_empty(extraction);
+        if !matches!(reason, EmptyReason::None) {
+            warn_empty(&page.url, &reason);
+        }
+    }
+}
+
 async fn run_crawl(cli: &Cli) -> Result<(), String> {
     let url = cli
         .urls
@@ -1554,6 +1568,18 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
 
     let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(4096);
     let stream_jsonl = matches!(cli.format, OutputFormat::Jsonl) && cli.output_dir.is_none();
+    let streamed_urls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let on_page = stream_jsonl.then(|| {
+        let streamed_urls = Arc::clone(&streamed_urls);
+        PageSink(Arc::new(move |page: &PageResult| {
+            println!(
+                "{}",
+                serde_json::to_string(page).expect("serialization failed")
+            );
+            report_page_problems(page);
+            streamed_urls.lock().unwrap().push(page.url.clone());
+        }))
+    });
 
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
@@ -1584,6 +1610,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         allow_external_links: false,
         respect_robots: !cli.ignore_robots,
         checkpoint: state_path.clone(),
+        on_page,
     };
 
     let resume_state = state_path
@@ -1607,12 +1634,6 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 Ok(page) => {
                     count += 1;
                     eprintln!("{}", format_progress(&page, count, max_pages));
-                    if stream_jsonl {
-                        println!(
-                            "{}",
-                            serde_json::to_string(&page).expect("serialization failed")
-                        );
-                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     eprintln!("warning: output fell behind the crawl, {n} pages were not printed");
@@ -1653,16 +1674,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         let _ = std::fs::remove_file(path);
     }
 
-    for page in &result.pages {
-        if let Some(ref err) = page.error {
-            eprintln!("error: {} -- {}", page.url, err);
-        } else if let Some(ref extraction) = page.extraction {
-            let reason = detect_empty(extraction);
-            if !matches!(reason, EmptyReason::None) {
-                warn_empty(&page.url, &reason);
-            }
-        }
-    }
+    result.pages.iter().for_each(report_page_problems);
 
     if let Some(ref dir) = cli.output_dir {
         let mut saved = 0usize;
@@ -1691,7 +1703,12 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     }
 
     if let Some(ref webhook_url) = cli.webhook {
-        let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
+        let streamed = streamed_urls.lock().unwrap().clone();
+        let urls: Vec<&str> = if stream_jsonl {
+            streamed.iter().map(String::as_str).collect()
+        } else {
+            result.pages.iter().map(|p| p.url.as_str()).collect()
+        };
         let handle = fire_webhook(
             webhook_url,
             &serde_json::json!({

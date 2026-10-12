@@ -10,14 +10,15 @@
 ///
 /// When `use_sitemap` is enabled, the crawler first discovers URLs from the
 /// site's sitemaps and seeds the BFS frontier before crawling.
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 use url::Url;
 
@@ -156,6 +157,8 @@ pub struct CrawlState {
 /// Recursive crawler that wraps a shared [`FetchClient`].
 pub struct Crawler {
     client: Arc<FetchClient>,
+    page_client: Arc<FetchClient>,
+    follow_redirects: bool,
     config: CrawlConfig,
     seed_origin: String,
     /// Root domain of the seed URL for subdomain matching (e.g. "example.com").
@@ -200,10 +203,20 @@ impl Crawler {
             validate_glob(pat)?;
         }
 
-        let client = FetchClient::new(config.fetch.clone())?;
+        let client = Arc::new(FetchClient::new(config.fetch.clone())?);
+        let page_client = if config.respect_robots && config.fetch.follow_redirects {
+            Arc::new(FetchClient::new(FetchConfig {
+                follow_redirects: false,
+                ..config.fetch.clone()
+            })?)
+        } else {
+            Arc::clone(&client)
+        };
 
         Ok(Self {
-            client: Arc::new(client),
+            client,
+            page_client,
+            follow_redirects: config.fetch.follow_redirects,
             config,
             seed_origin,
             seed_root_domain,
@@ -303,32 +316,33 @@ impl Crawler {
 
     /// Crawl starting from `start_url`, returning results for every page visited.
     ///
-    /// Uses breadth-first traversal: all pages at depth N are fetched (concurrently,
-    /// bounded by `config.concurrency`) before moving to depth N+1.
+    /// A worker pool keeps up to `config.concurrency` fetches in flight and
+    /// starts the next URL from a FIFO frontier as soon as one finishes, so the
+    /// crawl stays roughly breadth-first without waiting for the slowest page
+    /// of each depth. Links come from the whole fetched page. With
+    /// `respect_robots`, redirects are not followed blindly: each `Location`
+    /// goes back through the scope and robots.txt checks like any link.
     ///
     /// When `config.use_sitemap` is true, sitemap URLs are discovered first and
-    /// added to the initial frontier at depth 0 alongside the seed URL.
+    /// added to the frontier at depth 0 alongside the seed URL.
     ///
     /// If `resume_state` is provided, the crawl resumes from the saved state
     /// (pre-populated visited set and frontier) instead of starting fresh.
     pub async fn crawl(&self, start_url: &str, resume_state: Option<CrawlState>) -> CrawlResult {
-        let client = Arc::clone(&self.client);
-        self.crawl_with_fetcher(start_url, resume_state, move |url| {
+        let client = Arc::clone(&self.page_client);
+        let follow_redirects = self.follow_redirects;
+        self.run(start_url, resume_state, move |url| {
             let client = Arc::clone(&client);
-            async move {
-                client
-                    .fetch_and_extract(&url)
-                    .await
-                    .map_err(|error| error.to_string())
-            }
+            async move { fetch_page(&client, &url, follow_redirects).await }
         })
         .await
     }
 
     /// Crawl using one caller-supplied extraction path for every content page,
-    /// including the seed. Links in each returned extraction drive the frontier.
-    /// Existing scope, sitemap, cancellation and concurrency rules remain
-    /// in effect; sitemap discovery still uses the configured fetch client.
+    /// including the seed. Links in each returned extraction drive the frontier,
+    /// and the supplied fetcher follows redirects itself. Scope, sitemap,
+    /// robots.txt, cancellation and concurrency rules still apply; sitemap and
+    /// robots.txt discovery use the configured fetch client.
     pub async fn crawl_with_fetcher<F, Fut>(
         &self,
         start_url: &str,
@@ -342,6 +356,35 @@ impl Crawler {
             + 'static,
     {
         let fetcher = Arc::new(fetcher);
+        self.run(start_url, resume_state, move |url| {
+            let fetcher = Arc::clone(&fetcher);
+            async move {
+                let extraction = fetcher(url).await;
+                let links = extraction
+                    .as_ref()
+                    .map(|e| e.content.links.iter().map(|l| l.href.clone()).collect())
+                    .unwrap_or_default();
+                Page {
+                    extraction,
+                    links,
+                    redirect: None,
+                }
+            }
+        })
+        .await
+    }
+
+    async fn run<F, Fut>(
+        &self,
+        start_url: &str,
+        resume_state: Option<CrawlState>,
+        fetch: F,
+    ) -> CrawlResult
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Page> + Send + 'static,
+    {
+        let fetch = Arc::new(fetch);
         let start = Instant::now();
 
         let seed = match Url::parse(start_url) {
@@ -371,23 +414,14 @@ impl Crawler {
         } else {
             Arc::new(RobotsRules::allow_all())
         };
-        let (concurrency, delay) = pacing(&self.config, &seed_rules);
-        let semaphore = Arc::new(Semaphore::new(concurrency));
-        let mut skipped_by_robots: usize = 0;
-        let mut denied: HashSet<String> = HashSet::new();
-        let mut visited: HashSet<String>;
-        let mut pages: Vec<PageResult> = Vec::new();
-        // Counted independently of `pages`: in stream-only mode nothing is
-        // retained, so `pages.len()` can no longer stand in for progress.
-        let mut completed: usize = 0;
-        let mut ok_count: usize = 0;
-        let mut err_count: usize = 0;
-        let mut frontier: Vec<(String, usize)>;
 
-        // Resume from saved state or start fresh
+        let mut visited: HashSet<String>;
+        let mut frontier = Frontier::default();
         if let Some(state) = resume_state {
             visited = state.visited.into_iter().collect();
-            frontier = state.frontier;
+            for (url, depth) in state.frontier {
+                frontier.push_back(url, depth);
+            }
             info!(
                 visited = visited.len(),
                 frontier = frontier.len(),
@@ -395,9 +429,7 @@ impl Crawler {
             );
         } else {
             visited = HashSet::new();
-            frontier = vec![(without_fragment(&seed), 0)];
-
-            // Seed frontier from sitemap if enabled
+            frontier.push_back(without_fragment(&seed), 0);
             if self.config.use_sitemap && seed_rules.is_allowed("/sitemap.xml") {
                 let base_url = format!("{}://{}", seed.scheme(), seed.host_str().unwrap_or(""));
                 match sitemap::discover(&self.client, &base_url).await {
@@ -405,12 +437,11 @@ impl Crawler {
                         let before = frontier.len();
                         for entry in entries {
                             if let Some(url) = self.qualify_link(&entry.url, &visited) {
-                                frontier.push((url, 0));
+                                frontier.push_back(url, 0);
                             }
                         }
-                        let added = frontier.len() - before;
                         info!(
-                            sitemap_urls = added,
+                            sitemap_urls = frontier.len() - before,
                             "seeded frontier from sitemap discovery"
                         );
                     }
@@ -421,25 +452,35 @@ impl Crawler {
             }
         }
 
-        while !frontier.is_empty() && self.under_page_cap(completed) {
-            // Check cancel flag before processing each batch
-            if self.is_cancelled() {
-                info!("crawl cancelled by user");
-                break;
-            }
+        let frontier_cap = match self.config.max_pages {
+            Some(max) => max.saturating_mul(10).max(100),
+            None => UNCAPPED_FRONTIER_LIMIT,
+        };
+        let concurrency = self.config.concurrency.max(1);
+        let mut pages: Vec<PageResult> = Vec::new();
+        let mut completed: usize = 0;
+        let mut ok_count: usize = 0;
+        let mut err_count: usize = 0;
+        let mut skipped_by_robots: usize = 0;
+        let mut denied: HashSet<String> = HashSet::new();
+        let mut next_start: HashMap<String, Instant> = HashMap::new();
+        let mut started: usize = 0;
+        let mut in_flight = FuturesUnordered::new();
+        let mut in_flight_depths: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut redirect_hops: HashMap<String, usize> = HashMap::new();
 
-            let room = self
-                .config
-                .max_pages
-                .map_or(usize::MAX, |m| m.saturating_sub(completed));
-            let mut batch: Vec<(String, usize)> = Vec::new();
-            let mut pending = std::mem::take(&mut frontier).into_iter();
-            while let Some((url, depth)) = pending.next() {
-                if batch.len() >= room || self.is_cancelled() {
-                    frontier.push((url, depth));
-                    frontier.extend(pending);
+        loop {
+            while in_flight.len() < concurrency
+                && self.under_page_cap(started)
+                && !self.is_cancelled()
+            {
+                let deepest_allowed = in_flight_depths
+                    .keys()
+                    .next()
+                    .map_or(usize::MAX, |shallowest| shallowest + 1);
+                let Some((url, depth)) = frontier.pop(deepest_allowed) else {
                     break;
-                }
+                };
                 if visited.contains(&dedup_key(&url)) || denied.contains(&url) {
                     continue;
                 }
@@ -450,164 +491,120 @@ impl Crawler {
                     continue;
                 }
                 visited.insert(dedup_key(&url));
-                batch.push((url, depth));
-            }
-
-            if batch.is_empty() {
-                break;
-            }
-
-            // Spawn one task per URL, bounded by semaphore
-            let mut handles = Vec::with_capacity(batch.len());
-
-            for (url, depth) in &batch {
-                let permit = Arc::clone(&semaphore);
-                let fetcher = Arc::clone(&fetcher);
-                let url = url.clone();
-                let depth = *depth;
+                started += 1;
+                *in_flight_depths.entry(depth).or_default() += 1;
+                let wait = self.start_delay(&url, &mut next_start).await;
+                let fetch = Arc::clone(&fetch);
                 let cancel_flag = self.config.cancel_flag.clone();
-
-                handles.push(crate::transfer::spawn(async move {
-                    // Acquire permit -- blocks if concurrency limit reached.
-                    // Surface semaphore-closed as a failed PageResult rather
-                    // than panicking the spawned task and silently dropping
-                    // it from the batch.
+                let task_url = url.clone();
+                let task = crate::transfer::spawn(async move {
                     let page_start = Instant::now();
-                    let result = match permit.acquire().await {
-                        Ok(_permit) => {
-                            tokio::time::sleep(delay).await;
-                            if cancel_flag
-                                .as_ref()
-                                .is_some_and(|flag| flag.load(Ordering::Relaxed))
-                            {
-                                Err("crawl cancelled before fetch".to_string())
-                            } else {
-                                fetcher(url.clone()).await
-                            }
-                        }
-                        Err(_) => {
-                            warn!(url = %url, depth, "semaphore closed before acquire");
-                            return PageResult {
-                                url,
-                                depth,
-                                extraction: None,
-                                error: Some("semaphore closed before acquire".into()),
-                                elapsed: page_start.elapsed(),
-                            };
-                        }
+                    tokio::time::sleep(wait).await;
+                    let page = if cancel_flag
+                        .as_ref()
+                        .is_some_and(|flag| flag.load(Ordering::Relaxed))
+                    {
+                        Page::failed("crawl cancelled before fetch".into())
+                    } else {
+                        fetch(task_url).await
                     };
-                    let elapsed = page_start.elapsed();
-
-                    match result {
-                        Ok(extraction) => {
-                            debug!(
-                                url = %url, depth,
-                                elapsed_ms = %elapsed.as_millis(),
-                                "page extracted"
-                            );
-                            PageResult {
-                                url,
-                                depth,
-                                extraction: Some(extraction),
-                                error: None,
-                                elapsed,
-                            }
-                        }
-                        Err(e) => {
-                            warn!(url = %url, depth, error = %e, "page failed");
-                            PageResult {
-                                url,
-                                depth,
-                                extraction: None,
-                                error: Some(e.to_string()),
-                                elapsed,
-                            }
-                        }
-                    }
-                }));
+                    (page, page_start.elapsed())
+                });
+                in_flight.push(async move {
+                    let (page, elapsed) = task.await.unwrap_or_else(|e| {
+                        warn!(url = %url, error = %e, "crawl task panicked");
+                        (
+                            Page::failed(format!("crawl task failed: {e}")),
+                            Duration::ZERO,
+                        )
+                    });
+                    (url, depth, page, elapsed)
+                });
             }
 
-            // Collect results and harvest links for the next depth level
-            let mut next_frontier: Vec<(String, usize)> = Vec::new();
-
-            for handle in handles {
-                let page = match handle.await {
-                    Ok(page) => page,
-                    Err(e) => {
-                        warn!(error = %e, "crawl task panicked");
-                        continue;
-                    }
-                };
-                let depth = page.depth;
-
-                if depth < self.config.max_depth
-                    && let Some(ref extraction) = page.extraction
-                {
-                    for link in &extraction.content.links {
-                        if let Some(candidate) = self.qualify_link(&link.href, &visited) {
-                            next_frontier.push((candidate, depth + 1));
-                        }
-                    }
-                }
-
-                completed += 1;
-                if page.extraction.is_some() {
-                    ok_count += 1;
-                } else {
-                    err_count += 1;
-                }
-
-                // Stream progress if a channel is configured. In stream-only
-                // mode the page is moved into the channel rather than cloned —
-                // nothing downstream retains it, so the clone would be pure
-                // waste at exactly the page counts this mode exists to serve.
-                match (&self.config.progress_tx, self.config.stream_only) {
-                    (Some(tx), true) => {
-                        let _ = tx.send(page);
-                    }
-                    (Some(tx), false) => {
-                        let _ = tx.send(page.clone());
-                        pages.push(page);
-                    }
-                    (None, true) => {}
-                    (None, false) => pages.push(page),
-                }
-
-                // Drain every started task even after cancellation. A sibling
-                // may already have completed useful work; dropping its handle
-                // would lose its result and leave other tasks detached.
-            }
-
-            // Bound the frontier. This is a MEMORY rail, not a page limit:
-            // it caps queued-but-unfetched URLs, which are owned Strings held
-            // live for the whole crawl. Search-result listings, tag clouds and
-            // faceted navigation emit thousands of links per page, and a
-            // calendar-style URL space is effectively infinite — so this has to
-            // hold even when there is no page cap, or an uncapped crawl grows
-            // the frontier without limit and dies on memory rather than on
-            // work. Keeps the most recently discovered entries, which
-            // breadth-first means siblings of the last page seen.
-            let (frontier_cap, keep) = match self.config.max_pages {
-                Some(max) => (
-                    max.saturating_mul(10).max(100),
-                    max.saturating_mul(5).max(50),
-                ),
-                // Uncapped: a fixed ceiling, sized so a genuinely large site
-                // crawls without truncation while a link explosion still cannot
-                // grow unbounded.
-                None => (UNCAPPED_FRONTIER_LIMIT, UNCAPPED_FRONTIER_LIMIT / 2),
+            let Some((url, depth, page, elapsed)) = in_flight.next().await else {
+                break;
             };
-            if next_frontier.len() > frontier_cap {
-                warn!(
-                    frontier = next_frontier.len(),
-                    cap = frontier_cap,
-                    trimmed_to = keep,
-                    "frontier exceeded cap, truncating"
-                );
-                next_frontier.truncate(keep);
+            if let Some(n) = in_flight_depths.get_mut(&depth) {
+                *n -= 1;
+                if *n == 0 {
+                    in_flight_depths.remove(&depth);
+                }
             }
 
-            frontier.extend(next_frontier);
+            let mut extraction = page.extraction;
+            if let Some(location) = page.redirect {
+                let hop = redirect_hops.remove(&url).unwrap_or(0) + 1;
+                if hop <= self.config.fetch.max_redirects as usize {
+                    started -= 1;
+                    if let Some(target) = Url::parse(&url)
+                        .ok()
+                        .and_then(|base| base.join(&location).ok())
+                        .and_then(|target| self.qualify_link(target.as_str(), &visited))
+                    {
+                        debug!(from = %url, to = %target, "following redirect");
+                        redirect_hops.insert(target.clone(), hop);
+                        frontier.push_front(target, depth);
+                    }
+                    continue;
+                }
+                extraction = Err(format!(
+                    "stopped after {} redirects",
+                    self.config.fetch.max_redirects
+                ));
+            }
+
+            if depth < self.config.max_depth && extraction.is_ok() {
+                for link in &page.links {
+                    if frontier.len() >= frontier_cap {
+                        warn!(
+                            cap = frontier_cap,
+                            "frontier full, dropping newly found links"
+                        );
+                        break;
+                    }
+                    if let Some(candidate) = self.qualify_link(link, &visited) {
+                        frontier.push_back(candidate, depth + 1);
+                    }
+                }
+            }
+
+            completed += 1;
+            let page = match extraction {
+                Ok(extraction) => {
+                    ok_count += 1;
+                    debug!(url = %url, depth, elapsed_ms = %elapsed.as_millis(), "page extracted");
+                    PageResult {
+                        url,
+                        depth,
+                        extraction: Some(extraction),
+                        error: None,
+                        elapsed,
+                    }
+                }
+                Err(e) => {
+                    err_count += 1;
+                    warn!(url = %url, depth, error = %e, "page failed");
+                    PageResult {
+                        url,
+                        depth,
+                        extraction: None,
+                        error: Some(e),
+                        elapsed,
+                    }
+                }
+            };
+            match (&self.config.progress_tx, self.config.stream_only) {
+                (Some(tx), true) => {
+                    let _ = tx.send(page);
+                }
+                (Some(tx), false) => {
+                    let _ = tx.send(page.clone());
+                    pages.push(page);
+                }
+                (None, true) => {}
+                (None, false) => pages.push(page),
+            }
         }
 
         let total_elapsed = start.elapsed();
@@ -625,10 +622,36 @@ impl Crawler {
             errors: err_count,
             skipped_by_robots,
             elapsed_secs: total_elapsed.as_secs_f64(),
-            remaining_frontier: frontier,
+            remaining_frontier: frontier.into_vec(),
             visited,
             pages,
         }
+    }
+
+    async fn start_delay(&self, url: &str, next_start: &mut HashMap<String, Instant>) -> Duration {
+        let base = self.config.delay;
+        let Ok(parsed) = Url::parse(url) else {
+            return base;
+        };
+        if !self.config.respect_robots {
+            return base;
+        }
+        let Some(gap) = self
+            .robots_for(&parsed)
+            .await
+            .crawl_delay
+            .map(|d| d.min(MAX_CRAWL_DELAY))
+        else {
+            return base;
+        };
+        let now = Instant::now();
+        let earliest = now + base;
+        let origin = parsed.origin().ascii_serialization();
+        let start = next_start
+            .get(&origin)
+            .map_or(earliest, |slot| (*slot).max(earliest));
+        next_start.insert(origin, start + gap);
+        start - now
     }
 
     /// Check if a discovered link should be added to the frontier.
@@ -708,10 +731,90 @@ impl Crawler {
 /// Canonical origin string for comparing same-origin: "scheme://host[:port]".
 const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
 
-fn pacing(config: &CrawlConfig, rules: &RobotsRules) -> (usize, Duration) {
-    match rules.crawl_delay {
-        Some(wait) => (1, config.delay.max(wait.min(MAX_CRAWL_DELAY))),
-        None => (config.concurrency, config.delay),
+#[derive(Default)]
+struct Frontier {
+    levels: BTreeMap<usize, VecDeque<String>>,
+    len: usize,
+}
+
+impl Frontier {
+    fn push_back(&mut self, url: String, depth: usize) {
+        self.levels.entry(depth).or_default().push_back(url);
+        self.len += 1;
+    }
+
+    fn push_front(&mut self, url: String, depth: usize) {
+        self.levels.entry(depth).or_default().push_front(url);
+        self.len += 1;
+    }
+
+    fn pop(&mut self, deepest_allowed: usize) -> Option<(String, usize)> {
+        let (&depth, queue) = self.levels.iter_mut().find(|(_, q)| !q.is_empty())?;
+        if depth > deepest_allowed {
+            return None;
+        }
+        let url = queue.pop_front()?;
+        self.len -= 1;
+        Some((url, depth))
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn into_vec(self) -> Vec<(String, usize)> {
+        self.levels
+            .into_iter()
+            .flat_map(|(depth, urls)| urls.into_iter().map(move |url| (url, depth)))
+            .collect()
+    }
+}
+
+struct Page {
+    extraction: Result<webclaw_core::ExtractionResult, String>,
+    links: Vec<String>,
+    redirect: Option<String>,
+}
+
+impl Page {
+    fn failed(error: String) -> Self {
+        Self {
+            extraction: Err(error),
+            links: Vec::new(),
+            redirect: None,
+        }
+    }
+}
+
+async fn fetch_page(client: &FetchClient, url: &str, follow_redirects: bool) -> Page {
+    let fetched = match client.fetch_smart(url).await {
+        Ok(fetched) => fetched,
+        Err(e) => return Page::failed(e.to_string()),
+    };
+    if follow_redirects
+        && (300..400).contains(&fetched.status)
+        && let Some(location) = fetched
+            .headers
+            .get(http::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+    {
+        return Page {
+            extraction: Err(format!("redirected ({})", fetched.status)),
+            links: Vec::new(),
+            redirect: Some(location.to_string()),
+        };
+    }
+    let links = if fetched.document_bytes.is_none() {
+        webclaw_core::page_links(&fetched.html, &fetched.url)
+    } else {
+        Vec::new()
+    };
+    Page {
+        extraction: client
+            .extract(&fetched, &Default::default())
+            .map_err(|e| e.to_string()),
+        links,
+        redirect: None,
     }
 }
 
@@ -1027,19 +1130,262 @@ mod tests {
         assert_eq!(result.total, 0);
     }
 
-    #[test]
-    fn crawl_delay_serialises_requests_and_stretches_the_delay() {
-        let config = CrawlConfig {
-            concurrency: 5,
-            delay: Duration::from_millis(100),
-            ..Default::default()
-        };
-        let mut rules = RobotsRules::allow_all();
-        assert_eq!(pacing(&config, &rules), (5, Duration::from_millis(100)));
-        rules.crawl_delay = Some(Duration::from_secs(2));
-        assert_eq!(pacing(&config, &rules), (1, Duration::from_secs(2)));
-        rules.crawl_delay = Some(Duration::from_secs(3600));
-        assert_eq!(pacing(&config, &rules), (1, MAX_CRAWL_DELAY));
+    #[tokio::test]
+    async fn crawl_delay_spaces_request_starts_per_origin() {
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::from_millis(100),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nCrawl-delay: 2\n", USER_AGENT_TOKEN),
+        );
+        crawler.preload_robots(
+            "https://slow.test",
+            RobotsRules::parse("User-agent: *\nCrawl-delay: 3600\n", USER_AGENT_TOKEN),
+        );
+        crawler.preload_robots("https://other.test", RobotsRules::allow_all());
+        let mut slots = HashMap::new();
+        let first = crawler
+            .start_delay("https://example.com/a", &mut slots)
+            .await;
+        let second = crawler
+            .start_delay("https://example.com/b", &mut slots)
+            .await;
+        let third = crawler
+            .start_delay("https://example.com/c", &mut slots)
+            .await;
+        let other = crawler
+            .start_delay("https://other.test/a", &mut slots)
+            .await;
+        crawler.start_delay("https://slow.test/a", &mut slots).await;
+        let capped = crawler.start_delay("https://slow.test/b", &mut slots).await;
+        assert_eq!(first, Duration::from_millis(100));
+        assert!(second > Duration::from_millis(2000) && second <= Duration::from_millis(2100));
+        assert!(third > Duration::from_millis(4000) && third <= Duration::from_millis(4100));
+        assert_eq!(other, Duration::from_millis(100));
+        assert!(capped <= MAX_CRAWL_DELAY + Duration::from_millis(100));
+    }
+
+    fn html_page(url: &str, html: &str) -> Page {
+        let extraction = webclaw_core::extract_with_options(html, Some(url), &Default::default())
+            .map_err(|e| e.to_string());
+        Page {
+            extraction,
+            links: webclaw_core::page_links(html, url),
+            redirect: None,
+        }
+    }
+
+    fn redirect(to: &str) -> Page {
+        Page {
+            extraction: Err("redirected (301)".into()),
+            links: Vec::new(),
+            redirect: Some(to.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_slow_page_does_not_hold_back_the_next_depth() {
+        let done = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = done.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_depth: 2,
+                concurrency: 4,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler
+            .run("https://example.com/", None, move |url| {
+                let recorded = recorded.clone();
+                async move {
+                    let path = Url::parse(&url).unwrap().path().to_string();
+                    if path == "/slow" {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                    }
+                    let html = match path.as_str() {
+                        "/" => "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/slow'>Slow</a><a href='/fast'>Fast</a></main>",
+                        "/fast" => "<main><h1>Fast</h1><p>Fast page content here.</p><a href='/child'>Child</a></main>",
+                        _ => "<main><h1>Leaf</h1><p>Leaf content for the crawl.</p></main>",
+                    };
+                    recorded.lock().unwrap().push(path);
+                    html_page(&url, html)
+                }
+            })
+            .await;
+        assert_eq!(*done.lock().unwrap(), vec!["/", "/fast", "/child", "/slow"]);
+    }
+
+    #[tokio::test]
+    async fn redirect_chains_stop_at_max_redirects() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::ZERO,
+                respect_robots: false,
+                fetch: FetchConfig {
+                    max_redirects: 3,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result = crawler
+            .run("https://example.com/", None, move |url| {
+                let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    let _ = url;
+                    redirect(&format!("/r/{n}"))
+                }
+            })
+            .await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+        assert_eq!(result.errors, 1);
+    }
+
+    #[tokio::test]
+    async fn a_page_keeps_its_shortest_depth() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_depth: 3,
+                concurrency: 8,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler
+            .run("https://example.com/", None, move |url| {
+                let recorded = recorded.clone();
+                async move {
+                    let path = Url::parse(&url).unwrap().path().to_string();
+                    if path == "/slow" {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                    }
+                    let html = match path.as_str() {
+                        "/" => "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/slow'>Slow</a><a href='/fast'>Fast</a></main>",
+                        "/fast" => "<main><h1>Fast</h1><p>Fast page content here.</p><a href='/mid'>Mid</a></main>",
+                        "/mid" => "<main><h1>Mid</h1><p>Middle page content here.</p><a href='/shared'>Shared</a></main>",
+                        "/slow" => "<main><h1>Slow</h1><p>Slow page content here.</p><a href='/shared'>Shared</a></main>",
+                        "/shared" => "<main><h1>Shared</h1><p>Shared page content here.</p><a href='/leaf'>Leaf</a></main>",
+                        _ => "<main><h1>Leaf</h1><p>Leaf content for the crawl.</p></main>",
+                    };
+                    recorded.lock().unwrap().push(path);
+                    html_page(&url, html)
+                }
+            })
+            .await;
+        assert!(
+            calls.lock().unwrap().contains(&"/leaf".to_string()),
+            "{:?}",
+            calls.lock().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn caller_disabled_redirects_are_not_followed() {
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::ZERO,
+                fetch: FetchConfig {
+                    follow_redirects: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!crawler.follow_redirects);
+    }
+
+    #[tokio::test]
+    async fn base_delay_and_crawl_delay_both_hold_between_starts() {
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::from_secs(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nCrawl-delay: 1\n", USER_AGENT_TOKEN),
+        );
+        let mut slots = HashMap::new();
+        let first = crawler
+            .start_delay("https://example.com/a", &mut slots)
+            .await;
+        let second = crawler
+            .start_delay("https://example.com/b", &mut slots)
+            .await;
+        assert!(
+            second >= first + Duration::from_millis(990),
+            "{first:?} then {second:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn redirects_go_through_scope_and_robots_checks() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_depth: 1,
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nDisallow: /private\n", USER_AGENT_TOKEN),
+        );
+        let result = crawler
+            .run("https://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    match Url::parse(&url).unwrap().path() {
+                        "/start" => redirect("/private/report"),
+                        "/moved" => redirect("https://example.com/public"),
+                        "/away" => redirect("https://elsewhere.test/"),
+                        "/" => html_page(&url, "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/start'>Start</a><a href='/moved'>Moved</a><a href='/away'>Away</a></main>"),
+                        _ => html_page(&url, "<main><h1>Leaf</h1><p>Leaf content for the crawl.</p></main>"),
+                    }
+                }
+            })
+            .await;
+        let calls = calls.lock().unwrap().clone();
+        assert!(
+            !calls
+                .iter()
+                .any(|u| u.contains("/private") || u.contains("elsewhere")),
+            "{calls:?}"
+        );
+        assert!(
+            calls.contains(&"https://example.com/public".to_string()),
+            "{calls:?}"
+        );
+        assert_eq!(result.total, 2);
+        assert_eq!(result.skipped_by_robots, 1);
     }
 
     #[tokio::test]

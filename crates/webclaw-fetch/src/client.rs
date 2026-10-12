@@ -617,11 +617,24 @@ impl FetchClient {
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
         let fetched = self.fetch_smart(url).await?;
+        self.extract(&fetched, options)
+    }
+
+    /// Extract an already fetched page exactly as
+    /// [`Self::fetch_and_extract_with_options`] does: an HTTP error status
+    /// fails, PDFs and office documents go through their parsers, LinkedIn
+    /// posts use their embedded data, and an empty extraction fails unless
+    /// the options allow it.
+    pub fn extract(
+        &self,
+        fetched: &FetchResult,
+        options: &webclaw_core::ExtractionOptions,
+    ) -> Result<webclaw_core::ExtractionResult, FetchError> {
         if fetched.status >= 400 {
             return Err(FetchError::UpstreamStatus(fetched.status));
         }
         if fetched.document_bytes.is_some() {
-            return extract_fetched(&fetched, options, self.pdf_mode.clone());
+            return extract_fetched(fetched, options, self.pdf_mode.clone());
         }
         if crate::linkedin::is_linkedin_post(&fetched.url)
             && let Some(result) =
@@ -629,7 +642,7 @@ impl FetchClient {
         {
             return Ok(result);
         }
-        let extraction = extract_fetched(&fetched, options, self.pdf_mode.clone())?;
+        let extraction = extract_fetched(fetched, options, self.pdf_mode.clone())?;
         if let Some(issue) = webclaw_core::quality::content_issue(&extraction)
             && (issue != webclaw_core::quality::ContentIssue::Empty
                 || !webclaw_core::quality::allows_empty_content(&fetched.html, options))

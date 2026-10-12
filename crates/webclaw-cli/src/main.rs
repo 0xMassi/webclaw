@@ -1569,6 +1569,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(4096);
     let stream_jsonl = matches!(cli.format, OutputFormat::Jsonl) && cli.output_dir.is_none();
     let streamed_urls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let keep_urls = cli.webhook.is_some();
     let on_page = stream_jsonl.then(|| {
         let streamed_urls = Arc::clone(&streamed_urls);
         PageSink(Arc::new(move |page: &PageResult| {
@@ -1577,7 +1578,9 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 serde_json::to_string(page).expect("serialization failed")
             );
             report_page_problems(page);
-            streamed_urls.lock().unwrap().push(page.url.clone());
+            if keep_urls {
+                streamed_urls.lock().unwrap().push(page.url.clone());
+            }
         }))
     });
 

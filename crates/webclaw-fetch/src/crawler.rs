@@ -374,6 +374,7 @@ impl Crawler {
         let (concurrency, delay) = pacing(&self.config, &seed_rules);
         let semaphore = Arc::new(Semaphore::new(concurrency));
         let mut skipped_by_robots: usize = 0;
+        let mut denied: HashSet<String> = HashSet::new();
         let mut visited: HashSet<String>;
         let mut pages: Vec<PageResult> = Vec::new();
         // Counted independently of `pages`: in stream-only mode nothing is
@@ -397,7 +398,7 @@ impl Crawler {
             frontier = vec![(without_fragment(&seed), 0)];
 
             // Seed frontier from sitemap if enabled
-            if self.config.use_sitemap {
+            if self.config.use_sitemap && seed_rules.is_allowed(seed.path()) {
                 let base_url = format!("{}://{}", seed.scheme(), seed.host_str().unwrap_or(""));
                 match sitemap::discover(&self.client, &base_url).await {
                     Ok(entries) => {
@@ -432,18 +433,23 @@ impl Crawler {
                 .max_pages
                 .map_or(usize::MAX, |m| m.saturating_sub(completed));
             let mut batch: Vec<(String, usize)> = Vec::new();
-            for (url, depth) in frontier.drain(..) {
-                if batch.len() >= room {
+            let mut pending = std::mem::take(&mut frontier).into_iter();
+            while let Some((url, depth)) = pending.next() {
+                if batch.len() >= room || self.is_cancelled() {
+                    frontier.push((url, depth));
+                    frontier.extend(pending);
                     break;
                 }
-                if !visited.insert(dedup_key(&url)) {
+                if visited.contains(&dedup_key(&url)) || denied.contains(&url) {
                     continue;
                 }
                 if self.config.respect_robots && !self.robots_allow(&url).await {
                     debug!(url = %url, "skipped: disallowed by robots.txt");
                     skipped_by_robots += 1;
+                    denied.insert(url);
                     continue;
                 }
+                visited.insert(dedup_key(&url));
                 batch.push((url, depth));
             }
 
@@ -601,7 +607,7 @@ impl Crawler {
                 next_frontier.truncate(keep);
             }
 
-            frontier = next_frontier;
+            frontier.extend(next_frontier);
         }
 
         let total_elapsed = start.elapsed();
@@ -969,6 +975,40 @@ mod tests {
         assert_eq!(
             *calls.lock().unwrap(),
             vec!["https://example.com/", "https://example.com/public/"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_disallowed_variant_does_not_hide_an_allowed_url() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                use_sitemap: false,
+                max_depth: 1,
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nDisallow: /lessons/\n", USER_AGENT_TOKEN),
+        );
+        crawler
+            .crawl_with_fetcher("https://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    let html = "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/lessons/'>Denied</a><a href='/lessons'>Allowed</a></main>";
+                    webclaw_core::extract_with_options(html, Some(&url), &Default::default())
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await;
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["https://example.com/", "https://example.com/lessons"]
         );
     }
 

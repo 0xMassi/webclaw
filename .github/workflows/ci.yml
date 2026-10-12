@@ -50,6 +50,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --check --all
       - run: cargo clippy --all -- -D warnings
+      - run: cargo clippy -p webclaw-cli --features browser -- -D warnings
 
   wasm:
     name: WASM

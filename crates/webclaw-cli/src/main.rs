@@ -182,7 +182,7 @@ struct Cli {
     #[arg(short, long, default_value = "chrome")]
     browser: Browser,
 
-    /// Proxy URL (http://user:pass@host:port or socks5://host:port)
+    /// Proxy URL (http://user:pass@host:port or https://host:port)
     #[arg(short, long, env = "WEBCLAW_PROXY", hide_env_values = true)]
     proxy: Option<String>,
 

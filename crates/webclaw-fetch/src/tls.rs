@@ -555,6 +555,12 @@ pub fn build_client(
         .tcp_keepalive(Duration::from_secs(60));
 
     if let Some(proxy_url) = proxy {
+        if proxy_url.to_ascii_lowercase().starts_with("socks") {
+            return Err(FetchError::Build(format!(
+                "SOCKS proxies are not supported, use an http:// or https:// proxy: {}",
+                redact_proxy_url(proxy_url)
+            )));
+        }
         let proxy = wreq::Proxy::all(proxy_url).map_err(|_| {
             FetchError::Build(format!("invalid proxy {}", redact_proxy_url(proxy_url)))
         })?;
@@ -612,6 +618,25 @@ fn ssrf_safe_redirect_policy(
 #[cfg(test)]
 mod tests {
     use super::redact_proxy_url;
+
+    #[test]
+    fn rejects_socks_proxies_with_a_clear_error() {
+        for scheme in ["socks5", "socks5h", "socks4", "SOCKS5"] {
+            let err = super::build_client(
+                crate::browser::BrowserVariant::Chrome,
+                std::time::Duration::from_secs(5),
+                &Default::default(),
+                Some(&format!("{scheme}://user:pw@proxy.example.com:1080")),
+                true,
+                10,
+            )
+            .err()
+            .unwrap_or_else(|| panic!("{scheme} proxy was accepted"));
+            let msg = err.to_string();
+            assert!(msg.contains("SOCKS proxies are not supported"), "{msg}");
+            assert!(!msg.contains("pw@"), "credentials leaked: {msg}");
+        }
+    }
 
     #[test]
     fn redacts_userinfo_from_proxy_url() {

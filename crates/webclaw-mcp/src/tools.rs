@@ -122,6 +122,9 @@ pub struct CrawlParams {
     /// Seed the frontier from sitemap discovery before crawling
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub use_sitemap: Option<bool>,
+    /// Crawl URLs that robots.txt disallows (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub ignore_robots: Option<bool>,
     /// Output format for each page: "markdown" (default), "llm", "text"
     pub format: Option<String>,
 }

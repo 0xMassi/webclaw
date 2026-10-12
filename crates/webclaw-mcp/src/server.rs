@@ -272,6 +272,7 @@ impl WebclawMcp {
             },
             concurrency: params.concurrency.unwrap_or(5),
             use_sitemap: params.use_sitemap.unwrap_or(false),
+            respect_robots: !params.ignore_robots.unwrap_or(false),
             ..Default::default()
         };
 
@@ -281,8 +282,8 @@ impl WebclawMcp {
         let result = crawler.crawl(&params.url, None).await;
 
         let mut output = format!(
-            "Crawled {} pages ({} ok, {} errors) in {:.1}s\n\n",
-            result.total, result.ok, result.errors, result.elapsed_secs
+            "Crawled {} pages ({} ok, {} errors, {} disallowed by robots.txt) in {:.1}s\n\n",
+            result.total, result.ok, result.errors, result.skipped_by_robots, result.elapsed_secs
         );
 
         for page in &result.pages {

@@ -15,6 +15,7 @@ pub mod map;
 pub mod progress;
 pub mod proxy;
 pub mod reddit;
+pub mod robots;
 pub mod search;
 pub mod sitemap;
 pub mod tls;

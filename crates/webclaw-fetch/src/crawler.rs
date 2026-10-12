@@ -398,7 +398,7 @@ impl Crawler {
             frontier = vec![(without_fragment(&seed), 0)];
 
             // Seed frontier from sitemap if enabled
-            if self.config.use_sitemap && seed_rules.is_allowed(seed.path()) {
+            if self.config.use_sitemap && seed_rules.is_allowed("/sitemap.xml") {
                 let base_url = format!("{}://{}", seed.scheme(), seed.host_str().unwrap_or(""));
                 match sitemap::discover(&self.client, &base_url).await {
                     Ok(entries) => {

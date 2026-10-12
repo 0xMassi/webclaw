@@ -133,16 +133,16 @@ def resume_test(label):
         kill_tree(proc)
         out = work / "out.jsonl"
         before_kill = len(out.read_text().splitlines()) if out.exists() else 0
-        restarts = 0
-        while restarts < 3:
+        restarts, finished = 0, False
+        while restarts < 3 and not finished:
             restarts += 1
-            if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-                break
+            finished = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
         seconds = time.time() - start - KILL_AFTER
         pages = [json.loads(l) for l in out.read_text().splitlines()] if out.exists() else []
         urls = [norm(p["url"]) for p in pages if p["ok"]]
         rows.append({"arm": arm, "before_kill": before_kill, "unique": len(set(urls)),
-                     "duplicates": len(urls) - len(set(urls)), "seconds": round(seconds, 1), "restarts": restarts})
+                     "duplicates": len(urls) - len(set(urls)), "seconds": round(seconds, 1), "restarts": restarts,
+                     "finished": finished})
         print(json.dumps(rows[-1]), flush=True)
     (ROOT / "results" / label / "resume-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     return ["", "## Kill and resume", "",
@@ -152,7 +152,8 @@ def resume_test(label):
             "`unique` counts distinct pages in the output; `duplicates` counts pages written twice.", "",
             "| arm | pages before kill | unique pages at end | duplicates | seconds after restart | runs after kill |",
             "|---|---:|---:|---:|---:|---:|"] + [
-        f"| {r['arm']} | {r['before_kill']} | {r['unique']} | {r['duplicates']} | {r['seconds']} | {r['restarts']} |"
+        f"| {r['arm']} | {r['before_kill']} | {r['unique']} | {r['duplicates']} | {r['seconds']} | "
+        f"{r['restarts'] if r['finished'] else 'did not finish'} |"
         for r in rows]
 
 

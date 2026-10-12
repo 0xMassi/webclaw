@@ -26,7 +26,8 @@ def webclaw():
     for line in proc.stdout:
         page = json.loads(line)
         emit(page["url"], page.get("extraction") is not None)
-    proc.wait()
+    code = proc.wait()
+    sys.exit(0 if not (DIR / "state.json").exists() else code or 1)
 
 
 def scrapling():

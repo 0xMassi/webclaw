@@ -6,7 +6,7 @@
 ./benchmarks/run.sh [label] [webclaw-binary] [url-runs]
 ```
 
-You need `uv` installed. Without a binary argument, the script builds `target/release/webclaw`. Each competitor gets its own pinned environment under `benchmarks/.work/`. The script runs every tool over every case and writes `results/<label>/summary.md`, `rows.jsonl` and `versions.txt`. Defaults: label is today's date, 3 live rounds.
+You need `uv` installed, and Chrome for the rendering arms. Without a binary argument, the script builds `target/release/webclaw` with the `browser` feature. Each competitor gets its own pinned environment under `benchmarks/.work/`. The script runs every tool over every case and writes `results/<label>/summary.md`, `rows.jsonl` and `versions.txt`. Defaults: label is today's date, 3 live rounds.
 
 `WEBCLAW_API_KEY` is unset for the run, so webclaw never calls its hosted API. Every number comes from the open-source CLI on your machine.
 
@@ -14,8 +14,10 @@ You need `uv` installed. Without a binary argument, the script builds `target/re
 
 | Arm | Call |
 |---|---|
-| `webclaw-llm` | `webclaw <url> -f llm` |
-| `webclaw-md` | `webclaw <url> -f markdown` |
+| `webclaw-llm` | `webclaw <url> -f llm --render never` (HTTP only) |
+| `webclaw-md` | `webclaw <url> -f markdown --render never` |
+| `webclaw-auto` | `webclaw <url> -f llm --render auto`: HTTP first, renders in local Chrome only when the page looks like it needs JavaScript |
+| `webclaw-render` | `webclaw <url> -f llm --render always`: every page through local Chrome |
 | `trafilatura` | `fetch_url`, then `extract(html, output_format="markdown", include_links=True, include_tables=True, favor_recall=True)` |
 | `scrapling` | `Fetcher.get(url).markdown()` |
 | `crawl4ai-raw` | `AsyncWebCrawler.arun(url)` with `DefaultMarkdownGenerator()`, `raw_markdown` |
@@ -45,5 +47,6 @@ Propose new cases or facts by pull request. Every arm runs against them on the n
 
 - Two facts per case is a coarse signal. News, docs and ecommerce come out near 100% for most tools, so homepage, spa, pdf and paywalled carry most of the difference between tools.
 - Live pages change. When a fact disappears from the page, every tool misses it together.
-- `spa` pages need JavaScript. Crawl4AI renders them in a browser; webclaw, Scrapling's `Fetcher` and Trafilatura do not.
+- `spa` pages need JavaScript. Crawl4AI and the `webclaw-render` arm always use a browser; `webclaw-auto` uses one only when the HTTP result looks unrendered; the other arms never do.
+- The rendering arms run in url mode only: rendering a saved file would just repeat the HTML arms.
 - Results depend on your network and location. Compare runs from the same machine.

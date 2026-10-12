@@ -11,7 +11,7 @@ unset WEBCLAW_API_KEY
 
 command -v uv >/dev/null || { echo "needs uv: https://docs.astral.sh/uv/getting-started/installation/" >&2; exit 1; }
 if [ ! -x "$bin" ] && [ "$bin" = ../target/release/webclaw ]; then
-  (cd .. && cargo build --release -p webclaw-cli)
+  (cd .. && cargo build --release -p webclaw-cli --features browser)
 fi
 [ -x "$bin" ] || { echo "no webclaw binary at $bin" >&2; exit 1; }
 export WEBCLAW_BIN=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")

@@ -12,10 +12,10 @@ TIMEOUT = 30
 WEBCLAW = os.environ.get("WEBCLAW_BIN") or str(Path(__file__).resolve().parent / "bin/webclaw")
 
 
-def webclaw(fmt):
+def webclaw(fmt, render="never"):
     def run(case):
         src = ["--file", case["html_path"]] if MODE == "html" else [case["url"]]
-        r = subprocess.run([WEBCLAW, *src, "-f", fmt, "-t", str(TIMEOUT)],
+        r = subprocess.run([WEBCLAW, *src, "-f", fmt, "-t", str(TIMEOUT), "--render", render],
                            capture_output=True, text=True, timeout=TIMEOUT + 15)
         if r.returncode != 0 and not r.stdout:
             raise RuntimeError(r.stderr.strip()[-300:])
@@ -70,6 +70,8 @@ def crawl4ai_arm(fit):
 ARMS = {
     "webclaw-llm": lambda: webclaw("llm"),
     "webclaw-md": lambda: webclaw("markdown"),
+    "webclaw-auto": lambda: webclaw("llm", "auto"),
+    "webclaw-render": lambda: webclaw("llm", "always"),
     "trafilatura": lambda: trafilatura_arm,
     "scrapling": lambda: scrapling_arm,
     "crawl4ai-raw": lambda: crawl4ai_arm(False),

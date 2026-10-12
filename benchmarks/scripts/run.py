@@ -12,8 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
 CASES = ROOT / "cases.jsonl"
 HTML_CASES = WORK / "cases-html.jsonl"
-ARM_VENV = {"webclaw-llm": "base", "webclaw-md": "base", "trafilatura": "base",
+ARM_VENV = {"webclaw-llm": "base", "webclaw-md": "base", "webclaw-auto": "base", "webclaw-render": "base",
+            "trafilatura": "base",
             "scrapling": "scrapling", "crawl4ai-raw": "crawl4ai", "crawl4ai-fit": "crawl4ai"}
+URL_ONLY = {"webclaw-auto", "webclaw-render"}
 WEBCLAW = os.environ["WEBCLAW_BIN"]
 
 
@@ -44,6 +46,8 @@ def run(label, runs, arms):
     def arm_worker(arm):
         py = str(WORK / f"venv-{ARM_VENV[arm]}" / "bin/python")
         for mode, cases, n in (("url", CASES, runs), ("html", HTML_CASES, 1)):
+            if mode == "html" and arm in URL_ONLY:
+                continue
             code = subprocess.run([py, str(ROOT / "scripts/arms.py"), arm, mode, str(cases), str(res / "rows.jsonl"),
                                    str(out / mode / arm), str(n)]).returncode
             if code:

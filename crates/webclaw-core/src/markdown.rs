@@ -451,9 +451,7 @@ fn collect_preformatted_text(element: ElementRef<'_>, depth: usize) -> String {
                 let tag = el.name.local.as_ref();
                 if tag == "br" {
                     out.push('\n');
-                } else if let Some(child_el) = ElementRef::wrap(child)
-                    && !noise::is_hidden(child_el)
-                {
+                } else if let Some(child_el) = ElementRef::wrap(child) {
                     if tag == "div" || tag == "p" {
                         if !out.is_empty() && !out.ends_with('\n') {
                             out.push('\n');
@@ -617,15 +615,6 @@ fn table_to_md(
                 continue;
             }
             if el.value().name() == "tr" {
-                if el
-                    .ancestors()
-                    .filter_map(ElementRef::wrap)
-                    .take_while(|a| a.id() != table_el.id())
-                    .chain(std::iter::once(el))
-                    .any(noise::is_hidden)
-                {
-                    continue;
-                }
                 let cells: Vec<ElementRef<'_>> = el
                     .children()
                     .filter_map(ElementRef::wrap)
@@ -658,7 +647,7 @@ fn table_to_md(
     if is_layout {
         let mut out = String::new();
         for row in &raw_rows {
-            for cell in row.iter().filter(|c| !noise::is_hidden(**c)) {
+            for cell in row {
                 let content = children_to_md(*cell, base_url, assets, 0, exclude, depth);
                 let content = content.trim();
                 if !content.is_empty() {
@@ -677,13 +666,7 @@ fn table_to_md(
         .iter()
         .map(|row| {
             row.iter()
-                .map(|c| {
-                    if noise::is_hidden(*c) {
-                        String::new()
-                    } else {
-                        inline_text(*c, base_url, assets, exclude, depth)
-                    }
-                })
+                .map(|c| inline_text(*c, base_url, assets, exclude, depth))
                 .collect()
         })
         .collect();

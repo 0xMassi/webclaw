@@ -161,7 +161,8 @@ fn extract_with_options_inner(
         });
     }
 
-    let doc = Html::parse_document(html);
+    let mut doc = Html::parse_document(html);
+    noise::strip_hidden(&mut doc);
 
     let base_url = url
         .map(|u| Url::parse(u).map_err(|_| ExtractError::InvalidUrl(u.to_string())))

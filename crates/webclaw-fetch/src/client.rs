@@ -99,24 +99,33 @@ impl FetchResult {
         &self,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        if let Some(bytes) = &self.document_bytes {
-            if is_pdf_content_type(&self.headers) || bytes.starts_with(b"%PDF-") {
-                let pdf = webclaw_pdf::extract_pdf(bytes, PdfMode::default())?;
-                return Ok(pdf_to_extraction_result(&pdf, &self.url));
-            }
-            if let Some(kind) = crate::document::is_document_content_type(&self.headers, &self.url)
-            {
-                let mut result = crate::document::extract_document(bytes, kind)?;
-                result.metadata.url = Some(self.url.clone());
-                return Ok(result);
-            }
-        }
-        Ok(webclaw_core::extract_with_options(
-            &self.html,
-            Some(&self.url),
-            options,
-        )?)
+        extract_fetched(self, options, PdfMode::default())
     }
+}
+
+fn extract_fetched(
+    fetched: &FetchResult,
+    options: &webclaw_core::ExtractionOptions,
+    pdf_mode: PdfMode,
+) -> Result<webclaw_core::ExtractionResult, FetchError> {
+    if let Some(bytes) = &fetched.document_bytes {
+        if is_pdf_content_type(&fetched.headers) || bytes.starts_with(b"%PDF-") {
+            let pdf = webclaw_pdf::extract_pdf(bytes, pdf_mode)?;
+            return Ok(pdf_to_extraction_result(&pdf, &fetched.url));
+        }
+        if let Some(kind) =
+            crate::document::is_document_content_type(&fetched.headers, &fetched.url)
+        {
+            let mut result = crate::document::extract_document(bytes, kind)?;
+            result.metadata.url = Some(fetched.url.clone());
+            return Ok(result);
+        }
+    }
+    Ok(webclaw_core::extract_with_options(
+        &fetched.html,
+        Some(&fetched.url),
+        options,
+    )?)
 }
 
 /// Result for a single URL in a batch fetch operation.
@@ -227,10 +236,6 @@ impl Response {
     }
     fn body(&self) -> &[u8] {
         &self.body
-    }
-
-    fn text(&self) -> std::borrow::Cow<'_, str> {
-        String::from_utf8_lossy(&self.body)
     }
 
     /// Decode the body to `String`, consuming the buffer.
@@ -432,9 +437,10 @@ impl FetchClient {
         self.cloud.as_deref()
     }
 
-    /// Fetch a URL with per-site rescue paths: Reddit URLs redirect to the
-    /// `.json` API, and Akamai-style challenge responses trigger a homepage
-    /// cookie warmup and a retry. Returns the same `FetchResult` shape as
+    /// Fetch a URL with per-site rescue paths: Reddit URLs go to
+    /// old.reddit.com, and Akamai-style challenge responses trigger a homepage
+    /// cookie warmup and a retry whose result, error included, is the answer.
+    /// The whole call shares one [`FetchConfig::total_timeout`]. Returns the same `FetchResult` shape as
     /// [`Self::fetch`] so every caller (CLI, MCP, OSS server, production
     /// server) benefits without shape churn.
     ///
@@ -451,8 +457,6 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        // Reddit: fetch old.reddit.com for stable server-rendered HTML.
-        // The JSON API is blocked; old.reddit.com works without JS or auth.
         let owned;
         let url = if crate::reddit::is_reddit_url(url) {
             owned = crate::reddit::to_old_reddit_url(url);
@@ -460,86 +464,30 @@ impl FetchClient {
         } else {
             url
         };
-
-        let resp = self.fetch_with_headers(url, extra).await?;
-
-        // Akamai / bazadebezolkohpepadr challenge: visit the homepage to
-        // collect warmup cookies (_abck, bm_sz, etc.), then retry.
-        if is_challenge_html(&resp.html)
-            && let Some(homepage) = extract_homepage(url)
-        {
+        self.within_budget(Instant::now(), url, async {
+            let resp = self.fetch_with_headers(url, extra).await?;
+            let Some(homepage) = extract_homepage(url).filter(|_| is_challenge_html(&resp.html))
+            else {
+                return Ok(resp);
+            };
             debug!("challenge detected, warming cookies via {homepage}");
             let _ = self.fetch_with_headers(&homepage, extra).await;
-            if let Ok(retry) = self.fetch_with_headers(url, extra).await {
-                return Ok(retry);
-            }
-        }
-
-        Ok(resp)
+            self.fetch_with_headers(url, extra).await
+        })
+        .await
     }
 
     /// Fetch a URL and return the raw HTML + response metadata.
     ///
-    /// Automatically retries on transient failures (network errors, 5xx, 429)
-    /// with exponential backoff: 0s, 1s (2 attempts total). No per-site
-    /// rescue logic; use [`Self::fetch_smart`] for that.
+    /// Retries once on transient failures (network errors, 429, 502-504,
+    /// 520-524). The pause is 1s, or the response's `Retry-After` when it is
+    /// longer and still fits the remaining [`FetchConfig::total_timeout`].
+    /// No per-site rescue logic; use [`Self::fetch_smart`] for that.
     #[instrument(skip(self), fields(url = %url))]
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
-        let delays = [Duration::ZERO, Duration::from_secs(1)];
-        let mut last_err = None;
-        // Clock starts before the first attempt so the retry pause and every
-        // attempt come out of one budget, rather than each getting a fresh one.
-        let started = Instant::now();
-
-        for (attempt, delay) in delays.iter().enumerate() {
-            if attempt > 0 {
-                tokio::time::sleep(*delay).await;
-            }
-
-            match self.within_budget(started, url, self.fetch_once(url)).await {
-                Ok(result) => {
-                    if is_retryable_status(result.status) && attempt < delays.len() - 1 {
-                        warn!(
-                            url,
-                            status = result.status,
-                            attempt = attempt + 1,
-                            "retryable status, will retry"
-                        );
-                        last_err = Some(FetchError::Build(format!("HTTP {}", result.status)));
-                        continue;
-                    }
-                    if attempt > 0 {
-                        debug!(url, attempt = attempt + 1, "retry succeeded");
-                    }
-                    return Ok(result);
-                }
-                Err(e) => {
-                    if !is_retryable_error(&e) || attempt == delays.len() - 1 {
-                        return Err(e);
-                    }
-                    warn!(
-                        url,
-                        error = %e,
-                        attempt = attempt + 1,
-                        "transient error, will retry"
-                    );
-                    last_err = Some(e);
-                }
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
+        self.fetch_with_headers(url, &[]).await
     }
 
-    /// Single fetch attempt.
-    async fn fetch_once(&self, url: &str) -> Result<FetchResult, FetchError> {
-        self.fetch_once_with_headers(url, &[]).await
-    }
-
-    /// Single fetch attempt with optional per-request headers appended
-    /// after the profile defaults. Used by extractors that need to
-    /// satisfy site-specific headers (e.g. `x-ig-app-id` for Instagram's
-    /// internal API).
     async fn fetch_once_with_headers(
         &self,
         url: &str,
@@ -573,51 +521,56 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        let delays = [Duration::ZERO, Duration::from_secs(1)];
-        let mut last_err = None;
-        // One budget across the whole call — see `within_budget`.
+        self.with_retries(url, || self.fetch_once_with_headers(url, extra))
+            .await
+    }
+
+    async fn with_retries<F, Fut>(
+        &self,
+        url: &str,
+        mut attempt: F,
+    ) -> Result<FetchResult, FetchError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<FetchResult, FetchError>>,
+    {
         let started = Instant::now();
-
-        for (attempt, delay) in delays.iter().enumerate() {
-            if attempt > 0 {
-                tokio::time::sleep(*delay).await;
-            }
-            match self
-                .within_budget(started, url, self.fetch_once_with_headers(url, extra))
-                .await
-            {
-                Ok(result) => {
-                    if is_retryable_status(result.status) && attempt < delays.len() - 1 {
-                        warn!(
-                            url,
-                            status = result.status,
-                            attempt = attempt + 1,
-                            "retryable status, will retry"
-                        );
-                        last_err = Some(FetchError::Build(format!("HTTP {}", result.status)));
-                        continue;
-                    }
-                    if attempt > 0 {
-                        debug!(url, attempt = attempt + 1, "retry succeeded");
-                    }
-                    return Ok(result);
+        for attempt_no in 1.. {
+            let outcome = self.within_budget(started, url, attempt()).await;
+            let wait = match &outcome {
+                _ if attempt_no == MAX_ATTEMPTS => None,
+                Ok(result) if is_retryable_status(result.status) => {
+                    self.retry_wait(started, retry_after(&result.headers))
                 }
+                Err(e) if is_retryable_error(e) => self.retry_wait(started, None),
+                _ => None,
+            };
+            let Some(wait) = wait else {
+                return outcome;
+            };
+            match &outcome {
+                Ok(result) => warn!(
+                    url,
+                    status = result.status,
+                    attempt_no,
+                    wait_ms = wait.as_millis() as u64,
+                    "retryable status, will retry"
+                ),
                 Err(e) => {
-                    if !is_retryable_error(&e) || attempt == delays.len() - 1 {
-                        return Err(e);
-                    }
-                    warn!(
-                        url,
-                        error = %e,
-                        attempt = attempt + 1,
-                        "transient error, will retry"
-                    );
-                    last_err = Some(e);
+                    warn!(url, error = %e, attempt_no, wait_ms = wait.as_millis() as u64, "transient error, will retry")
                 }
             }
+            tokio::time::sleep(wait).await;
         }
+        unreachable!("the loop returns on the last attempt")
+    }
 
-        Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
+    fn retry_wait(&self, started: Instant, retry_after: Option<Duration>) -> Option<Duration> {
+        let wait = retry_after.map_or(RETRY_PAUSE, |d| d.max(RETRY_PAUSE));
+        let ceiling = self.total_timeout.map_or(RETRY_AFTER_CAP, |total| {
+            total.saturating_sub(started.elapsed())
+        });
+        (wait < ceiling).then_some(wait)
     }
 
     /// Fetch a URL and return the raw, undecoded response body as bytes.
@@ -630,16 +583,20 @@ impl FetchClient {
     /// String path would mangle them. Callers detect the gzip magic
     /// (`0x1f 0x8b`) and gunzip before parsing.
     ///
-    /// No retry wrapper: callers (sitemap discovery) already tolerate
-    /// per-URL failures by skipping. Returns `(status, body)`.
+    /// One attempt, bounded by [`FetchConfig::total_timeout`]: callers
+    /// (sitemap discovery) already tolerate per-URL failures by skipping.
+    /// Returns `(status, body)`.
     pub async fn fetch_raw(&self, url: &str) -> Result<(u16, bytes::Bytes), FetchError> {
-        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
-        let url = parsed_url.as_str();
-        let client = self.pick_client(url);
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = client.get(url).send().await?;
-        let response = Response::from_wreq(resp, attempt).await?;
-        Ok((response.status(), response.into_body()))
+        self.within_budget(Instant::now(), url, async {
+            let parsed_url = crate::url_security::validate_public_http_url(url).await?;
+            let url = parsed_url.as_str();
+            let client = self.pick_client(url);
+            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
+            let resp = client.get(url).send().await?;
+            let response = Response::from_wreq(resp, attempt).await?;
+            Ok((response.status(), response.into_body()))
+        })
+        .await
     }
 
     /// Fetch a URL then extract structured content.
@@ -659,111 +616,27 @@ impl FetchClient {
         url: &str,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
-        let url = parsed_url.as_str();
-
-        // Reddit: rewrite to old.reddit.com for stable server-rendered HTML.
-        // webclaw-core's Reddit fast path then parses the thread structure.
-        let reddit_owned;
-        let url = if crate::reddit::is_reddit_url(url) {
-            reddit_owned = crate::reddit::to_old_reddit_url(url);
-            debug!("reddit: rewriting to {reddit_owned}");
-            reddit_owned.as_str()
-        } else {
-            url
-        };
-
-        let start = Instant::now();
-        let client = self.pick_client(url);
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = client.get(url).send().await?;
-        let mut response = Response::from_wreq(resp, attempt).await?;
-
-        // Cookie warmup: if we get a challenge page, visit the homepage first
-        // to collect Akamai cookies (_abck, bm_sz, etc.), then retry.
-        if is_challenge_response(&response)
-            && let Some(homepage) = extract_homepage(url)
+        let fetched = self.fetch_smart(url).await?;
+        if fetched.status >= 400 {
+            return Err(FetchError::UpstreamStatus(fetched.status));
+        }
+        if fetched.document_bytes.is_some() {
+            return extract_fetched(&fetched, options, self.pdf_mode.clone());
+        }
+        if crate::linkedin::is_linkedin_post(&fetched.url)
+            && let Some(result) =
+                crate::linkedin::extract_linkedin_post(&fetched.html, &fetched.url)
         {
-            debug!("challenge detected, warming cookies via {homepage}");
-            let _ = self.fetch(&homepage).await;
-            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-            let resp = client.get(url).send().await?;
-            response = Response::from_wreq(resp, attempt).await?;
-            debug!("retried after cookie warmup: status={}", response.status());
+            return Ok(result);
         }
-
-        let status = response.status();
-        if status >= 400 {
-            return Err(FetchError::UpstreamStatus(status));
-        }
-        let final_url = response.url().to_string();
-
-        // Borrowed, not cloned: both consumers below take `&HeaderMap`, and the
-        // borrow ends before `response` is moved into `into_text()`.
-        let headers = response.headers();
-
-        let is_pdf = is_pdf_content_type(headers);
-
-        if is_pdf {
-            debug!(status, "detected PDF response, using pdf extraction");
-
-            let bytes = response.body();
-
-            let elapsed = start.elapsed();
-            debug!(
-                status,
-                bytes = bytes.len(),
-                elapsed_ms = %elapsed.as_millis(),
-                "PDF fetch complete"
-            );
-
-            let pdf_result = webclaw_pdf::extract_pdf(bytes, self.pdf_mode.clone())?;
-            Ok(pdf_to_extraction_result(&pdf_result, &final_url))
-        } else if let Some(doc_type) =
-            crate::document::is_document_content_type(headers, &final_url)
+        let extraction = extract_fetched(&fetched, options, self.pdf_mode.clone())?;
+        if let Some(issue) = webclaw_core::quality::content_issue(&extraction)
+            && (issue != webclaw_core::quality::ContentIssue::Empty
+                || !webclaw_core::quality::allows_empty_content(&fetched.html, options))
         {
-            debug!(status, doc_type = ?doc_type, "detected document response, extracting");
-
-            let bytes = response.body();
-
-            let elapsed = start.elapsed();
-            debug!(
-                status,
-                bytes = bytes.len(),
-                elapsed_ms = %elapsed.as_millis(),
-                "document fetch complete"
-            );
-
-            let mut result = crate::document::extract_document(bytes, doc_type)?;
-            result.metadata.url = Some(final_url);
-            Ok(result)
-        } else {
-            let html = response.into_text();
-
-            let elapsed = start.elapsed();
-            debug!(status, elapsed_ms = %elapsed.as_millis(), "fetch complete");
-
-            // LinkedIn: extract from embedded <code> JSON blobs
-            if crate::linkedin::is_linkedin_post(&final_url) {
-                if let Some(result) = crate::linkedin::extract_linkedin_post(&html, &final_url) {
-                    debug!("linkedin extraction succeeded");
-                    return Ok(result);
-                }
-                debug!("linkedin extraction failed, falling back to standard");
-            }
-
-            let extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
-
-            if let Some(issue) = webclaw_core::quality::content_issue(&extraction) {
-                // An explicit selector may intentionally match no readable text.
-                if issue != webclaw_core::quality::ContentIssue::Empty
-                    || !webclaw_core::quality::allows_empty_content(&html, options)
-                {
-                    return Err(issue.into());
-                }
-            }
-            Ok(extraction)
+            return Err(issue.into());
         }
+        Ok(extraction)
     }
 
     /// Fetch multiple URLs concurrently with bounded parallelism.
@@ -998,6 +871,16 @@ fn pick_random(clients: &[ObservedClient]) -> &ObservedClient {
     &clients[idx]
 }
 
+const MAX_ATTEMPTS: usize = 2;
+const RETRY_PAUSE: Duration = Duration::from_secs(1);
+const RETRY_AFTER_CAP: Duration = Duration::from_secs(30);
+
+// ponytail: delta-seconds only; the HTTP-date form falls back to RETRY_PAUSE. Parse it if a target needs it.
+fn retry_after(headers: &http::HeaderMap) -> Option<Duration> {
+    let value = headers.get(http::header::RETRY_AFTER)?.to_str().ok()?;
+    value.trim().parse().ok().map(Duration::from_secs)
+}
+
 /// Status codes worth retrying: server errors + rate limiting.
 fn is_retryable_status(status: u16) -> bool {
     status == 429
@@ -1025,15 +908,6 @@ fn is_pdf_content_type(headers: &http::HeaderMap) -> bool {
             mime.eq_ignore_ascii_case("application/pdf")
         })
         .unwrap_or(false)
-}
-
-/// Detect if a response looks like a bot protection challenge page.
-fn is_challenge_response(response: &Response) -> bool {
-    let body_len = response.body().len();
-    if body_len > 15_000 || body_len == 0 {
-        return false;
-    }
-    is_challenge_html(response.text().as_ref())
 }
 
 /// Same as `is_challenge_response`, operating on a body string directly
@@ -1390,6 +1264,112 @@ mod tests {
             .within_budget(started, "https://example.com", async { Ok(7) })
             .await;
         assert_eq!(res.expect("should run"), 7);
+    }
+
+    fn canned(status: u16, retry_after: Option<&str>) -> FetchResult {
+        let mut headers = http::HeaderMap::new();
+        if let Some(value) = retry_after {
+            headers.insert(http::header::RETRY_AFTER, value.parse().unwrap());
+        }
+        FetchResult {
+            html: String::new(),
+            document_bytes: None,
+            status,
+            url: "https://example.com/".into(),
+            headers,
+            elapsed: Duration::ZERO,
+        }
+    }
+
+    fn client_with_budget(total_timeout: Option<Duration>) -> FetchClient {
+        FetchClient::new(FetchConfig {
+            total_timeout,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    async fn run_retries(
+        client: &FetchClient,
+        mut responses: Vec<Result<FetchResult, FetchError>>,
+    ) -> (Result<FetchResult, FetchError>, usize, Duration) {
+        responses.reverse();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let responses = std::sync::Mutex::new(responses);
+        let began = Instant::now();
+        let outcome = client
+            .with_retries("https://example.com/", || {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let next = responses.lock().unwrap().pop().unwrap();
+                async move { next }
+            })
+            .await;
+        (outcome, calls.into_inner(), began.elapsed())
+    }
+
+    #[tokio::test]
+    async fn waits_for_retry_after_before_the_second_attempt() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, waited) = run_retries(
+            &client,
+            vec![Ok(canned(429, Some("2"))), Ok(canned(200, None))],
+        )
+        .await;
+        assert_eq!(outcome.unwrap().status, 200);
+        assert_eq!(calls, 2);
+        assert!(waited >= Duration::from_secs(2), "waited only {waited:?}");
+    }
+
+    #[tokio::test]
+    async fn returns_the_rate_limited_response_when_retry_after_exceeds_the_budget() {
+        let client = client_with_budget(Some(Duration::from_secs(3)));
+        let (outcome, calls, waited) =
+            run_retries(&client, vec![Ok(canned(429, Some("120")))]).await;
+        assert_eq!(outcome.unwrap().status, 429);
+        assert_eq!(calls, 1);
+        assert!(waited < Duration::from_millis(500));
+    }
+
+    #[tokio::test]
+    async fn caps_retry_after_when_there_is_no_budget() {
+        let client = client_with_budget(None);
+        let (outcome, calls, _) = run_retries(&client, vec![Ok(canned(503, Some("3600")))]).await;
+        assert_eq!(outcome.unwrap().status, 503);
+        assert_eq!(calls, 1);
+    }
+
+    #[tokio::test]
+    async fn retries_a_transient_error_once_then_gives_up() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, waited) = run_retries(
+            &client,
+            vec![
+                Err(FetchError::BodyDecode("reset".into())),
+                Err(FetchError::BodyDecode("reset again".into())),
+            ],
+        )
+        .await;
+        assert!(matches!(outcome, Err(FetchError::BodyDecode(m)) if m == "reset again"));
+        assert_eq!(calls, 2);
+        assert!(waited >= RETRY_PAUSE);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_a_final_status() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, _) = run_retries(&client, vec![Ok(canned(404, None))]).await;
+        assert_eq!(outcome.unwrap().status, 404);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn parses_retry_after_seconds_only() {
+        let parse = |v: &str| retry_after(&canned(429, Some(v)).headers);
+        assert_eq!(parse("2"), Some(Duration::from_secs(2)));
+        assert_eq!(parse(" 7 "), Some(Duration::from_secs(7)));
+        assert_eq!(parse("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+        assert_eq!(parse("soon"), None);
+        assert_eq!(retry_after(&http::HeaderMap::new()), None);
     }
 
     #[test]

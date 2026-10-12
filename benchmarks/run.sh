@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
-# Reproduce the webclaw benchmark.
-# Requires: python3, tiktoken, trafilatura. Optional: firecrawl-py + FIRECRAWL_API_KEY.
-
+# usage: ./run.sh [label] [webclaw-binary] [url-runs]
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Build webclaw if not present
-if [ ! -x "../target/release/webclaw" ]; then
-    echo "→ building webclaw..."
-    (cd .. && cargo build --release)
-fi
+label=${1:-$(date +%F)}
+bin=${2:-../target/release/webclaw}
+runs=${3:-3}
+unset WEBCLAW_API_KEY
 
-# Install python deps if missing
-missing=""
-python3 -c "import tiktoken"     2>/dev/null || missing+=" tiktoken"
-python3 -c "import trafilatura"  2>/dev/null || missing+=" trafilatura"
-if [ -n "${FIRECRAWL_API_KEY:-}" ]; then
-    python3 -c "import firecrawl" 2>/dev/null || missing+=" firecrawl-py"
+command -v uv >/dev/null || { echo "needs uv: https://docs.astral.sh/uv/getting-started/installation/" >&2; exit 1; }
+if [ ! -x "$bin" ] && [ "$bin" = ../target/release/webclaw ]; then
+  (cd .. && cargo build --release -p webclaw-cli)
 fi
-if [ -n "$missing" ]; then
-    echo "→ installing python deps:$missing"
-    python3 -m pip install --quiet $missing
-fi
+[ -x "$bin" ] || { echo "no webclaw binary at $bin" >&2; exit 1; }
+export WEBCLAW_BIN=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 
-# Run
-python3 scripts/bench.py
+venv() {
+  local name=$1; shift
+  [ -x ".work/venv-$name/bin/python" ] && return
+  uv venv -q -p 3.12 ".work/venv-$name"
+  uv pip install -q -p ".work/venv-$name" "$@"
+}
+venv base trafilatura==2.3.1 tiktoken==0.14.0
+venv scrapling "scrapling[fetchers] @ git+https://github.com/D4Vinci/Scrapling@7a68493" markdownify==1.2.3
+venv crawl4ai crawl4ai==0.9.4
+[ -f .work/venv-crawl4ai/.setup-done ] || { .work/venv-crawl4ai/bin/crawl4ai-setup && touch .work/venv-crawl4ai/.setup-done; }
+
+[ -f .work/cases-html.jsonl ] || .work/venv-base/bin/python scripts/run.py prepare
+rm -rf "results/$label" ".work/out/$label"
+.work/venv-base/bin/python scripts/run.py run "$label" "$runs"
+for v in base scrapling crawl4ai; do uv pip list -p ".work/venv-$v" 2>/dev/null; done \
+  | grep -iE '^(trafilatura|tiktoken|scrapling|curl.cffi|markdownify|crawl4ai|playwright) ' | sort -u > "results/$label/versions.txt"
+.work/venv-base/bin/python scripts/run.py summary "$label"

@@ -298,7 +298,7 @@ fn check_facts(path: &Path, url: &str, llm_text: &str) -> Result<Option<(usize, 
 }
 
 /// Match a single fact against the lowercased text. Mirrors the
-/// python harness in `benchmarks/scripts/bench.py`:
+/// python harness in `benchmarks/scripts/run.py`:
 /// - Single alphanumeric token → word-boundary (so `API` doesn't hit
 ///   `apiece`).
 /// - Multi-word or non-alpha facts (e.g. `99.999`) → substring.

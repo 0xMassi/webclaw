@@ -99,24 +99,33 @@ impl FetchResult {
         &self,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        if let Some(bytes) = &self.document_bytes {
-            if is_pdf_content_type(&self.headers) || bytes.starts_with(b"%PDF-") {
-                let pdf = webclaw_pdf::extract_pdf(bytes, PdfMode::default())?;
-                return Ok(pdf_to_extraction_result(&pdf, &self.url));
-            }
-            if let Some(kind) = crate::document::is_document_content_type(&self.headers, &self.url)
-            {
-                let mut result = crate::document::extract_document(bytes, kind)?;
-                result.metadata.url = Some(self.url.clone());
-                return Ok(result);
-            }
-        }
-        Ok(webclaw_core::extract_with_options(
-            &self.html,
-            Some(&self.url),
-            options,
-        )?)
+        extract_fetched(self, options, PdfMode::default())
     }
+}
+
+fn extract_fetched(
+    fetched: &FetchResult,
+    options: &webclaw_core::ExtractionOptions,
+    pdf_mode: PdfMode,
+) -> Result<webclaw_core::ExtractionResult, FetchError> {
+    if let Some(bytes) = &fetched.document_bytes {
+        if is_pdf_content_type(&fetched.headers) || bytes.starts_with(b"%PDF-") {
+            let pdf = webclaw_pdf::extract_pdf(bytes, pdf_mode)?;
+            return Ok(pdf_to_extraction_result(&pdf, &fetched.url));
+        }
+        if let Some(kind) =
+            crate::document::is_document_content_type(&fetched.headers, &fetched.url)
+        {
+            let mut result = crate::document::extract_document(bytes, kind)?;
+            result.metadata.url = Some(fetched.url.clone());
+            return Ok(result);
+        }
+    }
+    Ok(webclaw_core::extract_with_options(
+        &fetched.html,
+        Some(&fetched.url),
+        options,
+    )?)
 }
 
 /// Result for a single URL in a batch fetch operation.
@@ -227,10 +236,6 @@ impl Response {
     }
     fn body(&self) -> &[u8] {
         &self.body
-    }
-
-    fn text(&self) -> std::borrow::Cow<'_, str> {
-        String::from_utf8_lossy(&self.body)
     }
 
     /// Decode the body to `String`, consuming the buffer.
@@ -617,111 +622,27 @@ impl FetchClient {
         url: &str,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
-        let url = parsed_url.as_str();
-
-        // Reddit: rewrite to old.reddit.com for stable server-rendered HTML.
-        // webclaw-core's Reddit fast path then parses the thread structure.
-        let reddit_owned;
-        let url = if crate::reddit::is_reddit_url(url) {
-            reddit_owned = crate::reddit::to_old_reddit_url(url);
-            debug!("reddit: rewriting to {reddit_owned}");
-            reddit_owned.as_str()
-        } else {
-            url
-        };
-
-        let start = Instant::now();
-        let client = self.pick_client(url);
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = client.get(url).send().await?;
-        let mut response = Response::from_wreq(resp, attempt).await?;
-
-        // Cookie warmup: if we get a challenge page, visit the homepage first
-        // to collect Akamai cookies (_abck, bm_sz, etc.), then retry.
-        if is_challenge_response(&response)
-            && let Some(homepage) = extract_homepage(url)
+        let fetched = self.fetch_smart(url).await?;
+        if fetched.status >= 400 {
+            return Err(FetchError::UpstreamStatus(fetched.status));
+        }
+        if fetched.document_bytes.is_some() {
+            return extract_fetched(&fetched, options, self.pdf_mode.clone());
+        }
+        if crate::linkedin::is_linkedin_post(&fetched.url)
+            && let Some(result) =
+                crate::linkedin::extract_linkedin_post(&fetched.html, &fetched.url)
         {
-            debug!("challenge detected, warming cookies via {homepage}");
-            let _ = self.fetch(&homepage).await;
-            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-            let resp = client.get(url).send().await?;
-            response = Response::from_wreq(resp, attempt).await?;
-            debug!("retried after cookie warmup: status={}", response.status());
+            return Ok(result);
         }
-
-        let status = response.status();
-        if status >= 400 {
-            return Err(FetchError::UpstreamStatus(status));
-        }
-        let final_url = response.url().to_string();
-
-        // Borrowed, not cloned: both consumers below take `&HeaderMap`, and the
-        // borrow ends before `response` is moved into `into_text()`.
-        let headers = response.headers();
-
-        let is_pdf = is_pdf_content_type(headers);
-
-        if is_pdf {
-            debug!(status, "detected PDF response, using pdf extraction");
-
-            let bytes = response.body();
-
-            let elapsed = start.elapsed();
-            debug!(
-                status,
-                bytes = bytes.len(),
-                elapsed_ms = %elapsed.as_millis(),
-                "PDF fetch complete"
-            );
-
-            let pdf_result = webclaw_pdf::extract_pdf(bytes, self.pdf_mode.clone())?;
-            Ok(pdf_to_extraction_result(&pdf_result, &final_url))
-        } else if let Some(doc_type) =
-            crate::document::is_document_content_type(headers, &final_url)
+        let extraction = extract_fetched(&fetched, options, self.pdf_mode.clone())?;
+        if let Some(issue) = webclaw_core::quality::content_issue(&extraction)
+            && (issue != webclaw_core::quality::ContentIssue::Empty
+                || !webclaw_core::quality::allows_empty_content(&fetched.html, options))
         {
-            debug!(status, doc_type = ?doc_type, "detected document response, extracting");
-
-            let bytes = response.body();
-
-            let elapsed = start.elapsed();
-            debug!(
-                status,
-                bytes = bytes.len(),
-                elapsed_ms = %elapsed.as_millis(),
-                "document fetch complete"
-            );
-
-            let mut result = crate::document::extract_document(bytes, doc_type)?;
-            result.metadata.url = Some(final_url);
-            Ok(result)
-        } else {
-            let html = response.into_text();
-
-            let elapsed = start.elapsed();
-            debug!(status, elapsed_ms = %elapsed.as_millis(), "fetch complete");
-
-            // LinkedIn: extract from embedded <code> JSON blobs
-            if crate::linkedin::is_linkedin_post(&final_url) {
-                if let Some(result) = crate::linkedin::extract_linkedin_post(&html, &final_url) {
-                    debug!("linkedin extraction succeeded");
-                    return Ok(result);
-                }
-                debug!("linkedin extraction failed, falling back to standard");
-            }
-
-            let extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
-
-            if let Some(issue) = webclaw_core::quality::content_issue(&extraction) {
-                // An explicit selector may intentionally match no readable text.
-                if issue != webclaw_core::quality::ContentIssue::Empty
-                    || !webclaw_core::quality::allows_empty_content(&html, options)
-                {
-                    return Err(issue.into());
-                }
-            }
-            Ok(extraction)
+            return Err(issue.into());
         }
+        Ok(extraction)
     }
 
     /// Fetch multiple URLs concurrently with bounded parallelism.
@@ -993,15 +914,6 @@ fn is_pdf_content_type(headers: &http::HeaderMap) -> bool {
             mime.eq_ignore_ascii_case("application/pdf")
         })
         .unwrap_or(false)
-}
-
-/// Detect if a response looks like a bot protection challenge page.
-fn is_challenge_response(response: &Response) -> bool {
-    let body_len = response.body().len();
-    if body_len > 15_000 || body_len == 0 {
-        return false;
-    }
-    is_challenge_html(response.text().as_ref())
 }
 
 /// Same as `is_challenge_response`, operating on a body string directly

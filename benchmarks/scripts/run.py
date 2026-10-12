@@ -26,8 +26,9 @@ def prepare():
             continue
         path = corpus / f"{c['id']}.html"
         if not path.exists():
-            ok = subprocess.run([WEBCLAW, c["url"], "-f", "llm", "-t", "30"], capture_output=True, timeout=60).returncode == 0
-            r = subprocess.run([WEBCLAW, c["url"], "--raw-html", "-t", "30"], capture_output=True, text=True, timeout=60) if ok else None
+            probe = subprocess.run([WEBCLAW, c["url"], "-f", "llm", "-t", "30"], capture_output=True, text=True, timeout=60)
+            http_error = "returned HTTP" in probe.stderr or "request failed" in probe.stderr
+            r = None if http_error else subprocess.run([WEBCLAW, c["url"], "--raw-html", "-t", "30"], capture_output=True, text=True, timeout=60)
             if r and r.returncode == 0 and r.stdout.strip():
                 path.write_text(r.stdout)
         if path.exists():
@@ -93,13 +94,13 @@ def summary(label):
     for mode in ("url", "html"):
         lines += [f"## {mode} mode", "", "| category | arm | runs | ok % | fact recall % | median tokens | p50 s | p95 s |",
                   "|---|---|---:|---:|---:|---:|---:|---:|"]
-        for (m, cat, arm), rows in sorted(groups.items(), key=lambda kv: (kv[0][1] != "ALL", kv[0][1], kv[0][2])):
+        for (m, cat, arm), group in sorted(groups.items(), key=lambda kv: (kv[0][1] != "ALL", kv[0][1], kv[0][2])):
             if m != mode:
                 continue
-            ok = [r for r in rows if r["ok"]]
-            secs = [r["seconds"] for r in rows]
-            lines.append(f"| {cat} | {arm} | {len(rows)} | {100 * len(ok) / len(rows):.0f} | "
-                         f"{100 * sum(r['hits'] for r in rows) / max(1, sum(r['nfacts'] for r in rows)):.1f} | "
+            ok = [r for r in group if r["ok"]]
+            secs = [r["seconds"] for r in group]
+            lines.append(f"| {cat} | {arm} | {len(group)} | {100 * len(ok) / len(group):.0f} | "
+                         f"{100 * sum(r['hits'] for r in group) / max(1, sum(r['nfacts'] for r in group)):.1f} | "
                          f"{int(statistics.median([r['tokens'] for r in ok])) if ok else 0} | "
                          f"{pct(secs, .5):.2f} | {pct(secs, .95):.2f} |")
         lines.append("")

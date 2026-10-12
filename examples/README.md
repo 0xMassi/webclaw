@@ -259,9 +259,6 @@ webclaw -v https://example.com
 # Single proxy
 webclaw --proxy http://user:pass@proxy.example.com:8080 https://example.com
 
-# SOCKS5 proxy
-webclaw --proxy socks5://proxy.example.com:1080 https://example.com
-
 # Proxy rotation from file (one per line: host:port:user:pass)
 webclaw --proxy-file proxies.txt https://example.com
 

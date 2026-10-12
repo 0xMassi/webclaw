@@ -470,6 +470,8 @@ enum Commands {
 enum OutputFormat {
     Markdown,
     Json,
+    /// One compact JSON object per line. Crawls stream each page as it finishes.
+    Jsonl,
     Text,
     Llm,
     Html,
@@ -691,7 +693,7 @@ fn looks_truncated(url: &str) -> bool {
 fn url_to_filename(raw_url: &str, format: &OutputFormat) -> String {
     let ext = match format {
         OutputFormat::Markdown | OutputFormat::Llm => "md",
-        OutputFormat::Json => "json",
+        OutputFormat::Json | OutputFormat::Jsonl => "json",
         OutputFormat::Text => "txt",
         OutputFormat::Html => "html",
     };
@@ -829,6 +831,7 @@ fn format_output(result: &ExtractionResult, format: &OutputFormat, show_metadata
             out
         }
         OutputFormat::Json => serde_json::to_string_pretty(result).expect("serialization failed"),
+        OutputFormat::Jsonl => serde_json::to_string(result).expect("serialization failed"),
         OutputFormat::Text => result.content.plain_text.clone(),
         OutputFormat::Llm => to_llm_text(result, result.metadata.url.as_deref()),
         OutputFormat::Html => raw_html_or_markdown(result).to_string(),
@@ -910,7 +913,7 @@ fn cloud_scrape_format(cli: &Cli) -> &'static str {
     }
     match cli.format {
         OutputFormat::Markdown => "markdown",
-        OutputFormat::Json => "json",
+        OutputFormat::Json | OutputFormat::Jsonl => "json",
         OutputFormat::Text => "text",
         OutputFormat::Llm => "llm",
         OutputFormat::Html => "rawHtml",
@@ -1178,6 +1181,12 @@ fn format_frontmatter(meta: &Metadata) -> String {
 
 fn print_output(result: &ExtractionResult, format: &OutputFormat, show_metadata: bool) {
     match format {
+        OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string(result).expect("serialization failed")
+            );
+        }
         OutputFormat::Markdown => {
             if show_metadata {
                 print!("{}", format_frontmatter(&result.metadata));
@@ -1218,6 +1227,7 @@ fn cloud_text<'a>(resp: &'a serde_json::Value, field: &str, legacy: &str) -> Opt
 /// Print cloud API response in the requested format.
 fn print_cloud_output(resp: &serde_json::Value, format: &OutputFormat) {
     match format {
+        OutputFormat::Jsonl => println!("{resp}"),
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -1268,6 +1278,12 @@ fn print_cloud_output(resp: &serde_json::Value, format: &OutputFormat) {
 
 fn print_diff_output(diff: &ContentDiff, format: &OutputFormat) {
     match format {
+        OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string(diff).expect("serialization failed")
+            );
+        }
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -1314,6 +1330,14 @@ fn print_diff_output(diff: &ContentDiff, format: &OutputFormat) {
 
 fn print_crawl_output(result: &CrawlResult, format: &OutputFormat, show_metadata: bool) {
     match format {
+        OutputFormat::Jsonl => {
+            for page in &result.pages {
+                println!(
+                    "{}",
+                    serde_json::to_string(page).expect("serialization failed")
+                );
+            }
+        }
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -1371,6 +1395,15 @@ fn print_crawl_output(result: &CrawlResult, format: &OutputFormat, show_metadata
 
 fn print_batch_output(results: &[BatchExtractResult], format: &OutputFormat, show_metadata: bool) {
     match format {
+        OutputFormat::Jsonl => {
+            for r in results {
+                let line = match &r.result {
+                    Ok(extraction) => serde_json::json!({ "url": r.url, "result": extraction }),
+                    Err(e) => serde_json::json!({ "url": r.url, "error": e.to_string() }),
+                };
+                println!("{line}");
+            }
+        }
         OutputFormat::Json => {
             // Build a JSON array of {url, result?, error?} objects
             let entries: Vec<serde_json::Value> = results
@@ -1458,6 +1491,14 @@ fn print_batch_output(results: &[BatchExtractResult], format: &OutputFormat, sho
 
 fn print_map_output(entries: &[SitemapEntry], format: &OutputFormat) {
     match format {
+        OutputFormat::Jsonl => {
+            for entry in entries {
+                println!(
+                    "{}",
+                    serde_json::to_string(entry).expect("serialization failed")
+                );
+            }
+        }
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -1511,13 +1552,11 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
         .unwrap_or_default();
 
-    // Set up streaming progress channel
-    let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(100);
+    let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(4096);
+    let stream_jsonl = matches!(cli.format, OutputFormat::Jsonl) && cli.output_dir.is_none();
 
-    // Set up cancel flag for Ctrl+C handling
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
-    // Register Ctrl+C handler when --crawl-state is set
     let state_path = cli.crawl_state.clone();
     if state_path.is_some() {
         let flag = Arc::clone(&cancel_flag);
@@ -1531,12 +1570,8 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     let config = CrawlConfig {
         fetch: build_fetch_config(cli),
         max_depth: cli.depth,
-        // `--max-pages 0` = no cap.
         max_pages: (cli.max_pages > 0).then_some(cli.max_pages),
-        // The CLI renders a document from the collected pages at the end, so
-        // it keeps them. An uncapped crawl therefore grows with the site —
-        // acceptable on a workstation, and Ctrl+C saves resumable state.
-        stream_only: false,
+        stream_only: stream_jsonl,
         concurrency: cli.concurrency,
         delay: std::time::Duration::from_millis(cli.delay),
         path_prefix: cli.path_prefix.clone(),
@@ -1548,9 +1583,9 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         allow_subdomains: false,
         allow_external_links: false,
         respect_robots: !cli.ignore_robots,
+        checkpoint: state_path.clone(),
     };
 
-    // Load resume state if --crawl-state file exists
     let resume_state = state_path
         .as_ref()
         .and_then(|p| Crawler::load_state(p))
@@ -1562,27 +1597,37 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
             );
         });
 
-    // `None` = uncapped, so the progress line shows a running count only.
     let max_pages = (cli.max_pages > 0).then_some(cli.max_pages);
     let completed_offset = resume_state.as_ref().map_or(0, |s| s.completed_pages);
 
-    // Spawn background task to print streaming progress to stderr
     let progress_handle = tokio::spawn(async move {
         let mut count = completed_offset;
-        while let Ok(page) = progress_rx.recv().await {
-            count += 1;
-            eprintln!("{}", format_progress(&page, count, max_pages));
+        loop {
+            match progress_rx.recv().await {
+                Ok(page) => {
+                    count += 1;
+                    eprintln!("{}", format_progress(&page, count, max_pages));
+                    if stream_jsonl {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&page).expect("serialization failed")
+                        );
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("warning: output fell behind the crawl, {n} pages were not printed");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
         }
     });
 
     let crawler = Crawler::new(url, config).map_err(|e| format!("crawler error: {e}"))?;
     let result = crawler.crawl(url, resume_state).await;
 
-    // Drop the crawler (and its progress_tx clone) so the progress task finishes
     drop(crawler);
     let _ = progress_handle.await;
 
-    // If cancelled via Ctrl+C and --crawl-state is set, save state for resume
     let was_cancelled = cancel_flag.load(Ordering::Relaxed);
     if was_cancelled {
         if let Some(ref path) = state_path {
@@ -1602,14 +1647,12 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 path.display(),
             );
         }
-    } else if let Some(ref path) = state_path {
-        // Crawl completed normally — clean up state file
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
-        }
+    } else if let Some(ref path) = state_path
+        && path.exists()
+    {
+        let _ = std::fs::remove_file(path);
     }
 
-    // Log per-page errors and extraction warnings to stderr
     for page in &result.pages {
         if let Some(ref err) = page.error {
             eprintln!("error: {} -- {}", page.url, err);
@@ -1647,7 +1690,6 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         );
     }
 
-    // Fire webhook on crawl complete
     if let Some(ref webhook_url) = cli.webhook {
         let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
         let handle = fire_webhook(
@@ -1662,7 +1704,6 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 "urls": urls,
             }),
         );
-        // Wait for the webhook to finish so the process doesn't exit mid-send.
         let _ = handle.await;
     }
 

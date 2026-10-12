@@ -763,6 +763,7 @@ mod hidden_tests {
         let llm = crate::to_llm_text(&result, Some("https://example.com/rust"));
         for out in [&result.content.markdown, &result.content.plain_text, &llm] {
             assert!(!out.contains("IGNORE PREVIOUS"), "leaked:\n{out}");
+            assert!(out.contains("borrow checker"), "dropped content:\n{out}");
         }
     }
 
@@ -775,6 +776,8 @@ mod hidden_tests {
         let llm = crate::to_llm_text(&result, Some("https://example.com/rust"));
         for out in [&result.content.markdown, &llm] {
             assert!(!out.contains("IGNORE PREVIOUS"), "leaked:\n{out}");
+            assert!(out.contains("borrow checker"), "dropped content:\n{out}");
+            assert!(out.contains("Tooling"), "dropped heading:\n{out}");
         }
     }
 

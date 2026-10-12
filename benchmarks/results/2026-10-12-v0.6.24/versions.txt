@@ -1,0 +1,7 @@
+crawl4ai 0.9.4
+curl-cffi 0.16.3
+markdownify 1.2.3
+playwright 1.63.0
+scrapling 0.4.15
+tiktoken 0.14.0
+trafilatura 2.3.1

@@ -150,7 +150,7 @@ fn warn_empty(url: &str, reason: &EmptyReason) {
 }
 
 #[derive(Parser)]
-#[command(name = "webclaw", about = "Extract web content for LLMs", version)]
+#[command(name = "webclaw", about = "Extract web content for LLMs", version = VERSION)]
 struct Cli {
     /// Optional subcommand. When omitted, the CLI falls back to the
     /// traditional flag-based flow (URL + --format, --crawl, etc.).
@@ -193,6 +193,18 @@ struct Cli {
     /// Request timeout in seconds
     #[arg(short, long, default_value = "30")]
     timeout: u64,
+
+    /// Render pages in a local Chrome. auto renders only pages whose content needs JavaScript; needs a build with the `browser` feature
+    #[arg(long, value_enum, default_value_t = RenderMode::Auto)]
+    render: RenderMode,
+
+    /// Render with an already running browser at this DevTools endpoint (ws://... or http://host:port) instead of launching Chrome
+    #[arg(long)]
+    cdp_url: Option<String>,
+
+    /// When rendering, also wait until an element matching this CSS selector exists
+    #[arg(long)]
+    wait_for: Option<String>,
 
     /// Extract from local HTML file instead of fetching
     #[arg(long)]
@@ -475,6 +487,13 @@ enum OutputFormat {
     Text,
     Llm,
     Html,
+}
+
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum RenderMode {
+    Auto,
+    Always,
+    Never,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -925,8 +944,84 @@ fn cloud_scrape_format(cli: &Cli) -> &'static str {
 
 /// Fetch a URL and extract content, handling PDF detection automatically.
 /// Falls back to cloud API when bot protection or JS rendering is detected.
+const BROWSER_BUILD: bool = cfg!(feature = "browser");
+const VERSION: &str = if BROWSER_BUILD {
+    concat!(env!("CARGO_PKG_VERSION"), " +browser")
+} else {
+    env!("CARGO_PKG_VERSION")
+};
+
+fn needs_rendering(
+    fetched: &FetchResult,
+    extracted: &Result<ExtractionResult, webclaw_fetch::FetchError>,
+) -> bool {
+    if fetched.status >= 400 || fetched.document_bytes.is_some() {
+        return false;
+    }
+    let words = match extracted {
+        Ok(result) => result.metadata.word_count,
+        Err(webclaw_fetch::FetchError::Content(_)) => 0,
+        Err(_) => return false,
+    };
+    webclaw_fetch::cloud::needs_js_rendering(words, &fetched.html)
+}
+
+fn better_extraction(
+    http: Result<ExtractionResult, webclaw_fetch::FetchError>,
+    rendered: Result<ExtractionResult, webclaw_fetch::FetchError>,
+) -> Result<ExtractionResult, webclaw_fetch::FetchError> {
+    let words = |r: &Result<ExtractionResult, _>| r.as_ref().map_or(0, |e| e.metadata.word_count);
+    if words(&rendered) > words(&http) {
+        rendered
+    } else {
+        http
+    }
+}
+
+#[cfg(feature = "browser")]
+async fn render_page(
+    cli: &Cli,
+    url: &str,
+    prefetched: Option<&FetchResult>,
+) -> Result<FetchResult, String> {
+    use webclaw_fetch::render::{Prefetched, RenderOptions, Renderer};
+    let config = build_fetch_config(cli);
+    let pick = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos() as usize);
+    let proxy = config.proxy.clone().or_else(|| {
+        (!config.proxy_pool.is_empty())
+            .then(|| config.proxy_pool[pick % config.proxy_pool.len()].clone())
+    });
+    let renderer = match &cli.cdp_url {
+        Some(endpoint) => Renderer::connect(endpoint).await,
+        None => Renderer::launch(proxy.as_deref()).await,
+    }
+    .map_err(|e| format!("render error: {e}"))?;
+    let options = RenderOptions {
+        wait_for: cli.wait_for.clone(),
+        timeout: std::time::Duration::from_secs(cli.timeout),
+        headers: config.headers.into_iter().collect(),
+    };
+    let prefetched = prefetched.map(|f| Prefetched {
+        html: &f.html,
+        headers: &f.headers,
+    });
+    let rendered = renderer.render(url, prefetched, &options).await;
+    renderer.close().await;
+    rendered.map_err(|e| format!("render error: {e}"))
+}
+
+#[cfg(not(feature = "browser"))]
+async fn render_page(
+    _cli: &Cli,
+    _url: &str,
+    _prefetched: Option<&FetchResult>,
+) -> Result<FetchResult, String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
+}
+
 async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
-    // Local sources: read and extract as HTML
     if cli.stdin {
         let mut buf = String::new();
         io::stdin()
@@ -951,9 +1046,6 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         .urls
         .first()
         .ok_or("no input provided -- pass a URL, --file, or --stdin")?;
-    // M14: warn when the URL looks like the shell split it on `&` or `?`.
-    // Informational only — fetch still proceeds. Suppressed by --url-encoded,
-    // which asserts the caller has handled escaping intentionally.
     if !cli.url_encoded && looks_truncated(raw_url) {
         eprintln!(
             "# webclaw: warning: URL looks truncated (ends with '&' or '?'); did the shell split it? Quote the URL or use --url-encoded."
@@ -964,7 +1056,6 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
 
     let cloud_client = webclaw_fetch::cloud::CloudClient::new(cli.api_key.as_deref());
 
-    // --cloud: skip local, go straight to cloud API
     if cli.cloud {
         let c =
             cloud_client.ok_or("--cloud requires WEBCLAW_API_KEY (set via env or --api-key)")?;
@@ -982,15 +1073,34 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         return Ok(FetchOutput::Cloud(resp));
     }
 
-    // Normal path: try local first
     let client =
         FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
-    // M13: wrap with periodic stderr progress emitter. Fast fetches see
-    // zero emissions (timer never fires in <10s); slow fetches get a
-    // line every 10s of elapsed time so the CLI doesn't appear hung.
-    let fetch_fut = client.fetch_and_extract_with_options(url, &options);
-    let result = match webclaw_fetch::with_progress(url, fetch_fut).await {
+    let extracted = if cli.render == RenderMode::Always {
+        let rendered = webclaw_fetch::with_progress(url, render_page(cli, url, None)).await?;
+        client.extract(&rendered, &options)
+    } else {
+        let fetched = webclaw_fetch::with_progress(url, client.fetch_smart(url))
+            .await
+            .map_err(|e| format!("fetch error: {e}"))?;
+        let extracted = client.extract(&fetched, &options);
+        if cli.render == RenderMode::Auto && BROWSER_BUILD && needs_rendering(&fetched, &extracted)
+        {
+            let render = render_page(cli, &fetched.url, Some(&fetched));
+            match webclaw_fetch::with_progress(url, render).await {
+                Ok(rendered) => better_extraction(extracted, client.extract(&rendered, &options)),
+                Err(e) => {
+                    eprintln!(
+                        "\x1b[33mwarning:\x1b[0m rendering failed, using the HTTP result: {e}"
+                    );
+                    extracted
+                }
+            }
+        } else {
+            extracted
+        }
+    };
+    let result = match extracted {
         Ok(result) => result,
         Err(
             error @ (webclaw_fetch::FetchError::Content(_)
@@ -1014,7 +1124,6 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         Err(error) => return Err(format!("fetch error: {error}")),
     };
 
-    // Check if we should fall back to cloud
     let reason = detect_empty(&result);
     if !matches!(reason, EmptyReason::None) {
         if let Some(ref c) = cloud_client {
@@ -1033,7 +1142,6 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
                 Ok(resp) => return Ok(FetchOutput::Cloud(resp)),
                 Err(e) => {
                     eprintln!("\x1b[33mwarning:\x1b[0m cloud fallback failed: {e}");
-                    // Fall through to return the local result with a warning
                 }
             }
         }
@@ -3028,6 +3136,50 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fetched(html: &str, status: u16) -> FetchResult {
+        FetchResult {
+            html: html.to_string(),
+            document_bytes: None,
+            status,
+            url: "https://example.com/".into(),
+            headers: Default::default(),
+            elapsed: std::time::Duration::ZERO,
+        }
+    }
+
+    #[test]
+    fn renders_only_script_pages_with_too_little_text() {
+        let shell =
+            r#"<html><body><div id="root"></div><script src="/app.js"></script></body></html>"#;
+        let empty: Result<ExtractionResult, webclaw_fetch::FetchError> = Err(
+            webclaw_fetch::FetchError::Content(webclaw_core::quality::ContentIssue::Empty),
+        );
+        assert!(needs_rendering(&fetched(shell, 200), &empty));
+        assert!(!needs_rendering(&fetched(shell, 404), &empty));
+        let article = format!(
+            "<html><body><article><h1>Rust</h1><p>{}</p></article><script>track()</script></body></html>",
+            "Rust is a language that empowers everyone to build reliable software. ".repeat(20)
+        );
+        let full = Ok(webclaw_core::extract(&article, Some("https://example.com/")).unwrap());
+        assert!(!needs_rendering(&fetched(&article, 200), &full));
+        let shell_result = Err(webclaw_fetch::FetchError::Content(
+            webclaw_core::quality::ContentIssue::Empty,
+        ));
+        let article_result =
+            Ok(webclaw_core::extract(&article, Some("https://example.com/")).unwrap());
+        assert!(better_extraction(shell_result, article_result).is_ok());
+        let http = Ok(webclaw_core::extract(&article, Some("https://example.com/")).unwrap());
+        let worse = Ok(webclaw_core::extract(
+            "<html><body><p>Short page.</p></body></html>",
+            Some("https://example.com/"),
+        )
+        .unwrap());
+        assert!(better_extraction(http, worse).unwrap().metadata.word_count > 100);
+        let no_scripts = "<html><body><p>Short page.</p></body></html>";
+        let short = Ok(webclaw_core::extract(no_scripts, Some("https://example.com/")).unwrap());
+        assert!(!needs_rendering(&fetched(no_scripts, 200), &short));
+    }
     use webclaw_core::Content;
 
     #[test]

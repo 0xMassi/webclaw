@@ -9,6 +9,9 @@ license.workspace = true
 name = "webclaw"
 path = "src/main.rs"
 
+[features]
+browser = ["webclaw-fetch/browser"]
+
 [dependencies]
 webclaw-core = { workspace = true }
 webclaw-fetch = { workspace = true }

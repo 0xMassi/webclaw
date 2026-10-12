@@ -394,7 +394,7 @@ impl Crawler {
             );
         } else {
             visited = HashSet::new();
-            frontier = vec![(normalize(&seed), 0)];
+            frontier = vec![(without_fragment(&seed), 0)];
 
             // Seed frontier from sitemap if enabled
             if self.config.use_sitemap {
@@ -403,13 +403,8 @@ impl Crawler {
                     Ok(entries) => {
                         let before = frontier.len();
                         for entry in entries {
-                            if self.qualify_link(&entry.url, &visited).is_some() {
-                                let parsed = match Url::parse(&entry.url) {
-                                    Ok(u) => u,
-                                    Err(_) => continue,
-                                };
-                                let norm = normalize(&parsed);
-                                frontier.push((norm, 0));
+                            if let Some(url) = self.qualify_link(&entry.url, &visited) {
+                                frontier.push((url, 0));
                             }
                         }
                         let added = frontier.len() - before;
@@ -441,7 +436,7 @@ impl Crawler {
                 if batch.len() >= room {
                     break;
                 }
-                if !visited.insert(url.clone()) {
+                if !visited.insert(dedup_key(&url)) {
                     continue;
                 }
                 if self.config.respect_robots && !self.robots_allow(&url).await {
@@ -696,13 +691,11 @@ impl Crawler {
             return None;
         }
 
-        let normalized = normalize(&parsed);
-
-        if visited.contains(&normalized) {
+        if visited.contains(&normalize(&parsed)) {
             return None;
         }
 
-        Some(normalized)
+        Some(without_fragment(&parsed))
     }
 }
 
@@ -751,6 +744,16 @@ fn root_domain(url: &Url) -> String {
 
 /// Normalize a URL for dedup: strip fragment, remove trailing slash (except root "/"),
 /// lowercase scheme + host. Preserves query params and path case.
+fn without_fragment(url: &Url) -> String {
+    let mut url = url.clone();
+    url.set_fragment(None);
+    url.to_string()
+}
+
+fn dedup_key(url: &str) -> String {
+    Url::parse(url).map_or_else(|_| url.to_string(), |u| normalize(&u))
+}
+
 pub(crate) fn normalize(url: &Url) -> String {
     let scheme = url.scheme();
     let host = url.host_str().unwrap_or("").to_ascii_lowercase();
@@ -933,6 +936,40 @@ mod tests {
             vec!["https://example.com/", "https://example.com/public"]
         );
         assert_eq!(result.skipped_by_robots, 1);
+    }
+
+    #[tokio::test]
+    async fn checks_robots_and_fetches_the_url_as_linked() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                use_sitemap: false,
+                max_depth: 1,
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nDisallow: /lessons/\n", USER_AGENT_TOKEN),
+        );
+        crawler
+            .crawl_with_fetcher("https://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    let html = "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/lessons/'>Lessons</a><a href='/public/#top'>Public</a></main>";
+                    webclaw_core::extract_with_options(html, Some(&url), &Default::default())
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await;
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["https://example.com/", "https://example.com/public/"]
+        );
     }
 
     #[tokio::test]

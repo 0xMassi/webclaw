@@ -19,6 +19,8 @@ SITES = [
     {"name": "scrapethissite.com", "seed": "https://www.scrapethissite.com/", "max_pages": 100, "max_depth": 3},
 ]
 CONCURRENCY = 8
+RESUME_SITE = {"name": "books.toscrape.com", "seed": "https://books.toscrape.com/", "max_pages": 200, "max_depth": 4}
+KILL_AFTER = 3.0
 
 
 def norm(url):
@@ -98,8 +100,60 @@ def main(label, rounds):
             lines.append(f"| {site['name']} | {arm} | {len(rs)} | {med('ok'):.0f} | {med('seconds'):.1f} | "
                          f"{med('ok') / max(med('seconds'), 0.01):.1f} | {med('peak_mb'):.0f} | "
                          f"{med('duplicates'):.0f} | {max(r['disallowed'] for r in rs)} |")
+    if not rescore:
+        lines += resume_test(label)
     (res / "crawl-summary.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
+
+
+def kill_tree(proc):
+    for p in proc.children(recursive=True) + [proc]:
+        try:
+            p.kill()
+        except psutil.Error:
+            pass
+    proc.wait()
+
+
+def resume_test(label):
+    site = RESUME_SITE
+    rows = []
+    for arm in ARM_VENV:
+        work = WORK / "resume" / label / arm
+        if work.exists():
+            for f in sorted(work.rglob("*"), reverse=True):
+                f.unlink() if f.is_file() else f.rmdir()
+        work.mkdir(parents=True, exist_ok=True)
+        py = str(WORK / f"venv-{ARM_VENV[arm]}" / "bin/python")
+        cmd = [py, str(ROOT / "scripts/resume_arms.py"), arm, site["seed"], str(site["max_pages"]),
+               str(site["max_depth"]), str(CONCURRENCY), str(work)]
+        start = time.time()
+        proc = psutil.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(KILL_AFTER)
+        kill_tree(proc)
+        out = work / "out.jsonl"
+        before_kill = len(out.read_text().splitlines()) if out.exists() else 0
+        restarts = 0
+        while restarts < 3:
+            restarts += 1
+            if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                break
+        seconds = time.time() - start - KILL_AFTER
+        pages = [json.loads(l) for l in out.read_text().splitlines()] if out.exists() else []
+        urls = [norm(p["url"]) for p in pages if p["ok"]]
+        rows.append({"arm": arm, "before_kill": before_kill, "unique": len(set(urls)),
+                     "duplicates": len(urls) - len(set(urls)), "seconds": round(seconds, 1), "restarts": restarts})
+        print(json.dumps(rows[-1]), flush=True)
+    (ROOT / "results" / label / "resume-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return ["", "## Kill and resume", "",
+            f"Each tool crawls {site['name']} (cap {site['max_pages']}, depth {site['max_depth']}, concurrency "
+            f"{CONCURRENCY}), streaming pages to a file, through its own resume mechanism. After {KILL_AFTER:.0f}s "
+            "the whole process tree gets SIGKILL, then the same command reruns until it exits cleanly. "
+            "`unique` counts distinct pages in the output; `duplicates` counts pages written twice.", "",
+            "| arm | pages before kill | unique pages at end | duplicates | seconds after restart | runs after kill |",
+            "|---|---:|---:|---:|---:|---:|"] + [
+        f"| {r['arm']} | {r['before_kill']} | {r['unique']} | {r['duplicates']} | {r['seconds']} | {r['restarts']} |"
+        for r in rows]
 
 
 if __name__ == "__main__":

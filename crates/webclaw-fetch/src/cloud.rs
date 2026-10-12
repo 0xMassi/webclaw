@@ -497,32 +497,51 @@ pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     false
 }
 
-/// True when a page likely needs JS rendering — a large HTML document
-/// with almost no extractable text + an SPA framework signature.
+/// Whether a page fetched over HTTP probably needs a browser to show its
+/// content: it loads scripts, and it has almost no text (under 50 words), or
+/// little text (under 200 words) next to an empty app root or a `<noscript>`
+/// asking for JavaScript. Bundle names alone never count, so server-rendered
+/// pages that also ship scripts are left alone.
 pub fn needs_js_rendering(word_count: usize, html: &str) -> bool {
-    let has_scripts = html.contains("<script");
-
-    // Tier 1: almost no extractable text from a large-ish page.
-    if word_count < 50 && html.len() > 5_000 && has_scripts {
-        return true;
+    if !contains_ignore_case(html, "<script") {
+        return false;
     }
+    word_count < 50 || (word_count < 200 && (has_app_root(html) || noscript_asks_for_js(html)))
+}
 
-    // Tier 2: SPA framework markers + low content-to-HTML ratio.
-    if word_count < 800 && html.len() > 50_000 && has_scripts {
-        let html_lower = html.to_lowercase();
-        let has_spa_marker = html_lower.contains("react-app")
-            || html_lower.contains("id=\"__next\"")
-            || html_lower.contains("id=\"root\"")
-            || html_lower.contains("id=\"app\"")
-            || html_lower.contains("__next_data__")
-            || html_lower.contains("nuxt")
-            || html_lower.contains("ng-app");
-        if has_spa_marker {
-            return true;
-        }
-    }
+fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+}
 
-    false
+fn has_app_root(html: &str) -> bool {
+    [
+        "id=\"root\"",
+        "id=\"app\"",
+        "id=\"__next\"",
+        "id=\"__nuxt\"",
+        "id=\"___gatsby\"",
+        "id='root'",
+        "id='app'",
+        "ng-app",
+        "data-reactroot",
+    ]
+    .iter()
+    .any(|marker| contains_ignore_case(html, marker))
+}
+
+fn noscript_asks_for_js(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    lower.match_indices("<noscript").any(|(at, _)| {
+        let block: String = lower[at..].chars().take(2_000).collect();
+        let block = block.split("</noscript>").next().unwrap_or(&block);
+        block.contains("javascript")
+            && ["enable", "require", "turn on", "need", "must"]
+                .iter()
+                .any(|verb| block.contains(verb))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -899,6 +918,36 @@ mod tests {
             "<script>x</script>".repeat(500)
         );
         assert!(needs_js_rendering(10, &html));
+    }
+
+    #[test]
+    fn needs_js_rendering_flags_small_app_shells() {
+        let todo = r#"<html><head><title>TodoMVC</title></head><body><section class="todoapp"></section><script src="app.js"></script></body></html>"#;
+        assert!(needs_js_rendering(0, todo));
+        let noscript = format!(
+            "<html><body><noscript>You need to enable JavaScript to run this app.</noscript><p>{}</p><script src=\"/main.js\"></script></body></html>",
+            "Menu item ".repeat(60)
+        );
+        assert!(needs_js_rendering(120, &noscript));
+        let accented = format!(
+            "<html><body><noscript>{} Please enable JavaScript.</noscript><p>{}</p><script></script></body></html>",
+            "è".repeat(1_500),
+            "parola ".repeat(80)
+        );
+        assert!(needs_js_rendering(80, &accented));
+    }
+
+    #[test]
+    fn needs_js_rendering_leaves_server_rendered_pages_alone() {
+        let ssr = format!(
+            "<html><body><div id=\"__next\"><article>{}</article></div><script id=\"__NEXT_DATA__\">{{}}</script></body></html>",
+            "Server rendered text ".repeat(150)
+        );
+        assert!(!needs_js_rendering(450, &ssr));
+        assert!(!needs_js_rendering(
+            5,
+            "<html><body><p>Tiny static page.</p></body></html>"
+        ));
     }
 
     #[test]

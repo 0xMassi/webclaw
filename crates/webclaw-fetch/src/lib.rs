@@ -15,6 +15,8 @@ pub mod map;
 pub mod progress;
 pub mod proxy;
 pub mod reddit;
+#[cfg(feature = "browser")]
+pub mod render;
 pub mod robots;
 pub mod search;
 pub mod sitemap;

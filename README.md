@@ -174,6 +174,18 @@ webclaw https://example.com \
   --exclude "nav, footer, .sidebar, .ad"
 ```
 
+### Render JavaScript pages
+
+Build with the `browser` feature (`cargo build --release --features browser`) and webclaw renders pages in your local Chrome when the plain HTTP response has no content yet:
+
+```bash
+webclaw https://hn.algolia.com                    # --render auto: HTTP first, Chrome only when needed
+webclaw https://example.com --render always --wait-for "#app li"
+webclaw https://example.com --cdp-url ws://localhost:9222/devtools/browser/<id>   # use a running browser
+```
+
+`auto` renders when the page loads scripts and the HTTP response has almost no text, or little text next to an empty app root or a "please enable JavaScript" notice, and it keeps the rendered result only when it has more content. The browser never reaches private or loopback addresses.
+
 ### Crawl a documentation site
 
 ```bash

@@ -251,9 +251,51 @@ fn extract_with_options_inner(
     })
 }
 
+/// Every link a reader can follow on the page, for crawlers: `<a href>`
+/// targets resolved against `base_url`, http(s) only, fragments removed,
+/// deduplicated, in document order. Links inside elements a browser does not
+/// render (`hidden`, `display:none`, `<template>`) are left out.
+pub fn page_links(html: &str, base_url: &str) -> Vec<String> {
+    static ANCHORS: std::sync::LazyLock<scraper::Selector> =
+        std::sync::LazyLock::new(|| scraper::Selector::parse("a[href]").unwrap());
+    let Ok(base) = Url::parse(base_url) else {
+        return Vec::new();
+    };
+    let mut doc = Html::parse_document(html);
+    noise::strip_hidden(&mut doc);
+    let mut seen = std::collections::HashSet::new();
+    doc.select(&ANCHORS)
+        .filter_map(|a| a.value().attr("href"))
+        .filter_map(|href| base.join(href.trim()).ok())
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .filter_map(|mut u| {
+            u.set_fragment(None);
+            let link = u.to_string();
+            seen.insert(link.clone()).then_some(link)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_links_takes_every_visible_anchor() {
+        let html = r##"<html><body><nav><a href="/login">Log in</a></nav>
+            <main><a href="docs/intro#top">Intro</a><a href="/login">Again</a>
+            <a href="mailto:a@b.c">Mail</a><a href="javascript:void(0)">JS</a>
+            <a href="https://other.test/x">Other</a></main>
+            <div style="display:none"><a href="/trap">Trap</a></div></body></html>"##;
+        assert_eq!(
+            page_links(html, "https://example.com/start/"),
+            vec![
+                "https://example.com/login",
+                "https://example.com/start/docs/intro",
+                "https://other.test/x",
+            ]
+        );
+    }
 
     #[test]
     fn full_extraction_pipeline() {

@@ -480,66 +480,15 @@ impl FetchClient {
 
     /// Fetch a URL and return the raw HTML + response metadata.
     ///
-    /// Automatically retries on transient failures (network errors, 5xx, 429)
-    /// with exponential backoff: 0s, 1s (2 attempts total). No per-site
-    /// rescue logic; use [`Self::fetch_smart`] for that.
+    /// Retries once on transient failures (network errors, 429, 502-504,
+    /// 520-524). The pause is 1s, or the response's `Retry-After` when it is
+    /// longer and still fits the remaining [`FetchConfig::total_timeout`].
+    /// No per-site rescue logic; use [`Self::fetch_smart`] for that.
     #[instrument(skip(self), fields(url = %url))]
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
-        let delays = [Duration::ZERO, Duration::from_secs(1)];
-        let mut last_err = None;
-        // Clock starts before the first attempt so the retry pause and every
-        // attempt come out of one budget, rather than each getting a fresh one.
-        let started = Instant::now();
-
-        for (attempt, delay) in delays.iter().enumerate() {
-            if attempt > 0 {
-                tokio::time::sleep(*delay).await;
-            }
-
-            match self.within_budget(started, url, self.fetch_once(url)).await {
-                Ok(result) => {
-                    if is_retryable_status(result.status) && attempt < delays.len() - 1 {
-                        warn!(
-                            url,
-                            status = result.status,
-                            attempt = attempt + 1,
-                            "retryable status, will retry"
-                        );
-                        last_err = Some(FetchError::Build(format!("HTTP {}", result.status)));
-                        continue;
-                    }
-                    if attempt > 0 {
-                        debug!(url, attempt = attempt + 1, "retry succeeded");
-                    }
-                    return Ok(result);
-                }
-                Err(e) => {
-                    if !is_retryable_error(&e) || attempt == delays.len() - 1 {
-                        return Err(e);
-                    }
-                    warn!(
-                        url,
-                        error = %e,
-                        attempt = attempt + 1,
-                        "transient error, will retry"
-                    );
-                    last_err = Some(e);
-                }
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
+        self.fetch_with_headers(url, &[]).await
     }
 
-    /// Single fetch attempt.
-    async fn fetch_once(&self, url: &str) -> Result<FetchResult, FetchError> {
-        self.fetch_once_with_headers(url, &[]).await
-    }
-
-    /// Single fetch attempt with optional per-request headers appended
-    /// after the profile defaults. Used by extractors that need to
-    /// satisfy site-specific headers (e.g. `x-ig-app-id` for Instagram's
-    /// internal API).
     async fn fetch_once_with_headers(
         &self,
         url: &str,
@@ -573,51 +522,56 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        let delays = [Duration::ZERO, Duration::from_secs(1)];
-        let mut last_err = None;
-        // One budget across the whole call — see `within_budget`.
+        self.with_retries(url, || self.fetch_once_with_headers(url, extra))
+            .await
+    }
+
+    async fn with_retries<F, Fut>(
+        &self,
+        url: &str,
+        mut attempt: F,
+    ) -> Result<FetchResult, FetchError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<FetchResult, FetchError>>,
+    {
         let started = Instant::now();
-
-        for (attempt, delay) in delays.iter().enumerate() {
-            if attempt > 0 {
-                tokio::time::sleep(*delay).await;
-            }
-            match self
-                .within_budget(started, url, self.fetch_once_with_headers(url, extra))
-                .await
-            {
-                Ok(result) => {
-                    if is_retryable_status(result.status) && attempt < delays.len() - 1 {
-                        warn!(
-                            url,
-                            status = result.status,
-                            attempt = attempt + 1,
-                            "retryable status, will retry"
-                        );
-                        last_err = Some(FetchError::Build(format!("HTTP {}", result.status)));
-                        continue;
-                    }
-                    if attempt > 0 {
-                        debug!(url, attempt = attempt + 1, "retry succeeded");
-                    }
-                    return Ok(result);
+        for attempt_no in 1.. {
+            let outcome = self.within_budget(started, url, attempt()).await;
+            let wait = match &outcome {
+                _ if attempt_no == MAX_ATTEMPTS => None,
+                Ok(result) if is_retryable_status(result.status) => {
+                    self.retry_wait(started, retry_after(&result.headers))
                 }
+                Err(e) if is_retryable_error(e) => self.retry_wait(started, None),
+                _ => None,
+            };
+            let Some(wait) = wait else {
+                return outcome;
+            };
+            match &outcome {
+                Ok(result) => warn!(
+                    url,
+                    status = result.status,
+                    attempt_no,
+                    wait_ms = wait.as_millis() as u64,
+                    "retryable status, will retry"
+                ),
                 Err(e) => {
-                    if !is_retryable_error(&e) || attempt == delays.len() - 1 {
-                        return Err(e);
-                    }
-                    warn!(
-                        url,
-                        error = %e,
-                        attempt = attempt + 1,
-                        "transient error, will retry"
-                    );
-                    last_err = Some(e);
+                    warn!(url, error = %e, attempt_no, wait_ms = wait.as_millis() as u64, "transient error, will retry")
                 }
             }
+            tokio::time::sleep(wait).await;
         }
+        unreachable!("the loop returns on the last attempt")
+    }
 
-        Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
+    fn retry_wait(&self, started: Instant, retry_after: Option<Duration>) -> Option<Duration> {
+        let wait = retry_after.map_or(RETRY_PAUSE, |d| d.max(RETRY_PAUSE));
+        let ceiling = self.total_timeout.map_or(RETRY_AFTER_CAP, |total| {
+            total.saturating_sub(started.elapsed())
+        });
+        (wait < ceiling).then_some(wait)
     }
 
     /// Fetch a URL and return the raw, undecoded response body as bytes.
@@ -630,16 +584,20 @@ impl FetchClient {
     /// String path would mangle them. Callers detect the gzip magic
     /// (`0x1f 0x8b`) and gunzip before parsing.
     ///
-    /// No retry wrapper: callers (sitemap discovery) already tolerate
-    /// per-URL failures by skipping. Returns `(status, body)`.
+    /// One attempt, bounded by [`FetchConfig::total_timeout`]: callers
+    /// (sitemap discovery) already tolerate per-URL failures by skipping.
+    /// Returns `(status, body)`.
     pub async fn fetch_raw(&self, url: &str) -> Result<(u16, bytes::Bytes), FetchError> {
-        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
-        let url = parsed_url.as_str();
-        let client = self.pick_client(url);
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = client.get(url).send().await?;
-        let response = Response::from_wreq(resp, attempt).await?;
-        Ok((response.status(), response.into_body()))
+        self.within_budget(Instant::now(), url, async {
+            let parsed_url = crate::url_security::validate_public_http_url(url).await?;
+            let url = parsed_url.as_str();
+            let client = self.pick_client(url);
+            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
+            let resp = client.get(url).send().await?;
+            let response = Response::from_wreq(resp, attempt).await?;
+            Ok((response.status(), response.into_body()))
+        })
+        .await
     }
 
     /// Fetch a URL then extract structured content.
@@ -996,6 +954,16 @@ fn pick_random(clients: &[ObservedClient]) -> &ObservedClient {
     use rand::Rng;
     let idx = rand::thread_rng().gen_range(0..clients.len());
     &clients[idx]
+}
+
+const MAX_ATTEMPTS: usize = 2;
+const RETRY_PAUSE: Duration = Duration::from_secs(1);
+const RETRY_AFTER_CAP: Duration = Duration::from_secs(30);
+
+// ponytail: delta-seconds only; the HTTP-date form falls back to RETRY_PAUSE. Parse it if a target needs it.
+fn retry_after(headers: &http::HeaderMap) -> Option<Duration> {
+    let value = headers.get(http::header::RETRY_AFTER)?.to_str().ok()?;
+    value.trim().parse().ok().map(Duration::from_secs)
 }
 
 /// Status codes worth retrying: server errors + rate limiting.
@@ -1390,6 +1358,112 @@ mod tests {
             .within_budget(started, "https://example.com", async { Ok(7) })
             .await;
         assert_eq!(res.expect("should run"), 7);
+    }
+
+    fn canned(status: u16, retry_after: Option<&str>) -> FetchResult {
+        let mut headers = http::HeaderMap::new();
+        if let Some(value) = retry_after {
+            headers.insert(http::header::RETRY_AFTER, value.parse().unwrap());
+        }
+        FetchResult {
+            html: String::new(),
+            document_bytes: None,
+            status,
+            url: "https://example.com/".into(),
+            headers,
+            elapsed: Duration::ZERO,
+        }
+    }
+
+    fn client_with_budget(total_timeout: Option<Duration>) -> FetchClient {
+        FetchClient::new(FetchConfig {
+            total_timeout,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    async fn run_retries(
+        client: &FetchClient,
+        mut responses: Vec<Result<FetchResult, FetchError>>,
+    ) -> (Result<FetchResult, FetchError>, usize, Duration) {
+        responses.reverse();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let responses = std::sync::Mutex::new(responses);
+        let began = Instant::now();
+        let outcome = client
+            .with_retries("https://example.com/", || {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let next = responses.lock().unwrap().pop().unwrap();
+                async move { next }
+            })
+            .await;
+        (outcome, calls.into_inner(), began.elapsed())
+    }
+
+    #[tokio::test]
+    async fn waits_for_retry_after_before_the_second_attempt() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, waited) = run_retries(
+            &client,
+            vec![Ok(canned(429, Some("2"))), Ok(canned(200, None))],
+        )
+        .await;
+        assert_eq!(outcome.unwrap().status, 200);
+        assert_eq!(calls, 2);
+        assert!(waited >= Duration::from_secs(2), "waited only {waited:?}");
+    }
+
+    #[tokio::test]
+    async fn returns_the_rate_limited_response_when_retry_after_exceeds_the_budget() {
+        let client = client_with_budget(Some(Duration::from_secs(3)));
+        let (outcome, calls, waited) =
+            run_retries(&client, vec![Ok(canned(429, Some("120")))]).await;
+        assert_eq!(outcome.unwrap().status, 429);
+        assert_eq!(calls, 1);
+        assert!(waited < Duration::from_millis(500));
+    }
+
+    #[tokio::test]
+    async fn caps_retry_after_when_there_is_no_budget() {
+        let client = client_with_budget(None);
+        let (outcome, calls, _) = run_retries(&client, vec![Ok(canned(503, Some("3600")))]).await;
+        assert_eq!(outcome.unwrap().status, 503);
+        assert_eq!(calls, 1);
+    }
+
+    #[tokio::test]
+    async fn retries_a_transient_error_once_then_gives_up() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, waited) = run_retries(
+            &client,
+            vec![
+                Err(FetchError::BodyDecode("reset".into())),
+                Err(FetchError::BodyDecode("reset again".into())),
+            ],
+        )
+        .await;
+        assert!(matches!(outcome, Err(FetchError::BodyDecode(m)) if m == "reset again"));
+        assert_eq!(calls, 2);
+        assert!(waited >= RETRY_PAUSE);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_a_final_status() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, _) = run_retries(&client, vec![Ok(canned(404, None))]).await;
+        assert_eq!(outcome.unwrap().status, 404);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn parses_retry_after_seconds_only() {
+        let parse = |v: &str| retry_after(&canned(429, Some(v)).headers);
+        assert_eq!(parse("2"), Some(Duration::from_secs(2)));
+        assert_eq!(parse(" 7 "), Some(Duration::from_secs(7)));
+        assert_eq!(parse("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+        assert_eq!(parse("soon"), None);
+        assert_eq!(retry_after(&http::HeaderMap::new()), None);
     }
 
     #[test]

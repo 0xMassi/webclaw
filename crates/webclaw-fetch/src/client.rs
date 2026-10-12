@@ -437,9 +437,10 @@ impl FetchClient {
         self.cloud.as_deref()
     }
 
-    /// Fetch a URL with per-site rescue paths: Reddit URLs redirect to the
-    /// `.json` API, and Akamai-style challenge responses trigger a homepage
-    /// cookie warmup and a retry. Returns the same `FetchResult` shape as
+    /// Fetch a URL with per-site rescue paths: Reddit URLs go to
+    /// old.reddit.com, and Akamai-style challenge responses trigger a homepage
+    /// cookie warmup and a retry whose result, error included, is the answer.
+    /// The whole call shares one [`FetchConfig::total_timeout`]. Returns the same `FetchResult` shape as
     /// [`Self::fetch`] so every caller (CLI, MCP, OSS server, production
     /// server) benefits without shape churn.
     ///
@@ -456,8 +457,6 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        // Reddit: fetch old.reddit.com for stable server-rendered HTML.
-        // The JSON API is blocked; old.reddit.com works without JS or auth.
         let owned;
         let url = if crate::reddit::is_reddit_url(url) {
             owned = crate::reddit::to_old_reddit_url(url);
@@ -465,22 +464,17 @@ impl FetchClient {
         } else {
             url
         };
-
-        let resp = self.fetch_with_headers(url, extra).await?;
-
-        // Akamai / bazadebezolkohpepadr challenge: visit the homepage to
-        // collect warmup cookies (_abck, bm_sz, etc.), then retry.
-        if is_challenge_html(&resp.html)
-            && let Some(homepage) = extract_homepage(url)
-        {
+        self.within_budget(Instant::now(), url, async {
+            let resp = self.fetch_with_headers(url, extra).await?;
+            let Some(homepage) = extract_homepage(url).filter(|_| is_challenge_html(&resp.html))
+            else {
+                return Ok(resp);
+            };
             debug!("challenge detected, warming cookies via {homepage}");
             let _ = self.fetch_with_headers(&homepage, extra).await;
-            if let Ok(retry) = self.fetch_with_headers(url, extra).await {
-                return Ok(retry);
-            }
-        }
-
-        Ok(resp)
+            self.fetch_with_headers(url, extra).await
+        })
+        .await
     }
 
     /// Fetch a URL and return the raw HTML + response metadata.

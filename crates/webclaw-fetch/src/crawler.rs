@@ -89,6 +89,10 @@ pub struct CrawlConfig {
     /// Skip URLs that the site's robots.txt disallows for webclaw, and honour
     /// its `Crawl-delay`. Defaults to `true`.
     pub respect_robots: bool,
+    /// While crawling, write the crawl state to this file about once a second,
+    /// so a crash or kill can resume from it via [`Crawler::load_state`].
+    /// Pages still in flight are saved back into the frontier.
+    pub checkpoint: Option<std::path::PathBuf>,
 }
 
 impl Default for CrawlConfig {
@@ -109,6 +113,7 @@ impl Default for CrawlConfig {
             cancel_flag: None,
             stream_only: false,
             respect_robots: true,
+            checkpoint: None,
         }
     }
 }
@@ -289,9 +294,11 @@ impl Crawler {
             max_pages,
             max_depth,
         };
-        let json =
-            serde_json::to_string_pretty(&state).map_err(|e| format!("serialize state: {e}"))?;
-        std::fs::write(path, json).map_err(|e| format!("write state to {}: {e}", path.display()))
+        let json = serde_json::to_string(&state).map_err(|e| format!("serialize state: {e}"))?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, json)
+            .and_then(|()| std::fs::rename(&tmp, path))
+            .map_err(|e| format!("write state to {}: {e}", path.display()))
     }
 
     /// Load crawl state from a JSON file. Returns `None` if file doesn't exist.
@@ -415,6 +422,7 @@ impl Crawler {
             Arc::new(RobotsRules::allow_all())
         };
 
+        let resumed_pages = resume_state.as_ref().map_or(0, |s| s.completed_pages);
         let mut visited: HashSet<String>;
         let mut frontier = Frontier::default();
         if let Some(state) = resume_state {
@@ -464,9 +472,11 @@ impl Crawler {
         let mut skipped_by_robots: usize = 0;
         let mut denied: HashSet<String> = HashSet::new();
         let mut next_start: HashMap<String, Instant> = HashMap::new();
-        let mut started: usize = 0;
+        let mut started: usize = resumed_pages;
         let mut in_flight = FuturesUnordered::new();
         let mut in_flight_depths: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut in_flight_urls: HashMap<String, usize> = HashMap::new();
+        let mut last_checkpoint = Instant::now();
         let mut redirect_hops: HashMap<String, usize> = HashMap::new();
 
         loop {
@@ -493,6 +503,7 @@ impl Crawler {
                 visited.insert(dedup_key(&url));
                 started += 1;
                 *in_flight_depths.entry(depth).or_default() += 1;
+                in_flight_urls.insert(url.clone(), depth);
                 let wait = self.start_delay(&url, &mut next_start).await;
                 let fetch = Arc::clone(&fetch);
                 let cancel_flag = self.config.cancel_flag.clone();
@@ -531,6 +542,7 @@ impl Crawler {
                     in_flight_depths.remove(&depth);
                 }
             }
+            in_flight_urls.remove(&url);
 
             let mut extraction = page.extraction;
             if let Some(location) = page.redirect {
@@ -605,6 +617,20 @@ impl Crawler {
                 (None, true) => {}
                 (None, false) => pages.push(page),
             }
+
+            if let Some(path) = &self.config.checkpoint
+                && last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL
+            {
+                self.write_checkpoint(
+                    path,
+                    start_url,
+                    &visited,
+                    &frontier,
+                    &in_flight_urls,
+                    resumed_pages + completed,
+                );
+                last_checkpoint = Instant::now();
+            }
         }
 
         let total_elapsed = start.elapsed();
@@ -625,6 +651,35 @@ impl Crawler {
             remaining_frontier: frontier.into_vec(),
             visited,
             pages,
+        }
+    }
+
+    fn write_checkpoint(
+        &self,
+        path: &Path,
+        seed_url: &str,
+        visited: &HashSet<String>,
+        frontier: &Frontier,
+        in_flight: &HashMap<String, usize>,
+        completed_pages: usize,
+    ) {
+        let in_flight_keys: HashSet<String> = in_flight.keys().map(|u| dedup_key(u)).collect();
+        let visited: HashSet<String> = visited.difference(&in_flight_keys).cloned().collect();
+        let pending: Vec<(String, usize)> = in_flight
+            .iter()
+            .map(|(url, depth)| (url.clone(), *depth))
+            .chain(frontier.snapshot())
+            .collect();
+        if let Err(e) = Self::save_state(
+            path,
+            seed_url,
+            &visited,
+            &pending,
+            completed_pages,
+            self.config.max_pages.unwrap_or(0),
+            self.config.max_depth,
+        ) {
+            warn!(error = %e, "checkpoint failed");
         }
     }
 
@@ -730,6 +785,8 @@ impl Crawler {
 
 /// Canonical origin string for comparing same-origin: "scheme://host[:port]".
 const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
+// ponytail: a fixed 1s interval rewrites the whole visited set each time; space it out by size if crawls past ~100k pages make it costly.
+const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 struct Frontier {
@@ -760,6 +817,13 @@ impl Frontier {
 
     fn len(&self) -> usize {
         self.len
+    }
+
+    fn snapshot(&self) -> Vec<(String, usize)> {
+        self.levels
+            .iter()
+            .flat_map(|(depth, urls)| urls.iter().map(move |url| (url.clone(), *depth)))
+            .collect()
     }
 
     fn into_vec(self) -> Vec<(String, usize)> {
@@ -1223,6 +1287,40 @@ mod tests {
             })
             .await;
         assert_eq!(*done.lock().unwrap(), vec!["/", "/fast", "/child", "/slow"]);
+    }
+
+    #[test]
+    fn a_checkpoint_puts_in_flight_pages_back_in_the_frontier() {
+        let crawler = Crawler::new("https://example.com/", CrawlConfig::default()).unwrap();
+        let dir = std::env::temp_dir().join(format!("webclaw-checkpoint-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        let visited: HashSet<String> = ["https://example.com/", "https://example.com/a"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let mut frontier = Frontier::default();
+        frontier.push_back("https://example.com/b".into(), 1);
+        let in_flight = HashMap::from([("https://example.com/a/".to_string(), 1)]);
+        crawler.write_checkpoint(
+            &path,
+            "https://example.com/",
+            &visited,
+            &frontier,
+            &in_flight,
+            7,
+        );
+        let state = Crawler::load_state(&path).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(state.completed_pages, 7);
+        assert_eq!(state.visited, vec!["https://example.com/".to_string()]);
+        assert_eq!(
+            state.frontier,
+            vec![
+                ("https://example.com/a/".to_string(), 1),
+                ("https://example.com/b".to_string(), 1)
+            ]
+        );
     }
 
     #[tokio::test]

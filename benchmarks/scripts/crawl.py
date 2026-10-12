@@ -31,6 +31,7 @@ def run_arm(arm, site, out):
     cmd = [py, str(ROOT / "scripts/crawl_arms.py"), arm, site["seed"], str(site["max_pages"]),
            str(site["max_depth"]), str(CONCURRENCY), str(out)]
     start = time.time()
+    out.unlink(missing_ok=True)
     proc = psutil.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     peak = 0
     while proc.poll() is None:
@@ -40,6 +41,8 @@ def run_arm(arm, site, out):
         except psutil.Error:
             pass
         time.sleep(0.2)
+    if proc.returncode:
+        sys.exit(f"{arm} crawl of {site['name']} exited {proc.returncode}")
     return time.time() - start, peak / 2**20
 
 

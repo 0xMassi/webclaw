@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # usage: ./run.sh [label] [webclaw-binary] [url-runs]
 set -euo pipefail
+[ -n "${2:-}" ] && set -- "$1" "$(cd "$(dirname "$2")" && pwd)/$(basename "$2")" "${@:3}"
 cd "$(dirname "$0")"
 
 label=${1:-$(date +%F)}
@@ -17,7 +18,7 @@ export WEBCLAW_BIN=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 
 source ./envs.sh
 
-[ -f .work/cases-html.jsonl ] || .work/venv-base/bin/python scripts/run.py prepare
+.work/venv-base/bin/python scripts/run.py prepare
 rm -rf "results/$label" ".work/out/$label"
 .work/venv-base/bin/python scripts/run.py run "$label" "$runs"
 for v in base scrapling crawl4ai; do uv pip list -p ".work/venv-$v" 2>/dev/null; done \

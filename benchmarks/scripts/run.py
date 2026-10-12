@@ -5,6 +5,7 @@
   run.py summary <label>              results/<label>/summary.md
 """
 import json, os, re, statistics, subprocess, sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,8 +26,9 @@ def prepare():
             continue
         path = corpus / f"{c['id']}.html"
         if not path.exists():
-            r = subprocess.run([WEBCLAW, c["url"], "--raw-html", "-t", "30"], capture_output=True, text=True, timeout=60)
-            if r.stdout.strip():
+            ok = subprocess.run([WEBCLAW, c["url"], "-f", "llm", "-t", "30"], capture_output=True, timeout=60).returncode == 0
+            r = subprocess.run([WEBCLAW, c["url"], "--raw-html", "-t", "30"], capture_output=True, text=True, timeout=60) if ok else None
+            if r and r.returncode == 0 and r.stdout.strip():
                 path.write_text(r.stdout)
         if path.exists():
             html_cases.append({**c, "html_path": f"corpus/{c['id']}.html"})
@@ -38,14 +40,18 @@ def run(label, runs, arms):
     res = ROOT / "results" / label
     out = WORK / "out" / label
     res.mkdir(parents=True, exist_ok=True)
-    procs = []
-    for arm in arms:
+    def arm_worker(arm):
         py = str(WORK / f"venv-{ARM_VENV[arm]}" / "bin/python")
-        cmds = [[py, str(ROOT / "scripts/arms.py"), arm, "url", str(CASES), str(res / "rows.jsonl"), str(out / "url" / arm), str(runs)],
-                [py, str(ROOT / "scripts/arms.py"), arm, "html", str(HTML_CASES), str(res / "rows.jsonl"), str(out / "html" / arm), "1"]]
-        procs.append(subprocess.Popen(" && ".join(" ".join(f"'{a}'" for a in c) for c in cmds), shell=True))
-    for p in procs:
-        p.wait()
+        for mode, cases, n in (("url", CASES, runs), ("html", HTML_CASES, 1)):
+            code = subprocess.run([py, str(ROOT / "scripts/arms.py"), arm, mode, str(cases), str(res / "rows.jsonl"),
+                                   str(out / mode / arm), str(n)]).returncode
+            if code:
+                return f"{arm} {mode} exited {code}"
+
+    with ThreadPoolExecutor(len(arms)) as pool:
+        failures = [f for f in pool.map(arm_worker, arms) if f]
+    if failures:
+        sys.exit("benchmark workers failed: " + "; ".join(failures))
     subprocess.run([WEBCLAW, "--version"], stdout=open(res / "webclaw-version.txt", "w"))
 
 
@@ -73,7 +79,8 @@ def summary(label):
     out = WORK / "out" / label
     cases = {c["id"]: c for c in map(json.loads, open(CASES))}
     groups = {}
-    for row in map(json.loads, open(res / "rows.jsonl")):
+    rows = list(map(json.loads, open(res / "rows.jsonl")))
+    for row in rows:
         text = (out / row["mode"] / row["arm"] / f"{row['id']}-{row['run']}.md").read_text()
         c = cases[row["id"]]
         row.update(hits=hits(text, c["facts"]), nfacts=len(c["facts"]),
@@ -96,6 +103,7 @@ def summary(label):
                          f"{int(statistics.median([r['tokens'] for r in ok])) if ok else 0} | "
                          f"{pct(secs, .5):.2f} | {pct(secs, .95):.2f} |")
         lines.append("")
+    (res / "rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     (res / "summary.md").write_text("\n".join(lines))
     print("\n".join(lines))
 

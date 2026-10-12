@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # usage: ./crawl.sh [label] [webclaw-binary] [rounds]
 set -euo pipefail
+[ -n "${2:-}" ] && set -- "$1" "$(cd "$(dirname "$2")" && pwd)/$(basename "$2")" "${@:3}"
 cd "$(dirname "$0")"
 
 label=${1:-crawl-$(date +%F)}

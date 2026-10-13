@@ -50,6 +50,14 @@ It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, as
 
 It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, and scores how many answers survive each tool's question filter and at what token cost. A control row cuts each tool's full output to the size its filter returned, so a filter has to beat keeping the top of the page. Results land in `results/<label>/query-summary.md`.
 
+### MCP over HTTP
+
+```bash
+./benchmarks/mcp-http.sh       # webclaw-mcp and the other MCP server over streamable HTTP
+```
+
+It starts each server on loopback with a bearer token, drives it with the official MCP Python client (handshake, then one fetch-and-extract call per page), checks that a client without the token is refused, and writes `results/<label>/mcp-http-summary.md`.
+
 ## Methodology
 
 See [methodology.md](methodology.md) for each tool's exact call, the url and html modes, how facts are matched, the metrics and the limits of this setup.

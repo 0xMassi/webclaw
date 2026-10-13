@@ -1,0 +1,2 @@
+{"server": "webclaw", "calls": 15, "ok": 15, "handshake_ms": 3.9538340643048286, "call_ms": 282.57195791229606, "call_p95_ms": 592.7154580131173, "refuses_no_token": true}
+{"server": "scrapling", "calls": 15, "ok": 15, "handshake_ms": 3.5607919562608004, "call_ms": 555.7678749319166, "call_p95_ms": 904.3735831510276, "refuses_no_token": true}

@@ -18,6 +18,7 @@ use webclaw_fetch::cloud::{self, CloudClient, SmartFetchResult};
 
 use crate::tools::*;
 
+#[derive(Clone)]
 pub struct WebclawMcp {
     /// Holds the registered MCP tools. `rmcp >= 1.3` reads this through a
     /// derived trait impl (not by name), so rustc's dead-code lint can't
@@ -38,8 +39,8 @@ pub struct WebclawMcp {
     /// and we don't cache cookie-bearing clients (the cookie header is
     /// part of the shape and varies per call). So a single OnceLock for
     /// Firefox covers the one real cacheable case without a full LRU.
-    firefox_client: OnceLock<Arc<webclaw_fetch::FetchClient>>,
-    llm_chain: Option<webclaw_llm::ProviderChain>,
+    firefox_client: Arc<OnceLock<Arc<webclaw_fetch::FetchClient>>>,
+    llm_chain: Option<Arc<webclaw_llm::ProviderChain>>,
     cloud: Option<CloudClient>,
 }
 
@@ -169,7 +170,7 @@ impl WebclawMcp {
             None
         } else {
             info!(providers = chain.len(), "LLM provider chain ready");
-            Some(chain)
+            Some(Arc::new(chain))
         };
 
         let cloud = CloudClient::from_env();
@@ -186,7 +187,7 @@ impl WebclawMcp {
             tool_router: Self::tool_router(),
             fetch_config: config,
             fetch_client: Arc::new(fetch_client),
-            firefox_client: OnceLock::new(),
+            firefox_client: Arc::new(OnceLock::new()),
             llm_chain,
             cloud,
         }
@@ -521,7 +522,7 @@ impl WebclawMcp {
             return Ok(serde_json::to_string_pretty(&resp).unwrap_or_default());
         }
 
-        let chain = self.llm_chain.as_ref().unwrap();
+        let chain = self.llm_chain.as_deref().unwrap();
 
         let llm_content = match self.smart_fetch_llm(&params.url).await? {
             SmartFetchResult::Local(extraction) => {
@@ -575,7 +576,7 @@ impl WebclawMcp {
             return Ok(summary.to_string());
         }
 
-        let chain = self.llm_chain.as_ref().unwrap();
+        let chain = self.llm_chain.as_deref().unwrap();
 
         let llm_content = match self.smart_fetch_llm(&params.url).await? {
             SmartFetchResult::Local(extraction) => {

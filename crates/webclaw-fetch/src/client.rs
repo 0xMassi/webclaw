@@ -691,9 +691,7 @@ impl FetchClient {
         fetched: &FetchResult,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        if fetched.status >= 400 {
-            return Err(FetchError::UpstreamStatus(fetched.status));
-        }
+        FetchError::check_status(fetched.status)?;
         if fetched.document_bytes.is_some() {
             return extract_fetched(fetched, options, self.pdf_mode.clone());
         }

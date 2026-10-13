@@ -1,0 +1,27 @@
+{"site": "books.toscrape.com", "arm": "webclaw", "round": 0, "seconds": 6.96, "peak_mb": 59, "pages": 300, "ok": 300, "duplicates": 0, "disallowed": 0}
+{"site": "books.toscrape.com", "arm": "scrapling", "round": 0, "seconds": 8.12, "peak_mb": 80, "pages": 300, "ok": 300, "duplicates": 0, "disallowed": 0}
+{"site": "books.toscrape.com", "arm": "crawl4ai", "round": 0, "seconds": 66.97, "peak_mb": 1481, "pages": 586, "ok": 586, "duplicates": 0, "disallowed": 0}
+{"site": "books.toscrape.com", "arm": "webclaw", "round": 1, "seconds": 6.71, "peak_mb": 57, "pages": 300, "ok": 300, "duplicates": 0, "disallowed": 0}
+{"site": "books.toscrape.com", "arm": "scrapling", "round": 1, "seconds": 8.6, "peak_mb": 81, "pages": 300, "ok": 300, "duplicates": 0, "disallowed": 0}
+{"site": "books.toscrape.com", "arm": "crawl4ai", "round": 1, "seconds": 67.82, "peak_mb": 1488, "pages": 586, "ok": 586, "duplicates": 0, "disallowed": 0}
+{"site": "books.toscrape.com", "arm": "webclaw", "round": 2, "seconds": 6.71, "peak_mb": 58, "pages": 300, "ok": 300, "duplicates": 0, "disallowed": 0}
+{"site": "books.toscrape.com", "arm": "scrapling", "round": 2, "seconds": 8.12, "peak_mb": 82, "pages": 300, "ok": 300, "duplicates": 0, "disallowed": 0}
+{"site": "books.toscrape.com", "arm": "crawl4ai", "round": 2, "seconds": 66.34, "peak_mb": 1411, "pages": 586, "ok": 586, "duplicates": 0, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "webclaw", "round": 0, "seconds": 4.08, "peak_mb": 1377, "pages": 35, "ok": 33, "duplicates": 0, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "scrapling", "round": 0, "seconds": 2.14, "peak_mb": 85, "pages": 35, "ok": 35, "duplicates": 0, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "crawl4ai", "round": 0, "seconds": 6.38, "peak_mb": 1518, "pages": 38, "ok": 34, "duplicates": 1, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "webclaw", "round": 1, "seconds": 3.41, "peak_mb": 1511, "pages": 35, "ok": 33, "duplicates": 0, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "scrapling", "round": 1, "seconds": 1.95, "peak_mb": 84, "pages": 35, "ok": 35, "duplicates": 0, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "crawl4ai", "round": 1, "seconds": 5.7, "peak_mb": 1480, "pages": 38, "ok": 34, "duplicates": 1, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "webclaw", "round": 2, "seconds": 3.43, "peak_mb": 1378, "pages": 35, "ok": 33, "duplicates": 0, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "scrapling", "round": 2, "seconds": 2.13, "peak_mb": 85, "pages": 35, "ok": 35, "duplicates": 0, "disallowed": 0}
+{"site": "scrapethissite.com", "arm": "crawl4ai", "round": 2, "seconds": 6.15, "peak_mb": 1546, "pages": 38, "ok": 34, "duplicates": 1, "disallowed": 0}
+{"site": "quotes.toscrape.com-js", "arm": "webclaw", "round": 0, "seconds": 7.3, "peak_mb": 1444, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}
+{"site": "quotes.toscrape.com-js", "arm": "scrapling", "round": 0, "seconds": 4.93, "peak_mb": 1438, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}
+{"site": "quotes.toscrape.com-js", "arm": "crawl4ai", "round": 0, "seconds": 9.87, "peak_mb": 737, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}
+{"site": "quotes.toscrape.com-js", "arm": "webclaw", "round": 1, "seconds": 7.3, "peak_mb": 1530, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}
+{"site": "quotes.toscrape.com-js", "arm": "scrapling", "round": 1, "seconds": 4.92, "peak_mb": 1447, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}
+{"site": "quotes.toscrape.com-js", "arm": "crawl4ai", "round": 1, "seconds": 10.32, "peak_mb": 738, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}
+{"site": "quotes.toscrape.com-js", "arm": "webclaw", "round": 2, "seconds": 7.3, "peak_mb": 1476, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}
+{"site": "quotes.toscrape.com-js", "arm": "scrapling", "round": 2, "seconds": 4.71, "peak_mb": 1437, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}
+{"site": "quotes.toscrape.com-js", "arm": "crawl4ai", "round": 2, "seconds": 10.27, "peak_mb": 716, "pages": 11, "ok": 11, "duplicates": 0, "disallowed": 0, "found": 100, "expected": 100}

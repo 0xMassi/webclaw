@@ -199,7 +199,7 @@ webclaw "https://en.wikipedia.org/wiki/Rust_(programming_language)" -f llm \
 webclaw https://example.com --cache          # fetch once, answer later runs from disk
 ```
 
-`--cache` keeps every successful page in `~/.cache/webclaw` (or `WEBCLAW_CACHE_DIR`) and answers later fetches of the same URL with the same browser profile and headers from there, with no network request. Crawls and batches use it page by page. Entries never expire; delete the directory to refresh. Error responses, challenge pages and `Set-Cookie` headers are never stored.
+`--cache` keeps every successful page in `~/.cache/webclaw` (or `WEBCLAW_CACHE_DIR`), readable by you only, and answers later fetches of the same URL with the same browser profile and headers from there, with no network request. Crawls and batches use it page by page. Entries never expire; delete the directory to refresh. Error responses, challenge pages and `Set-Cookie` headers are never stored. The cache keeps the HTTP response only: a page that needs JavaScript still renders in the browser, which loads its scripts over the network.
 
 ### Render JavaScript pages
 

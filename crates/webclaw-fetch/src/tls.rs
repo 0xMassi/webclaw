@@ -620,7 +620,15 @@ mod tests {
 
     #[test]
     fn no_profile_refuses_every_response_header() {
-        for h2 in [super::chrome_h2(), super::firefox_h2(), super::safari_h2()] {
+        let ios = super::safari_ios_emulation()
+            .http2_options
+            .expect("the iOS Safari profile sets HTTP/2 options");
+        for h2 in [
+            super::chrome_h2(),
+            super::firefox_h2(),
+            super::safari_h2(),
+            ios,
+        ] {
             assert_ne!(h2.max_header_list_size, Some(0));
         }
     }

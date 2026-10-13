@@ -50,6 +50,14 @@ It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, as
 
 It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, and scores how many answers survive each tool's question filter and at what token cost. A control row cuts each tool's full output to the size its filter returned, so a filter has to beat keeping the top of the page. Results land in `results/<label>/query-summary.md`.
 
+### Screenshots
+
+```bash
+./benchmarks/screenshot.sh     # webclaw --screenshot and the MCP screenshot tool against the other tools
+```
+
+It screenshots 10 public pages with each tool, the viewport and the whole page, first with a fresh browser per page and then with one browser kept open (webclaw and Scrapling through their MCP servers, Scrapling inside a browser session). It records the time, the image size and whether the image is blank, and writes `results/<label>/screenshot-summary.md`.
+
 ### MCP over HTTP
 
 ```bash

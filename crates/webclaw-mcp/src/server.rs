@@ -228,12 +228,7 @@ impl WebclawMcp {
             )
             .await
             .map_err(|e| format!("Screenshot failed: {e}"))?;
-        if shot.status >= 400 {
-            return Err(format!(
-                "the target returned HTTP {} instead of a successful page",
-                shot.status
-            ));
-        }
+        webclaw_fetch::FetchError::check_status(shot.status).map_err(|e| e.to_string())?;
         let mime = if jpeg { "image/jpeg" } else { "image/png" };
         Ok(CallToolResult::success(vec![
             rmcp::model::ContentBlock::image(shot.base64(), mime),
@@ -455,12 +450,7 @@ impl WebclawMcp {
             .fetch_client
             .extract_page(fetched, &webclaw_core::ExtractionOptions::default())
             .await;
-        if page.status >= 400 {
-            return Err(format!(
-                "the target returned HTTP {} instead of a successful page",
-                page.status
-            ));
-        }
+        webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
         let fields: Vec<(String, String)> = params.fields.unwrap_or_default().into_iter().collect();
         let json = if fields.is_empty() {
             serde_json::to_string_pretty(

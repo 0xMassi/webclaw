@@ -686,7 +686,7 @@ impl FetchClient {
         self.extract_page(fetched, options).await.1
     }
 
-    /// [`Self::extract`], then, with [`FetchConfig::render`] set, render the
+    /// [`Self::extract`], then, with `FetchConfig::render` set, render the
     /// page when it seems to need JavaScript and keep whichever extraction
     /// has more text. Returns the page that extraction came from.
     pub async fn extract_page(
@@ -715,7 +715,7 @@ impl FetchClient {
         }
     }
 
-    /// Render `fetched` with [`FetchConfig::render`] when it is set and the
+    /// Render `fetched` with `FetchConfig::render` when it is set and the
     /// page seems to need it; `http_words` is the word count extracted over HTTP.
     pub async fn render_if_needed(
         &self,
@@ -743,9 +743,7 @@ impl FetchClient {
         fetched: &FetchResult,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        if fetched.status >= 400 {
-            return Err(FetchError::UpstreamStatus(fetched.status));
-        }
+        FetchError::check_status(fetched.status)?;
         if fetched.document_bytes.is_some() {
             return extract_fetched(fetched, options, self.pdf_mode.clone());
         }

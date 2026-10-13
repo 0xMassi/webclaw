@@ -28,3 +28,32 @@ pub enum FetchError {
     #[error("client build failed: {0}")]
     Build(String),
 }
+
+impl FetchError {
+    /// `Err(UpstreamStatus)` when `status` is an HTTP error (400 or above).
+    pub fn check_status(status: u16) -> Result<(), FetchError> {
+        if status >= 400 {
+            Err(Self::UpstreamStatus(status))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FetchError;
+
+    #[test]
+    fn only_http_errors_fail_the_status_check() {
+        for ok in [200, 204, 301, 399] {
+            assert!(FetchError::check_status(ok).is_ok(), "{ok}");
+        }
+        for status in [400, 404, 429, 500] {
+            assert!(matches!(
+                FetchError::check_status(status),
+                Err(FetchError::UpstreamStatus(s)) if s == status
+            ));
+        }
+    }
+}

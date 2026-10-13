@@ -619,7 +619,8 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
         }
     }
 
-    FetchConfig {
+    #[allow(unused_mut)]
+    let mut config = FetchConfig {
         browser: cli.browser.clone().into(),
         proxy,
         proxy_pool,
@@ -627,7 +628,43 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
         pdf_mode: cli.pdf_mode.clone().into(),
         headers,
         ..Default::default()
+    };
+    #[cfg(feature = "browser")]
+    if cli.render != RenderMode::Never {
+        config.render = Some(webclaw_fetch::render::RenderConfig {
+            pool: Arc::new(render_pool(cli, &config)),
+            always: cli.render == RenderMode::Always,
+            wait_for: cli.wait_for.clone(),
+        });
     }
+    config
+}
+
+#[cfg(feature = "browser")]
+fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::RenderPool {
+    use webclaw_fetch::render::{BrowserSource, RenderPool};
+    let source = match &cli.cdp_url {
+        Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
+        None => {
+            let pick = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos() as usize);
+            let proxy = config.proxy.clone().or_else(|| {
+                (!config.proxy_pool.is_empty())
+                    .then(|| config.proxy_pool[pick % config.proxy_pool.len()].clone())
+            });
+            BrowserSource::Launch { proxy }
+        }
+    };
+    RenderPool::new(source, std::time::Duration::from_secs(cli.timeout))
+}
+
+async fn close_browser(config: &FetchConfig) {
+    #[cfg(feature = "browser")]
+    if let Some(render) = &config.render {
+        render.pool.close().await;
+    }
+    let _ = config;
 }
 
 /// Parse a JSON cookie file (Chrome extension format) into a Cookie header string.
@@ -951,73 +988,19 @@ const VERSION: &str = if BROWSER_BUILD {
     env!("CARGO_PKG_VERSION")
 };
 
-fn needs_rendering(
-    fetched: &FetchResult,
-    extracted: &Result<ExtractionResult, webclaw_fetch::FetchError>,
-) -> bool {
-    if fetched.status >= 400 || fetched.document_bytes.is_some() {
-        return false;
-    }
-    let words = match extracted {
-        Ok(result) => result.metadata.word_count,
-        Err(webclaw_fetch::FetchError::Content(_)) => 0,
-        Err(_) => return false,
-    };
-    webclaw_fetch::cloud::needs_js_rendering(words, &fetched.html)
-}
-
-fn better_extraction(
-    http: Result<ExtractionResult, webclaw_fetch::FetchError>,
-    rendered: Result<ExtractionResult, webclaw_fetch::FetchError>,
-) -> Result<ExtractionResult, webclaw_fetch::FetchError> {
-    let words = |r: &Result<ExtractionResult, _>| r.as_ref().map_or(0, |e| e.metadata.word_count);
-    if words(&rendered) > words(&http) {
-        rendered
-    } else {
-        http
-    }
-}
-
 #[cfg(feature = "browser")]
-async fn render_page(
-    cli: &Cli,
-    url: &str,
-    prefetched: Option<&FetchResult>,
-) -> Result<FetchResult, String> {
-    use webclaw_fetch::render::{Prefetched, RenderOptions, Renderer};
-    let config = build_fetch_config(cli);
-    let pick = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos() as usize);
-    let proxy = config.proxy.clone().or_else(|| {
-        (!config.proxy_pool.is_empty())
-            .then(|| config.proxy_pool[pick % config.proxy_pool.len()].clone())
-    });
-    let renderer = match &cli.cdp_url {
-        Some(endpoint) => Renderer::connect(endpoint).await,
-        None => Renderer::launch(proxy.as_deref()).await,
-    }
-    .map_err(|e| format!("render error: {e}"))?;
-    let options = RenderOptions {
-        wait_for: cli.wait_for.clone(),
-        timeout: std::time::Duration::from_secs(cli.timeout),
-        headers: config.headers.into_iter().collect(),
-    };
-    let prefetched = prefetched.map(|f| Prefetched {
-        html: &f.html,
-        headers: &f.headers,
-    });
-    let rendered = renderer.render(url, prefetched, &options).await;
-    renderer.close().await;
-    rendered.map_err(|e| format!("render error: {e}"))
+async fn render_page(config: &FetchConfig, url: &str) -> Result<FetchResult, String> {
+    let render = config.render.as_ref().ok_or("rendering is off")?;
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    render
+        .pool
+        .render(url, None, render.wait_for.as_deref(), &headers)
+        .await
+        .map_err(|e| format!("render error: {e}"))
 }
 
 #[cfg(not(feature = "browser"))]
-async fn render_page(
-    _cli: &Cli,
-    _url: &str,
-    _prefetched: Option<&FetchResult>,
-) -> Result<FetchResult, String> {
+async fn render_page(_config: &FetchConfig, _url: &str) -> Result<FetchResult, String> {
     Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
@@ -1073,32 +1056,21 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         return Ok(FetchOutput::Cloud(resp));
     }
 
-    let client =
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
+    let config = build_fetch_config(cli);
+    let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
     let extracted = if cli.render == RenderMode::Always {
-        let rendered = webclaw_fetch::with_progress(url, render_page(cli, url, None)).await?;
-        client.extract(&rendered, &options)
+        let rendered = webclaw_fetch::with_progress(url, render_page(&config, url)).await;
+        close_browser(&config).await;
+        client.extract(&rendered?, &options)
     } else {
         let fetched = webclaw_fetch::with_progress(url, client.fetch_smart(url))
             .await
             .map_err(|e| format!("fetch error: {e}"))?;
-        let extracted = client.extract(&fetched, &options);
-        if cli.render == RenderMode::Auto && BROWSER_BUILD && needs_rendering(&fetched, &extracted)
-        {
-            let render = render_page(cli, &fetched.url, Some(&fetched));
-            match webclaw_fetch::with_progress(url, render).await {
-                Ok(rendered) => better_extraction(extracted, client.extract(&rendered, &options)),
-                Err(e) => {
-                    eprintln!(
-                        "\x1b[33mwarning:\x1b[0m rendering failed, using the HTTP result: {e}"
-                    );
-                    extracted
-                }
-            }
-        } else {
-            extracted
-        }
+        let (_, extracted) =
+            webclaw_fetch::with_progress(url, client.extract_page(fetched, &options)).await;
+        close_browser(&config).await;
+        extracted
     };
     let result = match extracted {
         Ok(result) => result,
@@ -1704,8 +1676,9 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         });
     }
 
+    let fetch = build_fetch_config(cli);
     let config = CrawlConfig {
-        fetch: build_fetch_config(cli),
+        fetch: fetch.clone(),
         max_depth: cli.depth,
         max_pages: (cli.max_pages > 0).then_some(cli.max_pages),
         stream_only: stream_jsonl,
@@ -1758,6 +1731,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     let result = crawler.crawl(url, resume_state).await;
 
     drop(crawler);
+    close_browser(&fetch).await;
     let _ = progress_handle.await;
 
     let was_cancelled = cancel_flag.load(Ordering::Relaxed);
@@ -1948,15 +1922,16 @@ async fn run_map(cli: &Cli) -> Result<(), String> {
 }
 
 async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<(), String> {
-    let client = Arc::new(
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?,
-    );
+    let config = build_fetch_config(cli);
+    let client =
+        Arc::new(FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?);
 
     let urls: Vec<&str> = entries.iter().map(|(u, _)| u.as_str()).collect();
     let options = build_extraction_options(cli);
     let results = client
         .fetch_and_extract_batch_with_options(&urls, cli.concurrency, &options)
         .await;
+    close_browser(&config).await;
 
     let ok = results.iter().filter(|r| r.result.is_ok()).count();
     let errors = results.len() - ok;
@@ -2166,12 +2141,11 @@ async fn run_watch(cli: &Cli, urls: &[String]) -> Result<(), String> {
         return Err("--watch requires at least one URL".into());
     }
 
-    let client = Arc::new(
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?,
-    );
+    let config = build_fetch_config(cli);
+    let client =
+        Arc::new(FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?);
     let options = build_extraction_options(cli);
 
-    // Ctrl+C handler
     let cancelled = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&cancelled);
     tokio::spawn(async move {
@@ -2179,13 +2153,13 @@ async fn run_watch(cli: &Cli, urls: &[String]) -> Result<(), String> {
         flag.store(true, Ordering::Relaxed);
     });
 
-    // Single-URL mode: preserve original behavior exactly
-    if urls.len() == 1 {
-        return run_watch_single(cli, &client, &options, &urls[0], &cancelled).await;
-    }
-
-    // Multi-URL mode: batch fetch, diff each, report aggregate
-    run_watch_multi(cli, &client, &options, urls, &cancelled).await
+    let watched = if urls.len() == 1 {
+        run_watch_single(cli, &client, &options, &urls[0], &cancelled).await
+    } else {
+        run_watch_multi(cli, &client, &options, urls, &cancelled).await
+    };
+    close_browser(&config).await;
+    watched
 }
 
 /// Original single-URL watch loop -- backward compatible.
@@ -2564,8 +2538,8 @@ async fn run_llm(cli: &Cli) -> Result<(), String> {
 /// Batch LLM extraction: fetch each URL, run LLM on extracted content, save/print results.
 /// URLs are processed sequentially to respect LLM provider rate limits.
 async fn run_batch_llm(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<(), String> {
-    let client =
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
+    let config = build_fetch_config(cli);
+    let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
     let provider = build_llm_provider(cli).await?;
     let model = cli.llm_model.as_deref();
@@ -2690,6 +2664,7 @@ async fn run_batch_llm(cli: &Cli, entries: &[(String, Option<String>)]) -> Resul
         }
     }
 
+    close_browser(&config).await;
     eprintln!("Processed {total} URLs ({ok} ok, {errors} errors)");
 
     if let Some(ref webhook_url) = cli.webhook {
@@ -3137,49 +3112,6 @@ async fn main() {
 mod tests {
     use super::*;
 
-    fn fetched(html: &str, status: u16) -> FetchResult {
-        FetchResult {
-            html: html.to_string(),
-            document_bytes: None,
-            status,
-            url: "https://example.com/".into(),
-            headers: Default::default(),
-            elapsed: std::time::Duration::ZERO,
-        }
-    }
-
-    #[test]
-    fn renders_only_script_pages_with_too_little_text() {
-        let shell =
-            r#"<html><body><div id="root"></div><script src="/app.js"></script></body></html>"#;
-        let empty: Result<ExtractionResult, webclaw_fetch::FetchError> = Err(
-            webclaw_fetch::FetchError::Content(webclaw_core::quality::ContentIssue::Empty),
-        );
-        assert!(needs_rendering(&fetched(shell, 200), &empty));
-        assert!(!needs_rendering(&fetched(shell, 404), &empty));
-        let article = format!(
-            "<html><body><article><h1>Rust</h1><p>{}</p></article><script>track()</script></body></html>",
-            "Rust is a language that empowers everyone to build reliable software. ".repeat(20)
-        );
-        let full = Ok(webclaw_core::extract(&article, Some("https://example.com/")).unwrap());
-        assert!(!needs_rendering(&fetched(&article, 200), &full));
-        let shell_result = Err(webclaw_fetch::FetchError::Content(
-            webclaw_core::quality::ContentIssue::Empty,
-        ));
-        let article_result =
-            Ok(webclaw_core::extract(&article, Some("https://example.com/")).unwrap());
-        assert!(better_extraction(shell_result, article_result).is_ok());
-        let http = Ok(webclaw_core::extract(&article, Some("https://example.com/")).unwrap());
-        let worse = Ok(webclaw_core::extract(
-            "<html><body><p>Short page.</p></body></html>",
-            Some("https://example.com/"),
-        )
-        .unwrap());
-        assert!(better_extraction(http, worse).unwrap().metadata.word_count > 100);
-        let no_scripts = "<html><body><p>Short page.</p></body></html>";
-        let short = Ok(webclaw_core::extract(no_scripts, Some("https://example.com/")).unwrap());
-        assert!(!needs_rendering(&fetched(no_scripts, 200), &short));
-    }
     use webclaw_core::Content;
 
     #[test]

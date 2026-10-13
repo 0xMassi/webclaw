@@ -23,3 +23,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = "2"
 dirs = "6.0.0"
+
+[features]
+browser = ["webclaw-fetch/browser"]

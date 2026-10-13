@@ -30,8 +30,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::io::stdout(),
     ));
 
-    let service = WebclawMcp::new().await.serve(transport).await?;
+    let mcp = WebclawMcp::new().await;
+    let close_browser = mcp.close_browser();
+    let service = mcp.serve(transport).await?;
 
     service.waiting().await?;
+    close_browser.await;
     Ok(())
 }

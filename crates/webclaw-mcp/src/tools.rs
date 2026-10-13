@@ -104,6 +104,10 @@ pub struct ScrapeParams {
     pub browser: Option<String>,
     /// Cookies to send with the request (e.g. ["name=value", "session=abc123"])
     pub cookies: Option<Vec<String>>,
+    /// JavaScript rendering in a local Chrome: "auto" (default) renders pages whose content needs it, "always" renders every page that runs scripts, "never" skips it
+    pub render: Option<String>,
+    /// When rendering, also wait until an element matching this CSS selector exists
+    pub wait_for: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

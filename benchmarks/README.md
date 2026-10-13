@@ -58,6 +58,14 @@ It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, an
 
 It fetches the non-PDF url-mode cases once per browser identity over HTTP only, scores each page on its case facts, and writes `results/<label>/profiles-summary.md`.
 
+### Response cache
+
+```bash
+./benchmarks/cache.sh          # webclaw --cache against the other tools' disk caches
+```
+
+It fetches the url-mode cases twice through each tool's cache, starting empty, and sends the second run to a proxy that refuses connections, so only cached pages come back. It writes `results/<label>/cache-summary.md` with both run times and how many pages the cache served unchanged.
+
 ### Screenshots
 
 ```bash

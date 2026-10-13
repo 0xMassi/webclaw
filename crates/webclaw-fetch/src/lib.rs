@@ -2,6 +2,7 @@
 //! Uses wreq (BoringSSL) for browser-grade TLS + HTTP/2 fingerprinting.
 //! Automatically detects PDF responses and delegates to webclaw-pdf.
 pub mod browser;
+mod cache;
 pub mod client;
 pub mod cloud;
 pub mod crawler;

@@ -1045,12 +1045,7 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
         .await;
     close_browser(&config).await;
     let shot = shot.map_err(|e| format!("screenshot error: {e}"))?;
-    if shot.status >= 400 {
-        return Err(format!(
-            "the target returned HTTP {} instead of a successful page",
-            shot.status
-        ));
-    }
+    webclaw_fetch::FetchError::check_status(shot.status).map_err(|e| e.to_string())?;
     std::fs::write(path, &shot.image)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     eprintln!(
@@ -1265,12 +1260,7 @@ async fn run_select(cli: &Cli, selector: &str) -> Result<(), String> {
         close_browser(&config).await;
         page?
     };
-    if page.status >= 400 {
-        return Err(format!(
-            "the target returned HTTP {} instead of a successful page",
-            page.status
-        ));
-    }
+    webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
     let url = (!page.url.is_empty()).then_some(page.url.as_str());
     let json = if fields.is_empty() {
         serde_json::to_string_pretty(
@@ -3218,7 +3208,13 @@ async fn main() {
     // --raw-html: skip extraction, dump the fetched HTML
     if cli.raw_html && cli.include.is_none() && cli.exclude.is_none() {
         match fetch_html(&cli).await {
-            Ok(r) => println!("{}", r.html),
+            Ok(r) => {
+                println!("{}", r.html);
+                if let Err(e) = webclaw_fetch::FetchError::check_status(r.status) {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
             Err(e) => {
                 eprintln!("error: {e}");
                 process::exit(1);

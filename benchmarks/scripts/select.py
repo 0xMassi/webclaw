@@ -4,7 +4,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
 CORPUS = WORK / "select-corpus"
-ARM_VENV = {"webclaw": "base", "scrapling": "scrapling", "crawl4ai": "crawl4ai"}
+ARM_VENV = {"webclaw": "base", "scrapling": "scrapling", "crawl4ai": "crawl4ai",
+            "webclaw-xpath": "base", "scrapling-xpath": "scrapling", "crawl4ai-xpath": "crawl4ai"}
 PAGES = [f"https://books.toscrape.com/catalogue/page-{n}.html" for n in range(1, 51)]
 
 
@@ -53,11 +54,11 @@ def main(label):
     (res / "select-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     lines = [f"# Selector benchmark {label}", "",
              f"Each tool reads the same {len(pages)} frozen books.toscrape.com catalogue pages and returns one record "
-             "per book (title, price, rating) through its CSS selector API. `correct` counts records equal to the "
+             "per book (title, price, rating) through its CSS selector API, and again through its XPath API (the `-xpath` rows). `correct` counts records equal to the "
              "values parsed from the raw HTML. Seconds are wall time for all pages. Python tools run in one process; "
              "webclaw runs its CLI once per page, and `of which start` is the time the same number of "
              "`webclaw --version` runs takes.", "",
-             "`synthetic ms` repeats the test from Scrapling's own benchmarks.py: the text of every `.item` in a "
+             "`synthetic ms` repeats the test from Scrapling's own benchmarks.py: the text of every `.item` (XPath: `//div[@class='item']`) in a "
              "page of 5,000 nested divs, mean wall time over 20 runs. webclaw and Crawl4AI return each element's whole text, descendants included, "
              "so they walk every nested div below each match; Scrapling's `::text` returns only the element's own text "
              "nodes, of which these divs have none. Crawl4AI returns the `class` attribute as a list, joined with spaces "

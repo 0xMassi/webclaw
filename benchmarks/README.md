@@ -34,13 +34,13 @@ What the numbers say:
 
 You need [`uv`](https://docs.astral.sh/uv/) and a Rust toolchain. The script installs each tool into its own pinned environment under `benchmarks/.work/`, so nothing touches your system Python. The first run also saves each page's HTML into `.work/corpus/` for the html-mode comparison. That HTML belongs to the sites, so it never leaves your machine.
 
-### CSS selectors
+### CSS selectors and XPath
 
 ```bash
-./benchmarks/select.sh         # same tools, records picked with each tool's CSS selector API
+./benchmarks/select.sh         # same tools, records picked with each tool's CSS selector API and its XPath API
 ```
 
-It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, asks each tool for one record per book (title, price, rating), checks every record against the values in the raw HTML, and times the run. It also repeats the nested-divs test from Scrapling's own benchmark script. Results land in `results/<label>/select-summary.md`.
+It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, asks each tool for one record per book (title, price, rating) through CSS selectors and again through XPath, checks every record against the values in the raw HTML, and times the run. It also repeats the nested-divs test from Scrapling's own benchmark script. Results land in `results/<label>/select-summary.md`.
 
 ### Question-focused extraction
 

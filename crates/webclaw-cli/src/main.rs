@@ -3181,7 +3181,10 @@ async fn main() {
                 print_output(&result, &cli.format, cli.metadata);
             }
         }
-        Ok(FetchOutput::Cloud(resp)) => {
+        Ok(FetchOutput::Cloud(mut resp)) => {
+            if let Some(ref query) = cli.query {
+                webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
+            }
             print_cloud_output(&resp, &cli.format);
         }
         Err(e) => {

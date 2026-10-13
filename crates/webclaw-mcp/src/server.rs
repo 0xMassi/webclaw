@@ -312,8 +312,10 @@ impl WebclawMcp {
                 };
                 Ok(output)
             }
-            SmartFetchResult::Cloud(resp) => {
-                // Extract the requested format from the API response
+            SmartFetchResult::Cloud(mut resp) => {
+                if let Some(ref query) = params.query {
+                    webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
+                }
                 let content = resp
                     .get(format)
                     .or_else(|| resp.get("markdown"))

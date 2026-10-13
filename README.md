@@ -184,6 +184,15 @@ webclaw https://books.toscrape.com --select "article.product_pod" \
 
 `--select` prints a JSON array of what the selector matches: each element's text, or an attribute or the element's HTML when the selector ends in `::attr(NAME)` or `::html`. Links in `href` and `src` come back absolute. With `--field NAME=SELECTOR`, each match becomes a JSON object whose fields run inside it, taking the first value or `null`. Pages that need JavaScript render first, as with extraction.
 
+### Keep only what answers a question
+
+```bash
+webclaw "https://en.wikipedia.org/wiki/Rust_(programming_language)" -f llm \
+  --query "Who began the language as a personal project?"
+```
+
+`--query` (and `query` on the MCP `scrape` tool) scores each paragraph, list, table and code block against the question and keeps the best ones under their headings, so an agent reads the answer instead of the whole page. The page comes back unchanged when no block shares a word with the question.
+
 ### Render JavaScript pages
 
 Build with the `browser` feature (`cargo build --release --features browser`) and webclaw renders pages in your local Chrome when the plain HTTP response has no content yet:

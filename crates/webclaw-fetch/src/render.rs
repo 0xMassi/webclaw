@@ -10,7 +10,9 @@ use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
 };
-use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType, SetCookieParams};
+use chromiumoxide::cdp::browser_protocol::network::{
+    ErrorReason, EventResponseReceived, ResourceType, SetCookieParams,
+};
 use chromiumoxide::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams,
 };
@@ -213,6 +215,21 @@ impl Renderer {
         let mut blank = CreateTargetParams::new("about:blank");
         blank.browser_context_id = context;
         let page = self.browser.new_page(blank).await.map_err(browser_error)?;
+        let main_frame = page.mainframe().await.map_err(browser_error)?;
+        let mut responses = page
+            .event_listener::<EventResponseReceived>()
+            .await
+            .map_err(browser_error)?;
+        let document_status = tokio::spawn(async move {
+            while let Some(event) = responses.next().await {
+                if event.r#type == ResourceType::Document
+                    && (main_frame.is_none() || event.frame_id == main_frame)
+                {
+                    return Some(event.response.status);
+                }
+            }
+            None
+        });
 
         let mut extra = Vec::new();
         for (name, value) in &options.headers {
@@ -298,6 +315,12 @@ impl Renderer {
         })
         .await;
         guard.abort();
+        let status = if document_status.is_finished() {
+            document_status.await.ok().flatten()
+        } else {
+            document_status.abort();
+            None
+        };
         let _ = page.close().await;
 
         let (html, final_url) = outcome
@@ -306,7 +329,9 @@ impl Renderer {
         Ok(FetchResult {
             html,
             document_bytes: None,
-            status: 200,
+            status: status
+                .and_then(|code| u16::try_from(code).ok())
+                .unwrap_or(200),
             url: final_url,
             headers: http::HeaderMap::new(),
             elapsed: start.elapsed(),
@@ -744,6 +769,24 @@ mod tests {
         );
         assert_eq!(super::settle_floor(Some(&menu)), 110);
         assert_eq!(super::settle_floor(None), 50);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a local Chrome and network access"]
+    async fn a_rendered_error_page_keeps_its_status() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let rendered = renderer
+            .render(
+                "https://books.toscrape.com/no-such-page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        assert_eq!(rendered.expect("render succeeds").status, 404);
     }
 
     fn page(url: &str, html: &str, status: u16) -> crate::client::FetchResult {

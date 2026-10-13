@@ -174,6 +174,16 @@ webclaw https://example.com \
   --exclude "nav, footer, .sidebar, .ad"
 ```
 
+### Pick values with CSS selectors
+
+```bash
+webclaw https://books.toscrape.com --select "h3 a::attr(href)"
+webclaw https://books.toscrape.com --select "article.product_pod" \
+  --field "title=h3 a::attr(title)" --field price=.price_color
+```
+
+`--select` prints a JSON array of what the selector matches: each element's text, or an attribute or the element's HTML when the selector ends in `::attr(NAME)` or `::html`. Links in `href` and `src` come back absolute. With `--field NAME=SELECTOR`, each match becomes a JSON object whose fields run inside it, taking the first value or `null`. Pages that need JavaScript render first, as with extraction.
+
 ### Render JavaScript pages
 
 Build with the `browser` feature (`cargo build --release --features browser`) and webclaw renders pages in your local Chrome when the plain HTTP response has no content yet:
@@ -281,6 +291,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | Tool | What it does | Local |
 | --- | --- | :-: |
 | `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
+| `select` | Pick values or records from a page with CSS selectors, as JSON | Yes |
 | `crawl` | Follow same-origin links and extract discovered pages | Yes |
 | `map` | Discover URLs without extracting every page | Yes |
 | `batch` | Scrape multiple URLs in parallel | Yes |

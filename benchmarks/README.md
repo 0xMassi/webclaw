@@ -58,6 +58,14 @@ It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, an
 
 It fetches the url-mode cases twice through each tool's cache, starting empty, and sends the second run to a proxy that refuses connections, so only cached pages come back. It writes `results/<label>/cache-summary.md` with both run times and how many pages the cache served unchanged.
 
+### Screenshots
+
+```bash
+./benchmarks/screenshot.sh     # webclaw --screenshot and the MCP screenshot tool against the other tools
+```
+
+It screenshots 10 public pages with each tool, the viewport and the whole page, first with a fresh browser per page and then with one browser kept open (webclaw and Scrapling through their MCP servers, Scrapling inside a browser session). It records the time, the image size and whether the image is blank, and writes `results/<label>/screenshot-summary.md`.
+
 ### MCP over HTTP
 
 ```bash

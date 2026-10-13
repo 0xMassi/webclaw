@@ -243,6 +243,15 @@ struct Cli {
     #[arg(long = "field", value_name = "NAME=SELECTOR", requires = "select")]
     fields: Vec<String>,
 
+    /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
+    /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["select", "crawl", "watch", "map"])]
+    screenshot: Option<PathBuf>,
+
+    /// With --screenshot, capture the whole scrollable page
+    #[arg(long, requires = "screenshot")]
+    full_page: bool,
+
     /// CSS selectors to include (comma-separated, e.g. "article,.content")
     #[arg(long)]
     include: Option<String>,
@@ -1024,6 +1033,54 @@ async fn render_page(config: &FetchConfig, url: &str) -> Result<FetchResult, Str
 
 #[cfg(not(feature = "browser"))]
 async fn render_page(_config: &FetchConfig, _url: &str) -> Result<FetchResult, String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
+}
+
+#[cfg(feature = "browser")]
+async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
+    let config = build_fetch_config(cli);
+    let render = config
+        .render
+        .as_ref()
+        .ok_or("--screenshot needs the browser, so it cannot run with --render never")?;
+    let jpeg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg"));
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let shot = render
+        .pool
+        .screenshot(
+            url,
+            render.wait_for.as_deref(),
+            &headers,
+            webclaw_fetch::render::ScreenshotOptions {
+                full_page: cli.full_page,
+                jpeg,
+            },
+        )
+        .await;
+    close_browser(&config).await;
+    let shot = shot.map_err(|e| format!("screenshot error: {e}"))?;
+    if shot.status >= 400 {
+        return Err(format!(
+            "the target returned HTTP {} instead of a successful page",
+            shot.status
+        ));
+    }
+    std::fs::write(path, &shot.image)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    eprintln!(
+        "saved {} ({} bytes) of {}",
+        path.display(),
+        shot.image.len(),
+        shot.url
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "browser"))]
+async fn run_screenshot(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), String> {
     Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
@@ -3074,6 +3131,18 @@ async fn main() {
         }
     };
     backfill_single_file_url(&mut cli.urls, &entries);
+
+    if let Some(ref path) = cli.screenshot {
+        let shot = match (entries.len(), cli.urls.first()) {
+            (1, Some(url)) => run_screenshot(&cli, &normalize_url(url), path).await,
+            _ => Err("--screenshot takes one URL".to_string()),
+        };
+        if let Err(e) = shot {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
 
     if let Some(ref selector) = cli.select {
         let selected = if entries.len() > 1 {

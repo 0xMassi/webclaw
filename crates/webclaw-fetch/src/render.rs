@@ -7,15 +7,18 @@ use std::time::{Duration, Instant};
 use chromiumoxide::auth::Credentials;
 use chromiumoxide::browser::{Browser, BrowserConfig, HeadlessMode};
 use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
+use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
     ErrorReason, EventResponseReceived, ResourceType, SetCookieParams,
 };
+use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams,
 };
+use chromiumoxide::page::ScreenshotParams;
 use futures_util::StreamExt;
 use rand::seq::SliceRandom;
 use tokio::sync::{RwLock, RwLockReadGuard, Semaphore};
@@ -48,6 +51,41 @@ impl Default for RenderOptions {
     }
 }
 
+/// What a screenshot captures.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScreenshotOptions {
+    /// The whole scrollable page instead of the 1280x720 viewport.
+    pub full_page: bool,
+    /// JPEG at quality 80 instead of PNG.
+    pub jpeg: bool,
+}
+
+/// A screenshot of a rendered page.
+#[derive(Debug, Clone)]
+pub struct Screenshot {
+    /// The encoded PNG or JPEG image.
+    pub image: Vec<u8>,
+    /// HTTP status of the page's document.
+    pub status: u16,
+    /// The page's URL after redirects.
+    pub url: String,
+}
+
+impl Screenshot {
+    /// The image in standard base64, as MCP image content carries it.
+    pub fn base64(&self) -> String {
+        base64(&self.image)
+    }
+}
+
+const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
+
+struct Visited<T> {
+    value: T,
+    status: u16,
+    url: String,
+}
+
 /// A page already fetched over HTTP, handed to the browser so it does not
 /// request the document a second time.
 pub struct Prefetched<'a> {
@@ -74,12 +112,14 @@ impl Renderer {
     /// the executable; without it the standard install locations are tried,
     /// then the browsers on `PATH`.
     pub async fn launch(proxy: Option<&str>) -> Result<Self, FetchError> {
+        static LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let profile = std::env::temp_dir().join(format!(
-            "webclaw-chrome-{}-{}",
+            "webclaw-chrome-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
+                .map_or(0, |d| d.as_nanos()),
+            LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let mut config = BrowserConfig::builder()
             .headless_mode(HeadlessMode::New)
@@ -181,12 +221,69 @@ impl Renderer {
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
     ) -> Result<FetchResult, FetchError> {
+        let start = Instant::now();
+        let visited = self
+            .visit(url, prefetched, options, None, async |page| {
+                page.content().await
+            })
+            .await?;
+        Ok(FetchResult {
+            html: visited.value,
+            document_bytes: None,
+            status: visited.status,
+            url: visited.url,
+            headers: http::HeaderMap::new(),
+            elapsed: start.elapsed(),
+        })
+    }
+
+    /// Render `url` in a 1280x720 viewport and capture it once its content
+    /// has settled, under the same rules as [`Renderer::render`].
+    pub async fn screenshot(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        shot: ScreenshotOptions,
+    ) -> Result<Screenshot, FetchError> {
+        let mut params = ScreenshotParams::builder().full_page(shot.full_page);
+        params = if shot.jpeg {
+            params.format(CaptureScreenshotFormat::Jpeg).quality(80)
+        } else {
+            params.format(CaptureScreenshotFormat::Png)
+        };
+        let params = params.build();
+        let visited = self
+            .visit(
+                url,
+                None,
+                options,
+                Some(SCREENSHOT_VIEWPORT),
+                async move |page| page.screenshot(params).await,
+            )
+            .await?;
+        Ok(Screenshot {
+            image: visited.value,
+            status: visited.status,
+            url: visited.url,
+        })
+    }
+
+    async fn visit<T>(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+        viewport: Option<(i64, i64)>,
+        read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
+    ) -> Result<Visited<T>, FetchError> {
         let private = options
             .headers
             .iter()
             .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
         if !private {
-            return self.render_in(None, url, prefetched, options).await;
+            return self
+                .visit_in(None, url, prefetched, options, viewport, read)
+                .await;
         }
         let context = self
             .browser
@@ -195,26 +292,41 @@ impl Renderer {
             .map_err(browser_error)?
             .result
             .browser_context_id;
-        let rendered = self
-            .render_in(Some(context.clone()), url, prefetched, options)
+        let visited = self
+            .visit_in(
+                Some(context.clone()),
+                url,
+                prefetched,
+                options,
+                viewport,
+                read,
+            )
             .await;
         let _ = self.browser.dispose_browser_context(context).await;
-        rendered
+        visited
     }
 
-    async fn render_in(
+    async fn visit_in<T>(
         &self,
         context: Option<BrowserContextId>,
         url: &str,
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
-    ) -> Result<FetchResult, FetchError> {
-        let start = Instant::now();
+        viewport: Option<(i64, i64)>,
+        read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
+    ) -> Result<Visited<T>, FetchError> {
         let target = crate::url_security::validate_public_http_url(url).await?;
         let url = target.to_string();
         let mut blank = CreateTargetParams::new("about:blank");
         blank.browser_context_id = context;
         let page = self.browser.new_page(blank).await.map_err(browser_error)?;
+        if let Some((width, height)) = viewport {
+            page.execute(SetDeviceMetricsOverrideParams::new(
+                width, height, 1., false,
+            ))
+            .await
+            .map_err(browser_error)?;
+        }
         let main_frame = page.mainframe().await.map_err(browser_error)?;
         let mut responses = page
             .event_listener::<EventResponseReceived>()
@@ -309,9 +421,9 @@ impl Renderer {
                 page.wait_for_selector(selector.as_str(), Some(options.timeout))
                     .await?;
             }
-            let html = page.content().await?;
+            let value = read(&page).await?;
             let final_url = page.url().await?.unwrap_or_else(|| url.clone());
-            Ok::<_, chromiumoxide::error::CdpError>((html, final_url))
+            Ok::<_, chromiumoxide::error::CdpError>((value, final_url))
         })
         .await;
         guard.abort();
@@ -323,18 +435,15 @@ impl Renderer {
         };
         let _ = page.close().await;
 
-        let (html, final_url) = outcome
+        let (value, final_url) = outcome
             .map_err(|_| FetchError::Build(format!("rendering {url} timed out")))?
             .map_err(browser_error)?;
-        Ok(FetchResult {
-            html,
-            document_bytes: None,
+        Ok(Visited {
+            value,
             status: status
                 .and_then(|code| u16::try_from(code).ok())
                 .unwrap_or(200),
             url: final_url,
-            headers: http::HeaderMap::new(),
-            elapsed: start.elapsed(),
         })
     }
 
@@ -441,12 +550,36 @@ impl RenderPool {
             .await
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
-        let options = RenderOptions {
+        renderer
+            .render(url, prefetched, &self.options(wait_for, headers))
+            .await
+    }
+
+    /// Screenshot `url`; see [`Renderer::screenshot`].
+    pub async fn screenshot(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        shot: ScreenshotOptions,
+    ) -> Result<Screenshot, FetchError> {
+        let _tab = self
+            .tabs
+            .acquire()
+            .await
+            .map_err(|_| FetchError::Build("browser closed".into()))?;
+        let renderer = self.renderer().await?;
+        renderer
+            .screenshot(url, &self.options(wait_for, headers), shot)
+            .await
+    }
+
+    fn options(&self, wait_for: Option<&str>, headers: &[(String, String)]) -> RenderOptions {
+        RenderOptions {
             wait_for: wait_for.map(str::to_string),
             timeout: self.timeout,
             headers: headers.to_vec(),
-        };
-        renderer.render(url, prefetched, &options).await
+        }
     }
 
     async fn renderer(&self) -> Result<RwLockReadGuard<'_, Renderer>, FetchError> {
@@ -759,6 +892,56 @@ mod tests {
         let second = second.expect("second render succeeds").html;
         assert!(first.contains("session=abc"), "{first}");
         assert!(second.contains("cookies::end"), "{second}");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a local Chrome and network access"]
+    async fn screenshots_capture_the_viewport_or_the_whole_page() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        };
+        let viewport = renderer
+            .screenshot(
+                "https://quotes.toscrape.com/js/",
+                &options,
+                super::ScreenshotOptions::default(),
+            )
+            .await;
+        let full = renderer
+            .screenshot(
+                "https://quotes.toscrape.com/js/",
+                &options,
+                super::ScreenshotOptions {
+                    full_page: true,
+                    jpeg: false,
+                },
+            )
+            .await;
+        let jpeg = renderer
+            .screenshot(
+                "https://quotes.toscrape.com/js/",
+                &options,
+                super::ScreenshotOptions {
+                    full_page: false,
+                    jpeg: true,
+                },
+            )
+            .await;
+        renderer.close().await;
+        let viewport = viewport.expect("viewport screenshot").image;
+        assert_eq!(&viewport[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(png_size(&viewport), (1280, 720));
+        let (width, height) = png_size(&full.expect("full-page screenshot").image);
+        assert_eq!(width, 1280);
+        assert!(height > 1000, "full page is only {height}px tall");
+        assert_eq!(&jpeg.expect("jpeg screenshot").image[..3], b"\xff\xd8\xff");
+    }
+
+    fn png_size(png: &[u8]) -> (u32, u32) {
+        let be = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+        (be(16), be(20))
     }
 
     #[test]

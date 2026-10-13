@@ -50,6 +50,14 @@ It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, as
 
 It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, and scores how many answers survive each tool's question filter and at what token cost. A control row cuts each tool's full output to the size its filter returned, so a filter has to beat keeping the top of the page. Results land in `results/<label>/query-summary.md`.
 
+### Browser profiles
+
+```bash
+./benchmarks/profiles.sh       # every webclaw --browser profile against the matching impersonation of another tool
+```
+
+It fetches the non-PDF url-mode cases once per browser identity over HTTP only, scores each page on its case facts, and writes `results/<label>/profiles-summary.md`.
+
 ### Response cache
 
 ```bash

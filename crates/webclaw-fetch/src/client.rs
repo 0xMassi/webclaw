@@ -949,7 +949,10 @@ fn collect_variants(profile: &BrowserProfile) -> Vec<BrowserVariant> {
     match profile {
         BrowserProfile::Random => browser::all_variants(),
         BrowserProfile::Chrome => vec![browser::latest_chrome()],
+        BrowserProfile::ChromeMacos => vec![BrowserVariant::ChromeMacos],
         BrowserProfile::Firefox => vec![browser::latest_firefox()],
+        BrowserProfile::Safari => vec![BrowserVariant::Safari],
+        BrowserProfile::Edge => vec![BrowserVariant::Edge],
         BrowserProfile::SafariIos => vec![BrowserVariant::SafariIos26],
     }
 }

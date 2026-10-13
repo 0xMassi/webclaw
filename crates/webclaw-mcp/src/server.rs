@@ -300,7 +300,10 @@ impl WebclawMcp {
         .await?;
 
         match result {
-            SmartFetchResult::Local(extraction) => {
+            SmartFetchResult::Local(mut extraction) => {
+                if let Some(ref query) = params.query {
+                    webclaw_core::focus_extraction(&mut extraction, query);
+                }
                 let output = match format {
                     "llm" => webclaw_core::to_llm_text(&extraction, Some(&params.url)),
                     "text" => extraction.content.plain_text,

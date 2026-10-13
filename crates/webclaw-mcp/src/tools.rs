@@ -108,6 +108,8 @@ pub struct ScrapeParams {
     pub render: Option<String>,
     /// When rendering, also wait until an element matching this CSS selector exists
     pub wait_for: Option<String>,
+    /// A question: keep only the parts of the page that answer it, under their headings
+    pub query: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

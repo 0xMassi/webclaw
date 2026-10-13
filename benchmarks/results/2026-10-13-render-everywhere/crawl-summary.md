@@ -6,15 +6,15 @@ Each arm crawls each site with the same page cap and depth, concurrency 8, robot
 
 | site | arm | rounds | pages ok | content found | seconds | pages/s | peak MB | duplicates | disallowed |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| books.toscrape.com | webclaw | 3 | 300 | - | 6.7 | 44.7 | 58 | 0 | 0 |
-| books.toscrape.com | scrapling | 3 | 300 | - | 8.1 | 36.9 | 81 | 0 | 0 |
-| books.toscrape.com | crawl4ai | 3 | 586 | - | 67.0 | 8.8 | 1481 | 0 | 0 |
-| scrapethissite.com | webclaw | 3 | 33 | - | 3.4 | 9.6 | 1378 | 0 | 0 |
-| scrapethissite.com | scrapling | 3 | 35 | - | 2.1 | 16.4 | 85 | 0 | 0 |
-| scrapethissite.com | crawl4ai | 3 | 34 | - | 6.2 | 5.5 | 1518 | 1 | 0 |
-| quotes.toscrape.com-js | webclaw | 3 | 11 | 100/100 | 7.3 | 1.5 | 1476 | 0 | 0 |
-| quotes.toscrape.com-js | scrapling | 3 | 11 | 100/100 | 4.9 | 2.2 | 1438 | 0 | 0 |
-| quotes.toscrape.com-js | crawl4ai | 3 | 11 | 100/100 | 10.3 | 1.1 | 737 | 0 | 0 |
+| books.toscrape.com | webclaw | 3 | 300 | - | 6.9 | 43.6 | 58 | 0 | 0 |
+| books.toscrape.com | scrapling | 3 | 300 | - | 8.1 | 36.9 | 82 | 0 | 0 |
+| books.toscrape.com | crawl4ai | 3 | 586 | - | 67.5 | 8.7 | 1474 | 0 | 0 |
+| scrapethissite.com | webclaw | 3 | 33 | - | 3.8 | 8.6 | 1568 | 0 | 0 |
+| scrapethissite.com | scrapling | 3 | 35 | - | 1.9 | 18.2 | 85 | 0 | 0 |
+| scrapethissite.com | crawl4ai | 3 | 34 | - | 6.1 | 5.6 | 1523 | 1 | 0 |
+| quotes.toscrape.com-js | webclaw | 3 | 11 | 100/100 | 7.9 | 1.4 | 1646 | 0 | 0 |
+| quotes.toscrape.com-js | scrapling | 3 | 11 | 100/100 | 4.9 | 2.2 | 1443 | 0 | 0 |
+| quotes.toscrape.com-js | crawl4ai | 3 | 11 | 100/100 | 10.2 | 1.1 | 699 | 0 | 0 |
 
 ## Kill and resume
 
@@ -22,6 +22,6 @@ Each tool crawls books.toscrape.com (cap 200, depth 4, concurrency 8), streaming
 
 | arm | pages before kill | unique pages at end | duplicates | seconds after restart | runs after kill |
 |---|---:|---:|---:|---:|---:|
-| webclaw | 107 | 200 | 32 | 3.1 | 1 |
-| scrapling | 116 | 200 | 116 | 4.5 | 1 |
-| crawl4ai | 2 | 2 | 0 | 0.6 | 1 |
+| webclaw | 96 | 200 | 32 | 3.4 | 1 |
+| scrapling | 111 | 200 | 111 | 4.8 | 1 |
+| crawl4ai | 9 | 170 | 0 | 20.2 | 1 |

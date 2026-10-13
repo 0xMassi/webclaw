@@ -1,92 +1,92 @@
-{"arm": "webclaw-llm", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.688, "error": null, "hits": 1, "nfacts": 1, "tokens": 2397, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0.011, "error": null, "hits": 1, "nfacts": 1, "tokens": 2397, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0.019, "error": null, "hits": 1, "nfacts": 1, "tokens": 6140, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 6140, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.019, "error": null, "hits": 1, "nfacts": 1, "tokens": 7615, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0.018, "error": null, "hits": 1, "nfacts": 1, "tokens": 7615, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.018, "error": null, "hits": 1, "nfacts": 1, "tokens": 7615, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.753, "error": null, "hits": 1, "nfacts": 1, "tokens": 2397, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 2397, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0.018, "error": null, "hits": 1, "nfacts": 1, "tokens": 6140, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 6140, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.018, "error": null, "hits": 1, "nfacts": 1, "tokens": 7615, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 7615, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 7615, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0.021, "error": null, "hits": 1, "nfacts": 1, "tokens": 6429, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.021, "error": null, "hits": 1, "nfacts": 1, "tokens": 6429, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.018, "error": null, "hits": 1, "nfacts": 1, "tokens": 7655, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.019, "error": null, "hits": 1, "nfacts": 1, "tokens": 7655, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "docs05-q2", "run": 0, "ok": true, "seconds": 0.018, "error": null, "hits": 1, "nfacts": 1, "tokens": 7655, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0.035, "error": null, "hits": 1, "nfacts": 1, "tokens": 24103, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0.036, "error": null, "hits": 1, "nfacts": 1, "tokens": 24103, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "docs07-q2", "run": 0, "ok": true, "seconds": 0.036, "error": null, "hits": 1, "nfacts": 1, "tokens": 24103, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "docs08-q1", "run": 0, "ok": true, "seconds": 0.013, "error": null, "hits": 1, "nfacts": 1, "tokens": 5697, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0.013, "error": null, "hits": 1, "nfacts": 1, "tokens": 5697, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0.012, "error": null, "hits": 1, "nfacts": 1, "tokens": 5697, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 5576, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 5576, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0.082, "error": null, "hits": 1, "nfacts": 1, "tokens": 41054, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.082, "error": null, "hits": 1, "nfacts": 1, "tokens": 41054, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.083, "error": null, "hits": 1, "nfacts": 1, "tokens": 41054, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.082, "error": null, "hits": 1, "nfacts": 1, "tokens": 41054, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 2, "nfacts": 2, "tokens": 4345, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 5480, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 4444, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 1431, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 1375, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0.018, "error": null, "hits": 1, "nfacts": 1, "tokens": 4444, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 1431, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 1375, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "news06-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 1478, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 3502, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 2040, "english": true}
-{"arm": "webclaw-llm", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 0.164, "error": null, "hits": 1, "nfacts": 1, "tokens": 76984, "english": false}
+{"arm": "webclaw-llm", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 3502, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 2040, "english": true}
+{"arm": "webclaw-llm", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 0.163, "error": null, "hits": 1, "nfacts": 1, "tokens": 76984, "english": false}
 {"arm": "webclaw-llm", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 0.163, "error": null, "hits": 1, "nfacts": 1, "tokens": 76984, "english": false}
-{"arm": "webclaw-llm", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0.176, "error": null, "hits": 1, "nfacts": 1, "tokens": 64353, "english": false}
-{"arm": "webclaw-llm", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 0.283, "error": null, "hits": 1, "nfacts": 1, "tokens": 98684, "english": false}
-{"arm": "webclaw-llm", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0.14, "error": null, "hits": 1, "nfacts": 1, "tokens": 58510, "english": false}
+{"arm": "webclaw-llm", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0.174, "error": null, "hits": 1, "nfacts": 1, "tokens": 64353, "english": false}
+{"arm": "webclaw-llm", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 0.284, "error": null, "hits": 1, "nfacts": 1, "tokens": 98684, "english": false}
+{"arm": "webclaw-llm", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0.141, "error": null, "hits": 1, "nfacts": 1, "tokens": 58510, "english": false}
 {"arm": "webclaw-llm", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 0.129, "error": null, "hits": 1, "nfacts": 1, "tokens": 55273, "english": false}
 {"arm": "webclaw-llm", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.097, "error": null, "hits": 1, "nfacts": 1, "tokens": 49221, "english": false}
-{"arm": "webclaw-llm", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.109, "error": null, "hits": 1, "nfacts": 1, "tokens": 83285, "english": false}
-{"arm": "webclaw-llm", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 0.111, "error": null, "hits": 1, "nfacts": 1, "tokens": 107331, "english": false}
-{"arm": "webclaw-llm", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0.116, "error": null, "hits": 1, "nfacts": 1, "tokens": 63105, "english": false}
+{"arm": "webclaw-llm", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.108, "error": null, "hits": 1, "nfacts": 1, "tokens": 83285, "english": false}
+{"arm": "webclaw-llm", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 0.11, "error": null, "hits": 1, "nfacts": 1, "tokens": 107331, "english": false}
+{"arm": "webclaw-llm", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0.115, "error": null, "hits": 1, "nfacts": 1, "tokens": 63105, "english": false}
 {"arm": "webclaw-llm", "mode": "html", "id": "shop01-q1", "run": 0, "ok": true, "seconds": 0.008, "error": null, "hits": 1, "nfacts": 1, "tokens": 605, "english": true}
 {"arm": "webclaw-llm", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0.027, "error": null, "hits": 1, "nfacts": 1, "tokens": 3073, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.01, "error": null, "hits": 1, "nfacts": 1, "tokens": 730, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0.009, "error": null, "hits": 1, "nfacts": 1, "tokens": 826, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0.011, "error": null, "hits": 1, "nfacts": 1, "tokens": 405, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0.012, "error": null, "hits": 1, "nfacts": 1, "tokens": 1084, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 224, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 147, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 739, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.01, "error": null, "hits": 1, "nfacts": 1, "tokens": 729, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0.009, "error": null, "hits": 1, "nfacts": 1, "tokens": 825, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0.011, "error": null, "hits": 1, "nfacts": 1, "tokens": 404, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0.012, "error": null, "hits": 1, "nfacts": 1, "tokens": 1083, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 223, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 146, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 738, "english": true}
 {"arm": "webclaw-query", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0.02, "error": null, "hits": 0, "nfacts": 1, "tokens": 2577, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.019, "error": null, "hits": 1, "nfacts": 1, "tokens": 319, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 620, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs05-q2", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 2141, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0.028, "error": null, "hits": 1, "nfacts": 1, "tokens": 480, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs07-q2", "run": 0, "ok": true, "seconds": 0.029, "error": null, "hits": 1, "nfacts": 1, "tokens": 247, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs08-q1", "run": 0, "ok": true, "seconds": 0.012, "error": null, "hits": 1, "nfacts": 1, "tokens": 2316, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0.011, "error": null, "hits": 1, "nfacts": 1, "tokens": 1327, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 180, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 487, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0.073, "error": null, "hits": 1, "nfacts": 1, "tokens": 522, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.072, "error": null, "hits": 1, "nfacts": 1, "tokens": 1179, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.072, "error": null, "hits": 1, "nfacts": 1, "tokens": 466, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 2, "nfacts": 2, "tokens": 2319, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 2152, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 1924, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.018, "error": null, "hits": 1, "nfacts": 1, "tokens": 318, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 619, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs05-q2", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 2141, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0.026, "error": null, "hits": 1, "nfacts": 1, "tokens": 479, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs07-q2", "run": 0, "ok": true, "seconds": 0.026, "error": null, "hits": 1, "nfacts": 1, "tokens": 246, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs08-q1", "run": 0, "ok": true, "seconds": 0.011, "error": null, "hits": 1, "nfacts": 1, "tokens": 2316, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0.011, "error": null, "hits": 1, "nfacts": 1, "tokens": 1326, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0.013, "error": null, "hits": 1, "nfacts": 1, "tokens": 179, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0.013, "error": null, "hits": 1, "nfacts": 1, "tokens": 486, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0.071, "error": null, "hits": 1, "nfacts": 1, "tokens": 521, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.07, "error": null, "hits": 1, "nfacts": 1, "tokens": 1178, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.071, "error": null, "hits": 1, "nfacts": 1, "tokens": 465, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 2, "nfacts": 2, "tokens": 2318, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0.016, "error": null, "hits": 1, "nfacts": 1, "tokens": 2151, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 1923, "english": true}
 {"arm": "webclaw-query", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 553, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 196, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0.013, "error": null, "hits": 1, "nfacts": 1, "tokens": 196, "english": true}
 {"arm": "webclaw-query", "mode": "html", "id": "news06-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 406, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 1657, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 926, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 0.142, "error": null, "hits": 1, "nfacts": 1, "tokens": 536, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 0.143, "error": null, "hits": 1, "nfacts": 1, "tokens": 1225, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0.154, "error": null, "hits": 1, "nfacts": 1, "tokens": 1188, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 0.251, "error": null, "hits": 1, "nfacts": 1, "tokens": 626, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0.123, "error": null, "hits": 1, "nfacts": 1, "tokens": 2431, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 0.113, "error": null, "hits": 1, "nfacts": 1, "tokens": 1774, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.087, "error": null, "hits": 1, "nfacts": 1, "tokens": 10477, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.095, "error": null, "hits": 1, "nfacts": 1, "tokens": 2692, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 0.098, "error": null, "hits": 0, "nfacts": 1, "tokens": 1818, "english": false}
-{"arm": "webclaw-query", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0.103, "error": null, "hits": 0, "nfacts": 1, "tokens": 503, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 1656, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.014, "error": null, "hits": 1, "nfacts": 1, "tokens": 925, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 0.136, "error": null, "hits": 1, "nfacts": 1, "tokens": 535, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 0.137, "error": null, "hits": 1, "nfacts": 1, "tokens": 1224, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0.149, "error": null, "hits": 1, "nfacts": 1, "tokens": 1188, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 0.24, "error": null, "hits": 1, "nfacts": 1, "tokens": 626, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0.118, "error": null, "hits": 1, "nfacts": 1, "tokens": 2431, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 0.107, "error": null, "hits": 1, "nfacts": 1, "tokens": 1774, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.084, "error": null, "hits": 1, "nfacts": 1, "tokens": 10477, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.092, "error": null, "hits": 1, "nfacts": 1, "tokens": 2691, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 0.094, "error": null, "hits": 0, "nfacts": 1, "tokens": 1817, "english": false}
+{"arm": "webclaw-query", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0.097, "error": null, "hits": 0, "nfacts": 1, "tokens": 502, "english": false}
 {"arm": "webclaw-query", "mode": "html", "id": "shop01-q1", "run": 0, "ok": true, "seconds": 0.008, "error": null, "hits": 1, "nfacts": 1, "tokens": 360, "english": true}
-{"arm": "webclaw-query", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0.027, "error": null, "hits": 1, "nfacts": 1, "tokens": 1107, "english": true}
-{"arm": "scrapling", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.061, "error": null, "hits": 1, "nfacts": 1, "tokens": 2567, "english": true}
+{"arm": "webclaw-query", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0.026, "error": null, "hits": 1, "nfacts": 1, "tokens": 1106, "english": true}
+{"arm": "scrapling", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.063, "error": null, "hits": 1, "nfacts": 1, "tokens": 2567, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0.005, "error": null, "hits": 1, "nfacts": 1, "tokens": 2567, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0.01, "error": null, "hits": 1, "nfacts": 1, "tokens": 6699, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0.01, "error": null, "hits": 1, "nfacts": 1, "tokens": 6699, "english": true}
-{"arm": "scrapling", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.048, "error": null, "hits": 1, "nfacts": 1, "tokens": 9253, "english": true}
+{"arm": "scrapling", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.047, "error": null, "hits": 1, "nfacts": 1, "tokens": 9253, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0.052, "error": null, "hits": 1, "nfacts": 1, "tokens": 9253, "english": true}
-{"arm": "scrapling", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.048, "error": null, "hits": 1, "nfacts": 1, "tokens": 9253, "english": true}
-{"arm": "scrapling", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0.047, "error": null, "hits": 1, "nfacts": 1, "tokens": 9895, "english": true}
-{"arm": "scrapling", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.046, "error": null, "hits": 1, "nfacts": 1, "tokens": 9895, "english": true}
+{"arm": "scrapling", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.047, "error": null, "hits": 1, "nfacts": 1, "tokens": 9253, "english": true}
+{"arm": "scrapling", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0.046, "error": null, "hits": 1, "nfacts": 1, "tokens": 9895, "english": true}
+{"arm": "scrapling", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.045, "error": null, "hits": 1, "nfacts": 1, "tokens": 9895, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.025, "error": null, "hits": 1, "nfacts": 1, "tokens": 11609, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "docs05-q2", "run": 0, "ok": true, "seconds": 0.024, "error": null, "hits": 1, "nfacts": 1, "tokens": 11609, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0.041, "error": null, "hits": 1, "nfacts": 1, "tokens": 26416, "english": true}
@@ -96,148 +96,148 @@
 {"arm": "scrapling", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0.034, "error": null, "hits": 1, "nfacts": 1, "tokens": 11679, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0.034, "error": null, "hits": 1, "nfacts": 1, "tokens": 11679, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0.215, "error": null, "hits": 1, "nfacts": 1, "tokens": 62966, "english": true}
-{"arm": "scrapling", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.204, "error": null, "hits": 1, "nfacts": 1, "tokens": 62966, "english": true}
-{"arm": "scrapling", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.219, "error": null, "hits": 1, "nfacts": 1, "tokens": 62966, "english": true}
+{"arm": "scrapling", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.205, "error": null, "hits": 1, "nfacts": 1, "tokens": 62966, "english": true}
+{"arm": "scrapling", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.218, "error": null, "hits": 1, "nfacts": 1, "tokens": 62966, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0.031, "error": null, "hits": 2, "nfacts": 2, "tokens": 11204, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0.029, "error": null, "hits": 1, "nfacts": 1, "tokens": 11461, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0.029, "error": null, "hits": 1, "nfacts": 1, "tokens": 10778, "english": true}
-{"arm": "scrapling", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0.039, "error": null, "hits": 1, "nfacts": 1, "tokens": 8882, "english": true}
+{"arm": "scrapling", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0.038, "error": null, "hits": 1, "nfacts": 1, "tokens": 8882, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0.027, "error": null, "hits": 1, "nfacts": 1, "tokens": 8953, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "news06-q1", "run": 0, "ok": true, "seconds": 0.027, "error": null, "hits": 1, "nfacts": 1, "tokens": 8908, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.028, "error": null, "hits": 1, "nfacts": 1, "tokens": 10078, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.027, "error": null, "hits": 1, "nfacts": 1, "tokens": 9481, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 0.361, "error": null, "hits": 1, "nfacts": 1, "tokens": 196263, "english": false}
-{"arm": "scrapling", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 0.366, "error": null, "hits": 1, "nfacts": 1, "tokens": 196263, "english": false}
-{"arm": "scrapling", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0.384, "error": null, "hits": 1, "nfacts": 1, "tokens": 203392, "english": false}
-{"arm": "scrapling", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 0.677, "error": null, "hits": 1, "nfacts": 1, "tokens": 303443, "english": false}
-{"arm": "scrapling", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0.338, "error": null, "hits": 1, "nfacts": 1, "tokens": 166224, "english": false}
-{"arm": "scrapling", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 0.291, "error": null, "hits": 1, "nfacts": 1, "tokens": 170014, "english": false}
-{"arm": "scrapling", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.25, "error": null, "hits": 1, "nfacts": 1, "tokens": 121679, "english": false}
-{"arm": "scrapling", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.241, "error": null, "hits": 1, "nfacts": 1, "tokens": 202776, "english": false}
-{"arm": "scrapling", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 0.404, "error": null, "hits": 1, "nfacts": 1, "tokens": 314295, "english": false}
+{"arm": "scrapling", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 0.365, "error": null, "hits": 1, "nfacts": 1, "tokens": 196263, "english": false}
+{"arm": "scrapling", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0.386, "error": null, "hits": 1, "nfacts": 1, "tokens": 203392, "english": false}
+{"arm": "scrapling", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 0.676, "error": null, "hits": 1, "nfacts": 1, "tokens": 303443, "english": false}
+{"arm": "scrapling", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0.337, "error": null, "hits": 1, "nfacts": 1, "tokens": 166224, "english": false}
+{"arm": "scrapling", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 0.288, "error": null, "hits": 1, "nfacts": 1, "tokens": 170014, "english": false}
+{"arm": "scrapling", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.244, "error": null, "hits": 1, "nfacts": 1, "tokens": 121679, "english": false}
+{"arm": "scrapling", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.24, "error": null, "hits": 1, "nfacts": 1, "tokens": 202776, "english": false}
+{"arm": "scrapling", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 0.402, "error": null, "hits": 1, "nfacts": 1, "tokens": 314295, "english": false}
 {"arm": "scrapling", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0.313, "error": null, "hits": 1, "nfacts": 1, "tokens": 346796, "english": false}
 {"arm": "scrapling", "mode": "html", "id": "shop01-q1", "run": 0, "ok": true, "seconds": 0.002, "error": null, "hits": 1, "nfacts": 1, "tokens": 481, "english": true}
 {"arm": "scrapling", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0.024, "error": null, "hits": 1, "nfacts": 1, "tokens": 5347, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.573, "error": null, "hits": 1, "nfacts": 1, "tokens": 2566, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.606, "error": null, "hits": 1, "nfacts": 1, "tokens": 2566, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0.011, "error": null, "hits": 1, "nfacts": 1, "tokens": 2566, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 6574, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0.015, "error": null, "hits": 1, "nfacts": 1, "tokens": 6574, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.045, "error": null, "hits": 1, "nfacts": 1, "tokens": 77740, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0.045, "error": null, "hits": 1, "nfacts": 1, "tokens": 77740, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.044, "error": null, "hits": 1, "nfacts": 1, "tokens": 77740, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0.044, "error": null, "hits": 1, "nfacts": 1, "tokens": 75187, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.046, "error": null, "hits": 1, "nfacts": 1, "tokens": 75187, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.052, "error": null, "hits": 1, "nfacts": 1, "tokens": 12093, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.045, "error": null, "hits": 1, "nfacts": 1, "tokens": 77740, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0.045, "error": null, "hits": 1, "nfacts": 1, "tokens": 75187, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.047, "error": null, "hits": 1, "nfacts": 1, "tokens": 75187, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.054, "error": null, "hits": 1, "nfacts": 1, "tokens": 12093, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs05-q2", "run": 0, "ok": true, "seconds": 0.046, "error": null, "hits": 1, "nfacts": 1, "tokens": 12093, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0.034, "error": null, "hits": 1, "nfacts": 1, "tokens": 26018, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs07-q2", "run": 0, "ok": true, "seconds": 0.034, "error": null, "hits": 1, "nfacts": 1, "tokens": 26018, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs08-q1", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 6453, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0.017, "error": null, "hits": 1, "nfacts": 1, "tokens": 6453, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0.043, "error": null, "hits": 1, "nfacts": 1, "tokens": 12175, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0.042, "error": null, "hits": 1, "nfacts": 1, "tokens": 12175, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0.041, "error": null, "hits": 1, "nfacts": 1, "tokens": 12175, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0.279, "error": null, "hits": 1, "nfacts": 1, "tokens": 64912, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.263, "error": null, "hits": 1, "nfacts": 1, "tokens": 64912, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0.277, "error": null, "hits": 1, "nfacts": 1, "tokens": 64912, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.262, "error": null, "hits": 1, "nfacts": 1, "tokens": 64912, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.262, "error": null, "hits": 1, "nfacts": 1, "tokens": 64912, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0.039, "error": null, "hits": 2, "nfacts": 2, "tokens": 11393, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0.049, "error": null, "hits": 1, "nfacts": 1, "tokens": 11686, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0.048, "error": null, "hits": 1, "nfacts": 1, "tokens": 11686, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0.037, "error": null, "hits": 1, "nfacts": 1, "tokens": 10969, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0.036, "error": null, "hits": 1, "nfacts": 1, "tokens": 9237, "english": true}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0.036, "error": null, "hits": 1, "nfacts": 1, "tokens": 9321, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "news06-q1", "run": 0, "ok": true, "seconds": 0.036, "error": null, "hits": 1, "nfacts": 1, "tokens": 9268, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.036, "error": null, "hits": 1, "nfacts": 1, "tokens": 10438, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.036, "error": null, "hits": 1, "nfacts": 1, "tokens": 9839, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 1.125, "error": null, "hits": 1, "nfacts": 1, "tokens": 200284, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 1.079, "error": null, "hits": 1, "nfacts": 1, "tokens": 200284, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0.805, "error": null, "hits": 1, "nfacts": 1, "tokens": 208489, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 1.459, "error": null, "hits": 1, "nfacts": 1, "tokens": 327032, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0.809, "error": null, "hits": 1, "nfacts": 1, "tokens": 176082, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 0.716, "error": null, "hits": 1, "nfacts": 1, "tokens": 176405, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.479, "error": null, "hits": 1, "nfacts": 1, "tokens": 125758, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.452, "error": null, "hits": 1, "nfacts": 1, "tokens": 215332, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 30.556, "error": null, "hits": 1, "nfacts": 1, "tokens": 331449, "english": false}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0.863, "error": null, "hits": 1, "nfacts": 1, "tokens": 364194, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "news06-q1", "run": 0, "ok": true, "seconds": 0.037, "error": null, "hits": 1, "nfacts": 1, "tokens": 9268, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.037, "error": null, "hits": 1, "nfacts": 1, "tokens": 10438, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.037, "error": null, "hits": 1, "nfacts": 1, "tokens": 9839, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 1.123, "error": null, "hits": 1, "nfacts": 1, "tokens": 200284, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 1.07, "error": null, "hits": 1, "nfacts": 1, "tokens": 200284, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0.814, "error": null, "hits": 1, "nfacts": 1, "tokens": 208489, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 1.46, "error": null, "hits": 1, "nfacts": 1, "tokens": 327032, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0.812, "error": null, "hits": 1, "nfacts": 1, "tokens": 176082, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 0.715, "error": null, "hits": 1, "nfacts": 1, "tokens": 176405, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.478, "error": null, "hits": 1, "nfacts": 1, "tokens": 125758, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.451, "error": null, "hits": 1, "nfacts": 1, "tokens": 215332, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 37.501, "error": null, "hits": 1, "nfacts": 1, "tokens": 331449, "english": false}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0.938, "error": null, "hits": 1, "nfacts": 1, "tokens": 364194, "english": false}
 {"arm": "crawl4ai-raw", "mode": "html", "id": "shop01-q1", "run": 0, "ok": true, "seconds": 0.011, "error": null, "hits": 1, "nfacts": 1, "tokens": 486, "english": true}
-{"arm": "crawl4ai-raw", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0.213, "error": null, "hits": 1, "nfacts": 1, "tokens": 6891, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.977, "error": null, "hits": 1, "nfacts": 1, "tokens": 1776, "english": true}
+{"arm": "crawl4ai-raw", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0.333, "error": null, "hits": 1, "nfacts": 1, "tokens": 6891, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0.851, "error": null, "hits": 1, "nfacts": 1, "tokens": 1776, "english": true}
 {"arm": "crawl4ai-bm25", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0.034, "error": null, "hits": 1, "nfacts": 1, "tokens": 1568, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0.064, "error": null, "hits": 1, "nfacts": 1, "tokens": 2257, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0.065, "error": null, "hits": 1, "nfacts": 1, "tokens": 3411, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.103, "error": null, "hits": 1, "nfacts": 1, "tokens": 1220, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0.1, "error": null, "hits": 1, "nfacts": 1, "tokens": 856, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0.065, "error": null, "hits": 1, "nfacts": 1, "tokens": 2257, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0.066, "error": null, "hits": 1, "nfacts": 1, "tokens": 3411, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0.101, "error": null, "hits": 1, "nfacts": 1, "tokens": 1220, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0.099, "error": null, "hits": 1, "nfacts": 1, "tokens": 856, "english": true}
 {"arm": "crawl4ai-bm25", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0.101, "error": null, "hits": 1, "nfacts": 1, "tokens": 1755, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0.197, "error": null, "hits": 1, "nfacts": 1, "tokens": 36359, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.122, "error": null, "hits": 1, "nfacts": 1, "tokens": 34637, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.114, "error": null, "hits": 1, "nfacts": 1, "tokens": 3738, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs05-q2", "run": 0, "ok": true, "seconds": 0.105, "error": null, "hits": 1, "nfacts": 1, "tokens": 1175, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0.191, "error": null, "hits": 1, "nfacts": 1, "tokens": 3123, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs07-q2", "run": 0, "ok": true, "seconds": 0.193, "error": null, "hits": 1, "nfacts": 1, "tokens": 7420, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs08-q1", "run": 0, "ok": true, "seconds": 0.06, "error": null, "hits": 1, "nfacts": 1, "tokens": 2830, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0.059, "error": null, "hits": 1, "nfacts": 1, "tokens": 2338, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0.113, "error": null, "hits": 1, "nfacts": 1, "tokens": 1146, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0.089, "error": null, "hits": 1, "nfacts": 1, "tokens": 2180, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0.477, "error": null, "hits": 1, "nfacts": 1, "tokens": 3952, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.443, "error": null, "hits": 1, "nfacts": 1, "tokens": 2973, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.475, "error": null, "hits": 1, "nfacts": 1, "tokens": 7685, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0.08, "error": null, "hits": 2, "nfacts": 2, "tokens": 387, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0.107, "error": null, "hits": 1, "nfacts": 1, "tokens": 525, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0.079, "error": null, "hits": 1, "nfacts": 1, "tokens": 1419, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0.068, "error": null, "hits": 1, "nfacts": 1, "tokens": 177, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0.067, "error": null, "hits": 1, "nfacts": 1, "tokens": 158, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "news06-q1", "run": 0, "ok": true, "seconds": 0.066, "error": null, "hits": 0, "nfacts": 1, "tokens": 28, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.072, "error": null, "hits": 0, "nfacts": 1, "tokens": 411, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.073, "error": null, "hits": 1, "nfacts": 1, "tokens": 433, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 1.516, "error": null, "hits": 1, "nfacts": 1, "tokens": 1668, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 1.455, "error": null, "hits": 1, "nfacts": 1, "tokens": 994, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 1.216, "error": null, "hits": 1, "nfacts": 1, "tokens": 5309, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 2.123, "error": null, "hits": 1, "nfacts": 1, "tokens": 21792, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 1.188, "error": null, "hits": 1, "nfacts": 1, "tokens": 40868, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 1.073, "error": null, "hits": 1, "nfacts": 1, "tokens": 25948, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.716, "error": null, "hits": 1, "nfacts": 1, "tokens": 12247, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.576, "error": null, "hits": 0, "nfacts": 1, "tokens": 83, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 33.691, "error": null, "hits": 0, "nfacts": 1, "tokens": 46, "english": false}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0.947, "error": null, "hits": 1, "nfacts": 1, "tokens": 6973, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0.119, "error": null, "hits": 1, "nfacts": 1, "tokens": 36359, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0.099, "error": null, "hits": 1, "nfacts": 1, "tokens": 34637, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0.11, "error": null, "hits": 1, "nfacts": 1, "tokens": 3738, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs05-q2", "run": 0, "ok": true, "seconds": 0.106, "error": null, "hits": 1, "nfacts": 1, "tokens": 1175, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0.186, "error": null, "hits": 1, "nfacts": 1, "tokens": 3123, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs07-q2", "run": 0, "ok": true, "seconds": 0.187, "error": null, "hits": 1, "nfacts": 1, "tokens": 7420, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs08-q1", "run": 0, "ok": true, "seconds": 0.057, "error": null, "hits": 1, "nfacts": 1, "tokens": 2830, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0.057, "error": null, "hits": 1, "nfacts": 1, "tokens": 2338, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0.106, "error": null, "hits": 1, "nfacts": 1, "tokens": 1146, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0.086, "error": null, "hits": 1, "nfacts": 1, "tokens": 2180, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0.455, "error": null, "hits": 1, "nfacts": 1, "tokens": 3952, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0.42, "error": null, "hits": 1, "nfacts": 1, "tokens": 2973, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0.447, "error": null, "hits": 1, "nfacts": 1, "tokens": 7685, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0.076, "error": null, "hits": 2, "nfacts": 2, "tokens": 387, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0.102, "error": null, "hits": 1, "nfacts": 1, "tokens": 525, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0.077, "error": null, "hits": 1, "nfacts": 1, "tokens": 1419, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0.065, "error": null, "hits": 1, "nfacts": 1, "tokens": 177, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0.065, "error": null, "hits": 1, "nfacts": 1, "tokens": 158, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "news06-q1", "run": 0, "ok": true, "seconds": 0.064, "error": null, "hits": 0, "nfacts": 1, "tokens": 28, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0.07, "error": null, "hits": 0, "nfacts": 1, "tokens": 411, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0.07, "error": null, "hits": 1, "nfacts": 1, "tokens": 433, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 1.476, "error": null, "hits": 1, "nfacts": 1, "tokens": 1668, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 1.406, "error": null, "hits": 1, "nfacts": 1, "tokens": 994, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 1.182, "error": null, "hits": 1, "nfacts": 1, "tokens": 5309, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 2.092, "error": null, "hits": 1, "nfacts": 1, "tokens": 21792, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 1.169, "error": null, "hits": 1, "nfacts": 1, "tokens": 40868, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 1.087, "error": null, "hits": 1, "nfacts": 1, "tokens": 25948, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0.706, "error": null, "hits": 1, "nfacts": 1, "tokens": 12247, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0.571, "error": null, "hits": 0, "nfacts": 1, "tokens": 83, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 26.562, "error": null, "hits": 0, "nfacts": 1, "tokens": 46, "english": false}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 1.145, "error": null, "hits": 1, "nfacts": 1, "tokens": 6973, "english": false}
 {"arm": "crawl4ai-bm25", "mode": "html", "id": "shop01-q1", "run": 0, "ok": true, "seconds": 0.013, "error": null, "hits": 0, "nfacts": 1, "tokens": 3, "english": true}
-{"arm": "crawl4ai-bm25", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0.155, "error": null, "hits": 0, "nfacts": 1, "tokens": 179, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 730, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 826, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 405, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 1084, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 224, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 147, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 739, "english": true}
+{"arm": "crawl4ai-bm25", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0.131, "error": null, "hits": 0, "nfacts": 1, "tokens": 179, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 729, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 825, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 404, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs02-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 1083, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs03-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 223, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs03-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 146, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs03-q3", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 738, "english": true}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs04-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 2577, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 319, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 620, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs04-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 318, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs05-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 619, "english": true}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs05-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 2141, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 480, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs07-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 247, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs07-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 479, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs07-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 246, "english": true}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs08-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 2316, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 1327, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 180, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 487, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 522, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1179, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 466, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 2, "nfacts": 2, "tokens": 2319, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 2152, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1924, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs08-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 1326, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs09-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 179, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "docs09-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 486, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "home12-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 521, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "home12-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1178, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "home12-q3", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 465, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news10-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 2, "nfacts": 2, "tokens": 2318, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news11-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 2151, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news12-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1923, "english": true}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news03-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 553, "english": true}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news04-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 196, "english": true}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news06-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 406, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1657, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 926, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 536, "english": false}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1225, "english": false}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news07-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1656, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "news02-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 925, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang01-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 535, "english": false}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang01-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1224, "english": false}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang02-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1188, "english": false}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang03-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 626, "english": false}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang04-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 2431, "english": false}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang05-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 1774, "english": false}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang06-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 10477, "english": false}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 2692, "english": false}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1818, "english": false}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 503, "english": false}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang07-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 2691, "english": false}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang08-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1817, "english": false}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "lang09-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 502, "english": false}
 {"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "shop01-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 360, "english": true}
-{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1107, "english": true}
+{"arm": "webclaw-llm cut to webclaw-query size", "mode": "html", "id": "home04-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1106, "english": true}
 {"arm": "crawl4ai-raw cut to crawl4ai-bm25 size", "mode": "html", "id": "docs01-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 1776, "english": true}
 {"arm": "crawl4ai-raw cut to crawl4ai-bm25 size", "mode": "html", "id": "docs01-q2", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 0, "nfacts": 1, "tokens": 1568, "english": true}
 {"arm": "crawl4ai-raw cut to crawl4ai-bm25 size", "mode": "html", "id": "docs02-q1", "run": 0, "ok": true, "seconds": 0, "error": null, "hits": 1, "nfacts": 1, "tokens": 2257, "english": true}

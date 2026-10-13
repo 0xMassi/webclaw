@@ -66,19 +66,23 @@ def main(label):
     lines = [f"# Query-focused extraction {label}", "",
              f"{len(cases)} questions over {len({c['html_path'] for c in cases})} frozen pages (`questions.jsonl`). "
              "Each question was written apart from its answers: no answer string appears in its question. Answer "
-             "recall counts answers found in the output. Tokens: cl100k, median. The `cut to` rows truncate the "
+             "recall counts answers found in the output, with failed runs as misses; `ok` counts runs that returned "
+             "text without an error. Tokens: cl100k, median over ok runs. The `cut to` rows truncate the "
              "tool's full output to the token count its own query filter returned for the same question, so a "
              "filter has to beat keeping the top of the page.", ""]
     for scope, keep in (("all questions", lambda r: True), ("English pages", lambda r: r["english"]),
                         ("non-English pages", lambda r: not r["english"])):
-        lines += [f"## {scope}", "", "| arm | questions | answer recall % | median tokens | p50 s |", "|---|---:|---:|---:|---:|"]
+        lines += [f"## {scope}", "", "| arm | questions | ok | answer recall % | median tokens | p50 s |",
+                  "|---|---:|---:|---:|---:|---:|"]
         arms = list(ARM_VENV) + [f"{full} cut to {filtered} size" for filtered, full in CONTROLS.items()]
         for arm in arms:
             group = [r for r in rows if r["arm"] == arm and keep(r)]
             if not group:
                 continue
-            lines.append(f"| {arm} | {len(group)} | {100 * sum(r['hits'] for r in group) / sum(r['nfacts'] for r in group):.1f} | "
-                         f"{int(statistics.median(r['tokens'] for r in group))} | "
+            ok = [r for r in group if r["ok"]]
+            lines.append(f"| {arm} | {len(group)} | {len(ok)} | "
+                         f"{100 * sum(r['hits'] for r in group) / sum(r['nfacts'] for r in group):.1f} | "
+                         f"{int(statistics.median(r['tokens'] for r in ok)) if ok else 0} | "
                          f"{statistics.median(r['seconds'] for r in group):.2f} |")
         lines.append("")
     (res / "query-summary.md").write_text("\n".join(lines))

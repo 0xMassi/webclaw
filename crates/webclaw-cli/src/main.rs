@@ -235,17 +235,23 @@ struct Cli {
 
     /// Print what a CSS selector picks as a JSON array. End it in `::text`
     /// (the default), `::attr(NAME)` or `::html`, e.g. "h3 a::attr(href)"
-    #[arg(long, value_name = "SELECTOR")]
+    #[arg(long, value_name = "SELECTOR", group = "pick")]
     select: Option<String>,
 
-    /// With --select, print one JSON object per match instead: NAME=SELECTOR,
-    /// run inside each match (repeatable), e.g. --field price=.price_color
-    #[arg(long = "field", value_name = "NAME=SELECTOR", requires = "select")]
+    /// Print what an XPath 1.0 expression picks as a JSON array: element and
+    /// text values as text, attributes as values, e.g. "//h3/a/@title"
+    #[arg(long, value_name = "EXPRESSION", group = "pick")]
+    xpath: Option<String>,
+
+    /// With --select or --xpath, print one JSON object per match instead:
+    /// NAME=SELECTOR run inside each match (repeatable), e.g. `--field
+    /// price=.price_color`, or with --xpath `--field "price=.//p[@class='price_color']"`
+    #[arg(long = "field", value_name = "NAME=SELECTOR", requires = "pick")]
     fields: Vec<String>,
 
     /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
     /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["select", "crawl", "watch", "map"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["select", "xpath", "crawl", "watch", "map"])]
     screenshot: Option<PathBuf>,
 
     /// With --screenshot, capture the whole scrollable page
@@ -1248,7 +1254,7 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
         .map_err(|e| format!("fetch error: {e}"))
 }
 
-async fn run_select(cli: &Cli, selector: &str) -> Result<(), String> {
+async fn run_select(cli: &Cli, selector: &str, xpath: bool) -> Result<(), String> {
     let fields = cli
         .fields
         .iter()
@@ -1285,15 +1291,22 @@ async fn run_select(cli: &Cli, selector: &str) -> Result<(), String> {
     };
     webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
     let url = (!page.url.is_empty()).then_some(page.url.as_str());
-    let json = if fields.is_empty() {
-        serde_json::to_string_pretty(
-            &webclaw_core::select(&page.html, url, selector).map_err(|e| e.to_string())?,
-        )
-    } else {
-        serde_json::to_string_pretty(
-            &webclaw_core::select_records(&page.html, url, selector, &fields)
+    let html = page.html.as_str();
+    let json = match (xpath, fields.is_empty()) {
+        (false, true) => serde_json::to_string_pretty(
+            &webclaw_core::select(html, url, selector).map_err(|e| e.to_string())?,
+        ),
+        (false, false) => serde_json::to_string_pretty(
+            &webclaw_core::select_records(html, url, selector, &fields)
                 .map_err(|e| e.to_string())?,
-        )
+        ),
+        (true, true) => serde_json::to_string_pretty(
+            &webclaw_core::select_xpath(html, url, selector).map_err(|e| e.to_string())?,
+        ),
+        (true, false) => serde_json::to_string_pretty(
+            &webclaw_core::select_xpath_records(html, url, selector, &fields)
+                .map_err(|e| e.to_string())?,
+        ),
     };
     println!("{}", json.map_err(|e| e.to_string())?);
     Ok(())
@@ -3140,11 +3153,16 @@ async fn main() {
         return;
     }
 
-    if let Some(ref selector) = cli.select {
+    let pick = match (&cli.select, &cli.xpath) {
+        (Some(css), _) => Some((css.clone(), false)),
+        (None, Some(xpath)) => Some((xpath.clone(), true)),
+        (None, None) => None,
+    };
+    if let Some((selector, xpath)) = pick {
         let selected = if entries.len() > 1 {
-            Err("--select takes one URL".to_string())
+            Err("--select and --xpath take one URL".to_string())
         } else {
-            run_select(&cli, selector).await
+            run_select(&cli, &selector, xpath).await
         };
         if let Err(e) = selected {
             eprintln!("error: {e}");

@@ -53,7 +53,9 @@ fn parse_browser(browser: Option<&str>) -> webclaw_fetch::BrowserProfile {
 }
 
 #[cfg(feature = "browser")]
-fn render_from_env() -> Option<webclaw_fetch::render::RenderConfig> {
+fn render_from_env(
+    config: &webclaw_fetch::FetchConfig,
+) -> Option<webclaw_fetch::render::RenderConfig> {
     use webclaw_fetch::render::{BrowserSource, RenderConfig, RenderPool};
     let mode = std::env::var("WEBCLAW_RENDER").unwrap_or_default();
     if mode == "never" {
@@ -61,9 +63,7 @@ fn render_from_env() -> Option<webclaw_fetch::render::RenderConfig> {
     }
     let source = match std::env::var("WEBCLAW_CDP_URL") {
         Ok(endpoint) if !endpoint.is_empty() => BrowserSource::Connect(endpoint),
-        _ => BrowserSource::Launch {
-            proxy: std::env::var("WEBCLAW_PROXY").ok(),
-        },
+        _ => BrowserSource::launch_for(config),
     };
     Some(RenderConfig {
         pool: Arc::new(RenderPool::new(source, LOCAL_FETCH_TIMEOUT)),
@@ -152,7 +152,7 @@ impl WebclawMcp {
         }
         #[cfg(feature = "browser")]
         {
-            config.render = render_from_env();
+            config.render = render_from_env(&config);
         }
 
         let fetch_client = match webclaw_fetch::FetchClient::new(config.clone()) {

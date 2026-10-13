@@ -6,11 +6,16 @@ use std::time::{Duration, Instant};
 
 use chromiumoxide::auth::Credentials;
 use chromiumoxide::browser::{Browser, BrowserConfig, HeadlessMode};
+use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType, SetCookieParams};
+use chromiumoxide::cdp::browser_protocol::target::{
+    CreateBrowserContextParams, CreateTargetParams,
+};
 use futures_util::StreamExt;
+use rand::seq::SliceRandom;
 use tokio::sync::{RwLock, RwLockReadGuard, Semaphore};
 use tracing::warn;
 use url::Url;
@@ -114,7 +119,7 @@ impl Renderer {
                 return Err(browser_error(e));
             }
         };
-        Ok(Self::start(browser, handler, Some(profile), proxy_login))
+        Self::start(browser, handler, Some(profile), proxy_login).await
     }
 
     /// Use a browser that is already running with its DevTools endpoint at
@@ -127,15 +132,15 @@ impl Renderer {
         let (browser, handler) = Browser::connect_with_config(cdp_url, config)
             .await
             .map_err(browser_error)?;
-        Ok(Self::start(browser, handler, None, None))
+        Self::start(browser, handler, None, None).await
     }
 
-    fn start(
+    async fn start(
         browser: Browser,
         mut handler: chromiumoxide::Handler,
         profile: Option<std::path::PathBuf>,
         proxy_login: Option<(String, String)>,
-    ) -> Self {
+    ) -> Result<Self, FetchError> {
         let events = tokio::spawn(async move {
             while let Some(event) = handler.next().await {
                 if event.is_err() {
@@ -143,12 +148,17 @@ impl Renderer {
                 }
             }
         });
-        Self {
+        let mut renderer = Self {
             browser,
             events,
             profile,
             proxy_login,
+        };
+        if let Err(e) = renderer.browser.start_incognito_context().await {
+            renderer.close().await;
+            return Err(browser_error(e));
         }
+        Ok(renderer)
     }
 
     /// Render `url` and return the DOM after its scripts ran. The result has
@@ -158,8 +168,41 @@ impl Renderer {
     /// (body and headers, `Set-Cookie` included) instead of requesting it
     /// again, so a page already fetched over HTTP costs only its scripts and
     /// other subresources.
+    ///
+    /// A render that sends a `Cookie` header runs in its own browser context,
+    /// so those cookies, and any the site sets in reply, never reach another
+    /// render. Other renders share one context of their own, with its cache and
+    /// cookies, apart from the browser's default profile.
     pub async fn render(
         &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+    ) -> Result<FetchResult, FetchError> {
+        let private = options
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
+        if !private {
+            return self.render_in(None, url, prefetched, options).await;
+        }
+        let context = self
+            .browser
+            .execute(CreateBrowserContextParams::default())
+            .await
+            .map_err(browser_error)?
+            .result
+            .browser_context_id;
+        let rendered = self
+            .render_in(Some(context.clone()), url, prefetched, options)
+            .await;
+        let _ = self.browser.dispose_browser_context(context).await;
+        rendered
+    }
+
+    async fn render_in(
+        &self,
+        context: Option<BrowserContextId>,
         url: &str,
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
@@ -167,11 +210,9 @@ impl Renderer {
         let start = Instant::now();
         let target = crate::url_security::validate_public_http_url(url).await?;
         let url = target.to_string();
-        let page = self
-            .browser
-            .new_page("about:blank")
-            .await
-            .map_err(browser_error)?;
+        let mut blank = CreateTargetParams::new("about:blank");
+        blank.browser_context_id = context;
+        let page = self.browser.new_page(blank).await.map_err(browser_error)?;
 
         let mut extra = Vec::new();
         for (name, value) in &options.headers {
@@ -201,6 +242,7 @@ impl Renderer {
             .map_err(browser_error)?;
         }
 
+        let settled_words = settle_floor(prefetched.as_ref().map(|p| p.html));
         let mut main_document =
             prefetched.map(|p| (base64(p.html.as_bytes()), response_headers(p.headers)));
         let origin = target.origin();
@@ -244,7 +286,7 @@ impl Renderer {
             page.goto(url.as_str()).await?;
             tokio::select! {
                 _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3) => {}
-                _ = text_settled(&page) => {}
+                _ = text_settled(&page, settled_words) => {}
             }
             if let Some(selector) = &options.wait_for {
                 page.wait_for_selector(selector.as_str(), Some(options.timeout))
@@ -290,6 +332,18 @@ pub enum BrowserSource {
     Launch { proxy: Option<String> },
     /// Use a browser already running at this DevTools endpoint; see [`Renderer::connect`].
     Connect(String),
+}
+
+impl BrowserSource {
+    /// Launch a local Chrome behind `config.proxy`, or behind one proxy
+    /// picked at random from `config.proxy_pool`.
+    pub fn launch_for(config: &crate::FetchConfig) -> Self {
+        let proxy = config
+            .proxy
+            .clone()
+            .or_else(|| config.proxy_pool.choose(&mut rand::thread_rng()).cloned());
+        Self::Launch { proxy }
+    }
 }
 
 /// One browser shared by every fetch that may need rendering.
@@ -500,7 +554,11 @@ const INSTALL_PATHS: &[&str] = &[
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
 ];
 
-async fn text_settled(page: &chromiumoxide::Page) {
+fn settle_floor(http_html: Option<&str>) -> usize {
+    http_html.map_or(0, webclaw_core::quality::visible_word_count) + 50
+}
+
+async fn text_settled(page: &chromiumoxide::Page, min_words: usize) {
     const PROBE: &str = "(() => { const t = document.body ? document.body.innerText : ''; \
                          return [t.length, t.split(/\\s+/).filter(Boolean).length]; })()";
     let mut last = None;
@@ -509,7 +567,9 @@ async fn text_settled(page: &chromiumoxide::Page) {
         let probe = page.evaluate(PROBE).await.ok();
         let sample = probe.and_then(|r| r.into_value::<(usize, usize)>().ok());
         steady = match (sample, last) {
-            (Some((chars, words)), Some(before)) if chars == before && words >= 50 => steady + 1,
+            (Some((chars, words)), Some(before)) if chars == before && words >= min_words => {
+                steady + 1
+            }
             _ => 0,
         };
         if steady >= 2 {
@@ -632,6 +692,58 @@ mod tests {
         let rendered = rendered.expect("render succeeds");
         assert!(rendered.html.contains("scripts ran"), "{}", rendered.html);
         assert_eq!(hits.load(Ordering::SeqCst), 0, "the page reached loopback");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a local Chrome"]
+    async fn cookies_from_one_render_never_reach_the_next() {
+        let mut first_headers = http::HeaderMap::new();
+        first_headers.insert("set-cookie", "served=1; Path=/".parse().unwrap());
+        let reader = r#"<html><body><p id="c"></p><script>document.getElementById("c").textContent = "cookies:" + document.cookie + ":end";</script></body></html>"#;
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let first = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: reader,
+                    headers: &first_headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    headers: vec![("Cookie".into(), "session=abc".into())],
+                    ..Default::default()
+                },
+            )
+            .await;
+        let empty = http::HeaderMap::new();
+        let second = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: reader,
+                    headers: &empty,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        let first = first.expect("first render succeeds").html;
+        let second = second.expect("second render succeeds").html;
+        assert!(first.contains("session=abc"), "{first}");
+        assert!(second.contains("cookies::end"), "{second}");
+    }
+
+    #[test]
+    fn the_text_must_grow_past_the_http_page_before_it_counts_as_settled() {
+        let menu = format!(
+            "<html><body><nav>{}</nav><div id=\"root\"></div></body></html>",
+            "Menu ".repeat(60)
+        );
+        assert_eq!(super::settle_floor(Some(&menu)), 110);
+        assert_eq!(super::settle_floor(None), 50);
     }
 
     fn page(url: &str, html: &str, status: u16) -> crate::client::FetchResult {
@@ -765,6 +877,18 @@ mod tests {
         assert!(!merged.iter().any(|e| e.value == "fr"));
         assert!(merged.iter().any(|e| e.name == "user-agent"));
         assert!(merged.iter().any(|e| e.name == "Authorization"));
+    }
+
+    #[test]
+    fn the_browser_uses_the_proxy_pool_when_no_single_proxy_is_set() {
+        let config = crate::FetchConfig {
+            proxy_pool: vec!["http://pool.example:8080".into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            super::BrowserSource::launch_for(&config),
+            super::BrowserSource::Launch { proxy: Some(p) } if p == "http://pool.example:8080"
+        ));
     }
 
     #[test]

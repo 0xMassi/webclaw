@@ -645,16 +645,7 @@ fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Render
     use webclaw_fetch::render::{BrowserSource, RenderPool};
     let source = match &cli.cdp_url {
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
-        None => {
-            let pick = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.subsec_nanos() as usize);
-            let proxy = config.proxy.clone().or_else(|| {
-                (!config.proxy_pool.is_empty())
-                    .then(|| config.proxy_pool[pick % config.proxy_pool.len()].clone())
-            });
-            BrowserSource::Launch { proxy }
-        }
+        None => BrowserSource::launch_for(config),
     };
     RenderPool::new(source, std::time::Duration::from_secs(cli.timeout))
 }

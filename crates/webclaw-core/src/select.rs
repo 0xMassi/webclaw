@@ -54,7 +54,8 @@ impl Query {
             Take::Text => Some(
                 element
                     .text()
-                    .flat_map(str::split_whitespace)
+                    .collect::<String>()
+                    .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" "),
             ),
@@ -142,6 +143,14 @@ mod tests {
         assert_eq!(
             select(PAGE, None, "#intro::text").unwrap(),
             ["Hello big world"]
+        );
+    }
+
+    #[test]
+    fn text_split_by_inline_tags_stays_joined() {
+        assert_eq!(
+            select("<p class=p>£<span>51</span>.77</p>", None, ".p").unwrap(),
+            ["£51.77"]
         );
     }
 

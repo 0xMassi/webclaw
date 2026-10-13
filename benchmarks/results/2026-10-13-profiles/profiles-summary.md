@@ -4,15 +4,15 @@ Each tool fetches the 69 non-PDF url-mode cases once per browser identity, over 
 
 | profile | tool | ok | fact recall % | p50 s | p95 s |
 |---|---|---:|---:|---:|---:|
-| chrome | webclaw | 55/69 | 72.4 | 0.39 | 0.84 |
-| chrome | scrapling | 60/69 | 79.7 | 0.33 | 2.56 |
-| chrome-macos | webclaw | 54/69 | 71.4 | 0.21 | 0.57 |
-| firefox | webclaw | 58/69 | 77.1 | 0.28 | 0.64 |
-| firefox | scrapling | 60/69 | 79.7 | 0.36 | 2.44 |
-| safari | webclaw | 57/69 | 74.5 | 0.23 | 0.56 |
-| safari | scrapling | 60/69 | 79.7 | 0.38 | 2.00 |
-| safari-ios | webclaw | 57/69 | 74.5 | 0.27 | 0.81 |
-| safari-ios | scrapling | 60/69 | 81.2 | 0.34 | 1.75 |
-| edge | webclaw | 54/69 | 71.4 | 0.25 | 0.78 |
-| edge | scrapling | 58/69 | 78.1 | 0.32 | 2.89 |
-| random | webclaw | 57/69 | 74.5 | 0.24 | 0.54 |
+| chrome | webclaw | 55/69 | 71.9 | 0.33 | 1.04 |
+| chrome | scrapling | 60/69 | 78.6 | 0.36 | 1.65 |
+| chrome-macos | webclaw | 55/69 | 71.9 | 0.25 | 0.53 |
+| firefox | webclaw | 55/69 | 73.4 | 0.22 | 0.57 |
+| firefox | scrapling | 59/69 | 77.6 | 0.32 | 2.16 |
+| safari | webclaw | 57/69 | 74.5 | 0.24 | 0.59 |
+| safari | scrapling | 60/69 | 78.6 | 0.31 | 1.88 |
+| safari-ios | webclaw | 57/69 | 74.0 | 0.26 | 0.71 |
+| safari-ios | scrapling | 58/69 | 78.1 | 0.31 | 1.80 |
+| edge | webclaw | 56/69 | 72.9 | 0.24 | 0.70 |
+| edge | scrapling | 58/69 | 77.1 | 0.31 | 2.30 |
+| random | webclaw | 55/69 | 72.4 | 0.22 | 0.55 |

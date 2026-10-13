@@ -7,6 +7,8 @@ import json, os, statistics, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from run import hits
+
 ROOT = Path(__file__).resolve().parents[1]
 TIMEOUT = 30
 PROFILES = {"chrome": "chrome", "chrome-macos": None, "firefox": "firefox", "safari": "safari",
@@ -38,7 +40,7 @@ def one(fetch, case):
     except Exception as e:
         text, error = "", str(e)[-200:]
     seconds = time.perf_counter() - t0
-    found = sum(f.lower() in text.lower() for f in case["facts"])
+    found = hits(text, case["facts"])
     return {"id": case["id"], "ok": bool(text) and found > 0, "facts": found, "of": len(case["facts"]),
             "seconds": seconds, "error": error}
 

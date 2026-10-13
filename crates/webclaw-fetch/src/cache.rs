@@ -107,12 +107,17 @@ impl ResponseCache {
             std::process::id(),
             WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        let mut file = private_file(&partial)?;
-        file.write_all(&serde_json::to_vec(&meta)?)?;
-        file.write_all(b"\n")?;
-        file.write_all(body)?;
-        drop(file);
-        std::fs::rename(&partial, self.dir.join(key))
+        let published = private_file(&partial).and_then(|mut file| {
+            file.write_all(&serde_json::to_vec(&meta)?)?;
+            file.write_all(b"\n")?;
+            file.write_all(body)?;
+            drop(file);
+            std::fs::rename(&partial, self.dir.join(key))
+        });
+        if published.is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
+        published
     }
 }
 
@@ -209,6 +214,21 @@ mod tests {
         let firefox = ResponseCache::new(dir.path().into(), &"firefox");
         assert_ne!(firefox.key("https://example.com/", &[]), key);
         assert!(cache.read(&key, "https://example.com/other").is_none());
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_partial_file() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ResponseCache::new(root.path().into(), &"chrome");
+        let key = cache.key("https://example.com/", &[]);
+        std::fs::create_dir(root.path().join(&key)).unwrap();
+        std::fs::write(root.path().join(&key).join("occupied"), b"x").unwrap();
+        cache.write(&key, "https://example.com/", &page("<p>hi</p>", None));
+        let names: Vec<_> = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, [key]);
     }
 
     #[cfg(unix)]

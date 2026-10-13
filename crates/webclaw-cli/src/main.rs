@@ -222,6 +222,11 @@ struct Cli {
     #[arg(long)]
     raw_html: bool,
 
+    /// Keep only the parts of the page that answer this question, under their
+    /// headings (single-page extraction)
+    #[arg(long, value_name = "QUESTION", conflicts_with_all = ["crawl", "watch"])]
+    query: Option<String>,
+
     /// Print what a CSS selector picks as a JSON array. End it in `::text`
     /// (the default), `::attr(NAME)` or `::html`, e.g. "h3 a::attr(href)"
     #[arg(long, value_name = "SELECTOR")]
@@ -3127,6 +3132,11 @@ async fn main() {
         return;
     }
 
+    if cli.query.is_some() && entries.len() > 1 {
+        eprintln!("error: --query works on one page at a time");
+        process::exit(1);
+    }
+
     // Multi-URL batch mode
     if entries.len() > 1 {
         if let Err(e) = run_batch(&cli, &entries).await {
@@ -3150,7 +3160,10 @@ async fn main() {
 
     // Single-page extraction (handles both HTML and PDF via content-type detection)
     match fetch_and_extract(&cli).await {
-        Ok(FetchOutput::Local(result)) => {
+        Ok(FetchOutput::Local(mut result)) => {
+            if let Some(ref query) = cli.query {
+                webclaw_core::focus_extraction(&mut result, query);
+            }
             if let Some(ref dir) = cli.output_dir {
                 let url = cli
                     .urls

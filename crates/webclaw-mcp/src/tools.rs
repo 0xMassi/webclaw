@@ -100,7 +100,7 @@ pub struct ScrapeParams {
     /// If true, extract only the main content (article/main element)
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub only_main_content: Option<bool>,
-    /// Browser profile: "chrome" (default), "firefox", or "random"
+    /// Browser profile: "chrome" (default), "chrome-macos", "firefox", "safari", "safari-ios", "edge", or "random"
     pub browser: Option<String>,
     /// Cookies to send with the request (e.g. ["name=value", "session=abc123"])
     pub cookies: Option<Vec<String>>,

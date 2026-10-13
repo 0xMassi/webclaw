@@ -44,13 +44,22 @@ pub struct WebclawMcp {
     cloud: Option<CloudClient>,
 }
 
-/// Parse a browser string into a BrowserProfile.
-fn parse_browser(browser: Option<&str>) -> webclaw_fetch::BrowserProfile {
-    match browser {
-        Some("firefox") => webclaw_fetch::BrowserProfile::Firefox,
-        Some("random") => webclaw_fetch::BrowserProfile::Random,
-        _ => webclaw_fetch::BrowserProfile::Chrome,
-    }
+fn parse_browser(browser: Option<&str>) -> Result<webclaw_fetch::BrowserProfile, String> {
+    use webclaw_fetch::BrowserProfile;
+    Ok(match browser {
+        None | Some("chrome") => BrowserProfile::Chrome,
+        Some("chrome-macos") => BrowserProfile::ChromeMacos,
+        Some("firefox") => BrowserProfile::Firefox,
+        Some("safari") => BrowserProfile::Safari,
+        Some("safari-ios") => BrowserProfile::SafariIos,
+        Some("edge") => BrowserProfile::Edge,
+        Some("random") => BrowserProfile::Random,
+        Some(other) => {
+            return Err(format!(
+                "unknown browser \"{other}\": use chrome, chrome-macos, firefox, safari, safari-ios, edge or random"
+            ));
+        }
+    })
 }
 
 #[cfg(feature = "browser")]
@@ -246,7 +255,7 @@ impl WebclawMcp {
     async fn scrape(&self, Parameters(params): Parameters<ScrapeParams>) -> Result<String, String> {
         validate_url(&params.url).await?;
         let format = params.format.as_deref().unwrap_or("markdown");
-        let browser = parse_browser(params.browser.as_deref());
+        let browser = parse_browser(params.browser.as_deref())?;
         let include = params.include_selectors.unwrap_or_default();
         let exclude = params.exclude_selectors.unwrap_or_default();
         let main_only = params.only_main_content.unwrap_or(false);

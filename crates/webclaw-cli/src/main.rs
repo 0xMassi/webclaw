@@ -514,7 +514,10 @@ enum RenderMode {
 #[derive(Clone, ValueEnum)]
 enum Browser {
     Chrome,
+    ChromeMacos,
     Firefox,
+    Safari,
+    Edge,
     /// Safari iOS 26. Pair with a country-matched residential proxy for sites
     /// that reject non-mobile profiles.
     SafariIos,
@@ -543,7 +546,10 @@ impl From<Browser> for BrowserProfile {
     fn from(b: Browser) -> Self {
         match b {
             Browser::Chrome => BrowserProfile::Chrome,
+            Browser::ChromeMacos => BrowserProfile::ChromeMacos,
             Browser::Firefox => BrowserProfile::Firefox,
+            Browser::Safari => BrowserProfile::Safari,
+            Browser::Edge => BrowserProfile::Edge,
             Browser::SafariIos => BrowserProfile::SafariIos,
             Browser::Random => BrowserProfile::Random,
         }

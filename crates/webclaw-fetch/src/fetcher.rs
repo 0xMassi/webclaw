@@ -73,6 +73,16 @@ pub trait Fetcher: Send + Sync {
     fn cloud(&self) -> Option<&CloudClient> {
         None
     }
+
+    /// Render `fetched` in a browser when this fetcher has one and the page
+    /// seems to need it. `http_words` is the word count extracted over HTTP.
+    async fn render_if_needed(
+        &self,
+        _fetched: &FetchResult,
+        _http_words: usize,
+    ) -> Option<FetchResult> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +106,14 @@ impl<T: Fetcher + ?Sized> Fetcher for &T {
     fn cloud(&self) -> Option<&CloudClient> {
         (**self).cloud()
     }
+
+    async fn render_if_needed(
+        &self,
+        fetched: &FetchResult,
+        http_words: usize,
+    ) -> Option<FetchResult> {
+        (**self).render_if_needed(fetched, http_words).await
+    }
 }
 
 #[async_trait]
@@ -114,5 +132,13 @@ impl<T: Fetcher + ?Sized> Fetcher for std::sync::Arc<T> {
 
     fn cloud(&self) -> Option<&CloudClient> {
         (**self).cloud()
+    }
+
+    async fn render_if_needed(
+        &self,
+        fetched: &FetchResult,
+        http_words: usize,
+    ) -> Option<FetchResult> {
+        (**self).render_if_needed(fetched, http_words).await
     }
 }

@@ -19,7 +19,7 @@ export WEBCLAW_BIN=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 source ./envs.sh
 
 .work/venv-base/bin/python scripts/run.py prepare
-rm -rf "results/$label" ".work/out/$label"
+rm -rf "results/$label/rows.jsonl" ".work/out/$label"
 .work/venv-base/bin/python scripts/run.py run "$label" "$runs"
 for v in base scrapling crawl4ai; do uv pip list -p ".work/venv-$v" 2>/dev/null; done \
   | grep -iE '^(trafilatura|tiktoken|scrapling|curl.cffi|markdownify|crawl4ai|playwright) ' | awk '{print $1, $2}' | sort -u > "results/$label/versions.txt"

@@ -186,6 +186,8 @@ webclaw https://example.com --cdp-url ws://localhost:9222/devtools/browser/<id> 
 
 `auto` renders when the page loads scripts and the HTTP response has almost no text, or little text next to an empty app root or a "please enable JavaScript" notice, and it keeps the rendered result only when it has more content. The browser never reaches private or loopback addresses.
 
+Crawls, batches, `--watch` and the MCP server render the same way and share one browser, started only when a page needs it. Per site, webclaw keeps count: once at least three renders show that rendering adds content (at least four in five did), it renders every page of that site that runs scripts, and once rendering stops adding content (at most one in five did), it stops rendering there.
+
 ### Crawl a documentation site
 
 ```bash
@@ -430,6 +432,9 @@ webclaw/
 | `ORCAROUTER_BASE_URL` | OrcaRouter base URL (defaults to https://api.orcarouter.ai/v1) |
 | `WEBCLAW_PROXY` | Single proxy URL |
 | `WEBCLAW_PROXY_FILE` | Proxy pool file |
+| `WEBCLAW_RENDER` | MCP server rendering: `auto` (default), `always` or `never`; needs a `browser` build |
+| `WEBCLAW_CDP_URL` | MCP server renders with the browser at this DevTools endpoint instead of launching Chrome |
+| `WEBCLAW_CHROME` | Chrome executable to launch for rendering |
 
 ---
 

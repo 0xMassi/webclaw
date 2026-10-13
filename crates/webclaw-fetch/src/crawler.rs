@@ -915,15 +915,14 @@ async fn fetch_page(client: &FetchClient, url: &str, follow_redirects: bool) -> 
             redirect: Some(location.to_string()),
         };
     }
-    let links = if fetched.document_bytes.is_none() {
-        webclaw_core::page_links(&fetched.html, &fetched.url)
+    let (page, extraction) = client.extract_page(fetched, &Default::default()).await;
+    let links = if page.document_bytes.is_none() {
+        webclaw_core::page_links(&page.html, &page.url)
     } else {
         Vec::new()
     };
     Page {
-        extraction: client
-            .extract(&fetched, &Default::default())
-            .map_err(|e| e.to_string()),
+        extraction: extraction.map_err(|e| e.to_string()),
         links,
         redirect: None,
     }

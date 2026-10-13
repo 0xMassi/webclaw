@@ -6,5 +6,6 @@ venv() {
 }
 venv base trafilatura==2.3.1 tiktoken==0.14.0 psutil==7.1.0
 venv scrapling "scrapling[fetchers] @ git+https://github.com/D4Vinci/Scrapling@7a68493" markdownify==1.2.3
+[ -f .work/venv-scrapling/.setup-done ] || { .work/venv-scrapling/bin/scrapling install && touch .work/venv-scrapling/.setup-done; }
 venv crawl4ai crawl4ai==0.9.4
 [ -f .work/venv-crawl4ai/.setup-done ] || { .work/venv-crawl4ai/bin/crawl4ai-setup && touch .work/venv-crawl4ai/.setup-done; }

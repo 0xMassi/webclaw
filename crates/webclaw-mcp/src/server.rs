@@ -26,6 +26,7 @@ pub struct WebclawMcp {
     /// would unregister every tool. See issue #30.
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
+    fetch_config: webclaw_fetch::FetchConfig,
     fetch_client: Arc<webclaw_fetch::FetchClient>,
     /// Lazily-initialized Firefox client, reused across all tool calls that
     /// request the Firefox profile with no cookies. Building a FetchClient
@@ -48,6 +49,69 @@ fn parse_browser(browser: Option<&str>) -> webclaw_fetch::BrowserProfile {
         Some("firefox") => webclaw_fetch::BrowserProfile::Firefox,
         Some("random") => webclaw_fetch::BrowserProfile::Random,
         _ => webclaw_fetch::BrowserProfile::Chrome,
+    }
+}
+
+#[cfg(feature = "browser")]
+fn render_from_env(
+    config: &webclaw_fetch::FetchConfig,
+) -> Option<webclaw_fetch::render::RenderConfig> {
+    use webclaw_fetch::render::{BrowserSource, RenderConfig, RenderPool};
+    let mode = std::env::var("WEBCLAW_RENDER").unwrap_or_default();
+    if mode == "never" {
+        return None;
+    }
+    let source = match std::env::var("WEBCLAW_CDP_URL") {
+        Ok(endpoint) if !endpoint.is_empty() => BrowserSource::Connect(endpoint),
+        _ => BrowserSource::launch_for(config),
+    };
+    Some(RenderConfig {
+        pool: Arc::new(RenderPool::new(source, LOCAL_FETCH_TIMEOUT)),
+        always: mode == "always",
+        wait_for: None,
+    })
+}
+
+#[cfg(feature = "browser")]
+fn apply_render(
+    config: &mut webclaw_fetch::FetchConfig,
+    mode: Option<&str>,
+    wait_for: Option<String>,
+) -> Result<(), String> {
+    if !matches!(mode, None | Some("auto" | "always" | "never")) {
+        return Err("render must be \"auto\", \"always\" or \"never\"".into());
+    }
+    if mode == Some("never") {
+        config.render = None;
+        return Ok(());
+    }
+    let Some(render) = config.render.as_mut() else {
+        return match (mode, &wait_for) {
+            (None | Some("auto"), None) => Ok(()),
+            _ => Err("rendering is turned off for this server (WEBCLAW_RENDER=never)".into()),
+        };
+    };
+    if let Some(mode) = mode {
+        render.always = mode == "always";
+    }
+    if wait_for.is_some() {
+        render.wait_for = wait_for;
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "browser"))]
+fn apply_render(
+    _config: &mut webclaw_fetch::FetchConfig,
+    mode: Option<&str>,
+    wait_for: Option<String>,
+) -> Result<(), String> {
+    match (mode, wait_for) {
+        (None | Some("auto" | "never"), None) => Ok(()),
+        _ => Err(
+            "this webclaw-mcp build has no browser support; build it with `--features browser`"
+                .into(),
+        ),
     }
 }
 
@@ -86,8 +150,12 @@ impl WebclawMcp {
             info!(count = pool.len(), file = %proxy_file, "loaded proxy pool");
             config.proxy_pool = pool;
         }
+        #[cfg(feature = "browser")]
+        {
+            config.render = render_from_env(&config);
+        }
 
-        let fetch_client = match webclaw_fetch::FetchClient::new(config) {
+        let fetch_client = match webclaw_fetch::FetchClient::new(config.clone()) {
             Ok(client) => client,
             Err(e) => {
                 error!("failed to build FetchClient: {e}");
@@ -116,10 +184,23 @@ impl WebclawMcp {
 
         Self {
             tool_router: Self::tool_router(),
+            fetch_config: config,
             fetch_client: Arc::new(fetch_client),
             firefox_client: OnceLock::new(),
             llm_chain,
             cloud,
+        }
+    }
+
+    /// Shuts down the browser this server launched for rendering, once awaited.
+    pub fn close_browser(&self) -> impl std::future::Future<Output = ()> + use<> {
+        let config = self.fetch_config.clone();
+        async move {
+            #[cfg(feature = "browser")]
+            if let Some(render) = &config.render {
+                render.pool.close().await;
+            }
+            let _ = config;
         }
     }
 
@@ -132,7 +213,7 @@ impl WebclawMcp {
         }
         let config = webclaw_fetch::FetchConfig {
             browser: webclaw_fetch::BrowserProfile::Firefox,
-            ..Default::default()
+            ..self.fetch_config.clone()
         };
         let client = Arc::new(
             webclaw_fetch::FetchClient::new(config)
@@ -159,7 +240,7 @@ impl WebclawMcp {
     }
 
     /// Scrape a single URL and extract its content as markdown, LLM-optimized text, plain text, or full JSON.
-    /// Automatically falls back to the webclaw cloud API when bot protection or JS rendering is detected.
+    /// Pages whose content needs JavaScript are rendered in a local Chrome when this server has browser support; otherwise, and on bot protection, it falls back to the webclaw cloud API when WEBCLAW_API_KEY is set.
     #[tool]
     async fn scrape(&self, Parameters(params): Parameters<ScrapeParams>) -> Result<String, String> {
         validate_url(&params.url).await?;
@@ -169,45 +250,42 @@ impl WebclawMcp {
         let exclude = params.exclude_selectors.unwrap_or_default();
         let main_only = params.only_main_content.unwrap_or(false);
 
-        // Build cookie header from params
         let cookie_header = params
             .cookies
             .as_ref()
             .filter(|c| !c.is_empty())
             .map(|c| c.join("; "));
+        let shared =
+            cookie_header.is_none() && params.render.is_none() && params.wait_for.is_none();
 
-        // Use a custom client if non-default browser or cookies are provided
-        // Pick the cheapest route to a FetchClient for this request:
-        //   1. Default Chrome + no cookies → reuse the long-lived self.fetch_client
-        //   2. Firefox + no cookies        → reuse the lazily-cached self.firefox_client
-        //   3. Anything with cookies, or Random                       → build ad-hoc
-        let is_default_browser = matches!(browser, webclaw_fetch::BrowserProfile::Chrome);
         let custom_client;
         let cached_firefox;
-        let client: &webclaw_fetch::FetchClient = if cookie_header.is_none() && is_default_browser {
-            &self.fetch_client
-        } else if cookie_header.is_none()
-            && matches!(browser, webclaw_fetch::BrowserProfile::Firefox)
-        {
-            cached_firefox = self.firefox_or_build()?;
-            // cached_firefox lives to end of function; auto-deref gives
-            // us &FetchClient here.
-            &cached_firefox
-        } else {
-            let mut headers = std::collections::HashMap::new();
-            headers.insert("Accept-Language".to_string(), "en-US,en;q=0.9".to_string());
-            if let Some(ref cookies) = cookie_header {
-                headers.insert("Cookie".to_string(), cookies.clone());
-            }
-            let config = webclaw_fetch::FetchConfig {
-                browser,
-                headers,
-                ..Default::default()
+        let client: &webclaw_fetch::FetchClient =
+            if shared && matches!(browser, webclaw_fetch::BrowserProfile::Chrome) {
+                &self.fetch_client
+            } else if shared && matches!(browser, webclaw_fetch::BrowserProfile::Firefox) {
+                cached_firefox = self.firefox_or_build()?;
+                &cached_firefox
+            } else {
+                let mut headers = std::collections::HashMap::new();
+                headers.insert("Accept-Language".to_string(), "en-US,en;q=0.9".to_string());
+                if let Some(ref cookies) = cookie_header {
+                    headers.insert("Cookie".to_string(), cookies.clone());
+                }
+                let mut config = webclaw_fetch::FetchConfig {
+                    browser,
+                    headers,
+                    ..self.fetch_config.clone()
+                };
+                apply_render(
+                    &mut config,
+                    params.render.as_deref(),
+                    params.wait_for.clone(),
+                )?;
+                custom_client = webclaw_fetch::FetchClient::new(config)
+                    .map_err(|e| format!("Failed to build client: {e}"))?;
+                &custom_client
             };
-            custom_client = webclaw_fetch::FetchClient::new(config)
-                .map_err(|e| format!("Failed to build client: {e}"))?;
-            &custom_client
-        };
 
         let formats = [format];
         let result = cloud::smart_fetch(
@@ -263,6 +341,7 @@ impl WebclawMcp {
         let format = params.format.as_deref().unwrap_or("markdown");
 
         let config = webclaw_fetch::CrawlConfig {
+            fetch: self.fetch_config.clone(),
             max_depth: params.depth.unwrap_or(2) as usize,
             // 0 = no cap; omitted keeps the modest default.
             max_pages: match params.max_pages {

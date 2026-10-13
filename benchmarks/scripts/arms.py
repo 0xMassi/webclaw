@@ -12,10 +12,11 @@ TIMEOUT = 30
 WEBCLAW = os.environ.get("WEBCLAW_BIN") or str(Path(__file__).resolve().parent / "bin/webclaw")
 
 
-def webclaw(fmt, render="never"):
+def webclaw(fmt, render="never", query=False):
     def run(case):
         src = ["--file", case["html_path"]] if MODE == "html" else [case["url"]]
-        r = subprocess.run([WEBCLAW, *src, "-f", fmt, "-t", str(TIMEOUT), "--render", render],
+        ask = ["--query", case["question"]] if query else []
+        r = subprocess.run([WEBCLAW, *src, "-f", fmt, "-t", str(TIMEOUT), "--render", render, *ask],
                            capture_output=True, text=True, timeout=TIMEOUT + 15)
         if r.returncode != 0 and not r.stdout:
             raise RuntimeError(r.stderr.strip()[-300:])
@@ -47,23 +48,28 @@ def scrapling_arm(case):
 _CRAWLER = None
 
 
-def crawl4ai_arm(fit):
+def crawl4ai_arm(fit, bm25=False):
     async def go(case):
         global _CRAWLER
         from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
         from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
-        from crawl4ai.content_filter_strategy import PruningContentFilter
+        from crawl4ai.content_filter_strategy import BM25ContentFilter, PruningContentFilter
         if _CRAWLER is None:
             _CRAWLER = AsyncWebCrawler()
             await _CRAWLER.start()
-        gen = DefaultMarkdownGenerator(content_filter=PruningContentFilter()) if fit else DefaultMarkdownGenerator()
+        if bm25:
+            gen = DefaultMarkdownGenerator(content_filter=BM25ContentFilter(user_query=case["question"]))
+        elif fit:
+            gen = DefaultMarkdownGenerator(content_filter=PruningContentFilter())
+        else:
+            gen = DefaultMarkdownGenerator()
         cfg = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, markdown_generator=gen, page_timeout=TIMEOUT * 1000)
         target = "raw:" + Path(case["html_path"]).read_text() if MODE == "html" else case["url"]
         res = await asyncio.wait_for(_CRAWLER.arun(target, config=cfg), TIMEOUT + 15)
         if not res.success:
             raise RuntimeError(res.error_message or "crawl failed")
         md = res.markdown
-        return (md.fit_markdown if fit else md.raw_markdown) or ""
+        return (md.fit_markdown if fit or bm25 else md.raw_markdown) or ""
     return lambda case: asyncio.get_event_loop().run_until_complete(go(case))
 
 
@@ -76,6 +82,8 @@ ARMS = {
     "scrapling": lambda: scrapling_arm,
     "crawl4ai-raw": lambda: crawl4ai_arm(False),
     "crawl4ai-fit": lambda: crawl4ai_arm(True),
+    "webclaw-query": lambda: webclaw("llm", query=True),
+    "crawl4ai-bm25": lambda: crawl4ai_arm(False, bm25=True),
 }
 
 

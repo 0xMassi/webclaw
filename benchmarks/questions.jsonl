@@ -1,0 +1,40 @@
+{"id": "docs01", "question": "Which keyword lets a variable binding change its value later?", "answers": ["mut"]}
+{"id": "docs01", "question": "What is it called when you declare a new variable with the same name as an earlier one?", "answers": ["shadowing"]}
+{"id": "docs02", "question": "Where are values whose size is unknown at compile time stored?", "answers": ["heap"]}
+{"id": "docs02", "question": "Which function does Rust call automatically when a value goes out of scope?", "answers": ["drop"]}
+{"id": "docs03", "question": "How do you add an item to the end of a list?", "answers": ["append"]}
+{"id": "docs03", "question": "Which collection type is unordered and keeps no duplicate elements?", "answers": ["set"]}
+{"id": "docs03", "question": "What gives a list that is fast at adding and popping from both ends?", "answers": ["deque"]}
+{"id": "docs04", "question": "Which function serializes an object to a JSON formatted str?", "answers": ["dumps"]}
+{"id": "docs04", "question": "What exception is raised when the document being decoded is invalid?", "answers": ["JSONDecodeError"]}
+{"id": "docs05", "question": "Which static method waits until every promise in an iterable fulfills?", "answers": ["Promise.all"]}
+{"id": "docs05", "question": "What is the initial state of a promise, before it is settled?", "answers": ["pending"]}
+{"id": "docs07", "question": "Which program formats Go source code?", "answers": ["gofmt"]}
+{"id": "docs07", "question": "Which statement schedules a function call to run just before the surrounding function returns?", "answers": ["defer"]}
+{"id": "docs08", "question": "Which constraint forbids two rows from having the same value in a column?", "answers": ["UNIQUE"]}
+{"id": "docs08", "question": "Which referential action deletes the referencing rows when the referenced row is deleted?", "answers": ["CASCADE"]}
+{"id": "docs09", "question": "Which subcommand cleans up stale administrative files of deleted worktrees?", "answers": ["prune"]}
+{"id": "docs09", "question": "How do you keep a worktree on a removable device from being cleaned up automatically?", "answers": ["lock"]}
+{"id": "home12", "question": "Who began the language as a personal project?", "answers": ["Graydon Hoare"]}
+{"id": "home12", "question": "Which organization sponsored the project from 2009?", "answers": ["Mozilla"]}
+{"id": "home12", "question": "What is the name of the language's build system and package manager?", "answers": ["Cargo"]}
+{"id": "news10", "question": "What are the names of the two moons of Mars?", "answers": ["Phobos", "Deimos"]}
+{"id": "news11", "question": "What gas makes up most of the atmosphere of Venus?", "answers": ["carbon dioxide"]}
+{"id": "news12", "question": "What is the giant long-lived storm on Jupiter called?", "answers": ["Great Red Spot"]}
+{"id": "news03", "question": "Which moonlet did the spacecraft strike?", "answers": ["Dimorphos"]}
+{"id": "news04", "question": "By how much did the impact shorten the moonlet's orbit?", "answers": ["32 minutes"]}
+{"id": "news06", "question": "In which crater did the rover land?", "answers": ["Jezero"]}
+{"id": "news07", "question": "Whose historic airplane lent a piece of fabric that the helicopter carries?", "answers": ["Wright"]}
+{"id": "news02", "question": "Which nebula appears in the first full-color images?", "answers": ["Carina"]}
+{"id": "lang01", "question": "Quale fiume attraversa la città?", "answers": ["Tevere"]}
+{"id": "lang01", "question": "Di quale regione è il capoluogo?", "answers": ["Lazio"]}
+{"id": "lang02", "question": "Di quale regione è il capoluogo la città?", "answers": ["Lombardia"]}
+{"id": "lang03", "question": "Quel fleuve traverse la ville ?", "answers": ["Seine"]}
+{"id": "lang04", "question": "Welcher Fluss fließt durch die Stadt?", "answers": ["Spree"]}
+{"id": "lang05", "question": "¿Qué río pasa por la ciudad?", "answers": ["Manzanares"]}
+{"id": "lang06", "question": "Qual é o rio que banha a cidade?", "answers": ["Tejo"]}
+{"id": "lang07", "question": "東京都庁はどこにありますか？", "answers": ["新宿"]}
+{"id": "lang08", "question": "北京有哪些著名的皇家宫殿？", "answers": ["故宫"]}
+{"id": "lang09", "question": "ما هو النهر الذي يمر عبر المدينة؟", "answers": ["النيل"]}
+{"id": "shop01", "question": "How many copies are available in stock?", "answers": ["22 available"]}
+{"id": "home04", "question": "What uptime does the platform report?", "answers": ["99.999"]}

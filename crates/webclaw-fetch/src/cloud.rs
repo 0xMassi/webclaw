@@ -397,6 +397,23 @@ async fn parse_cloud_response(resp: reqwest::Response) -> Result<Value, CloudErr
 ///
 /// Conservative — only fires on patterns that indicate the *entire*
 /// page is a challenge, not embedded CAPTCHAs on a real content page.
+/// Apply [`webclaw_core::focus`] to the text fields of a cloud scrape
+/// response: `markdown`, `llm`, `text` and `plain_text`, at the top level
+/// and under `content`.
+pub fn focus_cloud_response(resp: &mut Value, query: &str) {
+    fn focus_fields(object: &mut Value, query: &str) {
+        for key in ["markdown", "llm", "text", "plain_text"] {
+            if let Some(Value::String(text)) = object.get_mut(key) {
+                *text = webclaw_core::focus(text, query);
+            }
+        }
+    }
+    focus_fields(resp, query);
+    if let Some(content) = resp.get_mut("content") {
+        focus_fields(content, query);
+    }
+}
+
 pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     let html_lower = html.to_lowercase();
 
@@ -959,6 +976,21 @@ mod tests {
             "parola ".repeat(80)
         );
         assert!(needs_js_rendering(80, &accented));
+    }
+
+    #[test]
+    fn cloud_responses_are_focused_too() {
+        let page = "# Rust\n\n## Tooling\n\nCargo builds it.\n\n## History\n\nGraydon began it.";
+        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "url": "https://x"});
+        focus_cloud_response(&mut resp, "tooling");
+        for text in [&resp["markdown"], &resp["content"]["markdown"]] {
+            let text = text.as_str().unwrap();
+            assert!(
+                text.contains("Cargo") && !text.contains("Graydon"),
+                "{text}"
+            );
+        }
+        assert_eq!(resp["url"], "https://x");
     }
 
     struct StaticPage(&'static str);

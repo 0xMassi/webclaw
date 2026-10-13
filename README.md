@@ -193,6 +193,14 @@ webclaw "https://en.wikipedia.org/wiki/Rust_(programming_language)" -f llm \
 
 `--query` (and `query` on the MCP `scrape` tool) scores each paragraph, list, table and code block against the question and keeps the best ones under their headings, so an agent reads the answer instead of the whole page. The page comes back unchanged when no block shares a word with the question.
 
+### Reuse fetched pages
+
+```bash
+webclaw https://example.com --cache          # fetch once, answer later runs from disk
+```
+
+`--cache` keeps every successful page in `~/.cache/webclaw` (or `WEBCLAW_CACHE_DIR`) and answers later fetches of the same URL with the same browser profile and headers from there, with no network request. Crawls and batches use it page by page. Entries never expire; delete the directory to refresh. Error responses, challenge pages and `Set-Cookie` headers are never stored.
+
 ### Render JavaScript pages
 
 Build with the `browser` feature (`cargo build --release --features browser`) and webclaw renders pages in your local Chrome when the plain HTTP response has no content yet:

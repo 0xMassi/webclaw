@@ -3,8 +3,8 @@
 //! Every Shopify store exposes a public JSON endpoint for each product
 //! by appending `.json` to the product URL:
 //!
-//!   https://shop.example.com/products/cool-tshirt
-//!   → https://shop.example.com/products/cool-tshirt.json
+//!   `https://shop.example.com/products/cool-tshirt`
+//!   → `https://shop.example.com/products/cool-tshirt.json`
 //!
 //! There are ~4 million Shopify stores. The `.json` endpoint is
 //! undocumented but has been stable for 10+ years. When a store puts

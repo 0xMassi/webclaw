@@ -16,7 +16,7 @@
 //!   challenge-page signatures) so these live in OSS without leaking
 //!   any moat.
 //! - [`smart_fetch`] — try-local-then-escalate flow returning an
-//!   [`ExtractionResult`] or raw cloud JSON. Kept on the original
+//!   [`webclaw_core::ExtractionResult`] or raw cloud JSON. Kept on the original
 //!   `Result<_, String>` signature so the existing MCP / CLI call
 //!   sites work unchanged.
 //! - [`smart_fetch_html`] — new convenience for the vertical-extractor
@@ -24,7 +24,7 @@
 //!   parser on it. Returns the typed [`CloudError`] so extractors can
 //!   emit precise "upgrade your plan" / "invalid key" messages.
 //!
-//! ## Cloud response shape and [`synthesize_html`]
+//! ## Cloud response shape and `synthesize_html`
 //!
 //! `api.webclaw.io/v1/scrape` deliberately does **not** return a
 //! `html` field even when `formats=["html"]` is requested. By design
@@ -397,7 +397,7 @@ async fn parse_cloud_response(resp: reqwest::Response) -> Result<Value, CloudErr
 ///
 /// Conservative — only fires on patterns that indicate the *entire*
 /// page is a challenge, not embedded CAPTCHAs on a real content page.
-/// Apply [`webclaw_core::focus`] to the text fields of a cloud scrape
+/// Apply [`webclaw_core::focus()`] to the text fields of a cloud scrape
 /// response: `markdown`, `llm`, `text` and `plain_text`, at the top level
 /// and under `content`.
 pub fn focus_cloud_response(resp: &mut Value, query: &str) {

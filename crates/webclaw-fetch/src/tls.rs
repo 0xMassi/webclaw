@@ -449,7 +449,6 @@ fn safari_h2() -> Http2Options {
     Http2Options::builder()
         .initial_window_size(2_097_152)
         .initial_connection_window_size(10_420_225)
-        .max_header_list_size(0)
         .header_table_size(4_096)
         .enable_push(false)
         .max_concurrent_streams(100u32)
@@ -618,6 +617,13 @@ fn ssrf_safe_redirect_policy(
 #[cfg(test)]
 mod tests {
     use super::redact_proxy_url;
+
+    #[test]
+    fn no_profile_refuses_every_response_header() {
+        for h2 in [super::chrome_h2(), super::firefox_h2(), super::safari_h2()] {
+            assert_ne!(h2.max_header_list_size, Some(0));
+        }
+    }
 
     #[test]
     fn rejects_socks_proxies_with_a_clear_error() {

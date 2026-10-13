@@ -69,23 +69,37 @@ pub fn focus(markdown: &str, query: &str) -> String {
         .join("\n\n")
 }
 
-/// Apply [`focus`] to the markdown and plain text of `result`.
+/// Apply [`focus`] to the markdown of `result`, then rebuild its plain text
+/// and word count from what was kept.
 pub fn focus_extraction(result: &mut ExtractionResult, query: &str) {
     result.content.markdown = focus(&result.content.markdown, query);
-    result.content.plain_text = focus(&result.content.plain_text, query);
+    result.content.plain_text = crate::markdown::strip_markdown(&result.content.markdown);
+    result.metadata.word_count = crate::extractor::word_count(&result.content.plain_text);
 }
 
 fn split_blocks(markdown: &str) -> Vec<Block<'_>> {
     let mut ranges = Vec::new();
     let mut start: Option<usize> = None;
-    let mut fenced = false;
+    let mut fence: Option<(char, usize)> = None;
     let mut offset = 0;
     for line in markdown.split_inclusive('\n') {
         let trimmed = line.trim();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
-        }
-        if !fenced && (trimmed.is_empty() || heading_level(trimmed) > 0) {
+        let marker = trimmed
+            .chars()
+            .next()
+            .filter(|c| matches!(c, '`' | '~'))
+            .map(|c| (c, trimmed.chars().take_while(|&x| x == c).count()))
+            .filter(|&(_, len)| len >= 3);
+        fence = match (fence, marker) {
+            (None, Some(open)) => Some(open),
+            (Some((c, len)), Some((mark, n)))
+                if c == mark && n >= len && trimmed[n..].trim().is_empty() =>
+            {
+                None
+            }
+            (open, _) => open,
+        };
+        if fence.is_none() && (trimmed.is_empty() || heading_level(trimmed) > 0) {
             if let Some(from) = start.take() {
                 ranges.push((from, offset));
             }
@@ -228,6 +242,43 @@ mod tests {
         let out = focus(page, "Quale fiume attraversa la città?");
         assert!(out.contains("Tevere"), "{out}");
         assert!(!out.contains("clima"), "{out}");
+    }
+
+    #[test]
+    fn a_tilde_line_inside_a_backtick_fence_does_not_close_it() {
+        let page = "# Doc\n\n```\nlet a = 1;\n~~~\n\nlet zebra = 2;\n```\n\nUnrelated prose.";
+        let out = focus(page, "zebra");
+        assert!(
+            out.contains("```\nlet a = 1;\n~~~\n\nlet zebra = 2;\n```"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn plain_text_and_word_count_follow_the_kept_markdown() {
+        let mut result = crate::extract(
+            "<html><body><article><h1>Rust</h1><p>Rust is a language that many people use for systems work today.</p><h2>Tooling</h2><p>Cargo is the package manager and build tool that ships with every install.</p><h2>History</h2><p>Graydon Hoare began it in 2006 as a personal project at home.</p></article></body></html>",
+            None,
+        )
+        .unwrap();
+        super::focus_extraction(&mut result, "tooling");
+        assert!(
+            result
+                .content
+                .plain_text
+                .contains("Cargo is the package manager"),
+            "{}",
+            result.content.plain_text
+        );
+        assert!(
+            !result.content.plain_text.contains("Graydon"),
+            "{}",
+            result.content.plain_text
+        );
+        assert_eq!(
+            result.metadata.word_count,
+            crate::extractor::word_count(&result.content.plain_text)
+        );
     }
 
     #[test]

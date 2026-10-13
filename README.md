@@ -263,6 +263,30 @@ Zero-install — point any MCP client at the npx launcher:
 
 Or run `npx create-webclaw` to auto-detect your AI tools and write their configs for you.
 
+### Over HTTP
+
+To share one server between agents, or reach it from another machine, serve it over streamable HTTP:
+
+```bash
+WEBCLAW_MCP_TOKEN=$(openssl rand -hex 16) webclaw-mcp --http 127.0.0.1:8000
+```
+
+Clients connect to `http://127.0.0.1:8000/mcp` and send `Authorization: Bearer <token>`:
+
+```json
+{
+  "mcpServers": {
+    "webclaw": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+The server refuses to start over HTTP without a token, because anyone who reaches it can make the machine fetch any URL; `--no-auth` serves it open anyway. On a loopback address it also rejects requests whose `Host` header names another host, which blocks DNS-rebinding attacks from web pages.
+
 Then ask your agent things like:
 
 ```text
@@ -455,6 +479,7 @@ webclaw/
 | `WEBCLAW_RENDER` | MCP server rendering: `auto` (default), `always` or `never`; needs a `browser` build |
 | `WEBCLAW_CDP_URL` | MCP server renders with the browser at this DevTools endpoint instead of launching Chrome |
 | `WEBCLAW_CHROME` | Chrome executable to launch for rendering |
+| `WEBCLAW_MCP_TOKEN` | Bearer token `webclaw-mcp --http` requires from every client |
 
 ---
 

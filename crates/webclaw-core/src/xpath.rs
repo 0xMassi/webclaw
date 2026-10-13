@@ -92,9 +92,8 @@ fn values(value: sxd_xpath::Value, base: Option<&Url>) -> Vec<String> {
             .into_iter()
             .filter_map(|node| node_value(node, base))
             .collect(),
-        sxd_xpath::Value::Number(n) if n.is_finite() && n.fract() == 0.0 => {
-            vec![format!("{}", n as i64)]
-        }
+        sxd_xpath::Value::Number(0.0) => vec!["0".into()],
+        sxd_xpath::Value::Number(n) if n.is_finite() && n.fract() == 0.0 => vec![format!("{n:.0}")],
         sxd_xpath::Value::Number(n) => vec![n.to_string()],
         sxd_xpath::Value::String(s) => vec![s],
         sxd_xpath::Value::Boolean(b) => vec![b.to_string()],
@@ -227,6 +226,17 @@ mod tests {
             ["Books"]
         );
         assert_eq!(select_xpath(PAGE, None, "boolean(//b)").unwrap(), ["true"]);
+    }
+
+    #[test]
+    fn whole_numbers_keep_every_digit() {
+        let page = "<span>100000000000000000000</span><i>-3</i>";
+        assert_eq!(
+            select_xpath(page, None, "number(//span)").unwrap(),
+            ["100000000000000000000"]
+        );
+        assert_eq!(select_xpath(page, None, "number(//i)").unwrap(), ["-3"]);
+        assert_eq!(select_xpath(page, None, "-0").unwrap(), ["0"]);
     }
 
     #[test]

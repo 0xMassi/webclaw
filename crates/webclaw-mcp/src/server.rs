@@ -443,10 +443,15 @@ impl WebclawMcp {
         Ok(output)
     }
 
-    /// Pick values out of a web page with a CSS selector and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending. With `fields`, return one JSON object per match, each field a selector run inside that match.
+    /// Pick values out of a web page with a CSS selector or an XPath 1.0 expression and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending (CSS), or "@attr" (XPath). With `fields`, return one JSON object per match, each field a selector run inside that match.
     /// Pages whose content needs JavaScript are rendered first when this server has browser support.
     #[tool]
     async fn select(&self, Parameters(params): Parameters<SelectParams>) -> Result<String, String> {
+        let (query, xpath) = match (params.selector, params.xpath) {
+            (Some(css), None) => (css, false),
+            (None, Some(xpath)) => (xpath, true),
+            _ => return Err("give exactly one of `selector` and `xpath`".into()),
+        };
         validate_url(&params.url).await?;
         let fetched = tokio::time::timeout(
             LOCAL_FETCH_TIMEOUT,
@@ -461,21 +466,22 @@ impl WebclawMcp {
             .await;
         webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
         let fields: Vec<(String, String)> = params.fields.unwrap_or_default().into_iter().collect();
-        let json = if fields.is_empty() {
-            serde_json::to_string_pretty(
-                &webclaw_core::select(&page.html, Some(&page.url), &params.selector)
+        let (html, url) = (page.html.as_str(), Some(page.url.as_str()));
+        let json = match (xpath, fields.is_empty()) {
+            (false, true) => serde_json::to_string_pretty(
+                &webclaw_core::select(html, url, &query).map_err(|e| e.to_string())?,
+            ),
+            (false, false) => serde_json::to_string_pretty(
+                &webclaw_core::select_records(html, url, &query, &fields)
                     .map_err(|e| e.to_string())?,
-            )
-        } else {
-            serde_json::to_string_pretty(
-                &webclaw_core::select_records(
-                    &page.html,
-                    Some(&page.url),
-                    &params.selector,
-                    &fields,
-                )
-                .map_err(|e| e.to_string())?,
-            )
+            ),
+            (true, true) => serde_json::to_string_pretty(
+                &webclaw_core::select_xpath(html, url, &query).map_err(|e| e.to_string())?,
+            ),
+            (true, false) => serde_json::to_string_pretty(
+                &webclaw_core::select_xpath_records(html, url, &query, &fields)
+                    .map_err(|e| e.to_string())?,
+            ),
         };
         json.map_err(|e| e.to_string())
     }

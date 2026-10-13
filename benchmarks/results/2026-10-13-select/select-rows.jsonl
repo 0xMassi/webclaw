@@ -1,0 +1,3 @@
+{"arm": "webclaw", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.23659845790825784, "start_seconds": 0.18799391691572964, "synthetic_ms": 87.62970628449693, "synthetic_values": 5000}
+{"arm": "scrapling", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.06761950021609664, "start_seconds": null, "synthetic_ms": 1.7271354445256293, "synthetic_values": 0}
+{"arm": "crawl4ai", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.5954762080218643, "start_seconds": null, "synthetic_ms": 18492.052870884072, "synthetic_values": 4999}

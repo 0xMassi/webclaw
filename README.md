@@ -174,7 +174,7 @@ webclaw https://example.com \
   --exclude "nav, footer, .sidebar, .ad"
 ```
 
-### Pick values with CSS selectors
+### Pick values with CSS selectors or XPath
 
 ```bash
 webclaw https://books.toscrape.com --select "h3 a::attr(href)"
@@ -183,6 +183,14 @@ webclaw https://books.toscrape.com --select "article.product_pod" \
 ```
 
 `--select` prints a JSON array of what the selector matches: each element's text, or an attribute or the element's HTML when the selector ends in `::attr(NAME)` or `::html`. Links in `href` and `src` come back absolute. With `--field NAME=SELECTOR`, each match becomes a JSON object whose fields run inside it, taking the first value or `null`. Pages that need JavaScript render first, as with extraction.
+
+```bash
+webclaw https://books.toscrape.com --xpath "//li[@class='next']/a/@href"
+webclaw https://books.toscrape.com --xpath "//article[@class='product_pod']" \
+  --field "title=.//h3/a/@title" --field "price=.//p[@class='price_color']"
+```
+
+`--xpath` takes an XPath 1.0 expression instead, over the same parsed page: elements and text nodes give their text, attributes their value, and `count()` or `string()` style expressions one value. With `--xpath`, each `--field` is an expression evaluated from the match, so it usually starts with `.`. The MCP `select` tool takes `xpath` in place of `selector`.
 
 ### Keep only what answers a question
 
@@ -334,7 +342,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | Tool | What it does | Local |
 | --- | --- | :-: |
 | `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
-| `select` | Pick values or records from a page with CSS selectors, as JSON | Yes |
+| `select` | Pick values or records from a page with CSS selectors or XPath, as JSON | Yes |
 | `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages | Yes |
 | `map` | Discover URLs without extracting every page | Yes |

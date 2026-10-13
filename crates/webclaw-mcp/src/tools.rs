@@ -116,9 +116,11 @@ pub struct ScrapeParams {
 pub struct SelectParams {
     /// URL to read
     pub url: String,
-    /// CSS selector, optionally ending in "::text" (default), "::attr(NAME)" or "::html", e.g. "h3 a::attr(href)"
-    pub selector: String,
-    /// Return one object per match instead: field name to a selector run inside that match, e.g. {"title": "h3 a::attr(title)", "price": ".price_color"}
+    /// CSS selector, optionally ending in "::text" (default), "::attr(NAME)" or "::html", e.g. "h3 a::attr(href)". Give this or `xpath`
+    pub selector: Option<String>,
+    /// XPath 1.0 expression instead of a CSS selector, e.g. "//h3/a/@title". Elements and text give their text, attributes their value
+    pub xpath: Option<String>,
+    /// Return one object per match instead: field name to a selector run inside that match, e.g. {"title": "h3 a::attr(title)", "price": ".price_color"}, or with `xpath` an expression relative to the match, e.g. {"title": ".//h3/a/@title"}
     pub fields: Option<std::collections::BTreeMap<String, String>>,
 }
 

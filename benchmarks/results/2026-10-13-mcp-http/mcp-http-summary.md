@@ -4,5 +4,5 @@ Each server runs its streamable-HTTP transport on loopback with a bearer token. 
 
 | server | calls | ok | handshake ms (median) | tool call ms (median) | tool call ms (p95) | refuses no token |
 |---|---:|---:|---:|---:|---:|---|
-| webclaw | 15 | 15 | 4 | 299 | 608 | yes |
-| scrapling | 15 | 15 | 4 | 567 | 823 | yes |
+| webclaw | 15 | 15 | 4 | 283 | 593 | yes |
+| scrapling | 15 | 15 | 4 | 556 | 904 | yes |

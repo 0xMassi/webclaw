@@ -14,6 +14,6 @@ fi
 [ -x "$bin" ] || { echo "no webclaw-mcp binary at $bin" >&2; exit 1; }
 export WEBCLAW_MCP_BIN=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 
-source ./envs.sh
+source ./venv.sh
 venv mcp "scrapling[ai] @ git+https://github.com/D4Vinci/Scrapling@7a68493"
 .work/venv-mcp/bin/python scripts/mcp_http.py "$label"

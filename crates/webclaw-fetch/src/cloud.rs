@@ -609,10 +609,13 @@ pub async fn smart_fetch(
             .map_err(|e| format!("Extraction failed: {e}"))?;
     let whole_page =
         include_selectors.is_empty() && exclude_selectors.is_empty() && !only_main_content;
-    if whole_page
-        && let Some(rendered) = client
-            .render_if_needed(&fetch_result, extraction.metadata.word_count)
-            .await
+    let page_words = if whole_page {
+        extraction.metadata.word_count
+    } else {
+        webclaw_core::extract(&fetch_result.html, Some(&fetch_result.url))
+            .map_or(0, |e| e.metadata.word_count)
+    };
+    if let Some(rendered) = client.render_if_needed(&fetch_result, page_words).await
         && let Ok(better) =
             webclaw_core::extract_with_options(&rendered.html, Some(&rendered.url), &options)
         && better.metadata.word_count > extraction.metadata.word_count
@@ -975,6 +978,44 @@ mod tests {
                 elapsed: std::time::Duration::ZERO,
             })
         }
+    }
+
+    struct ScriptBuiltPage;
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for ScriptBuiltPage {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            StaticPage("<html><body><h1>Search</h1><div id=\"results\"></div><script src=\"/app.js\"></script></body></html>").fetch(url).await
+        }
+
+        async fn render_if_needed(
+            &self,
+            fetched: &crate::client::FetchResult,
+            _http_words: usize,
+        ) -> Option<crate::client::FetchResult> {
+            StaticPage("<html><body><h1>Search</h1><div id=\"results\"><p>First result about rendering pages that build their content with scripts.</p></div></body></html>").fetch(&fetched.url).await.ok()
+        }
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_renders_when_selectors_filter_the_page() {
+        let result = smart_fetch(
+            &ScriptBuiltPage,
+            None,
+            "https://example.com/search",
+            &["#results".to_string()],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .expect("local extraction should be returned");
+        assert!(
+            matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("First result"))
+        );
     }
 
     #[tokio::test]

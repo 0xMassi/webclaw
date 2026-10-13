@@ -39,7 +39,7 @@ pub struct LogoVariant {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BrandIdentity {
-    /// Brand name extracted from og:site_name, application-name, or <title>.
+    /// Brand name extracted from og:site_name, application-name, or `<title>`.
     pub name: Option<String>,
     pub colors: Vec<BrandColor>,
     pub fonts: Vec<String>,

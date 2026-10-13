@@ -22,7 +22,7 @@
 //!
 //! Sitemap entries always come first in the returned vec; crawl-discovered
 //! URLs are appended, deduplicated against the sitemap set using the *same*
-//! normalization the crawler uses ([`crawler::normalize`]) so map output stays
+//! normalization the crawler uses (`crawler::normalize`) so map output stays
 //! internally consistent.
 
 use std::collections::HashSet;

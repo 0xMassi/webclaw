@@ -168,7 +168,7 @@ async fn require_token(token: Arc<str>, request: Request, next: Next) -> Respons
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
+        .and_then(bearer_token);
     if sent.is_some_and(|sent| same_bytes(sent.as_bytes(), token.as_bytes())) {
         next.run(request).await
     } else {
@@ -179,6 +179,11 @@ async fn require_token(token: Arc<str>, request: Request, next: Next) -> Respons
         )
             .into_response()
     }
+}
+
+fn bearer_token(authorization: &str) -> Option<&str> {
+    let (scheme, token) = authorization.split_once(' ')?;
+    scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
 }
 
 fn same_bytes(a: &[u8], b: &[u8]) -> bool {
@@ -277,6 +282,15 @@ mod tests {
         assert!(http_args(&args(&["--http", "nope"])).is_err());
         assert!(http_args(&args(&["--no-auth"])).is_err());
         assert!(http_args(&args(&["--stdio"])).is_err());
+    }
+
+    #[test]
+    fn the_bearer_scheme_matches_in_any_case() {
+        assert_eq!(bearer_token("Bearer abc"), Some("abc"));
+        assert_eq!(bearer_token("bearer abc"), Some("abc"));
+        assert_eq!(bearer_token("BEARER  abc "), Some("abc"));
+        assert_eq!(bearer_token("Basic abc"), None);
+        assert_eq!(bearer_token("abc"), None);
     }
 
     #[test]

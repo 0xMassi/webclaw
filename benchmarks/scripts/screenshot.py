@@ -46,9 +46,13 @@ def run(arm, mode, full, out):
     shots = []
     for _ in range(rounds):
         r = subprocess.run(cmd + URLS, capture_output=True, text=True, timeout=1800)
-        shots += [score(l) for l in r.stdout.splitlines() if l.startswith("{")]
-        if not shots:
-            print(r.stderr[-2000:], file=sys.stderr)
+        done = [score(l) for l in r.stdout.splitlines() if l.startswith("{")]
+        seen = {s["url"] for s in done}
+        missing = [u for u in URLS if u not in seen]
+        if missing:
+            print(f"{arm} {mode}: exit {r.returncode}, {len(missing)} pages missing\n{r.stderr[-2000:]}",
+                  file=sys.stderr)
+        shots += done + [{"url": u, "ok": False, "error": f"no result, exit {r.returncode}"} for u in missing]
     return shots
 
 

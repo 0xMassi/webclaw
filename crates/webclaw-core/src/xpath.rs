@@ -129,7 +129,17 @@ fn tree(html: &str) -> Package {
         let document = package.as_document();
         let html_root = page.root_element();
         let root = element(&document, html_root.value());
-        document.root().append_child(root);
+        for node in page.tree.root().children() {
+            match node.value() {
+                scraper::Node::Comment(comment) => document
+                    .root()
+                    .append_child(document.create_comment(&comment.comment)),
+                scraper::Node::Element(_) if node.id() == html_root.id() => {
+                    document.root().append_child(root)
+                }
+                _ => {}
+            }
+        }
         let mut pending: Vec<_> = html_root.children().rev().map(|c| (c, root, 1)).collect();
         while let Some((node, parent, depth)) = pending.pop() {
             match node.value() {
@@ -226,6 +236,16 @@ mod tests {
             ["Books"]
         );
         assert_eq!(select_xpath(PAGE, None, "boolean(//b)").unwrap(), ["true"]);
+    }
+
+    #[test]
+    fn comments_outside_the_root_element_are_kept_in_order() {
+        let page = "<!-- before --><html><body>x</body></html><!-- after -->";
+        assert_eq!(
+            select_xpath(page, None, "//comment()").unwrap(),
+            ["before", "after"]
+        );
+        assert_eq!(select_xpath(page, None, "//body").unwrap(), ["x"]);
     }
 
     #[test]

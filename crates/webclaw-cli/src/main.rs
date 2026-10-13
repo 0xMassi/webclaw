@@ -239,7 +239,7 @@ struct Cli {
 
     /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
     /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["select", "crawl", "watch"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["select", "crawl", "watch", "map"])]
     screenshot: Option<PathBuf>,
 
     /// With --screenshot, capture the whole scrollable page

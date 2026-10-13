@@ -40,6 +40,9 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - `metadata.rs` — OG, Twitter Card, standard meta tag extraction
 - `types.rs` — Core data structures (ExtractionResult, Metadata, Content, plus ExtractionOptions for include/exclude CSS selectors — applied in `extractor.rs`; there is no `filter.rs`)
 - `diff.rs` — Content change tracking engine (snapshot diffing)
+- `select.rs` — CSS selector API (`select` / `select_records`): `::text` (default), `::attr(NAME)`, `::html`; `href`/`src` come back absolute. Backs CLI `--select`/`--field` and the MCP `select` tool.
+- `focus.rs` — question-focused extraction (`focus` / `focus_extraction`): BM25 over markdown blocks with heading context. Backs CLI `--query` and the MCP `query` option. Kept outside `ExtractionOptions` because the hosted server builds that struct field by field.
+- `quality.rs` — conservative empty-page and error-screen checks, plus `visible_word_count` used by the render settle wait.
 - `brand.rs` — Brand identity extraction from DOM structure and CSS
 - `reddit.rs` — old.reddit.com thread vertical extractor (parses server-rendered HTML directly; no JS/API key). Test fixtures under `testdata/reddit/*.html` are `exclude`d from the published crate (Cargo.toml).
 - `youtube.rs` — `ytInitialPlayerResponse` parser, structured markdown for `youtube.com/watch` URLs (title, channel, views, published, duration, description). Produces the legacy markdown shape — for transcripts and a structured `YoutubeData` block see the production server's `youtube_transcript.rs` short-circuit (yt-dlp via proxy pool).
@@ -52,7 +55,10 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - `extractors/` — ~30 vertical site extractors (Amazon, eBay, GitHub, Instagram, LinkedIn, Reddit, YouTube, npm, PyPI, HuggingFace, Etsy, Shopify, WooCommerce, Trustpilot, arXiv, Hacker News, StackOverflow, Chronopost, ...); `extractors/mod.rs` is the dispatch table. Note `dispatch_by_url` (auto-detect) deliberately excludes the permissive e-commerce/substack matchers — only add an extractor there when its `matches()` is strict enough that it cannot steal a generic URL. All reach the network through `&dyn Fetcher`. Shared helpers (not verticals themselves): `extractors/og.rs` (single-pass Open Graph `og:*` parser, `raw()` vs `unescaped()`), `extractors/github_common.rs` (shared GitHub API fetch + status handling), `extractors/jsonld_product.rs` / `ecommerce_product.rs` (shared JSON-LD product walker reused by the e-commerce verticals).
 - `reddit.rs` / `linkedin.rs` — top-level fetch-side verticals (distinct from `extractors/` and from `webclaw-core`'s parsers): `reddit.rs` rewrites Reddit hosts to `old.reddit.com` (the `*.json` API is blocked) so `webclaw-core::reddit` can parse server-rendered HTML; `linkedin.rs` reconstructs post + comments from the SPA's HTML-escaped JSON in `<code>` tags (the `included` typed-entity array).
 - `progress.rs` — wraps a slow fetch future in `tokio::select!` against an interval, emitting a periodic `# webclaw: still fetching <URL> (Ns)` line to STDERR.
-- `crawler.rs` — BFS same-origin crawler with configurable depth/concurrency/delay
+- `crawler.rs` — same-origin crawler: worker pool with per-host delay, robots.txt (`respect_robots`), include/exclude patterns, and a `checkpoint` file so a killed crawl resumes
+- `robots.rs` — robots.txt rules per RFC 9309
+- `render.rs` — local JavaScript rendering and screenshots in Chrome over CDP (`chromey`), behind the off-by-default `browser` cargo feature. `RenderPool` shares one browser per process, renders pages that need it (per-host memory after three renders), and blocks private and loopback addresses for every page request.
+- `transfer.rs` — optional observation of decoded response bytes (not wire metering)
 - `sitemap.rs` — Sitemap discovery and parsing (sitemap.xml, robots.txt; gzip `.xml.gz` supported via `decode_sitemap_body`, sitemap-index recursion)
 - `map.rs` — layered URL discovery (`discover_urls` / `MapOptions`): sitemaps first, then a bounded same-origin crawl fallback when the sitemap is thin, harvesting links from fetched pages + the unfetched frontier (deduped against the sitemap set)
 - `search.rs` — web search via Serper.dev with the caller's own key (`search` / `SearchOptions` / `SearchResult`; pure `parse_serper_organic`). Plain wreq client (JSON API, no fingerprinting); optional bounded concurrent fetch+extract of result pages. Powers the CLI `search` subcommand, the MCP `search` tool, and the OSS server `POST /v1/search`.
@@ -70,8 +76,8 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 - PDF text extraction via pdf-extract crate
 
 ### MCP Server (`webclaw-mcp`)
-- Model Context Protocol server over stdio transport
-- 12 tools: scrape, crawl, map, batch, extract, summarize, diff, brand, research, search, list_extractors, vertical_scrape. `search` is local-first via the caller's `SERPER_API_KEY` (falls back to the hosted API when unset); `research` is hosted-only (requires `WEBCLAW_API_KEY`). The rest run locally.
+- Model Context Protocol server over stdio, or streamable HTTP with `--http [ADDR]` (bearer token in `WEBCLAW_MCP_TOKEN`, required unless `--no-auth`)
+- 14 tools: scrape, select, screenshot, crawl, map, batch, extract, summarize, diff, brand, research, search, list_extractors, vertical_scrape. `screenshot` and rendering need a build with `--features browser`. `search` is local-first via the caller's `SERPER_API_KEY` (falls back to the hosted API when unset); `research` is hosted-only (requires `WEBCLAW_API_KEY`). The rest run locally.
 - Works with Claude Desktop, Claude Code, and any MCP client
 - Uses `rmcp` crate (official Rust MCP SDK)
 
@@ -94,7 +100,7 @@ Three binaries: `webclaw` (CLI), `webclaw-mcp` (MCP server), `webclaw-server` (R
 ## Hard Rules
 
 - **Core has ZERO network dependencies** — takes `&str` HTML, returns structured output. Keep it WASM-compatible. The `quickjs` feature (default ON) pulls in rquickjs, which links a C lib and can't target wasm32; it's gated `cfg(not(target_arch = "wasm32"))` in `lib.rs`. CI compiles webclaw-core for wasm32 both with AND without default features — never ungate that.
-- **webclaw-fetch pins wreq exactly**: `wreq = "=6.0.0-rc.29"` + `wreq-util = "=3.0.0-rc.12"` (BoringSSL). The `=` pin is deliberate — these are release candidates with no semver stability between rc.N builds. No `[patch.crates-io]` forks needed; wreq handles TLS internally.
+- **webclaw-fetch pins wreq exactly**: `wreq = "=6.0.0-rc.29"` + `wreq-util = "=3.0.0-rc.14"` (BoringSSL). The `=` pin is deliberate — these are release candidates with no semver stability between rc.N builds. No `[patch.crates-io]` forks needed; wreq handles TLS internally.
 - **No build flags in `.cargo/config.toml`** (it is comments-only) — don't add any locally. BUT CI (`.github/workflows/ci.yml`) DOES export `RUSTFLAGS: "--cfg reqwest_unstable"` for the wreq path; don't remove it from CI.
 - **webclaw-llm uses plain reqwest**. LLM APIs don't need TLS fingerprinting, so no wreq dep. `webclaw-fetch` also carries a reqwest dep, but only for `cloud.rs` (`CloudClient` → api.webclaw.io) — every *target-site* fetch must go through the wreq `FetchClient`. Don't reach for reqwest in the fetch path.
 - **Vertical extractors take `&dyn Fetcher`**, not `&FetchClient`. This lets the production server plug in a `ProductionFetcher` that adds domain_hints routing and antibot escalation on top of the same wreq client.
@@ -131,7 +137,7 @@ CI (`.github/workflows/ci.yml`, with `RUSTFLAGS=--cfg reqwest_unstable`) runs fo
 
 ## Repo Layout & Packaging
 
-Workspace is version **0.6.16** (single source of truth: `[workspace.package] version` in the root `Cargo.toml`; all crates inherit it), edition **2024**, license **AGPL-3.0** (matters for the public-OSS scrubbing rules). No crate declares `rust-version`, so MSRV is implicit — edition 2024 floors it at Rust 1.85+; CI pins `dtolnay/rust-toolchain@stable`.
+Workspace is version **0.6.24** (single source of truth: `[workspace.package] version` in the root `Cargo.toml`; all crates inherit it), edition **2024**, license **AGPL-3.0** (matters for the public-OSS scrubbing rules). No crate declares `rust-version`, so MSRV is implicit — edition 2024 floors it at Rust 1.85+; CI pins `dtolnay/rust-toolchain@stable`.
 
 Artifacts outside `crates/` that need separate attention:
 - `packages/create-webclaw/` — `npx create-webclaw` Node scaffolder that installs/configures the MCP server for AI agents (Claude, Cursor, Windsurf, ...). Versioned independently (own `package.json`) — bump it separately when MCP setup changes.

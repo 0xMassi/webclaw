@@ -6,6 +6,6 @@ Each tool reads the same 50 frozen books.toscrape.com catalogue pages and return
 
 | arm | records | correct | seconds | of which start | ms/page | synthetic ms | synthetic values |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| webclaw | 1000/1000 | 1000 | 0.24 | 0.19 | 4.7 | 87.6 | 5000 |
+| webclaw | 1000/1000 | 1000 | 0.22 | 0.18 | 4.5 | 83.0 | 5000 |
 | scrapling | 1000/1000 | 1000 | 0.07 | - | 1.4 | 1.7 | 0 |
-| crawl4ai | 1000/1000 | 1000 | 0.60 | - | 11.9 | 18492.1 | 4999 |
+| crawl4ai | 1000/1000 | 1000 | 0.60 | - | 12.1 | 18543.8 | 4999 |

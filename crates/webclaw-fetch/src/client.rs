@@ -61,6 +61,11 @@ pub struct FetchConfig {
     pub max_redirects: u32,
     pub headers: HashMap<String, String>,
     pub pdf_mode: PdfMode,
+    /// Keep successful responses in this directory and answer later fetches
+    /// of the same URL, browser profile and headers from it without touching
+    /// the network. Entries never expire; delete the directory to refresh.
+    /// Challenge pages and HTTP errors are not kept, nor `Set-Cookie` headers.
+    pub cache: Option<std::path::PathBuf>,
     /// Render pages that need JavaScript in a browser after fetching them
     /// over HTTP, keeping whichever extraction has more text. `None` never renders.
     #[cfg(feature = "browser")]
@@ -79,6 +84,7 @@ impl Default for FetchConfig {
             max_redirects: 10,
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
             pdf_mode: PdfMode::default(),
+            cache: None,
             #[cfg(feature = "browser")]
             render: None,
         }
@@ -314,6 +320,7 @@ pub struct FetchClient {
     cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
     /// Ceiling on one complete `fetch`. See [`FetchConfig::total_timeout`].
     total_timeout: Option<Duration>,
+    cache: Option<crate::cache::ResponseCache>,
     #[cfg(feature = "browser")]
     render: Option<crate::render::RenderConfig>,
     #[cfg(feature = "browser")]
@@ -415,11 +422,18 @@ impl FetchClient {
             ClientPool::Rotating { clients }
         };
 
+        let cache = config.cache.clone().map(|dir| {
+            let mut headers: Vec<_> = config.headers.iter().collect();
+            headers.sort();
+            crate::cache::ResponseCache::new(dir, &(format!("{:?}", config.browser), headers))
+        });
+
         Ok(Self {
             pool,
             pdf_mode,
             cloud: None,
             total_timeout: config.total_timeout,
+            cache,
             #[cfg(feature = "browser")]
             render: config.render.clone(),
             #[cfg(feature = "browser")]
@@ -535,8 +549,26 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        self.with_retries(url, || self.fetch_once_with_headers(url, extra))
-            .await
+        let cached = self
+            .cache
+            .as_ref()
+            .map(|cache| (cache, cache.key(url, extra)));
+        if let Some((cache, key)) = &cached
+            && let Some(hit) = cache.read(key, url)
+        {
+            debug!(url, "answered from the cache");
+            return Ok(hit);
+        }
+        let fetched = self
+            .with_retries(url, || self.fetch_once_with_headers(url, extra))
+            .await?;
+        if let Some((cache, key)) = &cached
+            && fetched.status < 400
+            && !is_challenge_html(&fetched.html)
+        {
+            cache.write(key, url, &fetched);
+        }
+        Ok(fetched)
     }
 
     async fn with_retries<F, Fut>(
@@ -1172,6 +1204,54 @@ mod tests {
         assert!(
             rows.iter()
                 .all(|row| row.complete && row.decoded_bytes == 16 && row.proxy.is_some())
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn a_cached_page_is_fetched_once() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buffer = [0; 4096];
+                let _ = socket.read(&mut buffer).await;
+                let (status, body) = if n == 0 {
+                    ("200 OK", "<p>one</p>")
+                } else {
+                    ("200 OK", "<p>two</p>")
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let config = FetchConfig {
+            proxy: Some(proxy),
+            cache: Some(dir.path().into()),
+            ..Default::default()
+        };
+        let first = FetchClient::new(config.clone()).unwrap();
+        assert_eq!(
+            first.fetch("http://example.com/c").await.unwrap().html,
+            "<p>one</p>"
+        );
+        let second = FetchClient::new(config).unwrap();
+        assert_eq!(
+            second.fetch("http://example.com/c").await.unwrap().html,
+            "<p>one</p>"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            second.fetch("http://example.com/d").await.unwrap().html,
+            "<p>two</p>"
         );
     }
 

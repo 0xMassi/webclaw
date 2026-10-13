@@ -50,6 +50,14 @@ It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, as
 
 It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, and scores how many answers survive each tool's question filter and at what token cost. A control row cuts each tool's full output to the size its filter returned, so a filter has to beat keeping the top of the page. Results land in `results/<label>/query-summary.md`.
 
+### Response cache
+
+```bash
+./benchmarks/cache.sh          # webclaw --cache against the other tools' disk caches
+```
+
+It fetches the url-mode cases twice through each tool's cache, starting empty, and sends the second run to a proxy that refuses connections, so only cached pages come back. It writes `results/<label>/cache-summary.md` with both run times and how many pages the cache served unchanged.
+
 ### MCP over HTTP
 
 ```bash

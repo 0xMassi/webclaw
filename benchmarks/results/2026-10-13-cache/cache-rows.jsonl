@@ -1,3 +1,3 @@
-{"arm": "webclaw", "pages": 78, "cold_ok": 68, "cold_s": 4.574752334039658, "warm_s": 1.7601502500474453, "warm_served": 68, "identical": 68}
-{"arm": "scrapling", "pages": 78, "cold_ok": 67, "cold_s": 9.89841345907189, "warm_s": 5.667699875077233, "warm_served": 67, "identical": 67}
-{"arm": "crawl4ai", "pages": 78, "cold_ok": 66, "cold_s": 17.67264600005001, "warm_s": 2.6004551670048386, "warm_served": 66, "identical": 66}
+{"arm": "webclaw", "pages": 78, "cold_ok": 68, "cold_s": 4.858057499863207, "warm_s": 1.7489144999999553, "warm_served": 68, "identical": 68}
+{"arm": "scrapling", "pages": 78, "cold_ok": 67, "cold_s": 8.95124595798552, "warm_s": 5.712932291906327, "warm_served": 67, "identical": 67}
+{"arm": "crawl4ai", "pages": 78, "cold_ok": 66, "cold_s": 16.029736124910414, "warm_s": 2.7122430000454187, "warm_served": 66, "identical": 66}

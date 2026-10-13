@@ -4,6 +4,6 @@ Each tool fetches the 78 url-mode cases twice through its own disk cache, starti
 
 | tool | first run ok | first run s | second run s | served from cache | identical |
 |---|---:|---:|---:|---:|---:|
-| webclaw | 68/78 | 4.6 | 1.8 | 68/68 | 68/68 |
-| scrapling | 67/78 | 9.9 | 5.7 | 67/67 | 67/67 |
-| crawl4ai | 66/78 | 17.7 | 2.6 | 66/66 | 66/66 |
+| webclaw | 68/78 | 4.9 | 1.7 | 68/68 | 68/68 |
+| scrapling | 67/78 | 9.0 | 5.7 | 67/67 | 67/67 |
+| crawl4ai | 66/78 | 16.0 | 2.7 | 66/66 | 66/66 |

@@ -42,6 +42,14 @@ You need [`uv`](https://docs.astral.sh/uv/) and a Rust toolchain. The script ins
 
 It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, asks each tool for one record per book (title, price, rating), checks every record against the values in the raw HTML, and times the run. It also repeats the nested-divs test from Scrapling's own benchmark script. Results land in `results/<label>/select-summary.md`.
 
+### Question-focused extraction
+
+```bash
+./benchmarks/query.sh          # webclaw --query against the other tools' question filters
+```
+
+It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, and scores how many answers survive each tool's question filter and at what token cost. A control row cuts each tool's full output to the size its filter returned, so a filter has to beat keeping the top of the page. Results land in `results/<label>/query-summary.md`.
+
 ## Methodology
 
 See [methodology.md](methodology.md) for each tool's exact call, the url and html modes, how facts are matched, the metrics and the limits of this setup.

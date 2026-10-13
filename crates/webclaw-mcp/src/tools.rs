@@ -123,6 +123,19 @@ pub struct SelectParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScreenshotParams {
+    /// URL to capture
+    pub url: String,
+    /// Capture the whole scrollable page instead of the 1280x720 viewport (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub full_page: Option<bool>,
+    /// Image format: "png" (default) or "jpeg", which is smaller
+    pub format: Option<String>,
+    /// Also wait until an element matching this CSS selector exists before capturing
+    pub wait_for: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CrawlParams {
     /// Seed URL to start crawling from
     pub url: String,

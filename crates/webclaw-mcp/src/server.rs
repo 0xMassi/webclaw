@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use serde_json::json;
 use tracing::{error, info, warn};
@@ -203,6 +203,56 @@ impl WebclawMcp {
             }
             let _ = config;
         }
+    }
+
+    #[cfg(feature = "browser")]
+    async fn take_screenshot(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        full_page: bool,
+        jpeg: bool,
+    ) -> Result<CallToolResult, String> {
+        let render = self
+            .fetch_config
+            .render
+            .as_ref()
+            .ok_or("screenshots need the browser, which is turned off for this server (WEBCLAW_RENDER=never)")?;
+        let shot = render
+            .pool
+            .screenshot(
+                url,
+                wait_for,
+                &[],
+                webclaw_fetch::render::ScreenshotOptions { full_page, jpeg },
+            )
+            .await
+            .map_err(|e| format!("Screenshot failed: {e}"))?;
+        if shot.status >= 400 {
+            return Err(format!(
+                "the target returned HTTP {} instead of a successful page",
+                shot.status
+            ));
+        }
+        let mime = if jpeg { "image/jpeg" } else { "image/png" };
+        Ok(CallToolResult::success(vec![
+            rmcp::model::ContentBlock::image(shot.base64(), mime),
+            rmcp::model::ContentBlock::text(shot.url),
+        ]))
+    }
+
+    #[cfg(not(feature = "browser"))]
+    async fn take_screenshot(
+        &self,
+        _url: &str,
+        _wait_for: Option<&str>,
+        _full_page: bool,
+        _jpeg: bool,
+    ) -> Result<CallToolResult, String> {
+        Err(
+            "this webclaw-mcp build has no browser support; build it with `--features browser`"
+                .into(),
+        )
     }
 
     /// Return the cached Firefox client, building it on first use. Any
@@ -429,6 +479,31 @@ impl WebclawMcp {
             )
         };
         json.map_err(|e| e.to_string())
+    }
+
+    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL.
+    #[tool]
+    async fn screenshot(
+        &self,
+        Parameters(params): Parameters<ScreenshotParams>,
+    ) -> Result<CallToolResult, String> {
+        validate_url(&params.url).await?;
+        let jpeg = match params.format.as_deref() {
+            None | Some("png") => false,
+            Some("jpeg" | "jpg") => true,
+            Some(other) => {
+                return Err(format!(
+                    "format must be \"png\" or \"jpeg\", got \"{other}\""
+                ));
+            }
+        };
+        self.take_screenshot(
+            &params.url,
+            params.wait_for.as_deref(),
+            params.full_page.unwrap_or(false),
+            jpeg,
+        )
+        .await
     }
 
     /// Discover URLs from a website's sitemaps (robots.txt + sitemap.xml).
@@ -944,8 +1019,8 @@ impl ServerHandler for WebclawMcp {
             .with_server_info(Implementation::new("webclaw-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(String::from(
                 "Webclaw MCP server -- web content extraction for AI agents. \
-                 Tools: scrape, select, crawl, map, batch, extract, summarize, diff, brand, research, \
-                 search, list_extractors, vertical_scrape.",
+                 Tools: scrape, select, screenshot, crawl, map, batch, extract, summarize, diff, brand, \
+                 research, search, list_extractors, vertical_scrape.",
             ))
     }
 }
@@ -1061,6 +1136,7 @@ mod tests {
                 "map",
                 "research",
                 "scrape",
+                "screenshot",
                 "search",
                 "select",
                 "summarize",

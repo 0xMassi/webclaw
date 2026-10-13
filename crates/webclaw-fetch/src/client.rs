@@ -62,9 +62,13 @@ pub struct FetchConfig {
     pub headers: HashMap<String, String>,
     pub pdf_mode: PdfMode,
     /// Keep successful responses in this directory and answer later fetches
-    /// of the same URL, browser profile and headers from it without touching
-    /// the network. Entries never expire; delete the directory to refresh.
-    /// Challenge pages and HTTP errors are not kept, nor `Set-Cookie` headers.
+    /// of the same URL, browser profile, headers and redirect settings from it
+    /// without touching the network. Entries never expire; delete the
+    /// directory to refresh. Challenge and bot-protection pages and HTTP errors
+    /// are not kept, nor `Set-Cookie` headers. Cookies a site sets during a run
+    /// are not part of the key. The directory and its files are readable by
+    /// their owner only on Unix. Only the HTTP response is kept: rendering a
+    /// cached page in the browser still loads its scripts over the network.
     pub cache: Option<std::path::PathBuf>,
     /// Render pages that need JavaScript in a browser after fetching them
     /// over HTTP, keeping whichever extraction has more text. `None` never renders.
@@ -425,7 +429,15 @@ impl FetchClient {
         let cache = config.cache.clone().map(|dir| {
             let mut headers: Vec<_> = config.headers.iter().collect();
             headers.sort();
-            crate::cache::ResponseCache::new(dir, &(format!("{:?}", config.browser), headers))
+            crate::cache::ResponseCache::new(
+                dir,
+                &(
+                    format!("{:?}", config.browser),
+                    headers,
+                    config.follow_redirects,
+                    config.max_redirects,
+                ),
+            )
         });
 
         Ok(Self {
@@ -499,7 +511,7 @@ impl FetchClient {
                 return Ok(resp);
             };
             debug!("challenge detected, warming cookies via {homepage}");
-            let _ = self.fetch_with_headers(&homepage, extra).await;
+            let _ = self.fetch_uncached(&homepage, extra).await;
             self.fetch_with_headers(url, extra).await
         })
         .await
@@ -559,16 +571,24 @@ impl FetchClient {
             debug!(url, "answered from the cache");
             return Ok(hit);
         }
-        let fetched = self
-            .with_retries(url, || self.fetch_once_with_headers(url, extra))
-            .await?;
+        let fetched = self.fetch_uncached(url, extra).await?;
         if let Some((cache, key)) = &cached
             && fetched.status < 400
             && !is_challenge_html(&fetched.html)
+            && !crate::cloud::is_bot_protected(&fetched.html, &fetched.headers)
         {
             cache.write(key, url, &fetched);
         }
         Ok(fetched)
+    }
+
+    async fn fetch_uncached(
+        &self,
+        url: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        self.with_retries(url, || self.fetch_once_with_headers(url, extra))
+            .await
     }
 
     async fn with_retries<F, Fut>(
@@ -1207,9 +1227,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    #[ignore = "requires local TCP sockets and public DNS"]
-    async fn a_cached_page_is_fetched_once() {
+    async fn counting_proxy(
+        body: fn(usize) -> &'static str,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy = format!("http://{}", listener.local_addr().unwrap());
@@ -1217,33 +1237,39 @@ mod tests {
         let counted = hits.clone();
         tokio::spawn(async move {
             while let Ok((mut socket, _)) = listener.accept().await {
-                let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = body(counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                 let mut buffer = [0; 4096];
                 let _ = socket.read(&mut buffer).await;
-                let (status, body) = if n == 0 {
-                    ("200 OK", "<p>one</p>")
-                } else {
-                    ("200 OK", "<p>two</p>")
-                };
                 let reply = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
                 let _ = socket.write_all(reply.as_bytes()).await;
             }
         });
-        let dir = tempfile::tempdir().unwrap();
-        let config = FetchConfig {
+        (proxy, hits)
+    }
+
+    fn cached_config(proxy: String, dir: &std::path::Path) -> FetchConfig {
+        FetchConfig {
             proxy: Some(proxy),
-            cache: Some(dir.path().into()),
+            cache: Some(dir.into()),
             ..Default::default()
-        };
-        let first = FetchClient::new(config.clone()).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn a_cached_page_is_fetched_once() {
+        let (proxy, hits) =
+            counting_proxy(|n| if n == 0 { "<p>one</p>" } else { "<p>two</p>" }).await;
+        let dir = tempfile::tempdir().unwrap();
+        let first = FetchClient::new(cached_config(proxy.clone(), dir.path())).unwrap();
         assert_eq!(
             first.fetch("http://example.com/c").await.unwrap().html,
             "<p>one</p>"
         );
-        let second = FetchClient::new(config).unwrap();
+        let second = FetchClient::new(cached_config(proxy, dir.path())).unwrap();
         assert_eq!(
             second.fetch("http://example.com/c").await.unwrap().html,
             "<p>one</p>"
@@ -1253,6 +1279,55 @@ mod tests {
             second.fetch("http://example.com/d").await.unwrap().html,
             "<p>two</p>"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn a_challenge_page_is_never_cached() {
+        let challenge = "<html><body>_cf_chl_opt loaded</body></html>";
+        assert!(crate::cloud::is_bot_protected(
+            challenge,
+            &http::HeaderMap::new()
+        ));
+        let (proxy, hits) = counting_proxy(|n| {
+            if n == 0 {
+                "<html><body>_cf_chl_opt loaded</body></html>"
+            } else {
+                "<p>through</p>"
+            }
+        })
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let first = FetchClient::new(cached_config(proxy.clone(), dir.path())).unwrap();
+        assert_eq!(
+            first.fetch("http://example.com/c").await.unwrap().html,
+            challenge
+        );
+        let second = FetchClient::new(cached_config(proxy, dir.path())).unwrap();
+        assert_eq!(
+            second.fetch("http://example.com/c").await.unwrap().html,
+            "<p>through</p>"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn redirect_settings_are_part_of_the_cache_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = |follow_redirects| {
+            let client = FetchClient::new(FetchConfig {
+                follow_redirects,
+                cache: Some(dir.path().into()),
+                ..Default::default()
+            })
+            .unwrap();
+            client
+                .cache
+                .as_ref()
+                .unwrap()
+                .key("https://example.com/", &[])
+        };
+        assert_ne!(key(true), key(false));
     }
 
     #[tokio::test]

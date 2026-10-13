@@ -564,20 +564,27 @@ impl FetchClient {
         let cached = self
             .cache
             .as_ref()
-            .map(|cache| (cache, cache.key(url, extra)));
-        if let Some((cache, key)) = &cached
-            && let Some(hit) = cache.read(key, url)
-        {
-            debug!(url, "answered from the cache");
-            return Ok(hit);
+            .map(|cache| (cache.clone(), cache.key(url, extra)));
+        if let Some((cache, key)) = cached.clone() {
+            let request = url.to_string();
+            let hit = tokio::task::spawn_blocking(move || cache.read(&key, &request))
+                .await
+                .ok()
+                .flatten();
+            if let Some(hit) = hit {
+                debug!(url, "answered from the cache");
+                return Ok(hit);
+            }
         }
         let fetched = self.fetch_uncached(url, extra).await?;
-        if let Some((cache, key)) = &cached
+        if let Some((cache, key)) = cached
             && fetched.status < 400
             && !is_challenge_html(&fetched.html)
             && !crate::cloud::is_bot_protected(&fetched.html, &fetched.headers)
         {
-            cache.write(key, url, &fetched);
+            let request = url.to_string();
+            let stored = fetched.clone();
+            let _ = tokio::task::spawn_blocking(move || cache.write(&key, &request, &stored)).await;
         }
         Ok(fetched)
     }

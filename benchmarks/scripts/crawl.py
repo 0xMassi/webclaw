@@ -68,8 +68,11 @@ def expected_items(site):
         return []
     items = []
     for url in site["expect"]:
-        html = subprocess.run([os.environ["WEBCLAW_BIN"], url, "--raw-html"], capture_output=True, text=True).stdout
-        items += [letters(json.loads(f'"{t}"'))[:60] for t in re.findall(r'"text": "((?:[^"\\]|\\.)*)"', html)]
+        r = subprocess.run([os.environ["WEBCLAW_BIN"], url, "--raw-html"], capture_output=True, text=True)
+        found = [letters(json.loads(f'"{t}"'))[:60] for t in re.findall(r'"text": "((?:[^"\\]|\\.)*)"', r.stdout)]
+        if r.returncode or not found:
+            sys.exit(f"no reference items from {url} (exit {r.returncode}); not scoring an incomplete set")
+        items += found
     return items
 
 
@@ -90,7 +93,8 @@ def main(label, rounds):
     rescore = rounds is None
     saved = {(r["site"], r["arm"], r["round"]): r for r in map(json.loads, open(res / "crawl-rows.jsonl"))} if rescore else {}
     rows = []
-    for site in SITES:
+    sites = [s for s in SITES if not rescore or any(k[0] == s["name"] for k in saved)]
+    for site in sites:
         judge = robots_judge(site)
         items = expected_items(site)
         for rnd in range(rounds or 1 + max(k[2] for k in saved)):
@@ -115,7 +119,7 @@ def main(label, rounds):
              "markdown.", "",
              "| site | arm | rounds | pages ok | content found | seconds | pages/s | peak MB | duplicates | disallowed |",
              "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
-    for site in SITES:
+    for site in sites:
         for arm in ARM_VENV:
             rs = [r for r in rows if r["site"] == site["name"] and r["arm"] == arm]
             med = lambda k: statistics.median(r[k] for r in rs)

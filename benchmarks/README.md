@@ -58,6 +58,14 @@ It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, an
 
 It fetches the non-PDF url-mode cases once per browser identity over HTTP only, scores each page on its case facts, and writes `results/<label>/profiles-summary.md`.
 
+### Screenshots
+
+```bash
+./benchmarks/screenshot.sh     # webclaw --screenshot and the MCP screenshot tool against the other tools
+```
+
+It screenshots 10 public pages with each tool, the viewport and the whole page, first with a fresh browser per page and then with one browser kept open (webclaw and Scrapling through their MCP servers, Scrapling inside a browser session). It records the time, the image size and whether the image is blank, and writes `results/<label>/screenshot-summary.md`.
+
 ### MCP over HTTP
 
 ```bash

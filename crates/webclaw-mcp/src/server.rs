@@ -1051,6 +1051,26 @@ mod tests {
     use super::slugify;
 
     #[test]
+    fn every_browser_name_picks_its_profile() {
+        use webclaw_fetch::BrowserProfile;
+        for (name, expected) in [
+            (None, BrowserProfile::Chrome),
+            (Some("chrome"), BrowserProfile::Chrome),
+            (Some("chrome-macos"), BrowserProfile::ChromeMacos),
+            (Some("firefox"), BrowserProfile::Firefox),
+            (Some("safari"), BrowserProfile::Safari),
+            (Some("safari-ios"), BrowserProfile::SafariIos),
+            (Some("edge"), BrowserProfile::Edge),
+            (Some("random"), BrowserProfile::Random),
+        ] {
+            let picked = super::parse_browser(name).unwrap();
+            assert_eq!(format!("{picked:?}"), format!("{expected:?}"), "{name:?}");
+        }
+        let err = super::parse_browser(Some("opera")).unwrap_err();
+        assert!(err.contains("opera") && err.contains("safari-ios"), "{err}");
+    }
+
+    #[test]
     fn tool_catalog_excludes_lead_and_preserves_the_supported_tools() {
         let mut names: Vec<_> = super::WebclawMcp::tool_router()
             .list_all()

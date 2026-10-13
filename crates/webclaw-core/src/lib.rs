@@ -22,6 +22,7 @@ pub mod reddit;
 pub mod select;
 pub mod structured_data;
 pub mod types;
+pub mod xpath;
 pub mod youtube;
 
 pub use brand::BrandIdentity;
@@ -34,6 +35,7 @@ pub use select::{SelectError, select, select_records};
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,
 };
+pub use xpath::{select_xpath, select_xpath_records};
 
 use scraper::Html;
 use url::Url;

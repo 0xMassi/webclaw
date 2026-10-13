@@ -194,6 +194,12 @@ struct Cli {
     #[arg(short, long, default_value = "30")]
     timeout: u64,
 
+    /// Keep fetched pages on disk and reuse them on later runs instead of
+    /// fetching again, in WEBCLAW_CACHE_DIR or ~/.cache/webclaw. Entries never
+    /// expire; delete the directory to refresh
+    #[arg(long)]
+    cache: bool,
+
     /// Render pages in a local Chrome. auto renders only pages whose content needs JavaScript; needs a build with the `browser` feature
     #[arg(long, value_enum, default_value_t = RenderMode::Auto)]
     render: RenderMode,
@@ -642,6 +648,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
         timeout: std::time::Duration::from_secs(cli.timeout),
         pdf_mode: cli.pdf_mode.clone().into(),
         headers,
+        cache: cli.cache.then(cache_dir),
         ..Default::default()
     };
     #[cfg(feature = "browser")]
@@ -663,6 +670,16 @@ fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Render
         None => BrowserSource::launch_for(config),
     };
     RenderPool::new(source, std::time::Duration::from_secs(cli.timeout))
+}
+
+fn cache_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("WEBCLAW_CACHE_DIR") {
+        return dir.into();
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .unwrap_or_else(|| ".".into());
+    PathBuf::from(home).join(".cache").join("webclaw")
 }
 
 async fn close_browser(config: &FetchConfig) {

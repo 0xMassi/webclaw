@@ -1,6 +1,7 @@
 //! On-disk cache of fetched responses; see [`crate::FetchConfig::cache`].
 
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -16,12 +17,11 @@ pub(crate) struct ResponseCache {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Entry {
+struct Meta {
     request: String,
     url: String,
     status: u16,
     headers: Vec<(String, String)>,
-    html: String,
     document: bool,
 }
 
@@ -44,21 +44,20 @@ impl ResponseCache {
     }
 
     pub(crate) fn read(&self, key: &str, url: &str) -> Option<FetchResult> {
-        let entry: Entry =
-            serde_json::from_slice(&std::fs::read(self.dir.join(format!("{key}.json"))).ok()?)
-                .ok()?;
-        if entry.request != url {
+        let entry = std::fs::read(self.dir.join(key)).ok()?;
+        let split = entry.iter().position(|b| *b == b'\n')?;
+        let meta: Meta = serde_json::from_slice(&entry[..split]).ok()?;
+        if meta.request != url {
             return None;
         }
-        let document_bytes = if entry.document {
-            Some(bytes::Bytes::from(
-                std::fs::read(self.dir.join(format!("{key}.bin"))).ok()?,
-            ))
+        let body = &entry[split + 1..];
+        let (html, document_bytes) = if meta.document {
+            (String::new(), Some(bytes::Bytes::copy_from_slice(body)))
         } else {
-            None
+            (String::from_utf8(body.to_vec()).ok()?, None)
         };
         let mut headers = http::HeaderMap::new();
-        for (name, value) in entry.headers {
+        for (name, value) in meta.headers {
             if let (Ok(name), Ok(value)) = (
                 http::header::HeaderName::from_bytes(name.as_bytes()),
                 http::header::HeaderValue::from_str(&value),
@@ -67,10 +66,10 @@ impl ResponseCache {
             }
         }
         Some(FetchResult {
-            html: entry.html,
+            html,
             document_bytes,
-            status: entry.status,
-            url: entry.url,
+            status: meta.status,
+            url: meta.url,
             headers,
             elapsed: Duration::ZERO,
         })
@@ -83,11 +82,8 @@ impl ResponseCache {
     }
 
     fn try_write(&self, key: &str, url: &str, fetched: &FetchResult) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
-        if let Some(bytes) = &fetched.document_bytes {
-            self.replace(&format!("{key}.bin"), bytes)?;
-        }
-        let entry = Entry {
+        private_dir(&self.dir)?;
+        let meta = Meta {
             request: url.to_string(),
             url: fetched.url.clone(),
             status: fetched.status,
@@ -99,22 +95,57 @@ impl ResponseCache {
                     Some((name.to_string(), value.to_str().ok()?.to_string()))
                 })
                 .collect(),
-            html: fetched.html.clone(),
             document: fetched.document_bytes.is_some(),
         };
-        self.replace(&format!("{key}.json"), &serde_json::to_vec(&entry)?)
-    }
-
-    fn replace(&self, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+        let body = fetched
+            .document_bytes
+            .as_deref()
+            .unwrap_or(fetched.html.as_bytes());
         static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let partial = self.dir.join(format!(
-            "{name}.{}-{}.partial",
+            "{key}.{}-{}.partial",
             std::process::id(),
             WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::write(&partial, bytes)?;
-        std::fs::rename(&partial, self.dir.join(name))
+        let mut file = private_file(&partial)?;
+        file.write_all(&serde_json::to_vec(&meta)?)?;
+        file.write_all(b"\n")?;
+        file.write_all(body)?;
+        drop(file);
+        std::fs::rename(&partial, self.dir.join(key))
     }
+}
+
+#[cfg(unix)]
+fn private_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+#[cfg(not(unix))]
+fn private_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
+#[cfg(unix)]
+fn private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
 }
 
 #[cfg(test)]
@@ -140,9 +171,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = ResponseCache::new(dir.path().into(), &"chrome");
         let key = cache.key("https://example.com/", &[]);
-        cache.write(&key, "https://example.com/", &page("<p>hi</p>", None));
+        cache.write(
+            &key,
+            "https://example.com/",
+            &page("<p>hi\nthere</p>", None),
+        );
         let hit = cache.read(&key, "https://example.com/").unwrap();
-        assert_eq!(hit.html, "<p>hi</p>");
+        assert_eq!(hit.html, "<p>hi\nthere</p>");
         assert_eq!(hit.url, "https://example.com/final");
         assert_eq!(hit.status, 200);
         assert_eq!(hit.headers["content-type"], "text/html");
@@ -155,13 +190,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = ResponseCache::new(dir.path().into(), &"chrome");
         let key = cache.key("https://example.com/a.pdf", &[]);
-        cache.write(
-            &key,
-            "https://example.com/a.pdf",
-            &page("", Some(b"%PDF-1.7 body")),
-        );
+        let pdf = b"%PDF-1.7\n\xff\x00 body";
+        cache.write(&key, "https://example.com/a.pdf", &page("", Some(pdf)));
         let hit = cache.read(&key, "https://example.com/a.pdf").unwrap();
-        assert_eq!(hit.document_bytes.as_deref(), Some(&b"%PDF-1.7 body"[..]));
+        assert_eq!(hit.document_bytes.as_deref(), Some(&pdf[..]));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]
@@ -176,5 +209,19 @@ mod tests {
         let firefox = ResponseCache::new(dir.path().into(), &"firefox");
         assert_ne!(firefox.key("https://example.com/", &[]), key);
         assert!(cache.read(&key, "https://example.com/other").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_the_owner_can_read_the_cache() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("cache");
+        let cache = ResponseCache::new(dir.clone(), &"chrome");
+        let key = cache.key("https://example.com/", &[]);
+        cache.write(&key, "https://example.com/", &page("<p>private</p>", None));
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&dir.join(&key)), 0o600);
     }
 }

@@ -18,6 +18,7 @@ pub mod metadata;
 pub(crate) mod noise;
 pub mod quality;
 pub mod reddit;
+pub mod select;
 pub mod structured_data;
 pub mod types;
 pub mod youtube;
@@ -27,6 +28,7 @@ pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;
 pub use llm::to_llm_text;
+pub use select::{SelectError, select, select_records};
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,
 };

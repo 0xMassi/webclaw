@@ -222,6 +222,16 @@ struct Cli {
     #[arg(long)]
     raw_html: bool,
 
+    /// Print what a CSS selector picks as a JSON array. End it in `::text`
+    /// (the default), `::attr(NAME)` or `::html`, e.g. "h3 a::attr(href)"
+    #[arg(long, value_name = "SELECTOR")]
+    select: Option<String>,
+
+    /// With --select, print one JSON object per match instead: NAME=SELECTOR,
+    /// run inside each match (repeatable), e.g. --field price=.price_color
+    #[arg(long = "field", value_name = "NAME=SELECTOR", requires = "select")]
+    fields: Vec<String>,
+
     /// CSS selectors to include (comma-separated, e.g. "article,.content")
     #[arg(long)]
     include: Option<String>,
@@ -1156,6 +1166,62 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
         .fetch(&url)
         .await
         .map_err(|e| format!("fetch error: {e}"))
+}
+
+async fn run_select(cli: &Cli, selector: &str) -> Result<(), String> {
+    let fields = cli
+        .fields
+        .iter()
+        .map(|field| {
+            field
+                .split_once('=')
+                .map(|(name, css)| (name.trim().to_string(), css.trim().to_string()))
+                .ok_or_else(|| format!("--field needs NAME=SELECTOR, got `{field}`"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let page = if cli.stdin || cli.file.is_some() {
+        fetch_html(cli).await?
+    } else {
+        let url = normalize_url(
+            cli.urls
+                .first()
+                .ok_or("no input provided -- pass a URL, --file, or --stdin")?,
+        );
+        let config = build_fetch_config(cli);
+        let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
+        let page = if cli.render == RenderMode::Always {
+            render_page(&config, &url).await
+        } else {
+            match client.fetch_smart(&url).await {
+                Ok(fetched) => Ok(client
+                    .extract_page(fetched, &build_extraction_options(cli))
+                    .await
+                    .0),
+                Err(e) => Err(format!("fetch error: {e}")),
+            }
+        };
+        close_browser(&config).await;
+        page?
+    };
+    if page.status >= 400 {
+        return Err(format!(
+            "the target returned HTTP {} instead of a successful page",
+            page.status
+        ));
+    }
+    let url = (!page.url.is_empty()).then_some(page.url.as_str());
+    let json = if fields.is_empty() {
+        serde_json::to_string_pretty(
+            &webclaw_core::select(&page.html, url, selector).map_err(|e| e.to_string())?,
+        )
+    } else {
+        serde_json::to_string_pretty(
+            &webclaw_core::select_records(&page.html, url, selector, &fields)
+                .map_err(|e| e.to_string())?,
+        )
+    };
+    println!("{}", json.map_err(|e| e.to_string())?);
+    Ok(())
 }
 
 /// Fetch external stylesheets referenced in HTML and inject them as `<style>` blocks.
@@ -2986,6 +3052,19 @@ async fn main() {
         }
     };
     backfill_single_file_url(&mut cli.urls, &entries);
+
+    if let Some(ref selector) = cli.select {
+        let selected = if entries.len() > 1 {
+            Err("--select takes one URL".to_string())
+        } else {
+            run_select(&cli, selector).await
+        };
+        if let Err(e) = selected {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
 
     // --crawl: recursive crawl mode
     if cli.crawl {

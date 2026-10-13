@@ -61,6 +61,10 @@ pub struct FetchConfig {
     pub max_redirects: u32,
     pub headers: HashMap<String, String>,
     pub pdf_mode: PdfMode,
+    /// Render pages that need JavaScript in a browser after fetching them
+    /// over HTTP, keeping whichever extraction has more text. `None` never renders.
+    #[cfg(feature = "browser")]
+    pub render: Option<crate::render::RenderConfig>,
 }
 
 impl Default for FetchConfig {
@@ -75,6 +79,8 @@ impl Default for FetchConfig {
             max_redirects: 10,
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
             pdf_mode: PdfMode::default(),
+            #[cfg(feature = "browser")]
+            render: None,
         }
     }
 }
@@ -308,6 +314,10 @@ pub struct FetchClient {
     cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
     /// Ceiling on one complete `fetch`. See [`FetchConfig::total_timeout`].
     total_timeout: Option<Duration>,
+    #[cfg(feature = "browser")]
+    render: Option<crate::render::RenderConfig>,
+    #[cfg(feature = "browser")]
+    headers: Vec<(String, String)>,
 }
 
 impl FetchClient {
@@ -410,6 +420,10 @@ impl FetchClient {
             pdf_mode,
             cloud: None,
             total_timeout: config.total_timeout,
+            #[cfg(feature = "browser")]
+            render: config.render.clone(),
+            #[cfg(feature = "browser")]
+            headers: config.headers.clone().into_iter().collect(),
         })
     }
 
@@ -617,7 +631,54 @@ impl FetchClient {
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
         let fetched = self.fetch_smart(url).await?;
-        self.extract(&fetched, options)
+        self.extract_page(fetched, options).await.1
+    }
+
+    /// [`Self::extract`], then, with [`FetchConfig::render`] set, render the
+    /// page when it seems to need JavaScript and keep whichever extraction
+    /// has more text. Returns the page that extraction came from.
+    pub async fn extract_page(
+        &self,
+        fetched: FetchResult,
+        options: &webclaw_core::ExtractionOptions,
+    ) -> (
+        FetchResult,
+        Result<webclaw_core::ExtractionResult, FetchError>,
+    ) {
+        let extracted = self.extract(&fetched, options);
+        let words = match &extracted {
+            Ok(result) => result.metadata.word_count,
+            Err(FetchError::Content(_)) => 0,
+            Err(_) => return (fetched, extracted),
+        };
+        let Some(rendered) = self.render_if_needed(&fetched, words).await else {
+            return (fetched, extracted);
+        };
+        let from_render = self.extract(&rendered, options);
+        let rendered_words = from_render.as_ref().map_or(0, |r| r.metadata.word_count);
+        if rendered_words > words {
+            (rendered, from_render)
+        } else {
+            (fetched, extracted)
+        }
+    }
+
+    /// Render `fetched` with [`FetchConfig::render`] when it is set and the
+    /// page seems to need it; `http_words` is the word count extracted over HTTP.
+    pub async fn render_if_needed(
+        &self,
+        fetched: &FetchResult,
+        http_words: usize,
+    ) -> Option<FetchResult> {
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.render {
+            return render
+                .pool
+                .render_if_needed(fetched, http_words, render, &self.headers)
+                .await;
+        }
+        let _ = (fetched, http_words);
+        None
     }
 
     /// Extract an already fetched page exactly as
@@ -820,6 +881,14 @@ impl crate::fetcher::Fetcher for FetchClient {
 
     fn cloud(&self) -> Option<&crate::cloud::CloudClient> {
         FetchClient::cloud(self)
+    }
+
+    async fn render_if_needed(
+        &self,
+        fetched: &FetchResult,
+        http_words: usize,
+    ) -> Option<FetchResult> {
+        FetchClient::render_if_needed(self, fetched, http_words).await
     }
 }
 

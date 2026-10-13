@@ -498,19 +498,21 @@ pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
 }
 
 /// Whether a page fetched over HTTP probably needs a browser to show its
-/// content: it loads scripts, and it has almost no text (under 50 words), or
-/// little text (under 200 words) next to an empty app root (`<div id="root"></div>`) or a `<noscript>`
-/// asking for JavaScript. Bundle names alone never count, so server-rendered
-/// pages that also ship scripts are left alone.
+/// content: it loads scripts, and it has almost no text (under 50 extracted
+/// words and under 50 visible words in the whole body, so a thin page with a
+/// full menu is left alone), or little text (under 200 words) next to an
+/// empty app root (`<div id="root"></div>`) or a `<noscript>` asking for
+/// JavaScript. Bundle names alone never count, so server-rendered pages that
+/// also ship scripts are left alone.
 pub fn needs_js_rendering(word_count: usize, html: &str) -> bool {
     if !contains_ignore_case(html, "<script") {
         return false;
     }
-    word_count < 50
+    (word_count < 50 && webclaw_core::quality::visible_word_count(html) < 50)
         || (word_count < 200 && (has_empty_app_root(html) || noscript_asks_for_js(html)))
 }
 
-fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+pub(crate) fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
     haystack
         .as_bytes()
         .windows(needle.len())
@@ -578,7 +580,7 @@ pub async fn smart_fetch(
     only_main_content: bool,
     formats: &[&str],
 ) -> Result<SmartFetchResult, String> {
-    let fetch_result = tokio::time::timeout(Duration::from_secs(30), client.fetch(url))
+    let mut fetch_result = tokio::time::timeout(Duration::from_secs(30), client.fetch(url))
         .await
         .map_err(|_| format!("Fetch timed out after 30s for {url}"))?
         .map_err(|e| format!("Fetch failed: {e}"))?;
@@ -602,18 +604,29 @@ pub async fn smart_fetch(
         only_main_content,
         include_raw_html: false,
     };
-    let extraction =
+    let mut extraction =
         webclaw_core::extract_with_options(&fetch_result.html, Some(&fetch_result.url), &options)
             .map_err(|e| format!("Extraction failed: {e}"))?;
+    let whole_page =
+        include_selectors.is_empty() && exclude_selectors.is_empty() && !only_main_content;
+    if whole_page
+        && let Some(rendered) = client
+            .render_if_needed(&fetch_result, extraction.metadata.word_count)
+            .await
+        && let Ok(better) =
+            webclaw_core::extract_with_options(&rendered.html, Some(&rendered.url), &options)
+        && better.metadata.word_count > extraction.metadata.word_count
+    {
+        extraction = better;
+        fetch_result = rendered;
+    }
 
     let issue = webclaw_core::quality::content_issue(&extraction).filter(|issue| {
         *issue != webclaw_core::quality::ContentIssue::Empty
             || !webclaw_core::quality::allows_empty_content(&fetch_result.html, &options)
     });
-    let looks_unrendered = include_selectors.is_empty()
-        && exclude_selectors.is_empty()
-        && !only_main_content
-        && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html);
+    let looks_unrendered =
+        whole_page && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html);
     if issue.is_none() && looks_unrendered && cloud.is_none() {
         return Ok(SmartFetchResult::Local(Box::new(extraction)));
     }
@@ -983,6 +996,15 @@ mod tests {
         assert!(
             matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("Starter costs"))
         );
+    }
+
+    #[test]
+    fn needs_js_rendering_ignores_a_thin_page_with_a_full_menu() {
+        let thin = format!(
+            "<html><body><nav>{}</nav><p>One book in stock.</p><script src=\"/jquery.js\"></script></body></html>",
+            "<a href=\"/c\">Category</a> ".repeat(60)
+        );
+        assert!(!needs_js_rendering(4, &thin));
     }
 
     #[test]

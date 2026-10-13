@@ -915,6 +915,16 @@ mod tests {
                 &options,
                 super::ScreenshotOptions {
                     full_page: true,
+                    jpeg: false,
+                },
+            )
+            .await;
+        let jpeg = renderer
+            .screenshot(
+                "https://quotes.toscrape.com/js/",
+                &options,
+                super::ScreenshotOptions {
+                    full_page: false,
                     jpeg: true,
                 },
             )
@@ -923,8 +933,10 @@ mod tests {
         let viewport = viewport.expect("viewport screenshot").image;
         assert_eq!(&viewport[..8], b"\x89PNG\r\n\x1a\n");
         assert_eq!(png_size(&viewport), (1280, 720));
-        let full = full.expect("full-page screenshot").image;
-        assert_eq!(&full[..3], b"\xff\xd8\xff");
+        let (width, height) = png_size(&full.expect("full-page screenshot").image);
+        assert_eq!(width, 1280);
+        assert!(height > 1000, "full page is only {height}px tall");
+        assert_eq!(&jpeg.expect("jpeg screenshot").image[..3], b"\xff\xd8\xff");
     }
 
     fn png_size(png: &[u8]) -> (u32, u32) {

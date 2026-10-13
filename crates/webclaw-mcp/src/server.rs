@@ -383,6 +383,48 @@ impl WebclawMcp {
         Ok(output)
     }
 
+    /// Pick values out of a web page with a CSS selector and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending. With `fields`, return one JSON object per match, each field a selector run inside that match.
+    /// Pages whose content needs JavaScript are rendered first when this server has browser support.
+    #[tool]
+    async fn select(&self, Parameters(params): Parameters<SelectParams>) -> Result<String, String> {
+        validate_url(&params.url).await?;
+        let fetched = tokio::time::timeout(
+            LOCAL_FETCH_TIMEOUT,
+            self.fetch_client.fetch_smart(&params.url),
+        )
+        .await
+        .map_err(|_| format!("Fetch timed out for {}", params.url))?
+        .map_err(|e| format!("Fetch failed: {e}"))?;
+        let (page, _) = self
+            .fetch_client
+            .extract_page(fetched, &webclaw_core::ExtractionOptions::default())
+            .await;
+        if page.status >= 400 {
+            return Err(format!(
+                "the target returned HTTP {} instead of a successful page",
+                page.status
+            ));
+        }
+        let fields: Vec<(String, String)> = params.fields.unwrap_or_default().into_iter().collect();
+        let json = if fields.is_empty() {
+            serde_json::to_string_pretty(
+                &webclaw_core::select(&page.html, Some(&page.url), &params.selector)
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            serde_json::to_string_pretty(
+                &webclaw_core::select_records(
+                    &page.html,
+                    Some(&page.url),
+                    &params.selector,
+                    &fields,
+                )
+                .map_err(|e| e.to_string())?,
+            )
+        };
+        json.map_err(|e| e.to_string())
+    }
+
     /// Discover URLs from a website's sitemaps (robots.txt + sitemap.xml).
     #[tool]
     async fn map(&self, Parameters(params): Parameters<MapParams>) -> Result<String, String> {
@@ -896,8 +938,8 @@ impl ServerHandler for WebclawMcp {
             .with_server_info(Implementation::new("webclaw-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(String::from(
                 "Webclaw MCP server -- web content extraction for AI agents. \
-                 Tools: scrape, crawl, map, batch, extract, summarize, diff, brand, research, search, \
-                 list_extractors, vertical_scrape.",
+                 Tools: scrape, select, crawl, map, batch, extract, summarize, diff, brand, research, \
+                 search, list_extractors, vertical_scrape.",
             ))
     }
 }
@@ -1014,6 +1056,7 @@ mod tests {
                 "research",
                 "scrape",
                 "search",
+                "select",
                 "summarize",
                 "vertical_scrape",
             ]

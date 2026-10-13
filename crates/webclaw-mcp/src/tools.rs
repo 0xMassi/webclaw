@@ -111,6 +111,16 @@ pub struct ScrapeParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct SelectParams {
+    /// URL to read
+    pub url: String,
+    /// CSS selector, optionally ending in "::text" (default), "::attr(NAME)" or "::html", e.g. "h3 a::attr(href)"
+    pub selector: String,
+    /// Return one object per match instead: field name to a selector run inside that match, e.g. {"title": "h3 a::attr(title)", "price": ".price_color"}
+    pub fields: Option<std::collections::BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CrawlParams {
     /// Seed URL to start crawling from
     pub url: String,

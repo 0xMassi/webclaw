@@ -74,12 +74,14 @@ impl Renderer {
     /// the executable; without it the standard install locations are tried,
     /// then the browsers on `PATH`.
     pub async fn launch(proxy: Option<&str>) -> Result<Self, FetchError> {
+        static LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let profile = std::env::temp_dir().join(format!(
-            "webclaw-chrome-{}-{}",
+            "webclaw-chrome-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
+                .map_or(0, |d| d.as_nanos()),
+            LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let mut config = BrowserConfig::builder()
             .headless_mode(HeadlessMode::New)

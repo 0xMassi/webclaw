@@ -177,11 +177,12 @@ impl Renderer {
                 "--proxy-server={}://{host}:{port}",
                 parsed.scheme()
             ));
-            if parsed
-                .host()
-                .is_some_and(|h| !matches!(h, url::Host::Domain(_)))
-            {
-                config = config.arg(format!("--ip-address-space-overrides={host}:{port}=public"));
+            let public: Vec<String> = tokio::net::lookup_host(format!("{host}:{port}"))
+                .await
+                .map(|addresses| addresses.map(|a| format!("{a}=public")).collect())
+                .unwrap_or_default();
+            if !public.is_empty() {
+                config = config.arg(format!("--ip-address-space-overrides={}", public.join(",")));
             }
             if !parsed.username().is_empty() {
                 proxy_login = Some((
@@ -1129,7 +1130,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let (loopback, reached) = loopback_listener().await;
         let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+        let proxy_url = format!("http://localhost:{}", proxy.local_addr().unwrap().port());
         let served = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let served_log = served.clone();
         let fixture_loopback = loopback.clone();

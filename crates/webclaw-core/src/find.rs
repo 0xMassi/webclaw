@@ -22,7 +22,10 @@ const MAX_CLASSES: usize = 32;
 /// One element a search found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Found {
-    /// A CSS selector that picks this element alone on this page.
+    /// A CSS selector that picks this element alone on this page: its path
+    /// from the nearest ancestor with an id no other element has, or from
+    /// the root. The path keeps its last 64 steps, so on a page nested deeper
+    /// than that with no such id it can pick more.
     pub selector: String,
     /// The element's visible text.
     pub text: String,
@@ -133,7 +136,7 @@ pub enum Example<'a> {
 /// The deepest elements whose text matches, in document order.
 pub fn find_text(html: &str, text: &TextMatch) -> Vec<Found> {
     let document = Html::parse_document(html);
-    found_all(matching(&document, text))
+    found_all(&document, matching(&document, text))
 }
 
 /// Every element like the example. The search starts from the example's path
@@ -257,7 +260,7 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Fin
     let start = tail(&document, &steps, from, &matched)?;
     Ok(Some(Similar {
         selector: render(&steps, start),
-        matches: found_all(matched),
+        matches: found_all(&document, matched),
     }))
 }
 
@@ -360,14 +363,32 @@ fn shape<'a>(element: ElementRef<'a>) -> HashSet<&'a str> {
         .collect()
 }
 
-fn found_all(elements: Vec<ElementRef>) -> Vec<Found> {
+fn found_all(document: &Html, elements: Vec<ElementRef>) -> Vec<Found> {
+    let mut ids: HashMap<&str, usize> = HashMap::new();
+    for element in document
+        .root_element()
+        .descendants()
+        .filter_map(ElementRef::wrap)
+    {
+        if let Some(id) = element.value().id() {
+            *ids.entry(id).or_default() += 1;
+        }
+    }
     let mut steps: HashMap<NodeId, String> = HashMap::new();
     elements
         .into_iter()
         .map(|element| {
             let mut path = Vec::new();
             let mut node = element;
-            loop {
+            while path.len() < MAX_STEPS {
+                if let Some(id) = node
+                    .value()
+                    .id()
+                    .filter(|id| !id.is_empty() && ids[id] == 1)
+                {
+                    path.push(format!("#{}", ident(id)));
+                    break;
+                }
                 if !steps.contains_key(&node.id()) {
                     sibling_steps(node, &mut steps);
                 }
@@ -733,6 +754,30 @@ mod tests {
                 ["A Light", "Tipping", "Soumission"],
                 "{example:?}"
             );
+        }
+    }
+
+    #[test]
+    fn match_selectors_stay_short() {
+        let page = format!(
+            "{}{}{}",
+            "<div>".repeat(200),
+            "<p>x</p>".repeat(50),
+            "</div>".repeat(200)
+        );
+        let found = find_text(&page, &TextMatch::text("x", true, false).unwrap());
+        assert_eq!(found.len(), 50);
+        assert!(found.iter().all(|f| f.selector.split(" > ").count() <= 64));
+        let page = r#"<div id="main"><ul><li>a</li><li>b</li></ul></div><div id="x"></div><div id="x"><p>b</p></div>"#;
+        let found = find_text(page, &TextMatch::text("b", true, false).unwrap());
+        assert_eq!(found[0].selector, "#main > ul > li:nth-of-type(2)");
+        assert!(
+            found[1].selector.starts_with("html > body"),
+            "{}",
+            found[1].selector
+        );
+        for f in &found {
+            assert_eq!(crate::select(page, None, &f.selector).unwrap(), ["b"]);
         }
     }
 }

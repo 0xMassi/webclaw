@@ -102,8 +102,8 @@ pub fn chunk(markdown: &str, max_tokens: usize, overlap: usize) -> Vec<Chunk> {
     let mut lead = 0;
     for (i, block) in blocks.iter().enumerate() {
         let path = heading_path(&blocks, i);
-        let room = if block.level == 0 && lead <= budget / 2 {
-            budget - lead
+        let room = if block.level == 0 {
+            budget.saturating_sub(lead).max(budget / 2).max(1)
         } else {
             budget
         };
@@ -131,16 +131,25 @@ pub fn chunk(markdown: &str, max_tokens: usize, overlap: usize) -> Vec<Chunk> {
     let mut current: Vec<usize> = Vec::new();
     let mut size = 0;
     for p in 0..pieces.len() {
-        let has_body = current.iter().any(|&i| !pieces[i].heading);
-        if has_body && size + pieces[p].tokens > max {
+        if !current.is_empty() && size + pieces[p].tokens > max {
             let mut next = Vec::new();
-            while current.last().is_some_and(|&i| pieces[i].heading) {
-                next.insert(0, current.pop().unwrap_or_default());
+            let mut moved = 0;
+            while !pieces[p].heading
+                && let Some(&i) = current.last()
+                && pieces[i].heading
+                && moved + pieces[i].tokens + pieces[p].tokens <= max
+            {
+                moved += pieces[i].tokens;
+                next.push(i);
+                current.pop();
             }
+            next.reverse();
             let tail = overlap_tail(&pieces, &current, overlap);
-            groups.push((std::mem::take(&mut carry), std::mem::take(&mut current)));
+            if !current.is_empty() {
+                groups.push((std::mem::take(&mut carry), std::mem::take(&mut current)));
+            }
             current = next;
-            size = current.iter().map(|&i| pieces[i].tokens).sum::<usize>();
+            size = moved;
             let tail_size = approx_tokens(&join(&tail));
             if size + tail_size + pieces[p].tokens <= max {
                 size += tail_size;
@@ -399,6 +408,55 @@ mod tests {
     use super::{approx_tokens, chunk};
 
     const PAGE: &str = "# Rust\n\nRust is a language.\n\n## History\n\nGraydon Hoare began Rust in 2006 as a personal project.\n\nMozilla sponsored it from 2009.\n\n## Tooling\n\nCargo is the package manager.\n\n```\nfn main() {\n\n    println!(\"hi\");\n}\n```\n";
+
+    #[test]
+    fn a_run_of_headings_is_cut_like_any_other_text() {
+        let page = (0..500)
+            .map(|i| format!("## Story title number {i}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let chunks = chunk(&page, 64, 0);
+        assert!(chunks.len() > 10, "{}", chunks.len());
+        assert!(chunks.iter().all(|c| c.tokens <= 64), "{chunks:?}");
+    }
+
+    #[test]
+    fn a_heading_ladder_taller_than_the_chunk_keeps_chunks_under_size() {
+        let page = (0..20)
+            .map(|i| {
+                let ladder = (1..=6)
+                    .map(|l| {
+                        format!(
+                            "{} Section {i}.{l} with a fairly long heading text here",
+                            "#".repeat(l)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                format!("{ladder}\n\nShort body.")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let chunks = chunk(&page, 64, 0);
+        assert!(chunks.iter().all(|c| c.tokens <= 64), "{chunks:?}");
+        for c in chunks.iter().filter(|c| c.text.contains("Short body.")) {
+            assert!(c.text.contains("###### Section"), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_paragraph_under_tall_headings_gets_the_room_they_leave() {
+        let headings = (1..=4)
+            .map(|l| format!("{} Heading level {l} that takes some room", "#".repeat(l)))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let page = format!(
+            "{headings}\n\n{}",
+            "Words keep coming in this paragraph. ".repeat(40)
+        );
+        let chunks = chunk(&page, 60, 0);
+        assert!(chunks.iter().all(|c| c.tokens <= 60), "{chunks:?}");
+    }
 
     #[test]
     fn approx_tokens_counts_words_digits_symbols_and_cjk_characters() {

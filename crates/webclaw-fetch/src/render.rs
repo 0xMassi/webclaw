@@ -44,10 +44,6 @@ pub struct RenderOptions {
     pub headers: Vec<(String, String)>,
     /// Resource types whose requests fail; see [`Block`] for what it misses.
     pub block: Block,
-    /// Steps run in order once the page has loaded, before it is read or
-    /// captured. They get their own time budget, equal to `timeout`, and
-    /// the first failing step fails the render with its number in the error.
-    pub actions: Vec<Action>,
 }
 
 impl Default for RenderOptions {
@@ -57,7 +53,6 @@ impl Default for RenderOptions {
             timeout: Duration::from_secs(30),
             headers: Vec::new(),
             block: Block::default(),
-            actions: Vec::new(),
         }
     }
 }
@@ -91,8 +86,6 @@ pub struct Screenshot {
     pub status: u16,
     /// The page's URL after redirects.
     pub url: String,
-    /// The values of the `eval` actions, in order.
-    pub script_results: Vec<serde_json::Value>,
 }
 
 impl Screenshot {
@@ -295,9 +288,8 @@ impl Renderer {
         }
     }
 
-    /// Render `url` and return the DOM after its scripts and
-    /// `options.actions` ran. The result has status 200 and no headers;
-    /// extract it with [`crate::FetchClient::extract`].
+    /// Render `url` and return the DOM after its scripts ran. The result has
+    /// status 200 and no headers; extract it with [`crate::FetchClient::extract`].
     ///
     /// With `prefetched`, the browser gets that response for the page itself
     /// (body and headers, `Set-Cookie` included) instead of requesting it
@@ -314,21 +306,36 @@ impl Renderer {
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
     ) -> Result<FetchResult, FetchError> {
+        Ok(self.render_actions(url, prefetched, options, &[]).await?.0)
+    }
+
+    /// [`Renderer::render`], running `actions` in order once the page has
+    /// loaded and before it is read. They get their own time budget, equal to
+    /// `options.timeout`, and the first failing step fails the render with
+    /// its number in the error. Returns the page and the values of its
+    /// `executeJavascript` steps.
+    pub async fn render_actions(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+        actions: &[Action],
+    ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
         let start = Instant::now();
         let visited = self
-            .visit(url, prefetched, options, None, async |page| {
+            .visit(url, prefetched, options, actions, None, async |page| {
                 page.content().await
             })
             .await?;
-        Ok(FetchResult {
+        let page = FetchResult {
             html: visited.value,
             document_bytes: None,
             status: visited.status,
             url: visited.url,
             headers: http::HeaderMap::new(),
             elapsed: start.elapsed(),
-            script_results: visited.scripts,
-        })
+        };
+        Ok((page, visited.scripts))
     }
 
     /// Render `url` in a 1280x720 viewport and capture it once its content
@@ -340,6 +347,17 @@ impl Renderer {
         options: &RenderOptions,
         shot: ScreenshotOptions,
     ) -> Result<Screenshot, FetchError> {
+        Ok(self.screenshot_actions(url, options, shot, &[]).await?.0)
+    }
+
+    /// [`Renderer::screenshot`] after `actions`, as [`Renderer::render_actions`] runs them.
+    pub async fn screenshot_actions(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        shot: ScreenshotOptions,
+        actions: &[Action],
+    ) -> Result<(Screenshot, Vec<serde_json::Value>), FetchError> {
         let mut params = ScreenshotParams::builder().full_page(shot.full_page);
         params = if shot.jpeg {
             params.format(CaptureScreenshotFormat::Jpeg).quality(80)
@@ -355,16 +373,17 @@ impl Renderer {
                     block: Block::default(),
                     ..options.clone()
                 },
+                actions,
                 Some(SCREENSHOT_VIEWPORT),
                 async move |page| page.screenshot(params).await,
             )
             .await?;
-        Ok(Screenshot {
+        let shot = Screenshot {
             image: visited.value,
             status: visited.status,
             url: visited.url,
-            script_results: visited.scripts,
-        })
+        };
+        Ok((shot, visited.scripts))
     }
 
     async fn visit<T>(
@@ -372,6 +391,7 @@ impl Renderer {
         url: &str,
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
+        actions: &[Action],
         viewport: Option<(i64, i64)>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
     ) -> Result<Visited<T>, FetchError> {
@@ -381,7 +401,7 @@ impl Renderer {
             .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
         if !private {
             return self
-                .visit_in(None, url, prefetched, options, viewport, read)
+                .visit_in(None, url, prefetched, options, actions, viewport, read)
                 .await;
         }
         let context = self
@@ -397,6 +417,7 @@ impl Renderer {
                 url,
                 prefetched,
                 options,
+                actions,
                 viewport,
                 read,
             )
@@ -405,12 +426,14 @@ impl Renderer {
         visited
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn visit_in<T>(
         &self,
         context: Option<BrowserContextId>,
         url: &str,
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
+        actions: &[Action],
         viewport: Option<(i64, i64)>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
     ) -> Result<Visited<T>, FetchError> {
@@ -519,7 +542,7 @@ impl Renderer {
                 let _ = guard_page.execute(resume).await;
             }
         });
-        let limit = options.timeout * if options.actions.is_empty() { 1 } else { 2 };
+        let limit = options.timeout * if actions.is_empty() { 1 } else { 2 };
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
             tokio::select! {
@@ -531,14 +554,14 @@ impl Renderer {
                     .await
                     .map_err(browser_error)?;
             }
-            let scripts = crate::actions::run(&page, &options.actions, options.timeout).await?;
+            let scripts = crate::actions::run(&page, actions, options.timeout).await?;
             let value = read(&page).await.map_err(browser_error)?;
             let final_url = page
                 .url()
                 .await
                 .map_err(browser_error)?
                 .unwrap_or_else(|| url.clone());
-            if !options.actions.is_empty() {
+            if !actions.is_empty() {
                 if final_url.starts_with("chrome-error:") {
                     return Err(FetchError::Build(
                         "the actions navigated to a page the browser refused or could not load"
@@ -685,8 +708,23 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         block: Block,
-        actions: &[Action],
     ) -> Result<FetchResult, FetchError> {
+        Ok(self
+            .render_actions(url, prefetched, wait_for, headers, block, &[])
+            .await?
+            .0)
+    }
+
+    /// Render `url` running `actions`; see [`Renderer::render_actions`].
+    pub async fn render_actions(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        block: Block,
+        actions: &[Action],
+    ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
         let _tab = self
             .tabs
             .acquire()
@@ -694,10 +732,11 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .render(
+            .render_actions(
                 url,
                 prefetched,
-                &self.options(wait_for, headers, block, actions),
+                &self.options(wait_for, headers, block),
+                actions,
             )
             .await
     }
@@ -709,8 +748,22 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         shot: ScreenshotOptions,
-        actions: &[Action],
     ) -> Result<Screenshot, FetchError> {
+        Ok(self
+            .screenshot_actions(url, wait_for, headers, shot, &[])
+            .await?
+            .0)
+    }
+
+    /// Screenshot `url` after `actions`; see [`Renderer::screenshot_actions`].
+    pub async fn screenshot_actions(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        shot: ScreenshotOptions,
+        actions: &[Action],
+    ) -> Result<(Screenshot, Vec<serde_json::Value>), FetchError> {
         let _tab = self
             .tabs
             .acquire()
@@ -718,10 +771,11 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .screenshot(
+            .screenshot_actions(
                 url,
-                &self.options(wait_for, headers, Block::default(), actions),
+                &self.options(wait_for, headers, Block::default()),
                 shot,
+                actions,
             )
             .await
     }
@@ -731,14 +785,12 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         block: Block,
-        actions: &[Action],
     ) -> RenderOptions {
         RenderOptions {
             wait_for: wait_for.map(str::to_string),
             timeout: self.timeout,
             headers: headers.to_vec(),
             block,
-            actions: actions.to_vec(),
         }
     }
 
@@ -794,7 +846,6 @@ impl RenderPool {
                 config.wait_for.as_deref(),
                 headers,
                 config.block,
-                &[],
             )
             .await;
         match rendered {
@@ -1231,7 +1282,7 @@ mod tests {
             r#"<html><body><a id="go" href="http://example.net:81/rebound">go</a></body></html>"#;
         let headers = http::HeaderMap::new();
         let rendered = renderer
-            .render(
+            .render_actions(
                 "https://example.com/",
                 Some(Prefetched {
                     html,
@@ -1239,10 +1290,9 @@ mod tests {
                 }),
                 &RenderOptions {
                     timeout: std::time::Duration::from_secs(20),
-                    actions: super::parse_actions(r##"[{"type": "click", "selector": "#go"}]"##)
-                        .unwrap(),
                     ..Default::default()
                 },
+                &super::parse_actions(r##"[{"type": "click", "selector": "#go"}]"##).unwrap(),
             )
             .await;
         renderer.close().await;
@@ -1699,7 +1749,6 @@ mod tests {
 
     fn page(url: &str, html: &str, status: u16) -> crate::client::FetchResult {
         crate::client::FetchResult {
-            script_results: Vec::new(),
             html: html.into(),
             document_bytes: None,
             status,

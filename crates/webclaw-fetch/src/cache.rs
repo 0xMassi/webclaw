@@ -66,7 +66,6 @@ impl ResponseCache {
             }
         }
         Some(FetchResult {
-            script_results: Vec::new(),
             html,
             document_bytes,
             status: meta.status,
@@ -163,7 +162,6 @@ mod tests {
         headers.insert("content-type", "text/html".parse().unwrap());
         headers.insert("set-cookie", "session=secret".parse().unwrap());
         crate::client::FetchResult {
-            script_results: Vec::new(),
             html: html.into(),
             document_bytes: document.map(bytes::Bytes::copy_from_slice),
             status: 200,

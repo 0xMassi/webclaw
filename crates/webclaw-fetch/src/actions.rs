@@ -586,10 +586,10 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         html: &str,
         actions: &str,
         timeout: Duration,
-    ) -> Result<crate::FetchResult, crate::FetchError> {
+    ) -> Result<(crate::FetchResult, Vec<serde_json::Value>), crate::FetchError> {
         let headers = http::HeaderMap::new();
         renderer
-            .render(
+            .render_actions(
                 "https://example.com/feed",
                 Some(Prefetched {
                     html,
@@ -597,9 +597,9 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
                 }),
                 &RenderOptions {
                     timeout,
-                    actions: parse_actions(actions).unwrap(),
                     ..Default::default()
                 },
+                &parse_actions(actions).unwrap(),
             )
             .await
     }
@@ -643,12 +643,12 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         )
         .await;
         renderer.close().await;
-        let done = done.expect("actions run");
+        let (done, js) = done.expect("actions run");
         assert!(done.html.contains("item 20") && !done.html.contains("item 21"));
         assert!(done.html.contains("more 3") && !done.html.contains("more 4"));
         assert!(done.html.contains("searched rust"), "{}", done.html);
         assert_eq!(
-            done.script_results,
+            js,
             vec![
                 serde_json::json!(20),
                 serde_json::json!(2),
@@ -721,19 +721,14 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         )
         .await;
         renderer.close().await;
-        let fetched = fetched.expect("render succeeds");
+        let (_, fetched) = fetched.expect("render succeeds");
         assert_eq!(
-            fetched.script_results[..2],
+            fetched[..2],
             [serde_json::json!("blocked"), serde_json::json!("blocked")]
         );
-        assert!(
-            fetched.script_results[3]
-                .as_str()
-                .unwrap()
-                .contains("start")
-        );
-        assert!(clicked.is_err(), "{:?}", clicked.map(|r| r.url));
-        assert!(submitted.is_err(), "{:?}", submitted.map(|r| r.url));
+        assert!(fetched[3].as_str().unwrap().contains("start"));
+        assert!(clicked.is_err(), "{:?}", clicked.map(|(r, _)| r.url));
+        assert!(submitted.is_err(), "{:?}", submitted.map(|(r, _)| r.url));
         assert_eq!(
             hits.load(Ordering::SeqCst),
             0,

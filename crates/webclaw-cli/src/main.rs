@@ -1141,9 +1141,9 @@ async fn render_page(cli: &Cli, config: &FetchConfig, url: &str) -> Result<Fetch
     let actions = page_actions(cli)?;
     let render = config.render.as_ref().ok_or("rendering is off")?;
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
-    let page = render
+    let (page, js_results) = render
         .pool
-        .render(
+        .render_actions(
             url,
             None,
             render.wait_for.as_deref(),
@@ -1153,7 +1153,7 @@ async fn render_page(cli: &Cli, config: &FetchConfig, url: &str) -> Result<Fetch
         )
         .await
         .map_err(|e| format!("render error: {e}"))?;
-    print_script_results(&page.script_results);
+    print_script_results(&js_results);
     Ok(page)
 }
 
@@ -1177,7 +1177,7 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
     let shot = render
         .pool
-        .screenshot(
+        .screenshot_actions(
             url,
             render.wait_for.as_deref(),
             &headers,
@@ -1189,8 +1189,8 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
         )
         .await;
     close_browser(&config).await;
-    let shot = shot.map_err(|e| format!("screenshot error: {e}"))?;
-    print_script_results(&shot.script_results);
+    let (shot, js_results) = shot.map_err(|e| format!("screenshot error: {e}"))?;
+    print_script_results(&js_results);
     webclaw_fetch::FetchError::check_status(shot.status).map_err(|e| e.to_string())?;
     std::fs::write(path, &shot.image)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -1335,7 +1335,6 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
             .read_to_string(&mut buf)
             .map_err(|e| format!("failed to read stdin: {e}"))?;
         return Ok(FetchResult {
-            script_results: Vec::new(),
             document_bytes: None,
             html: buf,
             url: String::new(),
@@ -1349,7 +1348,6 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
         let html =
             std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
         return Ok(FetchResult {
-            script_results: Vec::new(),
             document_bytes: None,
             html,
             url: String::new(),

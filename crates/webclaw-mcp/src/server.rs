@@ -259,9 +259,9 @@ impl WebclawMcp {
             .render
             .as_ref()
             .ok_or("screenshots need the browser, which is turned off for this server (WEBCLAW_RENDER=never)")?;
-        let shot = render
+        let (shot, js_results) = render
             .pool
-            .screenshot(
+            .screenshot_actions(
                 url,
                 wait_for,
                 &[],
@@ -276,9 +276,9 @@ impl WebclawMcp {
             rmcp::model::ContentBlock::image(shot.base64(), mime),
             rmcp::model::ContentBlock::text(shot.url),
         ];
-        if !shot.script_results.is_empty() {
+        if !js_results.is_empty() {
             content.push(rmcp::model::ContentBlock::text(
-                serde_json::to_string_pretty(&shot.script_results).unwrap_or_default(),
+                serde_json::to_string_pretty(&js_results).unwrap_or_default(),
             ));
         }
         Ok(CallToolResult::success(content))
@@ -313,9 +313,9 @@ impl WebclawMcp {
         if let Some(cookies) = params.cookies.as_ref().filter(|c| !c.is_empty()) {
             headers.push(("Cookie".into(), cookies.join("; ")));
         }
-        let page = render
+        let (page, results) = render
             .pool
-            .render(
+            .render_actions(
                 &params.url,
                 None,
                 render.wait_for.as_deref(),
@@ -347,7 +347,6 @@ impl WebclawMcp {
             .map_err(|e| e.to_string())?;
         }
         let format = params.format.as_deref().unwrap_or("markdown");
-        let results = page.script_results;
         if format == "json" && !results.is_empty() {
             let mut value = serde_json::to_value(&extraction).map_err(|e| e.to_string())?;
             value["script_results"] = serde_json::Value::Array(results);

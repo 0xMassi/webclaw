@@ -555,8 +555,28 @@ impl FetchClient {
     /// `FetchConfig.headers` shouldn't carry to other hosts (Instagram's
     /// `x-ig-app-id`, GitHub's `Authorization` once we wire `GITHUB_TOKEN`,
     /// Reddit's compliant UA when we add OAuth, etc.).
+    ///
+    /// With a render pool on a persistent browser profile, an HTML page is
+    /// then loaded in the browser with the profile's cookies; see
+    /// `render::RenderPool::load_in_profile` in a `browser` build.
     #[instrument(skip(self, extra), fields(url = %url, extra_count = extra.len()))]
     pub async fn fetch_with_headers(
+        &self,
+        url: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        let fetched = self.fetch_over_http(url, extra).await?;
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.render {
+            return render
+                .pool
+                .load_in_profile(url, fetched, render, &self.headers)
+                .await;
+        }
+        Ok(fetched)
+    }
+
+    async fn fetch_over_http(
         &self,
         url: &str,
         extra: &[(&str, &str)],

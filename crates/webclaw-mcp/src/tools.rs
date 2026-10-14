@@ -85,6 +85,40 @@ where
     }
 }
 
+fn actions_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let selector = schemars::json_schema!({"type": "string", "description": "CSS selector"});
+    let count = schemars::json_schema!({"type": "integer", "minimum": 0});
+    let step = |name: &str, required: &[&str], properties: serde_json::Value| {
+        let mut properties = properties;
+        properties["type"] = serde_json::json!({"const": name});
+        let required = [["type"].as_slice(), required].concat();
+        serde_json::json!({
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false
+        })
+    };
+    schemars::json_schema!({
+        "type": "array",
+        "items": {"oneOf": [
+            step("click", &["selector"], serde_json::json!({
+                "selector": selector, "nth": count, "all": {"type": "boolean"}, "repeat": count})),
+            step("type", &["selector", "value"], serde_json::json!({
+                "selector": selector, "value": {"type": "string"}})),
+            step("press", &["key"], serde_json::json!({
+                "key": {"type": "string", "description": "Enter, Tab, ArrowDown, ..."}})),
+            step("scroll", &[], serde_json::json!({
+                "direction": {"enum": ["down", "up"]}, "amount": count,
+                "selector": selector, "repeat": count})),
+            step("wait", &["milliseconds"], serde_json::json!({"milliseconds": count})),
+            step("waitForSelector", &["selector"], serde_json::json!({
+                "selector": selector, "timeout": count})),
+            step("executeJavascript", &["code"], serde_json::json!({"code": {"type": "string"}})),
+        ]}
+    })
+}
+
 // ── Parameter structs ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -119,6 +153,7 @@ pub struct ScrapeParams {
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub chunk_overlap: Option<usize>,
     /// Steps to run in the local browser once the page has loaded, before it is read. The page is always rendered when this is set. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error
+    #[schemars(schema_with = "actions_schema")]
     pub actions: Option<Vec<serde_json::Value>>,
 }
 
@@ -162,6 +197,7 @@ pub struct ScreenshotParams {
     /// Also wait until an element matching this CSS selector exists before capturing
     pub wait_for: Option<String>,
     /// Steps to run in the local browser once the page has loaded, before it is captured. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error
+    #[schemars(schema_with = "actions_schema")]
     pub actions: Option<Vec<serde_json::Value>>,
 }
 
@@ -298,6 +334,38 @@ pub struct ListExtractorsParams {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn actions_publish_a_schema_for_every_step() {
+        for schema in [
+            serde_json::to_value(schemars::schema_for!(ScrapeParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(ScreenshotParams)).unwrap(),
+        ] {
+            let steps = schema["properties"]["actions"]["items"]["oneOf"]
+                .as_array()
+                .expect("one schema per step")
+                .iter()
+                .map(|s| {
+                    s["properties"]["type"]["const"]
+                        .as_str()
+                        .unwrap()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                steps,
+                [
+                    "click",
+                    "type",
+                    "press",
+                    "scroll",
+                    "wait",
+                    "waitForSelector",
+                    "executeJavascript"
+                ]
+            );
+        }
+    }
 
     #[test]
     fn chunk_sizes_accept_numbers_and_numeric_strings() {

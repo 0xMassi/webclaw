@@ -240,12 +240,13 @@ struct Cli {
     #[arg(long, value_name = "QUESTION", conflicts_with = "watch")]
     query: Option<String>,
 
-    /// Print the page as chunks for retrieval, one JSON object per line with
-    /// url, index, heading_path, tokens and markdown text. Paragraphs, lists,
-    /// tables and code blocks stay whole; each chunk stays under about this
-    /// many tokens. Works with several URLs and --crawl (chunks per page)
+    /// Print the page as chunks for retrieval, one JSON object per line (one
+    /// JSON array with -f json) with url, index, heading_path, tokens and
+    /// markdown text. Paragraphs, lists, tables and code blocks stay whole;
+    /// each chunk stays under about this many tokens. Works with several URLs
+    /// and --crawl (chunks per page)
     #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(1..),
-          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "output_dir", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
+          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "output_dir", "metadata", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
     chunk: Option<u32>,
 
     /// With --chunk, start each chunk with up to this many tokens from the end
@@ -1558,12 +1559,39 @@ fn chunk_sizes(cli: &Cli) -> Option<(u32, u32)> {
     cli.chunk.map(|size| (size, cli.chunk_overlap))
 }
 
-fn print_chunks(markdown: &str, url: Option<&str>, (size, overlap): (u32, u32)) {
-    for mut chunk in webclaw_core::chunk(markdown, size as usize, overlap as usize) {
+fn check_chunk_format(cli: &Cli) -> Result<(), String> {
+    match (cli.chunk, &cli.format) {
+        (Some(_), OutputFormat::Text | OutputFormat::Llm | OutputFormat::Html) => Err(
+            "--chunk prints markdown chunks as JSON lines, or one JSON array with -f json".into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+fn chunk_page(
+    markdown: &str,
+    url: Option<&str>,
+    (size, overlap): (u32, u32),
+) -> Vec<webclaw_core::Chunk> {
+    let mut chunks = webclaw_core::chunk(markdown, size as usize, overlap as usize);
+    for chunk in &mut chunks {
         chunk.url = url.map(String::from);
+    }
+    chunks
+}
+
+fn print_chunks(chunks: &[webclaw_core::Chunk], format: &OutputFormat) {
+    if matches!(format, OutputFormat::Json) {
         println!(
             "{}",
-            serde_json::to_string(&chunk).expect("serialization failed")
+            serde_json::to_string_pretty(chunks).expect("serialization failed")
+        );
+        return;
+    }
+    for chunk in chunks {
+        println!(
+            "{}",
+            serde_json::to_string(chunk).expect("serialization failed")
         );
     }
 }
@@ -1914,7 +1942,8 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         .unwrap_or_default();
 
     let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(4096);
-    let stream_jsonl = (matches!(cli.format, OutputFormat::Jsonl) || cli.chunk.is_some())
+    let stream_jsonl = (matches!(cli.format, OutputFormat::Jsonl)
+        || (cli.chunk.is_some() && !matches!(cli.format, OutputFormat::Json)))
         && cli.output_dir.is_none();
     let chunk_cli = chunk_sizes(cli);
     let streamed_urls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
@@ -1923,9 +1952,10 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         let streamed_urls = Arc::clone(&streamed_urls);
         PageSink(Arc::new(move |page: &PageResult| {
             match (chunk_cli, &page.extraction) {
-                (Some(sizes), Some(extraction)) => {
-                    print_chunks(&extraction.content.markdown, Some(&page.url), sizes)
-                }
+                (Some(sizes), Some(extraction)) => print_chunks(
+                    &chunk_page(&extraction.content.markdown, Some(&page.url), sizes),
+                    &OutputFormat::Jsonl,
+                ),
                 (Some(_), None) => {}
                 (None, _) => println!(
                     "{}",
@@ -2046,7 +2076,23 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
             }
         }
         eprintln!("Saved {saved} files to {}", dir.display());
-    } else if cli.chunk.is_none() {
+    } else if let Some(sizes) = chunk_sizes(cli) {
+        if !stream_jsonl {
+            let chunks: Vec<_> = result
+                .pages
+                .iter()
+                .filter_map(|p| {
+                    Some(chunk_page(
+                        &p.extraction.as_ref()?.content.markdown,
+                        Some(&p.url),
+                        sizes,
+                    ))
+                })
+                .flatten()
+                .collect();
+            print_chunks(&chunks, &cli.format);
+        }
+    } else {
         print_crawl_output(&result, &cli.format, cli.metadata);
     }
 
@@ -2243,11 +2289,18 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
         }
         eprintln!("Saved {saved} files to {}", dir.display());
     } else if let Some(sizes) = chunk_sizes(cli) {
-        for r in &results {
-            if let Ok(ref extraction) = r.result {
-                print_chunks(&extraction.content.markdown, Some(&r.url), sizes);
-            }
-        }
+        let chunks: Vec<_> = results
+            .iter()
+            .filter_map(|r| {
+                Some(chunk_page(
+                    &r.result.as_ref().ok()?.content.markdown,
+                    Some(&r.url),
+                    sizes,
+                ))
+            })
+            .flatten()
+            .collect();
+        print_chunks(&chunks, &cli.format);
     } else {
         print_batch_output(&results, &cli.format, cli.metadata);
     }
@@ -3275,6 +3328,10 @@ async fn main() {
         }
     };
     backfill_single_file_url(&mut cli.urls, &entries);
+    if let Err(e) = check_chunk_format(&cli) {
+        eprintln!("error: {e}");
+        process::exit(1);
+    }
 
     if let Some(ref path) = cli.screenshot {
         let shot = match (entries.len(), cli.urls.first()) {
@@ -3431,11 +3488,12 @@ async fn main() {
                     process::exit(1);
                 }
             } else if let Some(sizes) = chunk_sizes(&cli) {
-                print_chunks(
+                let chunks = chunk_page(
                     &result.content.markdown,
                     result.metadata.url.as_deref(),
                     sizes,
                 );
+                print_chunks(&chunks, &cli.format);
             } else {
                 print_output(&result, &cli.format, cli.metadata);
             }
@@ -3446,11 +3504,12 @@ async fn main() {
             }
             if let Some(sizes) = chunk_sizes(&cli) {
                 let url = cli.urls.first().map(|u| normalize_url(u));
-                print_chunks(
+                let chunks = chunk_page(
                     cloud_text(&resp, "markdown", "markdown").unwrap_or_default(),
                     url.as_deref(),
                     sizes,
                 );
+                print_chunks(&chunks, &cli.format);
             } else {
                 print_cloud_output(&resp, &cli.format);
             }

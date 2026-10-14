@@ -288,7 +288,7 @@ fn split_block(text: &str, budget: usize) -> Vec<(String, &'static str)> {
         return vec![(text.to_string(), "\n\n")];
     }
     let lines: Vec<&str> = text.lines().collect();
-    if let Some(marker) = fence_marker(text) {
+    if let Some(marker) = fence_marker(text).filter(|_| lines.len() > 1) {
         let last = lines.len() - 1;
         let closed = last > 0 && lines[last].trim().starts_with(marker.as_str());
         let (end, close) = if closed {
@@ -544,6 +544,14 @@ mod tests {
                 "{c:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_one_line_block_that_starts_like_a_fence_is_kept() {
+        let page = format!("```inline``` {}", "word ".repeat(400));
+        let chunks = chunk(&page, 64, 0);
+        let words: usize = chunks.iter().map(|c| c.text.matches("word").count()).sum();
+        assert_eq!(words, 400, "{chunks:?}");
     }
 
     #[test]

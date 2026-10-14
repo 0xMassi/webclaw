@@ -45,8 +45,9 @@ struct Piece {
 
 /// Rough token count, without a tokenizer: one token per six ASCII letters
 /// of a word, per two other letters, per three digits and per two symbols in
-/// a row, and one per Chinese, Japanese or Korean character. On web markdown
-/// it lands within about 20% of common BPE tokenizers for nine chunks in ten.
+/// a row, one per Chinese, Japanese or Korean character, and one for the
+/// space before a number (counted at the start of the text too, so the
+/// count of a piece never falls below its share of the whole).
 pub fn approx_tokens(s: &str) -> usize {
     let mut tally = Tally::default();
     s.chars().for_each(|c| tally.push(c));
@@ -68,6 +69,7 @@ struct Tally {
     run: Run,
     len: usize,
     wide: usize,
+    glued: bool,
 }
 
 impl Tally {
@@ -85,9 +87,10 @@ impl Tally {
             Run::Symbol
         };
         if kind != self.run {
-            self.tokens = self.total();
+            self.tokens = self.total() + usize::from(kind == Run::Digit && !self.glued);
             (self.run, self.len, self.wide) = (kind, 0, 0);
         }
+        self.glued = !c.is_whitespace();
         self.len += 1;
         if kind == Run::Letter && !c.is_ascii() {
             self.wide += 1;
@@ -565,12 +568,19 @@ mod tests {
     }
 
     #[test]
+    fn a_number_after_a_space_costs_a_token_for_the_space() {
+        assert_eq!(approx_tokens("a 1 2 3"), 7);
+        assert_eq!(approx_tokens("page 195"), 3);
+        assert_eq!(approx_tokens("1234567"), 4);
+    }
+
+    #[test]
     fn approx_tokens_counts_words_digits_symbols_and_cjk_characters() {
         assert_eq!(approx_tokens(""), 0);
         assert_eq!(approx_tokens("  \n "), 0);
         assert_eq!(approx_tokens("The cat sat."), 4);
         assert_eq!(approx_tokens("extraordinary"), 3);
-        assert_eq!(approx_tokens("1234567"), 3);
+        assert_eq!(approx_tokens("1234567"), 4);
         assert_eq!(approx_tokens("[a](https://x.io)"), 10);
         assert_eq!(approx_tokens("東京都庁"), 4);
         assert_eq!(approx_tokens("Tokyo 東京"), 3);

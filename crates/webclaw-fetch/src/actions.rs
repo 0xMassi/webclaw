@@ -8,6 +8,9 @@ use chromiumoxide::cdp::browser_protocol::input::InsertTextParams;
 use chromiumoxide::cdp::browser_protocol::network::{
     EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent, RequestId, ResourceType,
 };
+use chromiumoxide::cdp::browser_protocol::page::{
+    EventJavascriptDialogOpening, HandleJavaScriptDialogParams,
+};
 use chromiumoxide::cdp::browser_protocol::target::{
     CloseTargetParams, EventTargetCreated, GetTargetsParams, TargetId,
 };
@@ -26,7 +29,8 @@ use crate::error::FetchError;
 ///
 /// Every step that needs an element waits up to 10 seconds for it. After a
 /// click, a key press or a scroll, webclaw waits until the page stops
-/// changing, up to 5 seconds.
+/// changing, up to 5 seconds. Alerts, confirms and prompts that steps
+/// open are dismissed.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Action {
@@ -254,8 +258,21 @@ pub(crate) async fn run(
     let (requests, watching) = Requests::watch(page)
         .await
         .map_err(|e| FetchError::Build(format!("browser: {e}")))?;
+    let mut dialogs = page
+        .event_listener::<EventJavascriptDialogOpening>()
+        .await
+        .map_err(|e| FetchError::Build(format!("browser: {e}")))?;
+    let answering = page.clone();
+    let dismissing = tokio::spawn(async move {
+        while dialogs.next().await.is_some() {
+            let _ = answering
+                .execute(HandleJavaScriptDialogParams::new(false))
+                .await;
+        }
+    });
     let ran = run_all(page, &requests, actions, budget, deadline).await;
     watching.abort();
+    dismissing.abort();
     ran
 }
 
@@ -903,6 +920,32 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         assert_eq!(
             done.expect("the script finishes").1,
             vec![serde_json::json!("late")]
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn dialogs_opened_by_a_step_are_dismissed() {
+        let page = r#"<html><body><button id="b" onclick="alert('hi'); document.getElementById('out').textContent = confirm('sure?') ? 'yes' : 'no';">b</button><p id="out"></p></body></html>"#;
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let started = std::time::Instant::now();
+        let done = render_feed(
+            &renderer,
+            page,
+            r##"[{"type": "click", "selector": "#b"},
+                {"type": "executeJavascript", "code": "document.getElementById('out').textContent"}]"##,
+            Duration::from_secs(15),
+        )
+        .await;
+        renderer.close().await;
+        assert_eq!(
+            done.expect("dialogs dismissed").1,
+            vec![serde_json::json!("no")]
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
         );
     }
 }

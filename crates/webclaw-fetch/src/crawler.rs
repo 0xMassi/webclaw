@@ -502,7 +502,10 @@ impl Crawler {
 
         let resumed_pages = resume_state.as_ref().map_or(0, |s| s.completed_pages);
         let mut visited: HashSet<String>;
-        let mut frontier = Frontier::default();
+        let mut frontier = Frontier {
+            evict: self.ask.is_some(),
+            ..Default::default()
+        };
         if let Some(state) = resume_state {
             visited = state.visited.into_iter().collect();
             for (url, depth) in state.frontier {
@@ -957,6 +960,7 @@ struct Frontier {
     queue: BTreeMap<FrontierKey, String>,
     back: i64,
     front: i64,
+    evict: bool,
 }
 
 impl Frontier {
@@ -983,7 +987,7 @@ impl Frontier {
         if self.queue.len() >= cap {
             let key = Self::key(score, depth, self.back);
             match self.queue.last_key_value() {
-                Some((last, _)) if key < *last => {
+                Some((last, _)) if self.evict && key < *last => {
                     self.queue.pop_last();
                 }
                 _ => return false,
@@ -1641,8 +1645,23 @@ mod tests {
     }
 
     #[test]
-    fn a_full_frontier_drops_its_lowest_priority_link() {
+    fn a_full_breadth_first_frontier_drops_new_links() {
         let mut frontier = Frontier::default();
+        assert!(frontier.push_capped("deep-a".into(), 3, 0.0, 2));
+        assert!(frontier.push_capped("deep-b".into(), 3, 0.0, 2));
+        assert!(!frontier.push_capped("shallow".into(), 2, 0.0, 2));
+        assert_eq!(
+            frontier.into_vec(),
+            vec![("deep-a".to_string(), 3), ("deep-b".to_string(), 3)]
+        );
+    }
+
+    #[test]
+    fn a_full_frontier_drops_its_lowest_priority_link() {
+        let mut frontier = Frontier {
+            evict: true,
+            ..Default::default()
+        };
         assert!(frontier.push_capped("a".into(), 1, 0.5, 2));
         assert!(frontier.push_capped("b".into(), 1, 0.1, 2));
         assert!(frontier.push_capped("c".into(), 1, 0.3, 2));

@@ -74,6 +74,14 @@ It fetches the url-mode cases twice through each tool's cache, starting empty, a
 
 It screenshots 10 public pages with each tool, the viewport and the whole page, first with a fresh browser per page and then with one browser kept open (webclaw and Scrapling through their MCP servers, Scrapling inside a browser session). It records the time, the image size and whether the image is blank, and writes `results/<label>/screenshot-summary.md`.
 
+### Blocking resources while rendering
+
+```bash
+./benchmarks/render-block.sh   # webclaw --block against the other tools' resource blocking
+```
+
+It renders 20 script-heavy pages (the `spa` cases, eight JavaScript-built homepages from `facts.json`, Books to Scrape, BBC News and The Verge) with each tool in one browser kept open, 3 rounds, with its blocking off and on: webclaw's `block` list through the MCP `scrape` tool, Scrapling's `disable_resources` (images, fonts, media, stylesheets, beacons, websockets and a few more, by resource type), and Crawl4AI's `text_mode` (images, fonts, media, documents and archives by file extension, plus Chrome flags that turn images and remote fonts off). Every request goes through a local proxy that counts the bytes it carries, leaving out Chrome's own background downloads. It records the time, the bytes, the golden facts and the word count, lists the pages that lost content against the same tool with blocking off, and writes `results/<label>/render-block-summary.md`.
+
 ### MCP over HTTP
 
 ```bash

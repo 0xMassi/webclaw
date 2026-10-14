@@ -193,10 +193,45 @@ impl std::io::Write for Capped {
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum Capture {
-    Png,
-    Jpeg,
-    Pdf,
+    Image { full_page: bool, jpeg: bool },
+    Pdf { a4: bool, print_background: bool },
+}
+
+fn capture(params: &ScreenshotParams) -> Result<Capture, String> {
+    let full_page = params.full_page.unwrap_or(false);
+    let jpeg = match params.format.as_deref() {
+        None | Some("png") => false,
+        Some("jpeg" | "jpg") => true,
+        Some("pdf") => {
+            if full_page {
+                return Err("full_page is for images: a PDF always holds the whole page".into());
+            }
+            let a4 = match params.paper.as_deref() {
+                None | Some("letter") => false,
+                Some("a4") => true,
+                Some(other) => {
+                    return Err(format!(
+                        "paper must be \"letter\" or \"a4\", got \"{other}\""
+                    ));
+                }
+            };
+            return Ok(Capture::Pdf {
+                a4,
+                print_background: params.print_background.unwrap_or(false),
+            });
+        }
+        Some(other) => {
+            return Err(format!(
+                "format must be \"png\", \"jpeg\" or \"pdf\", got \"{other}\""
+            ));
+        }
+    };
+    if params.paper.is_some() || params.print_background.is_some() {
+        return Err("paper and print_background are for format \"pdf\"".into());
+    }
+    Ok(Capture::Image { full_page, jpeg })
 }
 
 #[tool_router]
@@ -279,8 +314,7 @@ impl WebclawMcp {
         &self,
         url: &str,
         wait_for: Option<&str>,
-        full_page: bool,
-        format: Capture,
+        capture: Capture,
         actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
         let actions = parse_actions(actions)?;
@@ -289,10 +323,12 @@ impl WebclawMcp {
             .render
             .as_ref()
             .ok_or("screenshots need the browser, which is turned off for this server (WEBCLAW_RENDER=never)")?;
-        let jpeg = match format {
-            Capture::Png => false,
-            Capture::Jpeg => true,
-            Capture::Pdf => {
+        let (full_page, jpeg) = match capture {
+            Capture::Image { full_page, jpeg } => (full_page, jpeg),
+            Capture::Pdf {
+                a4,
+                print_background,
+            } => {
                 let mut data = Capped(Vec::new());
                 let (printed, js_results) = render
                     .pool
@@ -300,7 +336,15 @@ impl WebclawMcp {
                         url,
                         wait_for,
                         &[],
-                        webclaw_fetch::render::PdfOptions::default(),
+                        webclaw_fetch::render::PdfOptions {
+                            paper: if a4 {
+                                webclaw_fetch::render::Paper::A4
+                            } else {
+                                webclaw_fetch::render::Paper::Letter
+                            },
+                            print_background,
+                            ..Default::default()
+                        },
                         &actions,
                         &mut data,
                     )
@@ -446,8 +490,7 @@ impl WebclawMcp {
         &self,
         _url: &str,
         _wait_for: Option<&str>,
-        _full_page: bool,
-        _format: Capture,
+        _capture: Capture,
         _actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
         Err(
@@ -740,28 +783,18 @@ impl WebclawMcp {
         .map_err(|e| e.to_string())?
     }
 
-    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL, and with `actions` the values of their executeJavascript steps. With format "pdf", prints the whole page to a Letter-size PDF instead and returns it as an application/pdf resource.
+    /// Capture a web page in the local Chrome after its scripts ran, as an image or a PDF. Images (PNG, or JPEG with `format`) show the 1280x720 viewport, or the whole page with `full_page`. With format "pdf" the whole page is printed to a Letter or A4 PDF and returned as an application/pdf resource of up to 10 MiB. Also returns the final URL, and with `actions` the values of their executeJavascript steps.
     #[tool]
     async fn screenshot(
         &self,
         Parameters(params): Parameters<ScreenshotParams>,
     ) -> Result<CallToolResult, String> {
         validate_url(&params.url).await?;
-        let format = match params.format.as_deref() {
-            None | Some("png") => Capture::Png,
-            Some("jpeg" | "jpg") => Capture::Jpeg,
-            Some("pdf") => Capture::Pdf,
-            Some(other) => {
-                return Err(format!(
-                    "format must be \"png\", \"jpeg\" or \"pdf\", got \"{other}\""
-                ));
-            }
-        };
+        let capture = capture(&params)?;
         self.take_screenshot(
             &params.url,
             params.wait_for.as_deref(),
-            params.full_page.unwrap_or(false),
-            format,
+            capture,
             params.actions.as_deref(),
         )
         .await
@@ -1530,6 +1563,41 @@ fn pick(
 #[cfg(test)]
 mod tests {
     use super::{check_select, slugify};
+
+    #[test]
+    fn pdf_options_go_with_the_pdf_format_only() {
+        use super::Capture;
+        let capture = |params: serde_json::Value| {
+            let mut params = params;
+            params["url"] = "https://example.com".into();
+            super::capture(&serde_json::from_value(params).unwrap())
+        };
+        assert_eq!(
+            capture(
+                serde_json::json!({"format": "pdf", "paper": "a4", "print_background": "true"})
+            ),
+            Ok(Capture::Pdf {
+                a4: true,
+                print_background: true
+            })
+        );
+        assert_eq!(
+            capture(serde_json::json!({"format": "jpeg", "full_page": true})),
+            Ok(Capture::Image {
+                full_page: true,
+                jpeg: true
+            })
+        );
+        for refused in [
+            serde_json::json!({"format": "pdf", "full_page": true}),
+            serde_json::json!({"format": "pdf", "paper": "a3"}),
+            serde_json::json!({"paper": "a4"}),
+            serde_json::json!({"format": "png", "print_background": true}),
+            serde_json::json!({"format": "gif"}),
+        ] {
+            assert!(capture(refused.clone()).is_err(), "{refused}");
+        }
+    }
 
     #[test]
     fn chunk_overlap_needs_chunk_and_chunk_needs_a_size() {

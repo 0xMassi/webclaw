@@ -30,10 +30,10 @@ const BEST_BLOCKS: usize = 3;
 const MAX_QUESTION_WORDS: usize = 32;
 const MIN_PREFIX: usize = 4;
 
-struct Block<'a> {
-    text: &'a str,
-    heading: Option<usize>,
-    level: usize,
+pub(crate) struct Block<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) heading: Option<usize>,
+    pub(crate) level: usize,
 }
 
 /// `markdown` cut down to the blocks most relevant to `query`. Returns the
@@ -267,7 +267,7 @@ impl Relevance {
     }
 }
 
-fn split_blocks(markdown: &str) -> Vec<Block<'_>> {
+pub(crate) fn split_blocks(markdown: &str) -> Vec<Block<'_>> {
     let mut ranges = Vec::new();
     let mut start: Option<usize> = None;
     let mut fence: Option<(char, usize)> = None;

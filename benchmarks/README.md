@@ -124,6 +124,14 @@ It runs nine pages that need interaction, each in a fresh headless browser, 2 ro
 
 On 2026-10-15 ([results/actions-2026-10-15/actions-summary.md](results/actions-2026-10-15/actions-summary.md)) webclaw got every item in 18 of 18 runs (median 8.1 s), Scrapling in 16 (12.0 s) and Crawl4AI in 16 (11.7 s); rendering with no actions got none. Scrapling and Crawl4AI both kept NPR's first 24 stories in both rounds. NPR shows its button only once its scripts have run and covers it with a cookie banner; in a separate review run Crawl4AI's waiting loop reached 48 to 72 stories, so its result there varies from run to run. With its documented `scroll_delay=1.0`, Crawl4AI's `scan_full_page` gets all 117 items of the webscraper.io scroll shop (12 to 15 with the default 0.2 s), and it is slower on every scroll page for it.
 
+### Staying logged in
+
+```bash
+./benchmarks/profile.sh        # webclaw --browser-profile against Scrapling's user_data_dir and Crawl4AI's persistent context
+```
+
+Each tool runs every step in a process of its own, as one command per run does, with its documented persistent-profile option: webclaw `--browser-profile`, Scrapling `DynamicFetcher(user_data_dir=...)` and Crawl4AI `BrowserConfig(use_persistent_context=True, user_data_dir=...)`. It logs in through the login form of quotes.toscrape.com and practice.expandtesting.com (webclaw with `--actions`, Scrapling with a Playwright `page_action`, Crawl4AI with C4A-Script), then checks in a second process that the page behind the login still shows the logged-in marker, and that a new profile does not. It stores a value in localStorage and IndexedDB from a script on example.com and reads both back in the next process; webclaw gets the script as an async function expression, the form in which `--actions` takes `await` together with `return`. It times one process rendering quotes.toscrape.com/js with no profile, a new profile and a warm one, 5 runs each, and measures the profile on disk. Last, it opens a second process on a profile while the first still holds it and records whether the second one runs. Chrome refuses a second browser on a profile in use; in a separate run, Crawl4AI's second process still started its own Chrome on the profile, which ran next to the first one for about a second and returned the page. Both test logins keep the session in a session cookie; the other two tools lose it on the next run because Chrome drops session cookies when it closes. The practicetestautomation.com test login is left out, since its logged-in page shows the same text without a login, and the-internet.herokuapp.com did not load during the run. Results land in `results/<label>/profile-summary.md`.
+
 ### MCP over HTTP
 
 ```bash

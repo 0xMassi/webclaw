@@ -1,0 +1,15 @@
+{"test": "login", "arm": "webclaw", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "webclaw", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "webclaw", "stored": true, "local_storage": true, "indexed_db": true, "error": null}
+{"test": "timing", "arm": "webclaw", "runs": 5, "fresh_ms": 2087, "warm_ms": 1663, "none_ms": 1981, "fresh_mb": 8.8, "warm_mb": 8.9, "warm_renders": 6, "error": null}
+{"test": "lock", "arm": "webclaw", "first_ok": true, "second": "refused", "message": "file takes one browser at a time fetch error: client build failed: client build failed: the browser profile DIR is in use by another browser, and a profile takes one browser at a time", "second_ms": 196}
+{"test": "login", "arm": "scrapling", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": false, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "scrapling", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": false, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "scrapling", "stored": true, "local_storage": true, "indexed_db": true, "error": null}
+{"test": "timing", "arm": "scrapling", "runs": 5, "fresh_ms": 2287, "warm_ms": 1709, "none_ms": 2302, "fresh_mb": 8.7, "warm_mb": 8.8, "warm_renders": 6, "error": null}
+{"test": "lock", "arm": "scrapling", "first_ok": true, "second": "refused", "message": "5] <will force kill> - [pid=1305] exception while trying to kill process: Error: kill EPERM - [pid=1305] <process did exit: exitCode=21, signal=null> - [pid=1305] starting temporary directories cleanup - [pid=1305] finished temporary direct", "second_ms": 336}
+{"test": "login", "arm": "crawl4ai", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": false, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "crawl4ai", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": false, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "crawl4ai", "stored": true, "local_storage": true, "indexed_db": true, "error": null}
+{"test": "timing", "arm": "crawl4ai", "runs": 5, "fresh_ms": 1692, "warm_ms": 1319, "none_ms": 1773, "fresh_mb": 1.9, "warm_mb": 2.1, "warm_renders": 6, "error": null}
+{"test": "lock", "arm": "crawl4ai", "first_ok": true, "second": "ran on the profile in use", "message": "", "second_ms": 1693}

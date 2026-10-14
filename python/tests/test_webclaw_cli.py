@@ -153,6 +153,8 @@ class Offline(unittest.TestCase):
     def test_bad_arguments(self):
         with self.assertRaises(TypeError):
             wc.scrape(SHOP, proxies="x")
+        with self.assertRaises(TypeError):
+            wc.crawl("https://example.com/", proxies="x")
         with self.assertRaises(ValueError):
             wc.select(SHOP, css="a", xpath="//a")
         with self.assertRaises(ValueError):

@@ -328,8 +328,10 @@ def crawl(
     args = ["--crawl", "--format=jsonl", f"--max-pages={max_pages}", f"--depth={depth}"]
     if query:
         args.append(f"--query={query}")
-    cmd = [binary_path(), *args, *_options(options), "--", url]
-    limit = options.get("time_limit")
+    return _stream([binary_path(), *args, *_options(options), "--", url], options.get("time_limit"))
+
+
+def _stream(cmd: list[str], limit: float | None) -> Iterator[dict[str, Any]]:
     with tempfile.TemporaryFile() as err, _spawn(cmd, False, err) as proc:
         assert proc.stdout is not None
         expired = threading.Event()

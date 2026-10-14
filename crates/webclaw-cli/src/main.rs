@@ -218,6 +218,26 @@ struct Cli {
     #[arg(long, value_name = "TYPES", conflicts_with = "screenshot")]
     block: Option<webclaw_fetch::Block>,
 
+    /// Steps to run in the local browser once the page has loaded, before it
+    /// is read: a JSON array, or @FILE to read one, e.g. '[{"type": "click",
+    /// "selector": "button.more", "repeat": 10}]'. Steps: click, type, press,
+    /// scroll, wait, wait_for and eval; see the README. The values of eval
+    /// steps print to stderr. Renders the page even with --render auto
+    #[arg(long, value_name = "JSON", conflicts_with_all = ["crawl", "watch", "map", "brand", "raw_html", "cloud"])]
+    actions: Option<String>,
+
+    /// Scroll to the end of the page in the local browser, again and again
+    /// until it stops growing, at most TIMES times (default 20), before
+    /// reading it. Runs before --actions
+    #[arg(
+        long,
+        value_name = "TIMES",
+        num_args = 0..=1,
+        default_missing_value = "20",
+        conflicts_with_all = ["crawl", "watch", "map", "brand", "raw_html", "cloud"]
+    )]
+    scroll: Option<u32>,
+
     /// Extract from local HTML file instead of fetching
     #[arg(long)]
     file: Option<String>,
@@ -1088,10 +1108,40 @@ const VERSION: &str = if BROWSER_BUILD {
 };
 
 #[cfg(feature = "browser")]
-async fn render_page(config: &FetchConfig, url: &str) -> Result<FetchResult, String> {
+fn page_actions(cli: &Cli) -> Result<Vec<webclaw_fetch::render::Action>, String> {
+    let mut actions = Vec::new();
+    if let Some(times) = cli.scroll {
+        actions.push(webclaw_fetch::render::Action::Scroll {
+            selector: None,
+            by: None,
+            repeat: Some(times),
+        });
+    }
+    if let Some(json) = &cli.actions {
+        let json = match json.strip_prefix('@') {
+            Some(path) => {
+                std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?
+            }
+            None => json.clone(),
+        };
+        actions.extend(webclaw_fetch::render::parse_actions(&json)?);
+    }
+    Ok(actions)
+}
+
+#[cfg(feature = "browser")]
+fn print_script_results(results: &[serde_json::Value]) {
+    for (i, value) in results.iter().enumerate() {
+        eprintln!("eval {}: {value}", i + 1);
+    }
+}
+
+#[cfg(feature = "browser")]
+async fn render_page(cli: &Cli, config: &FetchConfig, url: &str) -> Result<FetchResult, String> {
+    let actions = page_actions(cli)?;
     let render = config.render.as_ref().ok_or("rendering is off")?;
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
-    render
+    let page = render
         .pool
         .render(
             url,
@@ -1099,18 +1149,22 @@ async fn render_page(config: &FetchConfig, url: &str) -> Result<FetchResult, Str
             render.wait_for.as_deref(),
             &headers,
             render.block,
+            &actions,
         )
         .await
-        .map_err(|e| format!("render error: {e}"))
+        .map_err(|e| format!("render error: {e}"))?;
+    print_script_results(&page.script_results);
+    Ok(page)
 }
 
 #[cfg(not(feature = "browser"))]
-async fn render_page(_config: &FetchConfig, _url: &str) -> Result<FetchResult, String> {
+async fn render_page(_cli: &Cli, _config: &FetchConfig, _url: &str) -> Result<FetchResult, String> {
     Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
 #[cfg(feature = "browser")]
 async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
+    let actions = page_actions(cli)?;
     let config = build_fetch_config(cli);
     let render = config
         .render
@@ -1131,10 +1185,12 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
                 full_page: cli.full_page,
                 jpeg,
             },
+            &actions,
         )
         .await;
     close_browser(&config).await;
     let shot = shot.map_err(|e| format!("screenshot error: {e}"))?;
+    print_script_results(&shot.script_results);
     webclaw_fetch::FetchError::check_status(shot.status).map_err(|e| e.to_string())?;
     std::fs::write(path, &shot.image)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -1208,7 +1264,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
     let extracted = if cli.render == RenderMode::Always {
-        let rendered = webclaw_fetch::with_progress(url, render_page(&config, url)).await;
+        let rendered = webclaw_fetch::with_progress(url, render_page(cli, &config, url)).await;
         close_browser(&config).await;
         client.extract(&rendered?, &options)
     } else {
@@ -1279,6 +1335,7 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
             .read_to_string(&mut buf)
             .map_err(|e| format!("failed to read stdin: {e}"))?;
         return Ok(FetchResult {
+            script_results: Vec::new(),
             document_bytes: None,
             html: buf,
             url: String::new(),
@@ -1292,6 +1349,7 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
         let html =
             std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
         return Ok(FetchResult {
+            script_results: Vec::new(),
             document_bytes: None,
             html,
             url: String::new(),
@@ -1327,7 +1385,7 @@ async fn fetch_page(cli: &Cli) -> Result<FetchResult, String> {
         let config = build_fetch_config(cli);
         let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
         let page = if cli.render == RenderMode::Always {
-            render_page(&config, &url).await
+            render_page(cli, &config, &url).await
         } else {
             match client.fetch_smart(&url).await {
                 Ok(fetched) => Ok(client
@@ -3331,6 +3389,20 @@ async fn main() {
     if let Err(e) = check_chunk_format(&cli) {
         eprintln!("error: {e}");
         process::exit(1);
+    }
+
+    if cli.actions.is_some() || cli.scroll.is_some() {
+        if entries.len() != 1 {
+            eprintln!("error: --actions and --scroll take one URL");
+            process::exit(1);
+        }
+        if cli.render == RenderMode::Never {
+            eprintln!(
+                "error: --actions and --scroll run in the browser, so they cannot run with --render never"
+            );
+            process::exit(1);
+        }
+        cli.render = RenderMode::Always;
     }
 
     if let Some(ref path) = cli.screenshot {

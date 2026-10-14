@@ -1,0 +1,629 @@
+{
+ "https://quotes.toscrape.com/scroll": {
+  "webclaw": {
+   "page": "https://quotes.toscrape.com/scroll",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 3307.431416818872,
+   "kb": 3.7724609375,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://quotes.toscrape.com/scroll",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2551.9830831326544,
+   "kb": 4.0400390625,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://quotes.toscrape.com/scroll",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 5,
+   "captured": 6,
+   "ms": 2066.9054999016225,
+   "kb": 227.984375,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://quotes.toscrape.com/scroll",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2821.8907499685884,
+   "kb": 3.7724609375,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://quotes.toscrape.com/scroll",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 1887.200458906591,
+   "kb": 4.0400390625,
+   "error": null
+  }
+ },
+ "https://earthquake.usgs.gov/earthquakes/map/": {
+  "webclaw": {
+   "page": "https://earthquake.usgs.gov/earthquakes/map/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 24,
+   "captured": 25,
+   "ms": 2252.9926667921245,
+   "kb": 686.44140625,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://earthquake.usgs.gov/earthquakes/map/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 43,
+   "captured": 44,
+   "ms": 2079.982459079474,
+   "kb": 12520.44921875,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://earthquake.usgs.gov/earthquakes/map/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 18,
+   "captured": 19,
+   "ms": 1486.3152080215514,
+   "kb": 3185.232421875,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://earthquake.usgs.gov/earthquakes/map/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2708.53520790115,
+   "kb": 27.7392578125,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://earthquake.usgs.gov/earthquakes/map/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 1864.126875065267,
+   "kb": 28.41796875,
+   "error": null
+  }
+ },
+ "https://www.swpc.noaa.gov/products/planetary-k-index": {
+  "webclaw": {
+   "page": "https://www.swpc.noaa.gov/products/planetary-k-index",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 3,
+   "captured": 4,
+   "ms": 3195.6089169252664,
+   "kb": 10.970703125,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://www.swpc.noaa.gov/products/planetary-k-index",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 3,
+   "captured": 4,
+   "ms": 1924.107041908428,
+   "kb": 16.828125,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://www.swpc.noaa.gov/products/planetary-k-index",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 88,
+   "captured": 89,
+   "ms": 1870.6026668660343,
+   "kb": 3612.1259765625,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://www.swpc.noaa.gov/products/planetary-k-index",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2560.10524998419,
+   "kb": 6.0673828125,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://www.swpc.noaa.gov/products/planetary-k-index",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 1862.4003750737756,
+   "kb": 6.9794921875,
+   "error": null
+  }
+ },
+ "https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London": {
+  "webclaw": {
+   "page": "https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 8,
+   "captured": 9,
+   "ms": 2548.7200419884175,
+   "kb": 85.0400390625,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 8,
+   "captured": 9,
+   "ms": 2186.7048339918256,
+   "kb": 92.1337890625,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 51,
+   "captured": 52,
+   "ms": 2046.6794581152499,
+   "kb": 2485.75,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2676.5600838698447,
+   "kb": 63.6181640625,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 1908.549499930814,
+   "kb": 64.25390625,
+   "error": null
+  }
+ },
+ "https://www.nasdaq.com/market-activity/stocks/aapl": {
+  "webclaw": {
+   "page": "https://www.nasdaq.com/market-activity/stocks/aapl",
+   "apis": 1,
+   "found": 0,
+   "ok": 0,
+   "noise": 0,
+   "captured": 0,
+   "ms": 797.6916669867933,
+   "kb": 0.0,
+   "error": "error: render error: client build failed: browser: net::ERR_HTTP2_PROTOCOL_ERROR\n"
+  },
+  "scrapling": {
+   "page": "https://www.nasdaq.com/market-activity/stocks/aapl",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 19,
+   "captured": 30,
+   "ms": 31553.233749931678,
+   "kb": 1908.9365234375,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://www.nasdaq.com/market-activity/stocks/aapl",
+   "apis": 1,
+   "found": 0,
+   "ok": 0,
+   "noise": 0,
+   "captured": 0,
+   "ms": 60362.55341605283,
+   "kb": 0.0,
+   "error": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n 781                       # Walk the redirect chain.  Playwright returns only the last\n 782                       # hop, so we trace the `request.redirected_from` links until the\n 783                       # first response that differs from the final one and surface its"
+  },
+  "webclaw (filtered)": {
+   "page": "https://www.nasdaq.com/market-activity/stocks/aapl",
+   "apis": 1,
+   "found": 0,
+   "ok": 0,
+   "noise": 0,
+   "captured": 0,
+   "ms": 874.8386669903994,
+   "kb": 0.0,
+   "error": "error: render error: client build failed: browser: net::ERR_HTTP2_PROTOCOL_ERROR\n"
+  },
+  "scrapling (filtered)": {
+   "page": "https://www.nasdaq.com/market-activity/stocks/aapl",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 10,
+   "ms": 31162.280042190105,
+   "kb": 37.0283203125,
+   "error": null
+  }
+ },
+ "https://www.aljazeera.com/": {
+  "webclaw": {
+   "page": "https://www.aljazeera.com/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 11,
+   "captured": 12,
+   "ms": 3695.0374580919743,
+   "kb": 1775.58984375,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://www.aljazeera.com/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 11,
+   "captured": 12,
+   "ms": 3702.151499921456,
+   "kb": 1787.501953125,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://www.aljazeera.com/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 63,
+   "captured": 64,
+   "ms": 3460.3344169445336,
+   "kb": 9425.853515625,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://www.aljazeera.com/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 3730.519416043535,
+   "kb": 0.9619140625,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://www.aljazeera.com/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 3377.683582948521,
+   "kb": 1.8173828125,
+   "error": null
+  }
+ },
+ "https://github.com/rust-lang/cargo": {
+  "webclaw": {
+   "page": "https://github.com/rust-lang/cargo",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 8,
+   "captured": 9,
+   "ms": 2856.187083059922,
+   "kb": 175.8837890625,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://github.com/rust-lang/cargo",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 8,
+   "captured": 9,
+   "ms": 2758.239333052188,
+   "kb": 216.7236328125,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://github.com/rust-lang/cargo",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 177,
+   "captured": 178,
+   "ms": 2863.9494171366096,
+   "kb": 9058.4814453125,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://github.com/rust-lang/cargo",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2800.307458965108,
+   "kb": 5.5595703125,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://github.com/rust-lang/cargo",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2631.0312091372907,
+   "kb": 10.447265625,
+   "error": null
+  }
+ },
+ "https://gitlab.com/gitlab-org/gitlab": {
+  "webclaw": {
+   "page": "https://gitlab.com/gitlab-org/gitlab",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 11,
+   "captured": 22,
+   "ms": 3924.740666989237,
+   "kb": 214.861328125,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://gitlab.com/gitlab-org/gitlab",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 11,
+   "captured": 22,
+   "ms": 3858.7367909494787,
+   "kb": 276.7822265625,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://gitlab.com/gitlab-org/gitlab",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 76,
+   "captured": 87,
+   "ms": 3608.2962080836296,
+   "kb": 9347.63671875,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://gitlab.com/gitlab-org/gitlab",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 11,
+   "ms": 5725.5168340634555,
+   "kb": 80.0341796875,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://gitlab.com/gitlab-org/gitlab",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 11,
+   "ms": 3200.7252918556333,
+   "kb": 121.509765625,
+   "error": null
+  }
+ },
+ "https://pokeapi.co/": {
+  "webclaw": {
+   "page": "https://pokeapi.co/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 6,
+   "captured": 7,
+   "ms": 2125.7259589619935,
+   "kb": 213.8017578125,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://pokeapi.co/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 6,
+   "captured": 7,
+   "ms": 1787.2598750982434,
+   "kb": 225.2451171875,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://pokeapi.co/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 22,
+   "captured": 23,
+   "ms": 1723.8956668879837,
+   "kb": 1689.662109375,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://pokeapi.co/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 1793.0039579514414,
+   "kb": 41.5380859375,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://pokeapi.co/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 1783.6430000606924,
+   "kb": 43.0634765625,
+   "error": null
+  }
+ },
+ "https://bundlephobia.com/package/react": {
+  "webclaw": {
+   "page": "https://bundlephobia.com/package/react",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 9,
+   "captured": 11,
+   "ms": 3352.8535419609398,
+   "kb": 17.791015625,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://bundlephobia.com/package/react",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 11,
+   "captured": 14,
+   "ms": 30998.611917020753,
+   "kb": 33.748046875,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://bundlephobia.com/package/react",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 57,
+   "captured": 60,
+   "ms": 31467.768375063315,
+   "kb": 2532.4638671875,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://bundlephobia.com/package/react",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 2,
+   "ms": 11309.997499920428,
+   "kb": 2.3955078125,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://bundlephobia.com/package/react",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 3,
+   "ms": 31067.2636248637,
+   "kb": 7.0595703125,
+   "error": null
+  }
+ },
+ "https://petstore.swagger.io/": {
+  "webclaw": {
+   "page": "https://petstore.swagger.io/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 3,
+   "captured": 4,
+   "ms": 2616.9195000547916,
+   "kb": 35.7763671875,
+   "error": null
+  },
+  "scrapling": {
+   "page": "https://petstore.swagger.io/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 3,
+   "captured": 4,
+   "ms": 2392.891500145197,
+   "kb": 40.05078125,
+   "error": null
+  },
+  "crawl4ai": {
+   "page": "https://petstore.swagger.io/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 13,
+   "captured": 14,
+   "ms": 2334.737499943003,
+   "kb": 3820.3134765625,
+   "error": null
+  },
+  "webclaw (filtered)": {
+   "page": "https://petstore.swagger.io/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2684.6913329791278,
+   "kb": 16.1611328125,
+   "error": null
+  },
+  "scrapling (filtered)": {
+   "page": "https://petstore.swagger.io/",
+   "apis": 1,
+   "found": 1,
+   "ok": 1,
+   "noise": 0,
+   "captured": 1,
+   "ms": 2357.924582902342,
+   "kb": 16.5341796875,
+   "error": null
+  }
+ }
+}

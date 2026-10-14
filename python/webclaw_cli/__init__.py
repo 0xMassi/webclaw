@@ -11,6 +11,8 @@ import functools
 import importlib.metadata
 import json
 import os
+import shutil
+import signal
 import subprocess
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
@@ -110,18 +112,42 @@ def _error(stderr: str, returncode: int) -> WebclawError:
     return WebclawError(message, stderr, returncode)
 
 
-def _run(args: list[str], target: str, options: Options) -> str:
-    source, stdin = _target(target)
-    r = subprocess.run(
-        [binary_path(), *args, *_options(options), *source],
-        input=stdin,
-        capture_output=True,
+def _spawn(cmd: list[str], stdin: bool, stderr: Any) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=stderr,
         text=True,
         encoding="utf-8",
+        start_new_session=os.name != "nt",
     )
-    if r.returncode != 0:
-        raise _error(r.stderr, r.returncode)
-    return r.stdout
+
+
+def _kill(proc: subprocess.Popen[str]) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    proc.wait()
+    for profile in Path(tempfile.gettempdir()).glob(f"webclaw-chrome-{proc.pid}-*"):
+        shutil.rmtree(profile, ignore_errors=True)
+
+
+def _run(args: list[str], target: str, options: Options) -> str:
+    source, stdin = _target(target)
+    with _spawn([binary_path(), *args, *_options(options), *source], stdin is not None, subprocess.PIPE) as proc:
+        try:
+            out, err = proc.communicate(stdin)
+        except BaseException:
+            _kill(proc)
+            raise
+    if proc.returncode != 0:
+        raise _error(err, proc.returncode)
+    return out
 
 
 Format = Literal["markdown", "text", "llm", "html"]
@@ -255,22 +281,20 @@ def crawl(
 
     Each page is a dict with `url`, `depth`, `extraction` (the `scrape(..., "json")`
     shape) and `error`. `max_pages=0` means no limit. Stopping the loop early stops
-    the crawl.
+    the crawl, and the browser it started.
     """
     args = ["--crawl", "--format=jsonl", f"--max-pages={max_pages}", f"--depth={depth}"]
     if query:
         args.append(f"--query={query}")
     cmd = [binary_path(), *args, *_options(options), "--", url]
-    with tempfile.TemporaryFile() as err, subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=err, text=True, encoding="utf-8"
-    ) as proc:
+    with tempfile.TemporaryFile() as err, _spawn(cmd, False, err) as proc:
         assert proc.stdout is not None
         try:
             for line in proc.stdout:
                 if line.strip():
                     yield json.loads(line)
         except BaseException:
-            proc.kill()
+            _kill(proc)
             raise
         if proc.wait() != 0:
             err.seek(0)

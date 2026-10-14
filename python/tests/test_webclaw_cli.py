@@ -1,7 +1,10 @@
 import importlib.metadata
 import os
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -112,6 +115,12 @@ class Offline(unittest.TestCase):
             wc.similar(SHOP)
 
 
+def chrome_left() -> set:
+    out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+    procs = {line.split(None, 1)[0] for line in out.splitlines() if "webclaw-chrome-" in line}
+    return procs | {p.name for p in Path(tempfile.gettempdir()).glob("webclaw-chrome-*")}
+
+
 @unittest.skipUnless(os.environ.get("WEBCLAW_REAL_SITES"), "set WEBCLAW_REAL_SITES=1 to run against public sites")
 class RealSites(unittest.TestCase):
     def test_scrape(self):
@@ -153,6 +162,34 @@ class RealSites(unittest.TestCase):
         pages = wc.crawl("https://quotes.toscrape.com/", max_pages=50)
         self.assertEqual(next(pages)["url"], "https://quotes.toscrape.com/")
         pages.close()
+
+    @unittest.skipIf(sys.platform == "win32", "uses ps")
+    def test_stopping_a_rendering_crawl_stops_chrome(self):
+        before = chrome_left()
+        pages = wc.crawl("https://quotes.toscrape.com/", max_pages=30, render="always")
+        next(pages)
+        started = chrome_left() - before
+        pages.close()
+        time.sleep(1)
+        self.assertTrue(started)
+        self.assertEqual(chrome_left() - before, set())
+
+    @unittest.skipIf(sys.platform == "win32", "uses SIGALRM")
+    def test_interrupting_a_call_stops_chrome(self):
+        def interrupt(*_):
+            raise KeyboardInterrupt
+
+        before = chrome_left()
+        old = signal.signal(signal.SIGALRM, interrupt)
+        signal.setitimer(signal.ITIMER_REAL, 4)
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                wc.scrape("https://httpbin.org/delay/10", render="always", timeout=30)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, old)
+        time.sleep(1)
+        self.assertEqual(chrome_left() - before, set())
 
     def test_crawl_error(self):
         with self.assertRaises(wc.WebclawError):

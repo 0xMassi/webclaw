@@ -240,6 +240,19 @@ struct Cli {
     #[arg(long, value_name = "QUESTION", conflicts_with = "watch")]
     query: Option<String>,
 
+    /// Print the page as chunks for retrieval, one JSON object per line with
+    /// url, index, heading_path, tokens and markdown text. Paragraphs, lists,
+    /// tables and code blocks stay whole; each chunk stays under about this
+    /// many tokens. Works with several URLs and --crawl (chunks per page)
+    #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(1..),
+          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "output_dir", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
+    chunk: Option<u32>,
+
+    /// With --chunk, start each chunk with up to this many tokens from the end
+    /// of the one before (at most half the chunk size)
+    #[arg(long, value_name = "TOKENS", requires = "chunk", default_value_t = 0)]
+    chunk_overlap: u32,
+
     /// Print what a CSS selector picks as a JSON array. End it in `::text`
     /// (the default), `::attr(NAME)` or `::html`, e.g. "h3 a::attr(href)"
     #[arg(long, value_name = "SELECTOR", group = "pick")]
@@ -1541,6 +1554,20 @@ fn print_output(result: &ExtractionResult, format: &OutputFormat, show_metadata:
     }
 }
 
+fn chunk_sizes(cli: &Cli) -> Option<(u32, u32)> {
+    cli.chunk.map(|size| (size, cli.chunk_overlap))
+}
+
+fn print_chunks(markdown: &str, url: Option<&str>, (size, overlap): (u32, u32)) {
+    for mut chunk in webclaw_core::chunk(markdown, size as usize, overlap as usize) {
+        chunk.url = url.map(String::from);
+        println!(
+            "{}",
+            serde_json::to_string(&chunk).expect("serialization failed")
+        );
+    }
+}
+
 fn cloud_text<'a>(resp: &'a serde_json::Value, field: &str, legacy: &str) -> Option<&'a str> {
     resp.get(field)
         .and_then(|v| v.as_str())
@@ -1887,16 +1914,24 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         .unwrap_or_default();
 
     let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(4096);
-    let stream_jsonl = matches!(cli.format, OutputFormat::Jsonl) && cli.output_dir.is_none();
+    let stream_jsonl = (matches!(cli.format, OutputFormat::Jsonl) || cli.chunk.is_some())
+        && cli.output_dir.is_none();
+    let chunk_cli = chunk_sizes(cli);
     let streamed_urls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let keep_urls = cli.webhook.is_some();
     let on_page = stream_jsonl.then(|| {
         let streamed_urls = Arc::clone(&streamed_urls);
         PageSink(Arc::new(move |page: &PageResult| {
-            println!(
-                "{}",
-                serde_json::to_string(page).expect("serialization failed")
-            );
+            match (chunk_cli, &page.extraction) {
+                (Some(sizes), Some(extraction)) => {
+                    print_chunks(&extraction.content.markdown, Some(&page.url), sizes)
+                }
+                (Some(_), None) => {}
+                (None, _) => println!(
+                    "{}",
+                    serde_json::to_string(page).expect("serialization failed")
+                ),
+            }
             report_page_problems(page);
             if keep_urls {
                 streamed_urls.lock().unwrap().push(page.url.clone());
@@ -2011,7 +2046,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
             }
         }
         eprintln!("Saved {saved} files to {}", dir.display());
-    } else {
+    } else if cli.chunk.is_none() {
         print_crawl_output(&result, &cli.format, cli.metadata);
     }
 
@@ -2207,6 +2242,12 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
             }
         }
         eprintln!("Saved {saved} files to {}", dir.display());
+    } else if let Some(sizes) = chunk_sizes(cli) {
+        for r in &results {
+            if let Ok(ref extraction) = r.result {
+                print_chunks(&extraction.content.markdown, Some(&r.url), sizes);
+            }
+        }
     } else {
         print_batch_output(&results, &cli.format, cli.metadata);
     }
@@ -3389,6 +3430,12 @@ async fn main() {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
+            } else if let Some(sizes) = chunk_sizes(&cli) {
+                print_chunks(
+                    &result.content.markdown,
+                    result.metadata.url.as_deref(),
+                    sizes,
+                );
             } else {
                 print_output(&result, &cli.format, cli.metadata);
             }
@@ -3397,7 +3444,16 @@ async fn main() {
             if let Some(ref query) = cli.query {
                 webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
             }
-            print_cloud_output(&resp, &cli.format);
+            if let Some(sizes) = chunk_sizes(&cli) {
+                let url = cli.urls.first().map(|u| normalize_url(u));
+                print_chunks(
+                    cloud_text(&resp, "markdown", "markdown").unwrap_or_default(),
+                    url.as_deref(),
+                    sizes,
+                );
+            } else {
+                print_cloud_output(&resp, &cli.format);
+            }
         }
         Err(e) => {
             eprintln!("{e}");
@@ -3434,6 +3490,49 @@ mod tests {
             &["--select", "a", "--find-text", "b"],
         ] {
             assert!(parse(extra).is_err(), "{extra:?}");
+        }
+    }
+
+    #[test]
+    fn chunk_flags_parse_and_refuse_modes_they_cannot_join() {
+        let cli = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com",
+            "--chunk",
+            "256",
+            "--chunk-overlap",
+            "32",
+        ])
+        .unwrap();
+        assert_eq!(chunk_sizes(&cli), Some((256, 32)));
+        for args in [
+            vec!["webclaw", "https://example.com", "--chunk", "0"],
+            vec!["webclaw", "https://example.com", "--chunk-overlap", "8"],
+            vec![
+                "webclaw",
+                "https://example.com",
+                "--chunk",
+                "64",
+                "--select",
+                "a",
+            ],
+            vec![
+                "webclaw",
+                "https://example.com",
+                "--chunk",
+                "64",
+                "--raw-html",
+            ],
+            vec![
+                "webclaw",
+                "https://example.com",
+                "--chunk",
+                "64",
+                "--find-text",
+                "a",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
         }
     }
 

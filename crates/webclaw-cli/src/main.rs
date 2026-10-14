@@ -1303,7 +1303,12 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
         .await;
     close_browser(&config).await;
     let printed = printed
-        .map_err(|e| format!("PDF error: {e}"))
+        .map_err(|e| match e.to_string() {
+            e if e.contains(" timed out after ") => {
+                format!("PDF error: {e}; raise it with --timeout")
+            }
+            e => format!("PDF error: {e}"),
+        })
         .and_then(|printed| {
             webclaw_fetch::FetchError::check_status(printed.status)
                 .map(|()| printed)

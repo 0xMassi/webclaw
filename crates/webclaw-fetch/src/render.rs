@@ -502,7 +502,16 @@ impl Renderer {
                 Some(SCREENSHOT_VIEWPORT),
                 async move |page| Ok(copy_pdf(page, params, out).await),
             )
-            .await?;
+            .await
+            .map_err(|e| match e {
+                FetchError::Build(message) if message.ends_with(" timed out") => {
+                    FetchError::Build(format!(
+                        "{message} after {}s, a limit that covers loading the page and printing it",
+                        options.timeout.as_secs()
+                    ))
+                }
+                e => e,
+            })?;
         Ok(Pdf {
             bytes: visited.value.map_err(FetchError::Build)?,
             status: visited.status,
@@ -1918,6 +1927,22 @@ mod tests {
         let printed = print(&mut data).await;
         let mut full = std::io::Cursor::new([0u8; 100]);
         let refused = print(&mut full).await;
+        let slow = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(1),
+                    wait_for: Some("#never".into()),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &mut Vec::new(),
+            )
+            .await;
         let bad_scale = renderer
             .pdf(
                 "https://example.com/",
@@ -1953,6 +1978,12 @@ mod tests {
             );
         }
         assert!(bad_scale.is_err());
+        let slow = slow.expect_err("a page that never settles times out");
+        assert!(
+            slow.to_string()
+                .contains("covers loading the page and printing it"),
+            "{slow}"
+        );
     }
 
     fn png_size(png: &[u8]) -> (u32, u32) {

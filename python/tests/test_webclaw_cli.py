@@ -4,6 +4,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -57,7 +58,7 @@ class Offline(unittest.TestCase):
         out = wc.scrape(SHOP, exclude_selectors=["ul", "table"])
         self.assertIn("carbon steel", out)
         self.assertNotIn("Spade", out)
-        self.assertNotIn("Spade", wc.scrape(SHOP, exclude_selectors="ul"))
+        self.assertNotIn("| Spade |", wc.scrape(SHOP, exclude_selectors="table"))
         with self.assertRaises(ValueError):
             wc.scrape(SHOP, include_selectors=["p:is(.a, .b)"])
 
@@ -186,10 +187,35 @@ class Offline(unittest.TestCase):
             wc.scrape(SHOP, cookies={"a": "1; b=2"})
 
 
-def chrome_left() -> set:
-    out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
-    procs = {line.split(None, 1)[0] for line in out.splitlines() if "webclaw-chrome-" in line}
-    return procs | {p.name for p in Path(tempfile.gettempdir()).glob("webclaw-chrome-*")}
+class ChromeWatch:
+    """Records the Chrome processes that webclaw binaries started by this test process run."""
+
+    def __enter__(self):
+        self.binaries, self.chromes, self.done = set(), set(), threading.Event()
+        self.thread = threading.Thread(target=self.watch)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.done.set()
+        self.thread.join()
+
+    def watch(self):
+        while not self.done.is_set():
+            rows = [line.split(None, 2) for line in ps().splitlines() if line.strip()]
+            self.binaries |= {pid for pid, ppid, _ in rows if ppid == str(os.getpid())}
+            self.chromes |= {pid for pid, _, cmd in rows
+                             if any(f"webclaw-chrome-{b}-" in cmd for b in self.binaries)}
+            time.sleep(0.1)
+
+    def left(self):
+        alive = {line.split(None, 2)[0] for line in ps().splitlines() if line.strip()}
+        profiles = [p for b in self.binaries for p in Path(tempfile.gettempdir()).glob(f"webclaw-chrome-{b}-*")]
+        return (self.chromes & alive) | {p.name for p in profiles}
+
+
+def ps() -> str:
+    return subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True).stdout
 
 
 @unittest.skipUnless(os.environ.get("WEBCLAW_REAL_SITES"), "set WEBCLAW_REAL_SITES=1 to run against public sites")
@@ -243,39 +269,36 @@ class RealSites(unittest.TestCase):
 
     @unittest.skipIf(sys.platform == "win32", "uses ps")
     def test_stopping_a_rendering_crawl_stops_chrome(self):
-        before = chrome_left()
-        pages = wc.crawl("https://quotes.toscrape.com/", max_pages=30, render="always")
-        next(pages)
-        started = chrome_left() - before
-        pages.close()
-        time.sleep(1)
-        self.assertTrue(started)
-        self.assertEqual(chrome_left() - before, set())
+        with ChromeWatch() as watch:
+            pages = wc.crawl("https://quotes.toscrape.com/js/", max_pages=30)
+            next(pages)
+            pages.close()
+            time.sleep(0.5)
+        self.assertTrue(watch.chromes)
+        self.assertEqual(watch.left(), set())
 
     @unittest.skipIf(sys.platform == "win32", "uses SIGALRM")
     def test_interrupting_a_call_stops_chrome(self):
         def interrupt(*_):
             raise KeyboardInterrupt
 
-        before = chrome_left()
         old = signal.signal(signal.SIGALRM, interrupt)
         signal.setitimer(signal.ITIMER_REAL, 4)
         try:
-            with self.assertRaises(KeyboardInterrupt):
+            with ChromeWatch() as watch, self.assertRaises(KeyboardInterrupt):
                 wc.scrape("https://httpbin.org/delay/10", render="always", timeout=30)
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, old)
-        time.sleep(1)
-        self.assertEqual(chrome_left() - before, set())
+        self.assertTrue(watch.chromes)
+        self.assertEqual(watch.left(), set())
 
     @unittest.skipIf(sys.platform == "win32", "uses ps")
     def test_time_limit_stops_chrome(self):
-        before = chrome_left()
-        with self.assertRaises(TimeoutError):
+        with ChromeWatch() as watch, self.assertRaises(TimeoutError):
             wc.scrape("https://httpbin.org/delay/10", render="always", time_limit=4)
-        time.sleep(1)
-        self.assertEqual(chrome_left() - before, set())
+        self.assertTrue(watch.chromes)
+        self.assertEqual(watch.left(), set())
 
     def test_crawl_error(self):
         with self.assertRaises(wc.WebclawError):

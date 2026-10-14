@@ -444,12 +444,9 @@ fn fence_marker(text: &str) -> Option<String> {
     if !matches!(first, '`' | '~') {
         return None;
     }
-    let run: String = text
-        .trim_start()
-        .chars()
-        .take_while(|&c| c == first)
-        .collect();
-    (run.len() >= 3).then_some(run)
+    let line = text.trim_start().lines().next().unwrap_or_default();
+    let run: String = line.chars().take_while(|&c| c == first).collect();
+    (run.len() >= 3 && (first == '~' || !line[run.len()..].contains('`'))).then_some(run)
 }
 
 fn is_separator(line: &str) -> bool {
@@ -572,6 +569,40 @@ mod tests {
         assert_eq!(approx_tokens("a 1 2 3"), 7);
         assert_eq!(approx_tokens("page 195"), 3);
         assert_eq!(approx_tokens("1234567"), 4);
+    }
+
+    #[test]
+    fn a_fence_that_touches_text_is_its_own_block() {
+        let code: String = (0..200)
+            .map(|i| format!("echo step {i} && make target{i}\n"))
+            .collect();
+        let before = format!("# Setup\n\nRun this:\n```sh\n{code}```\n");
+        let after = format!(
+            "```py\n{code}```\nAfter the code. {}",
+            "More words here. ".repeat(40)
+        );
+        for page in [before, after] {
+            for c in chunk(&page, 64, 0) {
+                let fences = c.text.lines().filter(|l| l.starts_with("```")).count();
+                assert_eq!(fences % 2, 0, "{c:?}");
+                if c.text.contains("echo step") {
+                    assert!(
+                        c.text.contains("```sh\n") || c.text.contains("```py\n"),
+                        "{c:?}"
+                    );
+                }
+                if c.text.contains("More words") {
+                    assert!(!c.text.trim_end().ends_with("```"), "{c:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn backticks_in_the_info_string_do_not_open_a_fence() {
+        let page = "Intro.\n\n```inline``` code here\n\n## Next\n\nOutro.";
+        let kept = crate::focus::focus(page, "outro");
+        assert_eq!(kept, "## Next\n\nOutro.");
     }
 
     #[test]

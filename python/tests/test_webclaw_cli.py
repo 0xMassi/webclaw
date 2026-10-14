@@ -57,6 +57,9 @@ class Offline(unittest.TestCase):
         out = wc.scrape(SHOP, exclude=["ul", "table"])
         self.assertIn("carbon steel", out)
         self.assertNotIn("Spade", out)
+        self.assertNotIn("Spade", wc.scrape(SHOP, exclude="ul"))
+        with self.assertRaises(ValueError):
+            wc.scrape(SHOP, include=["p:is(.a, .b)"])
 
     def test_select(self):
         self.assertEqual(wc.select(SHOP, css=".item a"), ["Spade", "Rake", "Hoe"])

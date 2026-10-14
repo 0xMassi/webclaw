@@ -150,6 +150,14 @@ def _run(args: list[str], target: str, options: Options) -> str:
     return out
 
 
+def _comma_list(flag: str, values: str | Sequence[str]) -> list[str]:
+    items = [values] if isinstance(values, str) else list(values)
+    for item in items:
+        if "," in item:
+            raise ValueError(f"{flag} items cannot contain a comma, the binary splits on it: {item!r}")
+    return [f"{flag}={','.join(items)}"] if items else []
+
+
 Format = Literal["markdown", "text", "llm", "html"]
 
 
@@ -193,10 +201,7 @@ def scrape(
     args = [f"--format={format}"]
     if query:
         args.append(f"--query={query}")
-    if include:
-        args.append(f"--include={','.join(include)}")
-    if exclude:
-        args.append(f"--exclude={','.join(exclude)}")
+    args += _comma_list("--include", include) + _comma_list("--exclude", exclude)
     if only_main_content:
         args.append("--only-main-content")
     out = _run(args, target, options)

@@ -193,6 +193,10 @@ pub struct CrawlState {
     /// keeps its order.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub scores: HashMap<String, f64>,
+    /// The query those scores answer. A resume with another query, or none,
+    /// ignores them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
 }
 
 /// Recursive crawler that wraps a shared [`FetchClient`].
@@ -349,6 +353,7 @@ impl Crawler {
                 max_pages,
                 max_depth,
                 scores: HashMap::new(),
+                query: None,
             },
         )
     }
@@ -508,8 +513,20 @@ impl Crawler {
         };
         if let Some(state) = resume_state {
             visited = state.visited.into_iter().collect();
+            let query = self.ask.as_ref().map(|a| a.query.as_str());
+            let scores = if query.is_some() && state.query.as_deref() == query {
+                state.scores
+            } else {
+                if state.query.is_some() {
+                    warn!(
+                        saved = ?state.query,
+                        "resuming with another query, the saved link order is dropped"
+                    );
+                }
+                HashMap::new()
+            };
             for (url, depth) in state.frontier {
-                let score = state.scores.get(&url).copied().unwrap_or(0.0);
+                let score = scores.get(&url).copied().unwrap_or(0.0);
                 frontier.push_back(url, depth, score);
             }
             info!(
@@ -842,6 +859,7 @@ impl Crawler {
             max_pages: self.config.max_pages.unwrap_or(0),
             max_depth: self.config.max_depth,
             scores,
+            query: self.ask.as_ref().map(|a| a.query.clone()),
         };
         if let Err(e) = Self::write_state(path, &state) {
             warn!(error = %e, "checkpoint failed");
@@ -1673,28 +1691,27 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_resumed_query_crawl_keeps_its_priorities() {
-        let dir = std::env::temp_dir().join(format!("webclaw-resume-{}", std::process::id()));
+    async fn resume(saved: Option<&str>, resumed: Option<&str>) -> (CrawlState, Vec<String>) {
+        let config = |query: Option<&str>| CrawlConfig {
+            max_depth: 1,
+            concurrency: 1,
+            delay: Duration::ZERO,
+            respect_robots: false,
+            query: query.map(String::from),
+            ..Default::default()
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "webclaw-resume-{}-{saved:?}-{resumed:?}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("state.json");
-        let crawler = Crawler::new(
-            "https://example.com/",
-            CrawlConfig {
-                max_depth: 1,
-                concurrency: 1,
-                delay: Duration::ZERO,
-                respect_robots: false,
-                query: Some("banana".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let writer = Crawler::new("https://example.com/", config(saved)).unwrap();
         let mut frontier = Frontier::default();
         frontier.push_back("https://example.com/low".into(), 1, 0.1);
         frontier.push_back("https://example.com/high".into(), 1, 0.9);
         let visited = HashSet::from(["https://example.com".to_string()]);
-        crawler.write_checkpoint(
+        writer.write_checkpoint(
             &path,
             "https://example.com/",
             &visited,
@@ -1702,23 +1719,44 @@ mod tests {
             &HashMap::new(),
             1,
         );
-        let mut state = Crawler::load_state(&path).unwrap();
+        let state = Crawler::load_state(&path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
-        assert_eq!(state.scores.get("https://example.com/high"), Some(&0.9));
-        assert_eq!(state.scores.get("https://example.com/low"), Some(&0.1));
-        state.frontier.reverse();
+        let mut resumed_state = state.clone();
+        resumed_state.frontier.reverse();
         let done = Arc::new(std::sync::Mutex::new(Vec::new()));
         let recorded = done.clone();
-        crawler
-            .run("https://example.com/", Some(state), move |url| {
+        Crawler::new("https://example.com/", config(resumed))
+            .unwrap()
+            .run("https://example.com/", Some(resumed_state), move |url| {
                 recorded.lock().unwrap().push(url.clone());
                 async move { food_site(&url) }
             })
             .await;
+        let order = done.lock().unwrap().clone();
+        (state, order)
+    }
+
+    #[tokio::test]
+    async fn a_resumed_query_crawl_keeps_its_priorities() {
+        let (state, order) = resume(Some("banana"), Some("banana")).await;
+        assert_eq!(state.scores.get("https://example.com/high"), Some(&0.9));
+        assert_eq!(state.scores.get("https://example.com/low"), Some(&0.1));
         assert_eq!(
-            *done.lock().unwrap(),
-            vec!["https://example.com/high", "https://example.com/low"]
+            order,
+            ["https://example.com/high", "https://example.com/low"]
         );
+    }
+
+    #[tokio::test]
+    async fn a_resume_without_the_saved_query_ignores_its_scores() {
+        for resumed in [None, Some("apple")] {
+            let (_, order) = resume(Some("banana"), resumed).await;
+            assert_eq!(
+                order,
+                ["https://example.com/low", "https://example.com/high"],
+                "{resumed:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1940,6 +1978,7 @@ mod tests {
             max_pages: 50,
             max_depth: 2,
             scores: HashMap::new(),
+            query: None,
         };
         let result = crawler
             .crawl_with_fetcher("https://example.com/", Some(resume), move |url| {

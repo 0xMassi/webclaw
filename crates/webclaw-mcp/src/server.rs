@@ -79,7 +79,7 @@ fn render_from_env(
         pool: Arc::new(RenderPool::new(source, LOCAL_FETCH_TIMEOUT)),
         always: mode == "always",
         wait_for: None,
-        block: webclaw_fetch::render::Block::default(),
+        block: webclaw_fetch::Block::default(),
     })
 }
 
@@ -93,9 +93,7 @@ fn apply_render(
     if !matches!(mode, None | Some("auto" | "always" | "never")) {
         return Err("render must be \"auto\", \"always\" or \"never\"".into());
     }
-    let block = block
-        .map(str::parse::<webclaw_fetch::render::Block>)
-        .transpose()?;
+    let block = block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
     if mode == Some("never") {
         config.render = None;
         return Ok(());
@@ -123,8 +121,9 @@ fn apply_render(
     _config: &mut webclaw_fetch::FetchConfig,
     mode: Option<&str>,
     wait_for: Option<String>,
-    _block: Option<&str>,
+    block: Option<&str>,
 ) -> Result<(), String> {
+    block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
     match (mode, wait_for) {
         (None | Some("auto" | "never"), None) => Ok(()),
         _ => Err(
@@ -1133,6 +1132,13 @@ fn save_research(dir: &std::path::Path, slug: &str, data: &serde_json::Value) ->
 #[cfg(test)]
 mod tests {
     use super::slugify;
+
+    #[test]
+    fn an_unknown_block_type_is_refused_with_or_without_a_browser() {
+        let mut config = webclaw_fetch::FetchConfig::default();
+        assert!(super::apply_render(&mut config, None, None, Some("bogus")).is_err());
+        assert!(super::apply_render(&mut config, None, None, Some("images,fonts")).is_ok());
+    }
 
     #[test]
     fn every_browser_name_picks_its_profile() {

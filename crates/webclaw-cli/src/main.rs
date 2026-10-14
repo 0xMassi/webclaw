@@ -216,7 +216,7 @@ struct Cli {
     /// list of images, fonts and media, or none. Screenshots
     /// load everything
     #[arg(long, value_name = "TYPES", conflicts_with = "screenshot")]
-    block: Option<String>,
+    block: Option<webclaw_fetch::Block>,
 
     /// Extract from local HTML file instead of fetching
     #[arg(long)]
@@ -684,13 +684,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
             pool: Arc::new(render_pool(cli, &config)),
             always: cli.render == RenderMode::Always,
             wait_for: cli.wait_for.clone(),
-            block: match cli.block.as_deref().unwrap_or_default().parse() {
-                Ok(block) => block,
-                Err(e) => {
-                    eprintln!("error: --block: {e}");
-                    process::exit(1);
-                }
-            },
+            block: cli.block.unwrap_or_default(),
         });
     }
     config

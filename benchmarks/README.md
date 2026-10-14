@@ -42,6 +42,14 @@ You need [`uv`](https://docs.astral.sh/uv/) and a Rust toolchain. The script ins
 
 It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, asks each tool for one record per book (title, price, rating) through CSS selectors and again through XPath, checks every record against the values in the raw HTML, and times the run. It also repeats the nested-divs test from Scrapling's own benchmark script. Results land in `results/<label>/select-summary.md`.
 
+### Data tables
+
+```bash
+./benchmarks/tables.sh         # webclaw --tables against Crawl4AI's result.tables and a CSS loop in Scrapling
+```
+
+It freezes 35 public pages into `.work/tables-corpus/`: Wikipedia lists and sports pages, government statistics, sports results, finance tables, docs with option tables, and old sites built from layout tables. Each table on those pages is labelled by hand in `tables-labels.json` as a data table, a layout table, or neither (infoboxes and key/value boxes). The script lays every labelled table out on a grid from the raw HTML with lxml, the way a browser shows it, and scores which tables each tool returns and how many cells it gets right. Crawl4AI returns tables from its default scraping pass (`DefaultTableExtraction`). Scrapling has no table API, so its arm is the loop a Scrapling user writes: every `table`, its `tr` rows and their `th, td` text, first row as headers. Results land in `results/<label>/tables-summary.md`.
+
 ### Question-focused extraction
 
 ```bash

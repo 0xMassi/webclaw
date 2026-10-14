@@ -24,6 +24,13 @@ SHOP = """<html><head><title>Shop</title></head><body><main>
 </main></body></html>"""
 
 
+def fake_binary(directory: str, code: str) -> str:
+    path = Path(directory, "webclaw")
+    path.write_text(f"#!{sys.executable}\nimport json, os, sys, time\n{code}\n")
+    path.chmod(0o755)
+    return str(path)
+
+
 class Offline(unittest.TestCase):
     def test_binary_runs(self):
         out = subprocess.run([wc.binary_path(), "--version"], capture_output=True, text=True, check=True)
@@ -105,6 +112,19 @@ class Offline(unittest.TestCase):
         exec("from webclaw_cli import *", names)
         self.assertNotIn("map", names)
         self.assertIn("crawl", names)
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_crawl_keeps_pages_when_some_fail(self):
+        ok = {"url": "https://a/", "depth": 0, "extraction": {}, "error": None}
+        bad = {"url": "https://a/x", "depth": 1, "extraction": None, "error": "HTTP 404"}
+        with tempfile.TemporaryDirectory() as d:
+            some = fake_binary(d, f"print(json.dumps({ok!r}))\nprint(json.dumps({bad!r}))\n"
+                                  "print('error: crawl finished with 1 errors', file=sys.stderr)\nsys.exit(1)")
+            with mock.patch.object(wc, "binary_path", return_value=some):
+                self.assertEqual([p["url"] for p in wc.crawl("https://a/")], ["https://a/", "https://a/x"])
+            every = fake_binary(d, f"print(json.dumps({bad!r}))\nsys.exit(1)")
+            with mock.patch.object(wc, "binary_path", return_value=every), self.assertRaises(wc.WebclawError):
+                list(wc.crawl("https://a/"))
 
     def test_bad_arguments(self):
         with self.assertRaises(TypeError):

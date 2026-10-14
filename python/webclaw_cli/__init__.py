@@ -280,7 +280,8 @@ def crawl(
     """Crawl same-site links and yield each page as it finishes.
 
     Each page is a dict with `url`, `depth`, `extraction` (the `scrape(..., "json")`
-    shape) and `error`. `max_pages=0` means no limit. Stopping the loop early stops
+    shape) and `error`, set when that page failed. It raises `WebclawError` only when
+    no page succeeded. `max_pages=0` means no limit. Stopping the loop early stops
     the crawl, and the browser it started.
     """
     args = ["--crawl", "--format=jsonl", f"--max-pages={max_pages}", f"--depth={depth}"]
@@ -289,14 +290,18 @@ def crawl(
     cmd = [binary_path(), *args, *_options(options), "--", url]
     with tempfile.TemporaryFile() as err, _spawn(cmd, False, err) as proc:
         assert proc.stdout is not None
+        pages = failed = 0
         try:
             for line in proc.stdout:
                 if line.strip():
-                    yield json.loads(line)
+                    page = json.loads(line)
+                    pages += 1
+                    failed += bool(page.get("error"))
+                    yield page
         except BaseException:
             _kill(proc)
             raise
-        if proc.wait() != 0:
+        if proc.wait() != 0 and failed == pages:
             err.seek(0)
             raise _error(err.read().decode("utf-8", "replace"), proc.returncode)
 

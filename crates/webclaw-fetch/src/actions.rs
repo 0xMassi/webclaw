@@ -17,13 +17,14 @@ use serde_json::Value;
 use crate::error::FetchError;
 
 /// One step run on a rendered page after it loads and before webclaw reads
-/// or captures it. Parse a list with [`parse_actions`].
+/// or captures it, in the shape the hosted API's `actions` take. Parse a
+/// list with [`parse_actions`].
 ///
 /// Every step that needs an element waits up to 10 seconds for it. After a
 /// click, a key press or a scroll, webclaw waits until the page stops
 /// changing, up to 5 seconds.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Action {
     /// Click the first element matching `selector`, the match at index `nth`
     /// (from 0), or with `all` every match. With `repeat`, click the first
@@ -37,31 +38,43 @@ pub enum Action {
         nth: Option<usize>,
         repeat: Option<u32>,
     },
-    /// Focus the element matching `selector` and type `text` key by key.
-    Type { selector: String, text: String },
+    /// Focus the element matching `selector` and type `value` into it.
+    Type { selector: String, value: String },
     /// Press a key such as `Enter`, `Tab` or `ArrowDown` in the focused element.
     Press { key: String },
-    /// Scroll the page, or the element matching `selector`, to its end, or
-    /// down by `by` pixels. With `repeat`, scroll again and again, up to that
+    /// Scroll the page, or the element matching `selector`, `amount` pixels
+    /// in `direction` (`down` by default, or `up`), or without `amount` all
+    /// the way to the end. With `repeat`, scroll again and again, up to that
     /// many times, and stop early once two scrolls in a row add nothing, as
     /// for infinite scroll.
     Scroll {
+        #[serde(default)]
+        direction: Direction,
+        amount: Option<u32>,
         selector: Option<String>,
-        by: Option<i64>,
         repeat: Option<u32>,
     },
-    /// Pause for `ms` milliseconds.
-    Wait { ms: u64 },
-    /// Wait until an element matching `selector` exists, up to `timeout_ms`
-    /// (10000 by default).
-    WaitFor {
+    /// Pause for `milliseconds`.
+    Wait { milliseconds: u64 },
+    /// Wait until an element matching `selector` exists, up to `timeout`
+    /// milliseconds (10000 by default).
+    WaitForSelector {
         selector: String,
-        timeout_ms: Option<u64>,
+        timeout: Option<u64>,
     },
-    /// Run a JavaScript expression, or a function body that ends in
+    /// Run JavaScript, an expression or a function body that ends in
     /// `return`, and keep its value, awaited when it is a promise, as JSON.
-    /// The values of all `eval` steps together are capped at 1 MiB.
-    Eval { script: String },
+    /// The values of all such steps together are capped at 1 MiB.
+    ExecuteJavascript { code: String },
+}
+
+/// Which way a [`Action::Scroll`] goes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    #[default]
+    Down,
+    Up,
 }
 
 impl Action {
@@ -72,8 +85,8 @@ impl Action {
             Self::Press { .. } => "press",
             Self::Scroll { .. } => "scroll",
             Self::Wait { .. } => "wait",
-            Self::WaitFor { .. } => "wait_for",
-            Self::Eval { .. } => "eval",
+            Self::WaitForSelector { .. } => "waitForSelector",
+            Self::ExecuteJavascript { .. } => "executeJavascript",
         }
     }
 }
@@ -83,7 +96,7 @@ impl Action {
 ///
 /// ```
 /// let actions = webclaw_fetch::render::parse_actions(
-///     r#"[{"type": "scroll", "repeat": 20}, {"type": "eval", "script": "document.title"}]"#,
+///     r#"[{"type": "scroll", "repeat": 20}, {"type": "executeJavascript", "code": "document.title"}]"#,
 /// )
 /// .unwrap();
 /// assert_eq!(actions.len(), 2);
@@ -201,7 +214,7 @@ async fn run_all(
         if let Some(value) = value {
             size += value.to_string().len();
             if size > MAX_RESULT_BYTES {
-                return Err(fail("eval results passed 1 MiB".into()));
+                return Err(fail("the script values passed 1 MiB".into()));
             }
             results.push(value);
         }
@@ -262,28 +275,30 @@ async fn step(
                 settle(page, requests, PATIENCE, true).await;
             }
         }
-        Action::Type { selector, text } => {
+        Action::Type { selector, value } => {
             let element = find(page, selector).await?.swap_remove(0);
             element.focus().await.map_err(js_error)?;
-            element.type_str(text).await.map_err(js_error)?;
+            element.type_str(value).await.map_err(js_error)?;
         }
         Action::Press { key } => {
             page.press_key(key).await.map_err(js_error)?;
             settle(page, requests, PATIENCE, true).await;
         }
         Action::Scroll {
+            direction,
+            amount,
             selector,
-            by,
             repeat,
         } => {
+            let sign = if *direction == Direction::Up { -1 } else { 1 };
             let script = format!(
-                "(() => {{ const sel = {}; const by = {}; \
+                "(() => {{ const sel = {}; const by = {}; const sign = {sign}; \
                  const el = sel === null ? document.scrollingElement || document.documentElement : document.querySelector(sel); \
                  if (!el) return -1; const top = el.scrollTop; \
-                 if (by === null) el.scrollTop = el.scrollHeight; else el.scrollTop += by; \
+                 if (by === null) el.scrollTop = sign > 0 ? el.scrollHeight : 0; else el.scrollTop += sign * by; \
                  return Math.abs(el.scrollTop - top); }})()",
                 serde_json::to_string(selector).unwrap_or_default(),
-                serde_json::to_string(by).unwrap_or_default(),
+                serde_json::to_string(amount).unwrap_or_default(),
             );
             let mut misses = 0;
             for _ in 0..repeat.unwrap_or(1) {
@@ -299,7 +314,7 @@ async fn step(
                         selector.as_deref().unwrap_or_default()
                     ));
                 }
-                let stepping = by.is_some() && moved > 0.;
+                let stepping = amount.is_some() && moved > 0.;
                 let grew = settle(
                     page,
                     requests,
@@ -314,23 +329,20 @@ async fn step(
             }
             settle(page, requests, QUIET, true).await;
         }
-        Action::Wait { ms } => {
-            let until = (Instant::now() + Duration::from_millis(*ms)).min(deadline);
+        Action::Wait { milliseconds } => {
+            let until = (Instant::now() + Duration::from_millis(*milliseconds)).min(deadline);
             tokio::time::sleep_until(until.into()).await;
         }
-        Action::WaitFor {
-            selector,
-            timeout_ms,
-        } => {
-            let limit = timeout_ms.map_or(FIND, Duration::from_millis);
+        Action::WaitForSelector { selector, timeout } => {
+            let limit = timeout.map_or(FIND, Duration::from_millis);
             page.wait_for_selector(selector.as_str(), Some(limit))
                 .await
                 .map_err(|_| format!("no element matches {selector:?} after {limit:?}"))?;
         }
-        Action::Eval { script } => {
-            let value = match page.evaluate_expression(script.as_str()).await {
+        Action::ExecuteJavascript { code } => {
+            let value = match page.evaluate_expression(code.as_str()).await {
                 Err(CdpError::JavascriptException(e)) if is_return_outside_function(&e) => {
-                    page.evaluate_expression(format!("(async () => {{\n{script}\n}})()"))
+                    page.evaluate_expression(format!("(async () => {{\n{code}\n}})()"))
                         .await
                 }
                 other => other,
@@ -530,12 +542,12 @@ mod tests {
     fn actions_parse_from_json_and_reject_mistakes() {
         let actions = parse_actions(
             r##"[{"type": "click", "selector": ".more", "repeat": 5},
-                {"type": "type", "selector": "#q", "text": "rust"},
+                {"type": "type", "selector": "#q", "value": "rust"},
                 {"type": "press", "key": "Enter"},
-                {"type": "scroll", "by": 800, "repeat": 3},
-                {"type": "wait", "ms": 200},
-                {"type": "wait_for", "selector": ".done", "timeout_ms": 5000},
-                {"type": "eval", "script": "document.title"}]"##,
+                {"type": "scroll", "direction": "down", "amount": 800, "repeat": 3},
+                {"type": "wait", "milliseconds": 200},
+                {"type": "waitForSelector", "selector": ".done", "timeout": 5000},
+                {"type": "executeJavascript", "code": "document.title"}]"##,
         )
         .unwrap();
         assert_eq!(actions.len(), 7);
@@ -554,7 +566,9 @@ mod tests {
             r##"[{"type": "click"}]"##,
             r##"[{"type": "click", "selector": "a", "all": true, "nth": 1}]"##,
             r##"[{"type": "click", "selector": "a", "repeat": 2, "nth": 1}]"##,
-            r##"{"type": "wait", "ms": 1}"##,
+            r##"[{"type": "scroll", "direction": "left"}]"##,
+            r##"[{"type": "type", "selector": "a", "text": "x"}]"##,
+            r##"{"type": "wait", "milliseconds": 1}"##,
         ] {
             assert!(parse_actions(bad).is_err(), "{bad}");
         }
@@ -565,7 +579,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            parse_actions(r##"[{"type": "wait", "ms": 1}, {"type": "click", "selector": "a", "all": true, "nth": 0}]"##)
+            parse_actions(r##"[{"type": "wait", "milliseconds": 1}, {"type": "click", "selector": "a", "all": true, "nth": 0}]"##)
                 .unwrap_err()
                 .starts_with("action 2")
         );
@@ -613,32 +627,32 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
             FEED,
             r##"[{"type": "scroll", "repeat": 10},
                 {"type": "click", "selector": "#more", "repeat": 10},
-                {"type": "type", "selector": "#q", "text": "rust"},
+                {"type": "type", "selector": "#q", "value": "rust"},
                 {"type": "press", "key": "Enter"},
-                {"type": "eval", "script": "document.querySelectorAll('.item').length"},
-                {"type": "eval", "script": "const x = 1; return x + 1;"},
-                {"type": "eval", "script": "new Promise(r => setTimeout(() => r({ok: true}), 50))"}]"##,
+                {"type": "executeJavascript", "code": "document.querySelectorAll('.item').length"},
+                {"type": "executeJavascript", "code": "const x = 1; return x + 1;"},
+                {"type": "executeJavascript", "code": "new Promise(r => setTimeout(() => r({ok: true}), 50))"}]"##,
             Duration::from_secs(30),
         )
         .await;
         let missing = render_feed(
             &renderer,
             FEED,
-            r##"[{"type": "wait", "ms": 10}, {"type": "click", "selector": "#nope"}]"##,
+            r##"[{"type": "wait", "milliseconds": 10}, {"type": "click", "selector": "#nope"}]"##,
             Duration::from_secs(30),
         )
         .await;
         let slow = render_feed(
             &renderer,
             FEED,
-            r##"[{"type": "wait", "ms": 60000}, {"type": "eval", "script": "1"}]"##,
+            r##"[{"type": "wait", "milliseconds": 60000}, {"type": "executeJavascript", "code": "1"}]"##,
             Duration::from_secs(2),
         )
         .await;
         let thrown = render_feed(
             &renderer,
             FEED,
-            r##"[{"type": "eval", "script": "null.x"}]"##,
+            r##"[{"type": "executeJavascript", "code": "null.x"}]"##,
             Duration::from_secs(30),
         )
         .await;
@@ -661,10 +675,13 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
             "{missing}"
         );
         let slow = slow.unwrap_err().to_string();
-        assert!(slow.contains("action 2 (eval): ran out of time"), "{slow}");
+        assert!(
+            slow.contains("action 2 (executeJavascript): ran out of time"),
+            "{slow}"
+        );
         let thrown = thrown.unwrap_err().to_string();
         assert!(
-            thrown.contains("action 1 (eval)") && thrown.contains("TypeError"),
+            thrown.contains("action 1 (executeJavascript)") && thrown.contains("TypeError"),
             "{thrown}"
         );
     }
@@ -697,11 +714,11 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
             &renderer,
             &page,
             &format!(
-                r##"[{{"type": "eval", "script": "fetch('{loopback}/fetch').then(() => 'reached', () => 'blocked')"}},
-                    {{"type": "eval", "script": "new Promise(r => {{ const x = new XMLHttpRequest(); x.onload = () => r('reached'); x.onerror = () => r('blocked'); x.open('GET', '{loopback}/xhr'); x.send(); }})"}},
-                    {{"type": "eval", "script": "location.href = 'file:///etc/hosts'; 1"}},
-                    {{"type": "wait", "ms": 500}},
-                    {{"type": "eval", "script": "document.body.innerText"}}]"##
+                r##"[{{"type": "executeJavascript", "code": "fetch('{loopback}/fetch').then(() => 'reached', () => 'blocked')"}},
+                    {{"type": "executeJavascript", "code": "new Promise(r => {{ const x = new XMLHttpRequest(); x.onload = () => r('reached'); x.onerror = () => r('blocked'); x.open('GET', '{loopback}/xhr'); x.send(); }})"}},
+                    {{"type": "executeJavascript", "code": "location.href = 'file:///etc/hosts'; 1"}},
+                    {{"type": "wait", "milliseconds": 500}},
+                    {{"type": "executeJavascript", "code": "document.body.innerText"}}]"##
             ),
             Duration::from_secs(20),
         )
@@ -716,7 +733,7 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         let submitted = render_feed(
             &renderer,
             &page,
-            r##"[{"type": "eval", "script": "document.getElementById('f').submit(); 1"}, {"type": "wait", "ms": 1000}]"##,
+            r##"[{"type": "executeJavascript", "code": "document.getElementById('f').submit(); 1"}, {"type": "wait", "milliseconds": 1000}]"##,
             Duration::from_secs(20),
         )
         .await;

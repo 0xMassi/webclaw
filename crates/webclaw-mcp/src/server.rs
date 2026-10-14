@@ -294,9 +294,9 @@ impl WebclawMcp {
         if sizes.is_some()
             && actions
                 .iter()
-                .any(|a| matches!(a, webclaw_fetch::render::Action::Eval { .. }))
+                .any(|a| matches!(a, webclaw_fetch::render::Action::ExecuteJavascript { .. }))
         {
-            return Err("chunk returns only the page's chunks, so it cannot carry eval values: drop one of them".into());
+            return Err("chunk returns only the page's chunks, so it cannot carry js_results: drop the executeJavascript steps or chunk".into());
         }
         let mut config = self.fetch_config.clone();
         apply_render(
@@ -349,7 +349,7 @@ impl WebclawMcp {
         let format = params.format.as_deref().unwrap_or("markdown");
         if format == "json" && !results.is_empty() {
             let mut value = serde_json::to_value(&extraction).map_err(|e| e.to_string())?;
-            value["script_results"] = serde_json::Value::Array(results);
+            value["js_results"] = serde_json::Value::Array(results);
             return serde_json::to_string_pretty(&value).map_err(|e| e.to_string());
         }
         let output = format_page(extraction, format, &params.url);
@@ -357,7 +357,7 @@ impl WebclawMcp {
             return Ok(output);
         }
         Ok(format!(
-            "{output}\n\nScript results:\n```json\n{}\n```",
+            "{output}\n\njs_results:\n```json\n{}\n```",
             serde_json::to_string_pretty(&results).unwrap_or_default()
         ))
     }
@@ -426,7 +426,7 @@ impl WebclawMcp {
 
     /// Scrape a single URL and extract its content as markdown, LLM-optimized text, plain text, or full JSON.
     /// Pages whose content needs JavaScript are rendered in a local Chrome when this server has browser support; otherwise, and on bot protection, it falls back to the webclaw cloud API when WEBCLAW_API_KEY is set.
-    /// With `actions`, the page is rendered and the steps (click, type, press, scroll, wait, wait_for, eval) run before it is read, for infinite scroll, "load more" buttons, tabs and forms.
+    /// With `actions`, in the hosted API's format, the page is rendered and the steps (click, type, press, scroll, wait, waitForSelector, executeJavascript) run before it is read, for infinite scroll, "load more" buttons, tabs and forms.
     #[tool]
     async fn scrape(&self, Parameters(params): Parameters<ScrapeParams>) -> Result<String, String> {
         validate_url(&params.url).await?;
@@ -673,7 +673,7 @@ impl WebclawMcp {
         .map_err(|e| e.to_string())?
     }
 
-    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL, and with `actions` the values of their eval steps.
+    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL, and with `actions` the values of their executeJavascript steps.
     #[tool]
     async fn screenshot(
         &self,

@@ -307,26 +307,26 @@ Crawls, batches, `--watch` and the MCP server render the same way and share one 
 
 ### Click, type and scroll before reading
 
-With a `browser` build, `--actions` runs steps in the browser once the page has loaded and before webclaw reads it, so content behind infinite scroll, "load more" buttons, pagination buttons, forms or a slow script ends up in the output. `--scroll` alone scrolls to the end until the page stops growing, at most 20 times (`--scroll 50` for more).
+With a `browser` build, `--actions` runs steps in the browser once the page has loaded and before webclaw reads it, in the same format as the hosted API's `actions`, so content behind infinite scroll, "load more" buttons, pagination buttons, forms or a slow script ends up in the output. `--scroll` alone scrolls to the end until the page stops growing, at most 20 times (`--scroll 50` for more).
 
 ```bash
 webclaw https://quotes.toscrape.com/scroll --scroll
 webclaw https://github.com/topics/rust --actions '[{"type": "click", "selector": "button.ajax-pagination-btn", "repeat": 3}]'
-webclaw https://quotes.toscrape.com/login --actions '[{"type": "type", "selector": "#username", "text": "me"}, {"type": "type", "selector": "#password", "text": "secret"}, {"type": "press", "key": "Enter"}]'
+webclaw https://quotes.toscrape.com/login --actions '[{"type": "type", "selector": "#username", "value": "me"}, {"type": "type", "selector": "#password", "value": "secret"}, {"type": "press", "key": "Enter"}]'
 webclaw https://example.com --actions @steps.json
 ```
 
 | Step | Fields | What it does |
 | --- | --- | --- |
 | `click` | `selector`, and `nth`, `all` or `repeat` | Clicks the first match, the match at index `nth` (from 0), or every match. With `repeat`, clicks the first visible match again and again, up to that many times, until none is left or two clicks in a row change nothing |
-| `type` | `selector`, `text` | Focuses the element and types the text key by key |
+| `type` | `selector`, `value` | Focuses the element and types the value |
 | `press` | `key` | Presses a key such as `Enter`, `Tab` or `ArrowDown` |
-| `scroll` | `selector`, `by`, `repeat`, all optional | Scrolls the page, or the element, to its end, or down by `by` pixels. With `repeat`, scrolls again until two scrolls in a row add nothing; with `by` it keeps stepping down to the end, which loads lazy images on the way |
-| `wait` | `ms` | Pauses |
-| `wait_for` | `selector`, `timeout_ms` | Waits until an element matches, 10 seconds by default |
-| `eval` | `script` | Runs a JavaScript expression, or a function body that ends in `return`, and prints its value as JSON to stderr |
+| `scroll` | `direction` (`down` or `up`), `amount`, `selector`, `repeat`, all optional | Scrolls the page, or the element, `amount` pixels, or without `amount` to its end. With `repeat`, scrolls again until two scrolls in a row add nothing; with `amount` it keeps stepping to the end, which loads lazy images on the way |
+| `wait` | `milliseconds` | Pauses |
+| `waitForSelector` | `selector`, `timeout` | Waits until an element matches, up to `timeout` milliseconds, 10 seconds by default |
+| `executeJavascript` | `code` | Runs a JavaScript expression, or a function body that ends in `return`, and keeps its value as JSON in `js_results` |
 
-After a click, a key press or a scroll, webclaw waits until the page and its requests go quiet, up to 5 seconds, before the next step. A step that needs an element waits up to 10 seconds for it. The steps get their own time budget, equal to `--timeout`, on top of loading the page. The first step that fails or runs out of time fails the command, and the error names it. The values of all `eval` steps together are capped at 1 MiB. Steps run in the same browser under the same checks as the page's own scripts, and a step that navigates to a private or loopback address, or to a name that resolves to one, fails the command. `--actions` takes one URL and renders the page even with `--render auto`. The MCP `scrape` and `screenshot` tools take the same list as `actions`, and return the `eval` values after the content.
+After a click, a key press or a scroll, webclaw waits until the page and its requests go quiet, up to 5 seconds, before the next step. A step that needs an element waits up to 10 seconds for it. The steps get their own time budget, equal to `--timeout`, on top of loading the page. The first step that fails or runs out of time fails the command, and the error names it. The values of all `executeJavascript` steps together are capped at 1 MiB. Steps run in the same browser under the same checks as the page's own scripts, and a step that navigates to a private or loopback address, or to a name that resolves to one, fails the command. `--actions` takes one URL and renders the page even with `--render auto`. `js_results` prints to stderr. The MCP `scrape` and `screenshot` tools take the same list as `actions` and return `js_results` after the content. Local additions are `nth`, `all` and `repeat` on `click`, and `selector`, `repeat` and scrolling to the end on `scroll`. The hosted `screenshot` step is left out, since `--screenshot` does that.
 
 ### Crawl a documentation site
 

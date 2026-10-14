@@ -27,7 +27,7 @@ use tracing::warn;
 use url::Url;
 
 use crate::Block;
-pub use crate::actions::{Action, parse_actions};
+pub use crate::actions::{Action, Direction, parse_actions};
 use crate::client::FetchResult;
 use crate::error::FetchError;
 
@@ -313,7 +313,7 @@ impl Renderer {
     /// loaded and before it is read. They get their own time budget, equal to
     /// `options.timeout`, and the first failing step fails the render with
     /// its number in the error. Returns the page and the values of its
-    /// `executeJavascript` steps.
+    /// `executeJavascript` steps, the hosted API's `js_results`.
     pub async fn render_actions(
         &self,
         url: &str,

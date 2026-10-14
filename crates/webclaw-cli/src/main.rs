@@ -219,9 +219,10 @@ struct Cli {
     block: Option<webclaw_fetch::Block>,
 
     /// Steps to run in the local browser once the page has loaded, before it
-    /// is read: a JSON array, or @FILE to read one, e.g. '[{"type": "click",
-    /// "selector": "button.more", "repeat": 10}]'. Steps: click, type, press,
-    /// scroll, wait, wait_for and eval; see the README. The values of eval
+    /// is read, in the hosted API's format: a JSON array, or @FILE to read
+    /// one, e.g. '[{"type": "click", "selector": "button.more", "repeat":
+    /// 10}]'. Steps: click, type, press, scroll, wait, waitForSelector and
+    /// executeJavascript; see the README. The values of executeJavascript
     /// steps print to stderr. Renders the page even with --render auto
     #[arg(long, value_name = "JSON", conflicts_with_all = ["crawl", "watch", "map", "brand", "raw_html", "cloud"])]
     actions: Option<String>,
@@ -1112,8 +1113,9 @@ fn page_actions(cli: &Cli) -> Result<Vec<webclaw_fetch::render::Action>, String>
     let mut actions = Vec::new();
     if let Some(times) = cli.scroll {
         actions.push(webclaw_fetch::render::Action::Scroll {
+            direction: webclaw_fetch::render::Direction::Down,
+            amount: None,
             selector: None,
-            by: None,
             repeat: Some(times),
         });
     }
@@ -1132,7 +1134,7 @@ fn page_actions(cli: &Cli) -> Result<Vec<webclaw_fetch::render::Action>, String>
 #[cfg(feature = "browser")]
 fn print_script_results(results: &[serde_json::Value]) {
     for (i, value) in results.iter().enumerate() {
-        eprintln!("eval {}: {value}", i + 1);
+        eprintln!("js_results[{i}]: {value}");
     }
 }
 

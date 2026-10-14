@@ -62,15 +62,15 @@ def playwright_steps(steps):
                     target.click(timeout=10000)
                     page.wait_for_timeout(1000)
             elif kind == "type":
-                page.locator(s["selector"]).first.press_sequentially(s["text"])
+                page.locator(s["selector"]).first.press_sequentially(s["value"])
             elif kind == "press":
                 page.keyboard.press(s["key"])
                 page.wait_for_timeout(1000)
             elif kind == "scroll":
                 for _ in range(s.get("repeat") or 1):
                     height = page.evaluate("document.documentElement.scrollHeight")
-                    if s.get("by"):
-                        page.mouse.wheel(0, s["by"])
+                    if s.get("amount"):
+                        page.mouse.wheel(0, s["amount"] if s.get("direction", "down") == "down" else -s["amount"])
                         page.wait_for_timeout(300)
                     else:
                         page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
@@ -78,11 +78,11 @@ def playwright_steps(steps):
                         if page.evaluate("document.documentElement.scrollHeight") == height:
                             break
             elif kind == "wait":
-                page.wait_for_timeout(s["ms"])
-            elif kind == "wait_for":
-                page.wait_for_selector(s["selector"], timeout=s.get("timeout_ms") or 10000)
-            elif kind == "eval":
-                page.evaluate(s["script"])
+                page.wait_for_timeout(s["milliseconds"])
+            elif kind == "waitForSelector":
+                page.wait_for_selector(s["selector"], timeout=s.get("timeout") or 10000)
+            elif kind == "executeJavascript":
+                page.evaluate(s["code"])
         return page
     return act
 
@@ -106,11 +106,11 @@ def c4a(steps):
             lines.append(f"CLICK `{s['selector']}`")
             lines.append("WAIT 1")
         elif s["type"] == "type":
-            lines += [f"CLICK `{s['selector']}`", f"TYPE {json.dumps(s['text'])}"]
+            lines += [f"CLICK `{s['selector']}`", f"TYPE {json.dumps(s['value'])}"]
         elif s["type"] == "press":
             lines += [f"PRESS {s['key']}", "WAIT 1"]
         elif s["type"] == "wait":
-            lines.append(f"WAIT {s['ms'] / 1000}")
+            lines.append(f"WAIT {s['milliseconds'] / 1000}")
     return "\n".join(lines)
 
 
@@ -120,9 +120,9 @@ def crawl4ai_config(steps):
     kinds = {s["type"] for s in steps}
     if kinds == {"scroll"}:
         opts.update(scan_full_page=True, max_scroll_steps=max(s.get("repeat") or 1 for s in steps) * 10)
-    elif kinds == {"wait_for"}:
+    elif kinds == {"waitForSelector"}:
         s = steps[0]
-        opts.update(wait_for=f"css:{s['selector']}", wait_for_timeout=s.get("timeout_ms") or 10000)
+        opts.update(wait_for=f"css:{s['selector']}", wait_for_timeout=s.get("timeout") or 10000)
     elif kinds == {"click"} and steps[0].get("repeat"):
         s = steps[0]
         opts["js_code"] = (

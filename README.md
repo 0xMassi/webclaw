@@ -198,7 +198,15 @@ webclaw https://books.toscrape.com --xpath "//article[@class='product_pod']" \
 webclaw "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies" --tables
 ```
 
-`--tables` prints the page's data tables as a JSON array, each with its `caption` (when it has one), `headers` and `rows` of cell text. A cell that spans several rows or columns repeats its text in each one, so every row has one value per column. Stacked header rows are joined per column with ` / `, as in `Population / % of world`. Tables used for page layout are skipped: those marked `role="presentation"`, and those without a header row that wrap other tables, hold paragraphs or lists, or hold only links. Hidden cells are left out. The MCP `select` tool takes `tables: true` in place of a selector.
+`--tables` prints the page's data tables as a JSON array, each with its `caption` (when it has one), `headers` and `rows` of cell text. A cell that spans several rows or columns repeats its text in each one, so every row has one value per column. Stacked header rows are joined per column with ` / `, as in `Population / % of world`. The MCP `select` tool takes `tables: true` in place of a selector.
+
+Header rows are the rows of `<thead>` and the leading rows made only of `<th>`; a leading row that is one cell across the whole table becomes the caption. These tables are skipped as page layout:
+
+- tables marked `role="presentation"` or `role="none"`;
+- tables with fewer than two columns of text;
+- tables without a header row that have a single body row, wrap another table, hold only links, or hold paragraphs, lists or other blocks in a row of more than one cell.
+
+Text hidden with `hidden`, an inline `display:none` or `<template>` is left out. Text hidden by a stylesheet is kept, because pages are not styled. A cell keeps its first 64 KB of text, and a very large table is cut short with `"truncated": true`; the tables after it are then left out.
 
 ### Keep only what answers a question
 

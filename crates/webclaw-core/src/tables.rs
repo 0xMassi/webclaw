@@ -3,9 +3,10 @@
 //! Every `<table>` on the page is laid out on a grid the way a browser does,
 //! so a cell spanning several rows or columns fills each slot it covers.
 //! Tables used for page layout are skipped: those marked
-//! `role="presentation"`, those with fewer than two columns of text, and
-//! those without a header row that wrap another table, hold blocks such as
-//! paragraphs or lists, hold nothing but links, or have a single body row.
+//! `role="presentation"` or `role="none"`, those with fewer than two columns
+//! of text, and those without a header row that have a single body row,
+//! wrap another table, hold nothing but links, or hold blocks such as
+//! paragraphs or lists in a row of more than one cell.
 
 use ego_tree::iter::Edge;
 use scraper::node::Node;

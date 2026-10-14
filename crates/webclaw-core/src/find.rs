@@ -435,10 +435,18 @@ fn collapse(text: &str) -> String {
 }
 
 fn ident(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    if chars == ['-'] {
+        return "\\-".into();
+    }
     let mut out = String::new();
-    for (i, c) in name.chars().enumerate() {
+    for (i, &c) in chars.iter().enumerate() {
+        let leading_digit = c.is_ascii_digit() && (i == 0 || (i == 1 && chars[0] == '-'));
         match c {
-            '0'..='9' if i == 0 => out.push_str(&format!("\\{:x} ", c as u32)),
+            '\0' => out.push('\u{FFFD}'),
+            c if c.is_ascii_control() || leading_digit => {
+                out.push_str(&format!("\\{:x} ", c as u32))
+            }
             'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' => out.push(c),
             c if !c.is_ascii() => out.push(c),
             c => {
@@ -685,5 +693,23 @@ mod tests {
         assert!(TextMatch::regex("x*", false).is_err());
         assert!(TextMatch::regex("^", false).is_err());
         assert!(TextMatch::regex("x+", false).is_ok());
+    }
+
+    #[test]
+    fn identifiers_are_escaped_the_css_way() {
+        for class in [
+            "-1", "-2x", "2col", "-", "--x", "a.b", "w-1/2", "日本", "a\"b",
+        ] {
+            let page = format!(
+                r#"<p class="{}">yes</p><p>no</p>"#,
+                class.replace('"', "&quot;")
+            );
+            let css = format!("p.{}", ident(class));
+            assert_eq!(
+                crate::select(&page, None, &css).unwrap(),
+                ["yes"],
+                "{class} -> {css}"
+            );
+        }
     }
 }

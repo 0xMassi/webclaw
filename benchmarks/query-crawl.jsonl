@@ -1,0 +1,60 @@
+{"site": "docs.python.org", "q": "How do I sort a list of dictionaries by a key?", "answer": ["https://docs.python.org/3/howto/sorting.html"], "snippet": "Key Functions"}
+{"site": "docs.python.org", "q": "How do I write a function that takes arbitrary keyword arguments with **kwargs?", "answer": ["https://docs.python.org/3/tutorial/controlflow.html"], "snippet": "Arbitrary Argument Lists"}
+{"site": "docs.python.org", "q": "What does functools.lru_cache do?", "answer": ["https://docs.python.org/3/library/functools.html"], "snippet": "lru_cache"}
+{"site": "docs.python.org", "q": "How do I count how often items occur with collections.Counter?", "answer": ["https://docs.python.org/3/library/collections.html"], "snippet": "Counter objects"}
+{"site": "docs.python.org", "q": "How do I handle exceptions with try, except and finally?", "answer": ["https://docs.python.org/3/tutorial/errors.html"], "snippet": "Defining Clean-up Actions"}
+{"site": "docs.python.org", "q": "How do I create a virtual environment with venv?", "answer": ["https://docs.python.org/3/library/venv.html", "https://docs.python.org/3/tutorial/venv.html"], "snippet": "python -m venv"}
+{"site": "docs.python.org", "q": "How do I parse command line arguments with argparse?", "answer": ["https://docs.python.org/3/library/argparse.html", "https://docs.python.org/3/howto/argparse.html"], "snippet": "ArgumentParser"}
+{"site": "docs.python.org", "q": "How do I join filesystem paths with pathlib?", "answer": ["https://docs.python.org/3/library/pathlib.html"], "snippet": "joinpath"}
+{"site": "docs.python.org", "q": "How do I run asyncio tasks concurrently with gather?", "answer": ["https://docs.python.org/3/library/asyncio-task.html"], "snippet": "asyncio.gather"}
+{"site": "docs.python.org", "q": "How do I format a date as a string with strftime?", "answer": ["https://docs.python.org/3/library/datetime.html"], "snippet": "strftime"}
+{"site": "docs.python.org", "q": "What does \\b match in a regular expression?", "answer": ["https://docs.python.org/3/library/re.html", "https://docs.python.org/3/howto/regex.html"], "snippet": "word boundary"}
+{"site": "docs.python.org", "q": "How do I configure logging to write messages to a file?", "answer": ["https://docs.python.org/3/howto/logging.html"], "snippet": "Logging to a file"}
+{"site": "docs.python.org", "q": "What methods does the dataclass decorator generate?", "answer": ["https://docs.python.org/3/library/dataclasses.html"], "snippet": "__init__"}
+{"site": "docs.python.org", "q": "What are list comprehensions?", "answer": ["https://docs.python.org/3/tutorial/datastructures.html"], "snippet": "List Comprehensions"}
+{"site": "docs.python.org", "q": "How do I read a CSV file with the csv module?", "answer": ["https://docs.python.org/3/library/csv.html"], "snippet": "csv.reader"}
+{"site": "www.postgresql.org", "q": "Which port does the PostgreSQL server listen on by default?", "answer": ["https://www.postgresql.org/docs/current/runtime-config-connection.html"], "snippet": "5432"}
+{"site": "www.postgresql.org", "q": "How do I build an index without locking writes using CREATE INDEX CONCURRENTLY?", "answer": ["https://www.postgresql.org/docs/current/sql-createindex.html"], "snippet": "Building Indexes Concurrently"}
+{"site": "www.postgresql.org", "q": "What does VACUUM FULL do?", "answer": ["https://www.postgresql.org/docs/current/sql-vacuum.html", "https://www.postgresql.org/docs/current/routine-vacuuming.html"], "snippet": "VACUUM FULL"}
+{"site": "www.postgresql.org", "q": "How do I write a recursive query with WITH RECURSIVE?", "answer": ["https://www.postgresql.org/docs/current/queries-with.html"], "snippet": "Recursive Queries"}
+{"site": "www.postgresql.org", "q": "What does the jsonb containment operator @> check?", "answer": ["https://www.postgresql.org/docs/current/datatype-json.html", "https://www.postgresql.org/docs/current/functions-json.html"], "snippet": "containment"}
+{"site": "www.postgresql.org", "q": "How do window functions work in PostgreSQL?", "answer": ["https://www.postgresql.org/docs/current/tutorial-window.html", "https://www.postgresql.org/docs/current/functions-window.html"], "snippet": "window function"}
+{"site": "www.postgresql.org", "q": "What does the shared_buffers setting control?", "answer": ["https://www.postgresql.org/docs/current/runtime-config-resource.html"], "snippet": "shared_buffers"}
+{"site": "www.postgresql.org", "q": "How do I set up streaming replication to a standby server?", "answer": ["https://www.postgresql.org/docs/current/warm-standby.html"], "snippet": "Streaming Replication"}
+{"site": "www.postgresql.org", "q": "Which transaction isolation levels does PostgreSQL support?", "answer": ["https://www.postgresql.org/docs/current/transaction-iso.html"], "snippet": "Serializable"}
+{"site": "www.postgresql.org", "q": "How do I back up a database with pg_dump?", "answer": ["https://www.postgresql.org/docs/current/app-pgdump.html", "https://www.postgresql.org/docs/current/backup-dump.html"], "snippet": "pg_dump"}
+{"site": "www.postgresql.org", "q": "What is the difference between char and varchar?", "answer": ["https://www.postgresql.org/docs/current/datatype-character.html"], "snippet": "character varying"}
+{"site": "www.postgresql.org", "q": "How do I create a partitioned table?", "answer": ["https://www.postgresql.org/docs/current/ddl-partitioning.html"], "snippet": "PARTITION BY"}
+{"site": "www.postgresql.org", "q": "What does EXPLAIN ANALYZE show?", "answer": ["https://www.postgresql.org/docs/current/using-explain.html", "https://www.postgresql.org/docs/current/sql-explain.html"], "snippet": "EXPLAIN ANALYZE"}
+{"site": "www.postgresql.org", "q": "How do I grant privileges on a table to a role?", "answer": ["https://www.postgresql.org/docs/current/sql-grant.html", "https://www.postgresql.org/docs/current/ddl-priv.html"], "snippet": "GRANT"}
+{"site": "www.postgresql.org", "q": "What is a GIN index good for?", "answer": ["https://www.postgresql.org/docs/current/gin.html"], "snippet": "GIN"}
+{"site": "developer.mozilla.org", "q": "What does the Retry-After header mean?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After"], "snippet": "Retry-After"}
+{"site": "developer.mozilla.org", "q": "What does the HTTP status 418 I'm a teapot mean?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/418"], "snippet": "teapot"}
+{"site": "developer.mozilla.org", "q": "What is the Strict-Transport-Security header for?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Strict-Transport-Security"], "snippet": "max-age"}
+{"site": "developer.mozilla.org", "q": "What does 429 Too Many Requests mean?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429"], "snippet": "Too Many Requests"}
+{"site": "developer.mozilla.org", "q": "What does the ETag response header do?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/ETag"], "snippet": "ETag"}
+{"site": "developer.mozilla.org", "q": "What is the HTTP PATCH method?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Methods/PATCH"], "snippet": "PATCH"}
+{"site": "developer.mozilla.org", "q": "What does the Vary header do?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Vary"], "snippet": "Vary"}
+{"site": "developer.mozilla.org", "q": "What does 304 Not Modified mean?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/304"], "snippet": "Not Modified"}
+{"site": "developer.mozilla.org", "q": "What is the X-Frame-Options header?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/X-Frame-Options"], "snippet": "SAMEORIGIN"}
+{"site": "developer.mozilla.org", "q": "What does Cache-Control no-store mean?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control"], "snippet": "no-store"}
+{"site": "developer.mozilla.org", "q": "What is the OPTIONS method used for?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Methods/OPTIONS"], "snippet": "OPTIONS"}
+{"site": "developer.mozilla.org", "q": "What does 503 Service Unavailable mean?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/503"], "snippet": "Service Unavailable"}
+{"site": "developer.mozilla.org", "q": "What does the Referrer-Policy header control?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy"], "snippet": "no-referrer"}
+{"site": "developer.mozilla.org", "q": "What is the Accept-Language request header?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Language"], "snippet": "Accept-Language"}
+{"site": "developer.mozilla.org", "q": "What does 301 Moved Permanently mean?", "answer": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/301"], "snippet": "Moved Permanently"}
+{"site": "quotes.toscrape.com", "q": "Quotes about tea", "answer": ["https://quotes.toscrape.com/tag/tea/page/1/", "https://quotes.toscrape.com/tag/tea/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about friendship", "answer": ["https://quotes.toscrape.com/tag/friendship/page/1/", "https://quotes.toscrape.com/tag/friendship/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about death", "answer": ["https://quotes.toscrape.com/tag/death/page/1/", "https://quotes.toscrape.com/tag/death/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about hope", "answer": ["https://quotes.toscrape.com/tag/hope/page/1/", "https://quotes.toscrape.com/tag/hope/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about fate", "answer": ["https://quotes.toscrape.com/tag/fate/page/1/", "https://quotes.toscrape.com/tag/fate/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about writing", "answer": ["https://quotes.toscrape.com/tag/writing/page/1/", "https://quotes.toscrape.com/tag/writing/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about music", "answer": ["https://quotes.toscrape.com/tag/music/page/1/", "https://quotes.toscrape.com/tag/music/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about knowledge", "answer": ["https://quotes.toscrape.com/tag/knowledge/page/1/", "https://quotes.toscrape.com/tag/knowledge/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about poetry", "answer": ["https://quotes.toscrape.com/tag/poetry/page/1/", "https://quotes.toscrape.com/tag/poetry/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about dreams", "answer": ["https://quotes.toscrape.com/tag/dreams/page/1/", "https://quotes.toscrape.com/tag/dreams/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about humor", "answer": ["https://quotes.toscrape.com/tag/humor/page/1/", "https://quotes.toscrape.com/tag/humor/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about education", "answer": ["https://quotes.toscrape.com/tag/education/page/1/", "https://quotes.toscrape.com/tag/education/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about religion", "answer": ["https://quotes.toscrape.com/tag/religion/page/1/", "https://quotes.toscrape.com/tag/religion/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about love", "answer": ["https://quotes.toscrape.com/tag/love/page/1/", "https://quotes.toscrape.com/tag/love/"], "snippet": "(about)"}
+{"site": "quotes.toscrape.com", "q": "Quotes about wisdom", "answer": ["https://quotes.toscrape.com/tag/wisdom/page/1/", "https://quotes.toscrape.com/tag/wisdom/"], "snippet": "(about)"}

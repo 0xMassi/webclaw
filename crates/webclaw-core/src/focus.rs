@@ -6,15 +6,29 @@
 //! stay, in page order, under their headings; the page title always stays.
 //! Words match on their first six letters, so most inflected forms meet;
 //! Chinese, Japanese and Korean text matches by character pairs.
+//!
+//! [`Question`] and [`Relevance`] use the same words to tell a crawler which
+//! links to follow first for a question.
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ExtractionResult;
+use crate::{Anchor, ExtractionResult};
 
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
 const KEEP_RATIO: f64 = 0.5;
 const STEM: usize = 6;
+const QUESTION_WORDS: &[&str] = &[
+    "a", "about", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from",
+    "how", "i", "if", "in", "is", "it", "its", "me", "my", "of", "on", "or", "should", "that",
+    "the", "there", "this", "to", "use", "using", "was", "what", "when", "where", "which", "who",
+    "why", "will", "with", "would", "you", "your",
+];
+const CONTEXT_WEIGHT: f64 = 0.25;
+const PARENT_WEIGHT: f64 = 0.25;
+const BEST_BLOCKS: usize = 3;
+const MAX_QUESTION_WORDS: usize = 32;
+const MIN_PREFIX: usize = 4;
 
 struct Block<'a> {
     text: &'a str,
@@ -75,6 +89,182 @@ pub fn focus_extraction(result: &mut ExtractionResult, query: &str) {
     result.content.markdown = focus(&result.content.markdown, query);
     result.content.plain_text = crate::markdown::strip_markdown(&result.content.markdown);
     result.metadata.word_count = crate::extractor::word_count(&result.content.plain_text);
+}
+
+/// The words of a question, ready to look for in crawled pages; see
+/// [`Relevance`].
+///
+/// Common English question words ("how", "does", "the") are left out unless
+/// nothing else is asked, and only the first 32 distinct words count.
+#[derive(Debug, Clone)]
+pub struct Question {
+    words: Vec<String>,
+    exact: HashMap<String, u32>,
+    starts: HashMap<String, u32>,
+}
+
+/// Where a [`Question`]'s words appear in one fetched page; rate it with
+/// [`Relevance::rate`].
+#[derive(Debug, Clone, Default)]
+pub struct PageWords {
+    blocks: Vec<u32>,
+    sections: Vec<u32>,
+    links: Vec<(u32, u32)>,
+}
+
+impl Question {
+    /// The words of `query`, or `None` when it has none to look for.
+    pub fn new(query: &str) -> Option<Self> {
+        let all = terms(query);
+        let asked: Vec<&String> = all
+            .iter()
+            .filter(|t| !QUESTION_WORDS.contains(&t.as_str()))
+            .collect();
+        let source = if asked.is_empty() {
+            all.iter().collect()
+        } else {
+            asked
+        };
+        let mut words: Vec<String> = Vec::new();
+        for word in source {
+            if words.len() == MAX_QUESTION_WORDS {
+                break;
+            }
+            if !words.contains(word) {
+                words.push(word.clone());
+            }
+        }
+        if words.is_empty() {
+            return None;
+        }
+        let mut exact = HashMap::new();
+        let mut starts: HashMap<String, u32> = HashMap::new();
+        for (i, word) in words.iter().enumerate() {
+            let bit = 1u32 << i;
+            exact.insert(word.clone(), bit);
+            for (end, _) in word.char_indices().skip(MIN_PREFIX) {
+                *starts.entry(word[..end].to_string()).or_default() |= bit;
+            }
+        }
+        Some(Self {
+            words,
+            exact,
+            starts,
+        })
+    }
+
+    /// Finds the question's words in a fetched page's markdown and anchors.
+    pub fn read(&self, markdown: &str, anchors: &[Anchor]) -> PageWords {
+        let blocks = split_blocks(markdown);
+        let own: Vec<u32> = blocks.iter().map(|b| self.mask(b.text)).collect();
+        let sections = (0..blocks.len())
+            .map(|i| {
+                let mut mask = own[i];
+                let mut parent = blocks[i].heading;
+                while let Some(h) = parent {
+                    mask |= own[h];
+                    parent = blocks[h].heading;
+                }
+                mask
+            })
+            .collect();
+        let links = anchors
+            .iter()
+            .map(|a| {
+                let path = url::Url::parse(&a.href)
+                    .map(|u| u.path().to_string())
+                    .unwrap_or_default();
+                (self.mask(&a.text) | self.mask(&path), self.mask(&a.context))
+            })
+            .collect();
+        PageWords {
+            blocks: own,
+            sections,
+            links,
+        }
+    }
+
+    fn mask(&self, text: &str) -> u32 {
+        let mut mask = 0;
+        for word in terms(text) {
+            mask |= self.exact.get(&word).copied().unwrap_or(0);
+            if word.chars().count() >= MIN_PREFIX {
+                mask |= self.starts.get(&word).copied().unwrap_or(0);
+                for (end, _) in word.char_indices().skip(MIN_PREFIX) {
+                    mask |= self.exact.get(&word[..end]).copied().unwrap_or(0);
+                }
+            }
+        }
+        mask
+    }
+}
+
+/// Rates the pages and links of a crawl against a [`Question`].
+///
+/// A link scores the weighted share of the question's words found in its
+/// text and URL path, plus a quarter of that share for the words around it,
+/// plus a quarter of the rating of the page it was found on. A page rates
+/// the mean share found in its three best blocks, each read with the
+/// headings above it. Words of four letters or more also match longer words
+/// they start, so "sort" finds "sorting". Each word weighs by how rare it is
+/// among the blocks of the pages rated so far.
+#[derive(Debug, Clone)]
+pub struct Relevance {
+    df: Vec<f64>,
+    docs: f64,
+}
+
+impl Relevance {
+    /// A rater for `question`, with no pages seen yet.
+    pub fn new(question: &Question) -> Self {
+        Self {
+            df: vec![0.0; question.words.len()],
+            docs: 0.0,
+        }
+    }
+
+    /// Rates a fetched page and returns that rating, from 0 to 1, with one
+    /// crawl priority per anchor the page was read with.
+    pub fn rate(&mut self, page: &PageWords) -> (f64, Vec<f64>) {
+        for &mask in &page.blocks {
+            for (i, df) in self.df.iter_mut().enumerate() {
+                if mask & (1 << i) != 0 {
+                    *df += 1.0;
+                }
+            }
+            self.docs += 1.0;
+        }
+        let weights: Vec<f64> = self
+            .df
+            .iter()
+            .map(|d| ((self.docs - d + 0.5) / (d + 0.5) + 1.0).ln())
+            .collect();
+        let total: f64 = weights.iter().sum();
+        let share = |mask: u32| -> f64 {
+            if total <= 0.0 {
+                return 0.0;
+            }
+            let found: f64 = weights
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << i) != 0)
+                .map(|(_, w)| w)
+                .sum();
+            found / total
+        };
+        let mut shares: Vec<f64> = page.sections.iter().map(|&m| share(m)).collect();
+        shares.sort_by(|a, b| b.total_cmp(a));
+        let rated = shares.iter().take(BEST_BLOCKS).sum::<f64>() / BEST_BLOCKS as f64;
+        let rated = if rated > 0.0 { rated } else { 0.0 };
+        let scores = page
+            .links
+            .iter()
+            .map(|&(own, around)| {
+                share(own) + CONTEXT_WEIGHT * share(around) + PARENT_WEIGHT * rated
+            })
+            .collect();
+        (rated, scores)
+    }
 }
 
 fn split_blocks(markdown: &str) -> Vec<Block<'_>> {
@@ -279,6 +469,129 @@ mod tests {
             result.metadata.word_count,
             crate::extractor::word_count(&result.content.plain_text)
         );
+    }
+
+    struct Rater(super::Question, super::Relevance);
+
+    impl Rater {
+        fn new(query: &str) -> Self {
+            let question = super::Question::new(query).unwrap();
+            let relevance = super::Relevance::new(&question);
+            Self(question, relevance)
+        }
+
+        fn rate(&mut self, markdown: &str, anchors: &[crate::Anchor]) -> (f64, Vec<f64>) {
+            self.1.rate(&self.0.read(markdown, anchors))
+        }
+    }
+
+    fn anchor(href: &str, text: &str, context: &str) -> crate::Anchor {
+        crate::Anchor {
+            href: href.into(),
+            text: text.into(),
+            context: context.into(),
+        }
+    }
+
+    #[test]
+    fn links_rank_by_the_question_words_they_carry() {
+        let mut rel = Rater::new("How do I sort a list by a key?");
+        let (_, scores) = rel.rate(
+            "# Home",
+            &[
+                anchor("https://d.test/howto/index.html", "How to guides", ""),
+                anchor(
+                    "https://d.test/howto/sorting.html",
+                    "Sorting techniques",
+                    "",
+                ),
+                anchor("https://d.test/howto/logging.html", "How to log", ""),
+                anchor(
+                    "https://d.test/tutorial/",
+                    "Tutorial",
+                    "Examples with lists",
+                ),
+            ],
+        );
+        assert!(scores[1] > scores[0], "{scores:?}");
+        assert!(scores[1] > scores[2], "{scores:?}");
+        assert!(scores[3] > 0.0 && scores[3] < scores[1], "{scores:?}");
+    }
+
+    #[test]
+    fn the_url_path_counts_like_link_text() {
+        let mut rel = Rater::new("functools lru_cache");
+        let (_, scores) = rel.rate(
+            "# Library",
+            &[
+                anchor("https://d.test/library/functools.html", "next", ""),
+                anchor("https://d.test/library/os.html", "next", ""),
+            ],
+        );
+        assert!(scores[0] > scores[1], "{scores:?}");
+    }
+
+    #[test]
+    fn words_every_block_shares_count_for_little() {
+        let mut rel = Rater::new("rust crawler");
+        let (_, scores) = rel.rate(
+            "# Rust\n\nRust is fast.\n\nRust is safe.\n\nRust has crates.",
+            &[
+                anchor("https://d.test/book.html", "Rust book", ""),
+                anchor("https://d.test/guide.html", "Crawler guide", ""),
+            ],
+        );
+        assert!(scores[1] > 5.0 * scores[0], "{scores:?}");
+    }
+
+    #[test]
+    fn a_question_of_only_common_words_keeps_them() {
+        let mut rel = Rater::new("How?");
+        let (_, scores) = rel.rate(
+            "# Page",
+            &[
+                anchor("https://d.test/a.html", "How it works", ""),
+                anchor("https://d.test/b.html", "Pricing", ""),
+            ],
+        );
+        assert!(scores[0] > scores[1], "{scores:?}");
+    }
+
+    #[test]
+    fn a_relevant_page_lifts_every_link_on_it() {
+        let mut rel = Rater::new("window functions");
+        let links = [anchor("https://d.test/next.html", "Next", "")];
+        let (on_topic, lifted) = rel.rate(
+            "# Window Functions\n\nA window function...\n\nWindow functions run over rows.",
+            &links,
+        );
+        let (off_topic, plain) = rel.rate("# Indexes\n\nB-tree.", &links);
+        assert!(on_topic > 0.9 && off_topic == 0.0, "{on_topic} {off_topic}");
+        assert!(lifted[0] > plain[0], "{lifted:?} {plain:?}");
+    }
+
+    #[test]
+    fn a_long_question_keeps_its_first_32_words() {
+        let long: Vec<String> = (0..2000).map(|k| format!("word{k}x")).collect();
+        let question = super::Question::new(&long.join(" ")).unwrap();
+        assert_eq!(question.words.len(), 32);
+        let page = format!("# Page\n\n{}", long.join(" ").repeat(20));
+        let start = std::time::Instant::now();
+        let words = question.read(&page, &[]);
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(words.blocks[1].count_ones(), 32);
+    }
+
+    #[test]
+    fn a_question_with_no_words_is_no_question() {
+        assert!(super::Question::new("  ?! ").is_none());
+    }
+
+    #[test]
+    fn an_empty_page_rates_a_plain_zero() {
+        let mut rel = Rater::new("window functions");
+        let (page, _) = rel.rate("", &[]);
+        assert!(page == 0.0 && page.is_sign_positive(), "{page}");
     }
 
     #[test]

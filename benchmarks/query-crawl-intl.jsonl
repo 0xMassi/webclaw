@@ -1,0 +1,16 @@
+{"site": "py-ja", "q": "辞書のリストをキーで並べ替えるにはどうすればいいですか？", "answer": ["https://docs.python.org/ja/3/howto/sorting.html"], "snippet": "key"}
+{"site": "py-ja", "q": "正規表現で文字列を検索する方法は？", "answer": ["https://docs.python.org/ja/3/howto/regex.html", "https://docs.python.org/ja/3/library/re.html"], "snippet": "正規表現"}
+{"site": "py-ja", "q": "JSON をファイルに書き出すには？", "answer": ["https://docs.python.org/ja/3/library/json.html"], "snippet": "json.dump"}
+{"site": "py-ja", "q": "仮想環境を作成する方法", "answer": ["https://docs.python.org/ja/3/tutorial/venv.html", "https://docs.python.org/ja/3/library/venv.html"], "snippet": "venv"}
+{"site": "py-ja", "q": "例外を処理するには？", "answer": ["https://docs.python.org/ja/3/tutorial/errors.html"], "snippet": "except"}
+{"site": "py-fr", "q": "Comment trier une liste de dictionnaires par clé ?", "answer": ["https://docs.python.org/fr/3/howto/sorting.html"], "snippet": "key"}
+{"site": "py-fr", "q": "Comment lire un fichier CSV ?", "answer": ["https://docs.python.org/fr/3/library/csv.html"], "snippet": "csv.reader"}
+{"site": "py-fr", "q": "Comment créer un environnement virtuel ?", "answer": ["https://docs.python.org/fr/3/tutorial/venv.html", "https://docs.python.org/fr/3/library/venv.html"], "snippet": "venv"}
+{"site": "py-fr", "q": "Comment mesurer le temps d'exécution d'un petit bout de code ?", "answer": ["https://docs.python.org/fr/3/library/timeit.html"], "snippet": "timeit"}
+{"site": "py-fr", "q": "Quelle est la différence entre une liste et un n-uplet ?", "answer": ["https://docs.python.org/fr/3/tutorial/datastructures.html"], "snippet": "tuple"}
+{"site": "py-es", "q": "¿Cómo ordeno una lista de diccionarios por una clave?", "answer": ["https://docs.python.org/es/3/howto/sorting.html"], "snippet": "key"}
+{"site": "py-es", "q": "¿Cómo manejo excepciones con try y except?", "answer": ["https://docs.python.org/es/3/tutorial/errors.html"], "snippet": "except"}
+{"site": "py-es", "q": "¿Cómo leo argumentos de la línea de órdenes?", "answer": ["https://docs.python.org/es/3/library/argparse.html", "https://docs.python.org/es/3/howto/argparse.html"], "snippet": "argparse"}
+{"site": "py-zh", "q": "如何使用正则表达式？", "answer": ["https://docs.python.org/zh-cn/3/howto/regex.html", "https://docs.python.org/zh-cn/3/library/re.html"], "snippet": "re"}
+{"site": "py-zh", "q": "如何创建虚拟环境？", "answer": ["https://docs.python.org/zh-cn/3/tutorial/venv.html", "https://docs.python.org/zh-cn/3/library/venv.html"], "snippet": "venv"}
+{"site": "py-zh", "q": "如何对列表进行排序？", "answer": ["https://docs.python.org/zh-cn/3/howto/sorting.html"], "snippet": "sorted"}

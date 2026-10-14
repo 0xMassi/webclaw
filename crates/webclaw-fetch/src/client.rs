@@ -542,6 +542,13 @@ impl FetchClient {
         for (k, v) in extra {
             req = req.header(*k, *v);
         }
+        #[cfg(feature = "browser")]
+        if let Some(render) = self.render.as_ref().filter(|render| render.solve)
+            && let Some((cookies, agent)) = render.pool.clearance(url).await
+        {
+            debug!(url, "sending the cookies from a solved challenge");
+            req = req.header("cookie", cookies).header("user-agent", agent);
+        }
         let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
         let resp = req.send().await?;
         let response = Response::from_wreq(resp, attempt).await?;
@@ -708,6 +715,7 @@ impl FetchClient {
         let words = match &extracted {
             Ok(result) => result.metadata.word_count,
             Err(FetchError::Content(_)) => 0,
+            Err(FetchError::UpstreamStatus(_)) if self.solves(&fetched) => 0,
             Err(_) => return (fetched, extracted),
         };
         let Some(rendered) = self.render_if_needed(&fetched, words).await else {
@@ -720,6 +728,15 @@ impl FetchClient {
         } else {
             (fetched, extracted)
         }
+    }
+
+    fn solves(&self, fetched: &FetchResult) -> bool {
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.render {
+            return render.solve && crate::render::is_challenge(fetched);
+        }
+        let _ = fetched;
+        false
     }
 
     /// Render `fetched` with `FetchConfig::render` when it is set and the

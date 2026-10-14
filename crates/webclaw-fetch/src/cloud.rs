@@ -1,8 +1,11 @@
 //! Cloud API fallback client for api.webclaw.io.
 //!
 //! When local fetch hits bot protection or a JS-only SPA, callers can
-//! fall back to the hosted API which runs the full antibot / CDP
-//! pipeline. This module is the shared home for that flow: previously
+//! fall back to the hosted API. A Cloudflare challenge can also be solved
+//! locally, in a browser this crate launches (see
+//! `render::RenderOptions::solve` with the `browser` feature); [`smart_fetch`]
+//! tries that first when the client is set up for it. This module is the
+//! shared home for that flow: previously
 //! duplicated between `webclaw-mcp/src/cloud.rs` and
 //! `webclaw-cli/src/cloud.rs`.
 //!
@@ -439,10 +442,7 @@ pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     // `orchestrate/managed/v1` (managed challenge) are equally real. Keying
     // on the `h/{b,g}/orchestrate/` prefix covers every variant while still
     // rejecting the beacon, which always sits under `/scripts/`.
-    if html_lower.contains("_cf_chl_opt")
-        || html_lower.contains("challenge-platform/h/b/orchestrate/")
-        || html_lower.contains("challenge-platform/h/g/orchestrate/")
-    {
+    if is_cloudflare_challenge(&html_lower, headers) {
         return true;
     }
 
@@ -512,6 +512,19 @@ pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
     }
 
     false
+}
+
+/// Whether a response is a Cloudflare challenge page: its body carries the
+/// challenge options blob or loads the challenge's orchestrate script, as
+/// [`is_bot_protected`] explains, or Cloudflare marked it with
+/// `cf-mitigated: challenge`.
+pub fn is_cloudflare_challenge(html: &str, headers: &HeaderMap) -> bool {
+    contains_ignore_case(html, "_cf_chl_opt")
+        || contains_ignore_case(html, "challenge-platform/h/b/orchestrate/")
+        || contains_ignore_case(html, "challenge-platform/h/g/orchestrate/")
+        || headers
+            .get("cf-mitigated")
+            .is_some_and(|value| value == "challenge")
 }
 
 /// Whether a page fetched over HTTP probably needs a browser to show its
@@ -602,17 +615,34 @@ pub async fn smart_fetch(
         .map_err(|_| format!("Fetch timed out after 30s for {url}"))?
         .map_err(|e| format!("Fetch failed: {e}"))?;
 
+    let mut rendered_already = false;
     if fetch_result.status >= 400 || is_bot_protected(&fetch_result.html, &fetch_result.headers) {
-        info!(url, "bot protection detected, falling back to cloud API");
-        return cloud_scrape_fallback(
-            cloud,
-            url,
-            include_selectors,
-            exclude_selectors,
-            only_main_content,
-            formats,
-        )
-        .await;
+        let solved = if is_cloudflare_challenge(&fetch_result.html, &fetch_result.headers) {
+            client.render_if_needed(&fetch_result, 0).await
+        } else {
+            None
+        };
+        match solved {
+            Some(solved)
+                if solved.status < 400
+                    && !is_cloudflare_challenge(&solved.html, &solved.headers) =>
+            {
+                fetch_result = solved;
+                rendered_already = true;
+            }
+            _ => {
+                info!(url, "bot protection detected, falling back to cloud API");
+                return cloud_scrape_fallback(
+                    cloud,
+                    url,
+                    include_selectors,
+                    exclude_selectors,
+                    only_main_content,
+                    formats,
+                )
+                .await;
+            }
+        }
     }
 
     let options = webclaw_core::ExtractionOptions {
@@ -632,7 +662,8 @@ pub async fn smart_fetch(
         webclaw_core::extract(&fetch_result.html, Some(&fetch_result.url))
             .map_or(0, |e| e.metadata.word_count)
     };
-    if let Some(rendered) = client.render_if_needed(&fetch_result, page_words).await
+    if !rendered_already
+        && let Some(rendered) = client.render_if_needed(&fetch_result, page_words).await
         && let Ok(better) =
             webclaw_core::extract_with_options(&rendered.html, Some(&rendered.url), &options)
         && better.metadata.word_count > extraction.metadata.word_count
@@ -1069,6 +1100,81 @@ mod tests {
         assert!(
             matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("Starter costs"))
         );
+    }
+
+    struct BlockedPage(&'static str);
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for BlockedPage {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            let mut page = StaticPage(self.0).fetch(url).await?;
+            page.status = 403;
+            Ok(page)
+        }
+
+        async fn render_if_needed(
+            &self,
+            fetched: &crate::client::FetchResult,
+            _http_words: usize,
+        ) -> Option<crate::client::FetchResult> {
+            assert!(is_cloudflare_challenge(&fetched.html, &fetched.headers));
+            StaticPage("<html><body><main><h1>Prices</h1><p>The solved page lists every plan with its monthly price, the projects it includes and the support that comes with it.</p></main></body></html>").fetch(&fetched.url).await.ok()
+        }
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_reads_the_page_behind_a_solved_challenge() {
+        let challenge = BlockedPage(
+            "<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt = {cType: 'managed'};</script></body></html>",
+        );
+        let result = smart_fetch(
+            &challenge,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .expect("the solved page is extracted");
+        assert!(
+            matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("monthly price"))
+        );
+        let other = BlockedPage(
+            "<html><body><script src=\"https://geo.captcha-delivery.com/captcha/\"></script></body></html>",
+        );
+        let blocked = smart_fetch(
+            &other,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await;
+        assert!(blocked.is_err());
+    }
+
+    #[test]
+    fn cloudflare_challenges_are_told_from_other_blocks() {
+        let mut headers = HeaderMap::new();
+        assert!(is_cloudflare_challenge(
+            "<script>window._cf_chl_opt = {}</script>",
+            &headers
+        ));
+        assert!(!is_cloudflare_challenge(
+            r#"<script src="/cdn-cgi/challenge-platform/h/g/scripts/jsd/e4025c85ea63/main.js"></script>"#,
+            &headers
+        ));
+        headers.insert("cf-mitigated", "block".parse().unwrap());
+        assert!(!is_cloudflare_challenge("<html></html>", &headers));
+        headers.insert("cf-mitigated", "challenge".parse().unwrap());
+        assert!(is_cloudflare_challenge("<html></html>", &headers));
     }
 
     #[test]

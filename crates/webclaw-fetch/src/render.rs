@@ -13,7 +13,7 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     FulfillRequestParams, HeaderEntry,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
-    ErrorReason, EventResponseReceived, ResourceType, SetCookieParams,
+    ErrorReason, EventResponseReceived, GetCookiesParams, ResourceType, SetCookieParams,
 };
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::cdp::browser_protocol::target::{
@@ -25,6 +25,8 @@ use rand::seq::SliceRandom;
 use tokio::sync::{RwLock, RwLockReadGuard, Semaphore};
 use tracing::warn;
 use url::Url;
+
+mod solve;
 
 use crate::Block;
 pub use crate::actions::{Action, Direction, parse_actions};
@@ -44,6 +46,16 @@ pub struct RenderOptions {
     pub headers: Vec<(String, String)>,
     /// Resource types whose requests fail; see [`Block`] for what it misses.
     pub block: Block,
+    /// Get past a Cloudflare challenge page: wait for one that clears on its
+    /// own, click the checkbox of one that asks for it, then read the page it
+    /// leads to. A Turnstile widget embedded in the page is clicked as well.
+    /// The render fails when the challenge is still shown after three
+    /// quarters of `timeout`, leaving the rest for the page it leads to.
+    /// `headers` then go on the page's other requests to its origin but not
+    /// on its documents, since rewriting a document request fails the
+    /// challenge. Cloudflare rejects a browser that calls itself
+    /// `HeadlessChrome`, so launch it with [`Renderer::launch_as_chrome`].
+    pub solve: bool,
 }
 
 impl Default for RenderOptions {
@@ -53,6 +65,7 @@ impl Default for RenderOptions {
             timeout: Duration::from_secs(30),
             headers: Vec::new(),
             block: Block::default(),
+            solve: false,
         }
     }
 }
@@ -144,6 +157,8 @@ pub struct Renderer {
     profile: Option<std::path::PathBuf>,
     proxy_login: Option<(String, String)>,
     check_documents: bool,
+    agent: String,
+    clearances: Mutex<Vec<(String, String, String)>>,
 }
 
 impl Renderer {
@@ -154,6 +169,30 @@ impl Renderer {
     /// then the browsers on `PATH`.
     pub async fn launch(proxy: Option<&str>) -> Result<Self, FetchError> {
         Self::launch_with(proxy, &[]).await
+    }
+
+    /// [`Renderer::launch`], with the browser calling itself Chrome instead
+    /// of `HeadlessChrome` in its User-Agent, in every page and worker, so
+    /// that it can get past Cloudflare challenges. Chrome tells its version
+    /// only once it runs, so this launches it twice, about half a second more.
+    pub async fn launch_as_chrome(proxy: Option<&str>) -> Result<Self, FetchError> {
+        Self::launch_as_chrome_timed(proxy, COMMAND_TIMEOUT).await
+    }
+
+    async fn launch_as_chrome_timed(
+        proxy: Option<&str>,
+        command_timeout: Duration,
+    ) -> Result<Self, FetchError> {
+        let renderer = Self::launch_timed(proxy, &[], command_timeout).await?;
+        if !renderer.agent.contains("HeadlessChrome") {
+            return Ok(renderer);
+        }
+        let agent = format!(
+            "--user-agent={}",
+            renderer.agent.replace("HeadlessChrome", "Chrome")
+        );
+        renderer.close().await;
+        Self::launch_timed(proxy, &[agent.as_str()], command_timeout).await
     }
 
     async fn launch_with(proxy: Option<&str>, args: &[&str]) -> Result<Self, FetchError> {
@@ -282,6 +321,7 @@ impl Renderer {
             Ok::<_, chromiumoxide::error::CdpError>(Some(paused))
         }
         .await;
+        let agent = browser.user_agent().await.unwrap_or_default();
         let mut renderer = Self {
             browser: Arc::new(browser),
             guard: None,
@@ -289,6 +329,8 @@ impl Renderer {
             profile,
             proxy_login,
             check_documents: false,
+            agent,
+            clearances: Mutex::new(Vec::new()),
         };
         match ready {
             Ok(paused) => {
@@ -472,6 +514,7 @@ impl Renderer {
         let documents = Arc::new(Mutex::new((None, None)));
         let seen = documents.clone();
         let check_documents = self.check_documents;
+        let solve = options.solve;
         let document_watch = tokio::spawn(async move {
             while let Some(event) = responses.next().await {
                 if event.r#type != ResourceType::Document {
@@ -483,7 +526,9 @@ impl Renderer {
                 if check_documents && seen.1.is_none() {
                     seen.1 = private_address(&event.response);
                 }
-                if seen.0.is_none() && (main_frame.is_none() || event.frame_id == main_frame) {
+                if (solve || seen.0.is_none())
+                    && (main_frame.is_none() || event.frame_id == main_frame)
+                {
                     seen.0 = Some(event.response.status);
                 }
             }
@@ -550,7 +595,10 @@ impl Renderer {
                     continue;
                 }
                 let mut resume = ContinueRequestParams::new(id);
-                if !extra.is_empty() && Url::parse(request_url).is_ok_and(|u| u.origin() == origin)
+                let untouched = solve && event.resource_type == ResourceType::Document;
+                if !extra.is_empty()
+                    && !untouched
+                    && Url::parse(request_url).is_ok_and(|u| u.origin() == origin)
                 {
                     resume.headers = Some(merged_headers(event.request.headers.inner(), &extra));
                 }
@@ -568,12 +616,23 @@ impl Renderer {
         let limit = options
             .timeout
             .saturating_mul(if actions.is_empty() { 1 } else { 2 });
+        let deadline = Instant::now() + options.timeout * 3 / 4;
+        let solved = async |page: &chromiumoxide::Page| {
+            if !options.solve {
+                return Ok(());
+            }
+            solve::solve(page, deadline)
+                .await
+                .map_err(|e| FetchError::Build(format!("rendering {url}: {e}")))
+        };
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
+            solved(&page).await?;
             tokio::select! {
                 _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3) => {}
                 _ = text_settled(&page, settled_words) => {}
             }
+            solved(&page).await?;
             if let Some(selector) = &options.wait_for {
                 page.wait_for_selector(selector.as_str(), Some(options.timeout))
                     .await
@@ -600,6 +659,9 @@ impl Renderer {
                             FetchError::Build(format!("the actions led to {final_url}: {e}"))
                         })?;
                 }
+            }
+            if options.solve {
+                self.keep_clearance(&page, &final_url).await;
             }
             Ok::<_, FetchError>((value, final_url, scripts))
         })
@@ -632,6 +694,43 @@ impl Renderer {
         })
     }
 
+    /// The cookies for `url` that renders with [`RenderOptions::solve`] kept
+    /// once they got past a Cloudflare challenge, as a `Cookie` header value,
+    /// and the User-Agent the browser sent. Cloudflare accepts them from
+    /// another client only with that User-Agent and from the same IP address.
+    pub fn clearance(&self, url: &str) -> Option<(String, String)> {
+        let host = host(url)?;
+        let jar = self.clearances.lock().ok()?;
+        let cookies: Vec<String> = jar
+            .iter()
+            .filter(|(domain, _, _)| cookie_domain_matches(domain, &host))
+            .map(|(_, name, value)| format!("{name}={value}"))
+            .collect();
+        cookies
+            .iter()
+            .any(|c| c.starts_with("cf_clearance="))
+            .then(|| (cookies.join("; "), self.agent.clone()))
+    }
+
+    async fn keep_clearance(&self, page: &chromiumoxide::Page, url: &str) {
+        let params = GetCookiesParams {
+            urls: Some(vec![url.to_string()]),
+        };
+        let Ok(cookies) = page.execute(params).await else {
+            return;
+        };
+        let cookies = cookies.result.cookies;
+        if !cookies.iter().any(|c| c.name == "cf_clearance") {
+            return;
+        }
+        if let Ok(mut jar) = self.clearances.lock() {
+            for cookie in cookies {
+                jar.retain(|(domain, name, _)| *domain != cookie.domain || *name != cookie.name);
+                jar.push((cookie.domain, cookie.name, cookie.value));
+            }
+        }
+    }
+
     /// Shut down a browser this renderer launched and wait for it to exit.
     /// A browser reached through [`Renderer::connect`] keeps running.
     pub async fn close(mut self) {
@@ -653,21 +752,24 @@ impl Renderer {
 /// Where a [`RenderPool`] gets its browser.
 #[derive(Debug, Clone)]
 pub enum BrowserSource {
-    /// Launch a local headless Chrome; see [`Renderer::launch`].
-    Launch { proxy: Option<String> },
+    /// Launch a local headless Chrome; see [`Renderer::launch`]. With
+    /// `solve`, launch it with [`Renderer::launch_as_chrome`], which
+    /// [`RenderOptions::solve`] needs.
+    Launch { proxy: Option<String>, solve: bool },
     /// Use a browser already running at this DevTools endpoint; see [`Renderer::connect`].
     Connect(String),
 }
 
 impl BrowserSource {
     /// Launch a local Chrome behind `config.proxy`, or behind one proxy
-    /// picked at random from `config.proxy_pool`.
-    pub fn launch_for(config: &crate::FetchConfig) -> Self {
+    /// picked at random from `config.proxy_pool`, ready to get past
+    /// Cloudflare challenges when `solve` is set.
+    pub fn launch_for(config: &crate::FetchConfig, solve: bool) -> Self {
         let proxy = config
             .proxy
             .clone()
             .or_else(|| config.proxy_pool.choose(&mut rand::thread_rng()).cloned());
-        Self::Launch { proxy }
+        Self::Launch { proxy, solve }
     }
 }
 
@@ -705,6 +807,10 @@ pub struct RenderConfig {
     /// Resource types whose requests fail while rendering; see [`Block`].
     /// Screenshots load everything.
     pub block: Block,
+    /// Render a page that comes back as a Cloudflare challenge and get past
+    /// it; see [`RenderOptions::solve`]. Later requests to that host over
+    /// HTTP then send the cookies the browser got, with its User-Agent.
+    pub solve: bool,
 }
 
 impl std::fmt::Debug for RenderPool {
@@ -738,14 +844,16 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         block: Block,
+        solve: bool,
     ) -> Result<FetchResult, FetchError> {
         Ok(self
-            .render_actions(url, prefetched, wait_for, headers, block, &[])
+            .render_actions(url, prefetched, wait_for, headers, block, solve, &[])
             .await?
             .0)
     }
 
     /// Render `url` running `actions`; see [`Renderer::render_actions`].
+    #[allow(clippy::too_many_arguments)]
     pub async fn render_actions(
         &self,
         url: &str,
@@ -753,6 +861,7 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         block: Block,
+        solve: bool,
         actions: &[Action],
     ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
         let _tab = self
@@ -765,10 +874,21 @@ impl RenderPool {
             .render_actions(
                 url,
                 prefetched,
-                &self.options(wait_for, headers, block),
+                &RenderOptions {
+                    solve,
+                    ..self.options(wait_for, headers, block)
+                },
                 actions,
             )
             .await
+    }
+
+    /// [`Renderer::clearance`] for `url`, once the browser has started.
+    pub async fn clearance(&self, url: &str) -> Option<(String, String)> {
+        match self.browser.read().await.as_ref() {
+            Some(Ok(renderer)) => renderer.clearance(url),
+            _ => None,
+        }
     }
 
     /// Screenshot `url`; see [`Renderer::screenshot`].
@@ -821,6 +941,7 @@ impl RenderPool {
             timeout: self.timeout,
             headers: headers.to_vec(),
             block,
+            solve: false,
         }
     }
 
@@ -833,8 +954,12 @@ impl RenderPool {
                     .saturating_add(COMMAND_TIMEOUT)
                     .min(Duration::from_secs(86_400));
                 let started = match &self.source {
-                    BrowserSource::Launch { proxy } => {
-                        Renderer::launch_timed(proxy.as_deref(), &[], commands).await
+                    BrowserSource::Launch {
+                        proxy,
+                        solve: false,
+                    } => Renderer::launch_timed(proxy.as_deref(), &[], commands).await,
+                    BrowserSource::Launch { proxy, solve: true } => {
+                        Renderer::launch_as_chrome_timed(proxy.as_deref(), commands).await
                     }
                     BrowserSource::Connect(endpoint) => {
                         Renderer::connect_timed(endpoint, commands).await
@@ -859,8 +984,9 @@ impl RenderPool {
 
     /// Render `fetched` when `config` asks for it and the page seems to need
     /// a browser, handing the browser the HTTP response so the document is
-    /// not requested twice. `http_words` is the word count extracted from it
-    /// over HTTP. A failed render is logged and gives `None`. Only renders
+    /// not requested twice. With `config.solve`, a Cloudflare challenge page
+    /// is rendered too, from a fresh request. `http_words` is the word count
+    /// extracted from it over HTTP. A failed render is logged and gives `None`. Only renders
     /// that block nothing count toward the per-host verdict, since a blocked
     /// render can come back with less text than the site really has.
     pub async fn render_if_needed(
@@ -870,7 +996,8 @@ impl RenderPool {
         config: &RenderConfig,
         headers: &[(String, String)],
     ) -> Option<FetchResult> {
-        if !self.wants(fetched, http_words, config.always) {
+        let challenged = config.solve && is_challenge(fetched);
+        if !challenged && !self.wants(fetched, http_words, config.always) {
             return None;
         }
         let prefetched = Prefetched {
@@ -880,10 +1007,11 @@ impl RenderPool {
         let rendered = self
             .render(
                 &fetched.url,
-                Some(prefetched),
+                (!challenged).then_some(prefetched),
                 config.wait_for.as_deref(),
                 headers,
                 config.block,
+                config.solve,
             )
             .await;
         match rendered {
@@ -937,6 +1065,13 @@ impl RenderPool {
     }
 }
 
+/// Whether `fetched` is a Cloudflare challenge page, which
+/// [`RenderConfig::solve`] renders whatever its status.
+pub fn is_challenge(fetched: &FetchResult) -> bool {
+    fetched.document_bytes.is_none()
+        && crate::cloud::is_cloudflare_challenge(&fetched.html, &fetched.headers)
+}
+
 async fn keep_public(
     browser: std::sync::Weak<Browser>,
     paused: impl futures_util::Stream<Item = Arc<EventRequestPaused>>,
@@ -974,6 +1109,12 @@ async fn is_public(url: &str) -> bool {
         || crate::url_security::validate_public_http_url(url)
             .await
             .is_ok()
+}
+
+fn cookie_domain_matches(domain: &str, host: &str) -> bool {
+    let (domain, host) = (domain.to_ascii_lowercase(), host.to_ascii_lowercase());
+    let bare = domain.trim_start_matches('.');
+    host == bare || (domain.starts_with('.') && host.ends_with(&format!(".{bare}")))
 }
 
 fn host(url: &str) -> Option<String> {
@@ -1859,7 +2000,10 @@ mod tests {
 
     fn pool() -> super::RenderPool {
         super::RenderPool::new(
-            super::BrowserSource::Launch { proxy: None },
+            super::BrowserSource::Launch {
+                proxy: None,
+                solve: false,
+            },
             std::time::Duration::from_secs(1),
         )
     }
@@ -1902,12 +2046,16 @@ mod tests {
     async fn blocked_renders_leave_the_host_verdict_alone() {
         let config = super::RenderConfig {
             pool: Arc::new(super::RenderPool::new(
-                super::BrowserSource::Launch { proxy: None },
+                super::BrowserSource::Launch {
+                    proxy: None,
+                    solve: false,
+                },
                 std::time::Duration::from_secs(20),
             )),
             always: false,
             wait_for: None,
             block: "images".parse().unwrap(),
+            solve: false,
         };
         let shell = page(
             "https://example.com/",
@@ -2015,8 +2163,8 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            super::BrowserSource::launch_for(&config),
-            super::BrowserSource::Launch { proxy: Some(p) } if p == "http://pool.example:8080"
+            super::BrowserSource::launch_for(&config, true),
+            super::BrowserSource::Launch { proxy: Some(p), solve: true } if p == "http://pool.example:8080"
         ));
     }
 
@@ -2024,5 +2172,190 @@ mod tests {
     fn proxy_credentials_are_percent_decoded() {
         assert_eq!(super::percent_decode("p%40ss%3Aword"), "p@ss:word");
         assert_eq!(super::percent_decode("plain"), "plain");
+    }
+
+    #[test]
+    fn solving_renders_challenge_pages_whatever_their_status() {
+        let challenge = r#"<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt = {cType: 'managed'};</script></body></html>"#;
+        assert!(super::is_challenge(&page(
+            "https://a.test/",
+            challenge,
+            403
+        )));
+        let mut mitigated = page("https://a.test/", "<html></html>", 403);
+        mitigated
+            .headers
+            .insert("cf-mitigated", "challenge".parse().unwrap());
+        assert!(super::is_challenge(&mitigated));
+        assert!(!super::is_challenge(&page(
+            "https://a.test/",
+            "<html><body><p>Forbidden</p></body></html>",
+            403
+        )));
+    }
+
+    #[test]
+    fn clearance_cookies_go_only_to_hosts_their_domain_covers() {
+        use super::cookie_domain_matches;
+        assert!(cookie_domain_matches(".example.com", "example.com"));
+        assert!(cookie_domain_matches(".example.com", "www.example.com"));
+        assert!(cookie_domain_matches("example.com", "EXAMPLE.com"));
+        assert!(!cookie_domain_matches("example.com", "www.example.com"));
+        assert!(!cookie_domain_matches(".example.com", "badexample.com"));
+        assert!(!cookie_domain_matches(".example.com", "example.org"));
+    }
+
+    const CHALLENGE: &str = r#"<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt = {cType: 'managed'};</script><div style="margin: 100px 0 0 40px"><iframe src="http://example.net:8080/cdn-cgi/challenge-platform/fixture" width="300" height="65" style="border: 0"></iframe></div><script>addEventListener("message", (e) => { if (e.data === "passed") { document.cookie = "cf_clearance=fixture; path=/"; location.reload(); } });</script></body></html>"#;
+
+    const CHECKBOX: &str = r#"<html><body style="margin: 0"><input type="checkbox" id="box" style="position: absolute; left: 16px; top: 16px; width: 32px; height: 32px; margin: 0"><script>document.getElementById("box").addEventListener("click", (e) => { if (e.isTrusted) parent.postMessage("passed", "*"); });</script></body></html>"#;
+
+    async fn challenge_proxy() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://localhost:{}", proxy.local_addr().unwrap().port());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = proxy.accept().await {
+                tokio::spawn(async move {
+                    let mut buffer = [0; 8192];
+                    let n = socket.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    let target = request.split_whitespace().nth(1).unwrap_or_default();
+                    let passed = request.lines().any(|l| {
+                        l.to_ascii_lowercase().starts_with("cookie:")
+                            && l.contains("cf_clearance=fixture")
+                    });
+                    let (status, body) = if target.contains("challenge-platform") {
+                        ("200 OK", CHECKBOX.to_string())
+                    } else if target.contains("example.net") {
+                        ("404 Not Found", String::new())
+                    } else if passed {
+                        (
+                            "200 OK",
+                            "<html><body><p>the real page</p></body></html>".to_string(),
+                        )
+                    } else {
+                        ("403 Forbidden", CHALLENGE.to_string())
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_render_clicks_through_a_challenge_and_keeps_its_cookies() {
+        let proxy = challenge_proxy().await;
+        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        assert!(
+            !renderer.agent.contains("HeadlessChrome"),
+            "{}",
+            renderer.agent
+        );
+        let solved = renderer
+            .render(
+                "http://example.com:8080/page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(30),
+                    solve: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        let unsolved = renderer
+            .render(
+                "http://example.org:8080/page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let clearance = renderer.clearance("http://example.com:8080/other");
+        let elsewhere = renderer.clearance("http://example.org:8080/other");
+        renderer.close().await;
+        let solved = solved.expect("render succeeds");
+        assert!(solved.html.contains("the real page"), "{}", solved.html);
+        assert_eq!(solved.status, 200);
+        let (cookies, agent) = clearance.expect("the clearance is kept");
+        assert_eq!(cookies, "cf_clearance=fixture");
+        assert!(agent.contains("Chrome/") && !agent.contains("Headless"));
+        assert!(elsewhere.is_none());
+        let unsolved = unsolved.expect("a render without solve still returns the page");
+        assert_eq!(unsolved.status, 403);
+        assert!(unsolved.html.contains("Just a moment"));
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_challenge_that_never_clears_fails_the_render_in_time() {
+        let proxy = challenge_proxy().await;
+        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        let started = std::time::Instant::now();
+        let rendered = renderer
+            .render(
+                "http://example.com:8080/page",
+                Some(Prefetched {
+                    html: &CHALLENGE.replace("challenge-platform/fixture", "gone"),
+                    headers: &http::HeaderMap::new(),
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(5),
+                    solve: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        let error = rendered
+            .expect_err("the challenge never clears")
+            .to_string();
+        assert!(error.contains("challenge was still shown"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(8));
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn real_cloudflare_challenges_get_solved() {
+        let renderer = Renderer::launch_as_chrome(None)
+            .await
+            .expect("Chrome launches");
+        let mut failed = Vec::new();
+        for (url, marker) in [
+            (
+                "https://www.scrapingcourse.com/cloudflare-challenge",
+                "You bypassed the Cloudflare challenge",
+            ),
+            ("https://www.bscscan.com/", "BNB Smart Chain"),
+            ("https://gitlab.com/users/sign_in", "Remember me"),
+        ] {
+            let rendered = renderer
+                .render(
+                    url,
+                    None,
+                    &RenderOptions {
+                        timeout: std::time::Duration::from_secs(45),
+                        solve: true,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            if !rendered.as_ref().is_ok_and(|r| r.html.contains(marker)) {
+                failed.push((url, rendered.map(|r| r.status)));
+            }
+        }
+        renderer.close().await;
+        assert!(failed.is_empty(), "{failed:?}");
     }
 }

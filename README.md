@@ -303,6 +303,13 @@ Behind a proxy, the proxy resolves host names itself and the document check is o
 
 `--screenshot page.png` saves the rendered page's 1280x720 viewport, `--full-page` the whole page, and a `.jpg` name gives a JPEG. The MCP `screenshot` tool returns the same image to the agent.
 
+`--solve` gets past Cloudflare challenge pages, the ones that say "Just a moment..." or "Performing security verification". When a page comes back as one, webclaw opens it in Chrome, waits for the challenge to clear, clicks its checkbox when it asks for a click, and reads the page it leads to, all within `--timeout`; a challenge still shown after three quarters of it fails with an error that says so. Later pages of the same site, in a crawl or a batch, go over plain HTTP again with the cookies Chrome got and Chrome's User-Agent; Cloudflare accepts them from the same IP address on most sites, and when it does not, webclaw solves again. With `--render always`, a Turnstile checkbox inside a page, as on a sign-up form, is clicked too, so that page actions can submit the form. To pass, the browser presents itself as regular Chrome rather than headless Chrome, which adds about half a second when it starts. Headers you pass with `-H` still go to the page's other requests, but not to its documents, since rewriting a document request fails the challenge. A browser you connect with `--cdp-url` keeps its own User-Agent. The MCP `scrape` tool takes `solve: true`; the MCP server's browser always presents itself as regular Chrome, since any call can ask to solve.
+
+```bash
+webclaw https://www.scrapingcourse.com/cloudflare-challenge --solve
+webclaw https://gitlab.com/users/sign_in https://gitlab.com/explore --solve   # solves once, then plain HTTP
+```
+
 Crawls, batches, `--watch` and the MCP server render the same way and share one browser, started only when a page needs it. Per site, webclaw keeps count: once at least three renders show that rendering adds content (at least four in five did), it renders every page of that site that runs scripts, and once rendering stops adding content (at most one in five did), it stops rendering there.
 
 ### Click, type and scroll before reading

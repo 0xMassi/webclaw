@@ -1,0 +1,60 @@
+{"arm": "webclaw-http", "url": "https://www.scrapingcourse.com/cloudflare-challenge", "kind": "managed", "solved": false, "ms": 202, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.scrapingcourse.com/antibot-challenge", "kind": "managed", "solved": false, "ms": 134, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://seleniumbase.io/apps/turnstile", "kind": "embedded", "solved": false, "ms": 130, "error": "challenge still shown", "reuse": null}
+{"arm": "webclaw-http", "url": "https://peet.ws/turnstile-test/non-interactive.html", "kind": "embedded", "solved": false, "ms": 185, "error": "challenge still shown", "reuse": null}
+{"arm": "webclaw-http", "url": "https://peet.ws/turnstile-test/managed.html", "kind": "embedded", "solved": false, "ms": 142, "error": "challenge still shown", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.bscscan.com/", "kind": "non-interactive", "solved": false, "ms": 119, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://basescan.org/", "kind": "non-interactive", "solved": false, "ms": 154, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://gitlab.com/users/sign_in", "kind": "managed", "solved": false, "ms": 138, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.glassdoor.com/Reviews/index.htm", "kind": "managed", "solved": false, "ms": 137, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.crunchbase.com/organization/openai", "kind": "managed", "solved": false, "ms": 124, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.cardmarket.com/en/Magic", "kind": "managed", "solved": false, "ms": 128, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.bizjournals.com/", "kind": "managed", "solved": false, "ms": 172, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.pricecharting.com/", "kind": "managed", "solved": false, "ms": 125, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.bbb.org/", "kind": "managed", "solved": false, "ms": 158, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-http", "url": "https://www.capterra.com/", "kind": "managed", "solved": false, "ms": 171, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.scrapingcourse.com/cloudflare-challenge", "kind": "managed", "solved": false, "ms": 2179, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.scrapingcourse.com/antibot-challenge", "kind": "managed", "solved": false, "ms": 1660, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://seleniumbase.io/apps/turnstile", "kind": "embedded", "solved": false, "ms": 1532, "error": "challenge still shown", "reuse": null}
+{"arm": "webclaw-render", "url": "https://peet.ws/turnstile-test/non-interactive.html", "kind": "embedded", "solved": false, "ms": 1515, "error": "challenge still shown", "reuse": null}
+{"arm": "webclaw-render", "url": "https://peet.ws/turnstile-test/managed.html", "kind": "embedded", "solved": false, "ms": 1841, "error": "challenge still shown", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.bscscan.com/", "kind": "non-interactive", "solved": false, "ms": 1377, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://basescan.org/", "kind": "non-interactive", "solved": false, "ms": 1385, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://gitlab.com/users/sign_in", "kind": "managed", "solved": false, "ms": 1378, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.glassdoor.com/Reviews/index.htm", "kind": "managed", "solved": false, "ms": 2069, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.crunchbase.com/organization/openai", "kind": "managed", "solved": false, "ms": 1250, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.cardmarket.com/en/Magic", "kind": "managed", "solved": false, "ms": 1500, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.bizjournals.com/", "kind": "managed", "solved": false, "ms": 1423, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.pricecharting.com/", "kind": "managed", "solved": false, "ms": 1453, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.bbb.org/", "kind": "managed", "solved": false, "ms": 1369, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "webclaw-render", "url": "https://www.capterra.com/", "kind": "managed", "solved": false, "ms": 1255, "error": "the target returned HTTP 403 instead of a successful page", "reuse": null}
+{"arm": "scrapling", "url": "https://www.scrapingcourse.com/cloudflare-challenge", "kind": "managed", "solved": true, "ms": 4737, "error": null, "reuse": {"same_ua": true, "own_ua": false}}
+{"arm": "scrapling", "url": "https://www.scrapingcourse.com/antibot-challenge", "kind": "managed", "solved": true, "ms": 3869, "error": null, "reuse": {"same_ua": true, "own_ua": false}}
+{"arm": "scrapling", "url": "https://seleniumbase.io/apps/turnstile", "kind": "embedded", "solved": false, "ms": 1810, "error": "challenge still shown", "reuse": null}
+{"arm": "scrapling", "url": "https://peet.ws/turnstile-test/non-interactive.html", "kind": "embedded", "solved": true, "ms": 2289, "error": null, "reuse": null}
+{"arm": "scrapling", "url": "https://peet.ws/turnstile-test/managed.html", "kind": "embedded", "solved": false, "ms": 3009, "error": "challenge still shown", "reuse": null}
+{"arm": "scrapling", "url": "https://www.bscscan.com/", "kind": "non-interactive", "solved": true, "ms": 3484, "error": null, "reuse": {"same_ua": false, "own_ua": false}}
+{"arm": "scrapling", "url": "https://basescan.org/", "kind": "non-interactive", "solved": true, "ms": 4187, "error": null, "reuse": {"same_ua": true, "own_ua": false}}
+{"arm": "scrapling", "url": "https://gitlab.com/users/sign_in", "kind": "managed", "solved": true, "ms": 4518, "error": null, "reuse": {"same_ua": true, "own_ua": true}}
+{"arm": "scrapling", "url": "https://www.glassdoor.com/Reviews/index.htm", "kind": "managed", "solved": true, "ms": 3547, "error": null, "reuse": {"same_ua": false, "own_ua": false}}
+{"arm": "scrapling", "url": "https://www.crunchbase.com/organization/openai", "kind": "managed", "solved": true, "ms": 3502, "error": null, "reuse": {"same_ua": true, "own_ua": false}}
+{"arm": "scrapling", "url": "https://www.cardmarket.com/en/Magic", "kind": "managed", "solved": true, "ms": 5845, "error": null, "reuse": {"same_ua": true, "own_ua": false}}
+{"arm": "scrapling", "url": "https://www.bizjournals.com/", "kind": "managed", "solved": true, "ms": 3407, "error": null, "reuse": {"same_ua": true, "own_ua": false}}
+{"arm": "scrapling", "url": "https://www.pricecharting.com/", "kind": "managed", "solved": true, "ms": 3430, "error": null, "reuse": {"same_ua": true, "own_ua": false}}
+{"arm": "scrapling", "url": "https://www.bbb.org/", "kind": "managed", "solved": true, "ms": 3748, "error": null, "reuse": {"same_ua": true, "own_ua": false}}
+{"arm": "scrapling", "url": "https://www.capterra.com/", "kind": "managed", "solved": true, "ms": 3820, "error": null, "reuse": {"same_ua": false, "own_ua": false}}
+{"arm": "crawl4ai", "url": "https://www.scrapingcourse.com/cloudflare-challenge", "kind": "managed", "solved": false, "ms": 6045, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.scrapingcourse.com/antibot-challenge", "kind": "managed", "solved": false, "ms": 5838, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://seleniumbase.io/apps/turnstile", "kind": "embedded", "solved": false, "ms": 5913, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://peet.ws/turnstile-test/non-interactive.html", "kind": "embedded", "solved": true, "ms": 6020, "error": null, "reuse": null}
+{"arm": "crawl4ai", "url": "https://peet.ws/turnstile-test/managed.html", "kind": "embedded", "solved": false, "ms": 5967, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.bscscan.com/", "kind": "non-interactive", "solved": false, "ms": 5933, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://basescan.org/", "kind": "non-interactive", "solved": false, "ms": 5860, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://gitlab.com/users/sign_in", "kind": "managed", "solved": false, "ms": 5870, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.glassdoor.com/Reviews/index.htm", "kind": "managed", "solved": false, "ms": 5870, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.crunchbase.com/organization/openai", "kind": "managed", "solved": false, "ms": 5873, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.cardmarket.com/en/Magic", "kind": "managed", "solved": false, "ms": 5872, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.bizjournals.com/", "kind": "managed", "solved": false, "ms": 5885, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.pricecharting.com/", "kind": "managed", "solved": false, "ms": 5868, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.bbb.org/", "kind": "managed", "solved": false, "ms": 5885, "error": "challenge still shown", "reuse": null}
+{"arm": "crawl4ai", "url": "https://www.capterra.com/", "kind": "managed", "solved": false, "ms": 5857, "error": "challenge still shown", "reuse": null}

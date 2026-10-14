@@ -213,7 +213,7 @@ struct Cli {
     wait_for: Option<String>,
 
     /// When rendering a page for its content, skip these resources: a comma
-    /// list of images, fonts, media and stylesheets, or none. Screenshots
+    /// list of images, fonts and media, or none. Screenshots
     /// load everything
     #[arg(long, value_name = "TYPES", conflicts_with = "screenshot")]
     block: Option<String>,

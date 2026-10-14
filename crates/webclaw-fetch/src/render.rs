@@ -56,7 +56,8 @@ impl Default for RenderOptions {
 
 /// Kinds of subresources a render skips so the page downloads less. Scripts,
 /// XHR and the document itself always load. Parse it from a comma list of
-/// `images`, `fonts`, `media` and `stylesheets`, or `none`.
+/// `images`, `fonts` and `media`, or `none`. Stylesheets always load: many
+/// apps fetch CSS on demand and fail without it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Block {
     /// Images, including `srcset` candidates and CSS backgrounds.
@@ -65,8 +66,6 @@ pub struct Block {
     pub fonts: bool,
     /// Audio, video and their text tracks.
     pub media: bool,
-    /// Stylesheets.
-    pub stylesheets: bool,
 }
 
 impl Block {
@@ -75,7 +74,6 @@ impl Block {
             ResourceType::Image => self.images,
             ResourceType::Font => self.fonts,
             ResourceType::Media | ResourceType::TextTrack => self.media,
-            ResourceType::Stylesheet => self.stylesheets,
             _ => false,
         }
     }
@@ -91,11 +89,10 @@ impl std::str::FromStr for Block {
                 "images" => block.images = true,
                 "fonts" => block.fonts = true,
                 "media" => block.media = true,
-                "stylesheets" => block.stylesheets = true,
                 "none" => {}
                 _ => {
                     return Err(format!(
-                        "cannot block \"{kind}\": use images, fonts, media, stylesheets or none"
+                        "cannot block \"{kind}\": use images, fonts, media or none"
                     ));
                 }
             }
@@ -1038,8 +1035,7 @@ mod tests {
         ] {
             assert!(!block.blocks(&kind));
         }
-        let all: super::Block = "images,fonts,media,stylesheets".parse().unwrap();
-        assert!(all.blocks(&ResourceType::Stylesheet));
+        assert!("stylesheets".parse::<super::Block>().is_err());
         assert_eq!("none".parse::<super::Block>(), Ok(super::Block::default()));
         assert_eq!("".parse::<super::Block>(), Ok(super::Block::default()));
         assert!("scripts".parse::<super::Block>().is_err());
@@ -1075,7 +1071,7 @@ mod tests {
             .await
             .expect("Chrome launches");
         let mut results = Vec::new();
-        for block in ["images,fonts,media,stylesheets", "none"] {
+        for block in ["images,fonts,media", "none"] {
             let rendered = renderer
                 .render(
                     "http://example.com/page",
@@ -1093,8 +1089,9 @@ mod tests {
             results.push((rendered, std::mem::take(&mut *seen.lock().unwrap())));
         }
         renderer.close().await;
-        let paths = ["/style.css", "/font.woff2", "/pic.png", "/clip.mp4"];
+        let paths = ["/font.woff2", "/pic.png", "/clip.mp4"];
         let reached = |log: &[String], path: &str| log.iter().any(|t| t.ends_with(path));
+        assert!(reached(&results[0].1, "/style.css"), "{:?}", results[0].1);
         let (blocked, blocked_log) = &results[0];
         assert!(
             blocked

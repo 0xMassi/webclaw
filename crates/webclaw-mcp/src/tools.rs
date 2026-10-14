@@ -108,7 +108,7 @@ pub struct ScrapeParams {
     pub render: Option<String>,
     /// When rendering, also wait until an element matching this CSS selector exists
     pub wait_for: Option<String>,
-    /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts", "media" and "stylesheets", or "none"
+    /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none"
     pub block: Option<String>,
     /// A question: keep only the parts of the page that answer it, under their headings
     pub query: Option<String>,
@@ -160,7 +160,7 @@ pub struct CrawlParams {
     pub ignore_robots: Option<bool>,
     /// Output format for each page: "markdown" (default), "llm", "text"
     pub format: Option<String>,
-    /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts", "media" and "stylesheets", or "none"
+    /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none"
     pub block: Option<String>,
 }
 

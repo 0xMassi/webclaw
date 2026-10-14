@@ -221,7 +221,7 @@ webclaw https://example.com --cdp-url ws://localhost:9222/devtools/browser/<id> 
 
 `auto` renders when the page loads scripts and the HTTP response has almost no text, or little text next to an empty app root or a "please enable JavaScript" notice, and it keeps the rendered result only when it has more content. The browser never reaches private or loopback addresses.
 
-`--block images,fonts,media` skips those resources while a page renders for its content; add `stylesheets` to skip those too. Scripts and the data they load always load, so the text is the same; the page downloads less, about 40% fewer bytes on a typical page. Rendering is not much faster, since webclaw already stops waiting once the text settles, so blocking stays off unless you ask. Screenshots always load everything. The MCP `scrape` and `crawl` tools take the same list as `block`.
+`--block images,fonts,media` skips those resources while a page renders for its content. Stylesheets always load, since many apps fetch CSS on demand and break without it. Scripts and the data they load always load, so the text is the same; the page downloads less, about 40% fewer bytes on a typical page. Rendering is not much faster, since webclaw already stops waiting once the text settles, so blocking stays off unless you ask. Screenshots always load everything. The MCP `scrape` and `crawl` tools take the same list as `block`.
 
 `--screenshot page.png` saves the rendered page's 1280x720 viewport, `--full-page` the whole page, and a `.jpg` name gives a JPEG. The MCP `screenshot` tool returns the same image to the agent.
 

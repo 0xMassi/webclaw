@@ -10,7 +10,7 @@ EXTRA = {
 }
 HOMEPAGES = ["https://vercel.com", "https://www.notion.com", "https://stripe.com", "https://react.dev",
              "https://nextjs.org/docs", "https://techcrunch.com", "https://www.shopify.com", "https://anthropic.com"]
-ARMS = [("webclaw", "none"), ("webclaw", "images,fonts,media"), ("webclaw", "images,fonts,media,stylesheets"),
+ARMS = [("webclaw", "none"), ("webclaw", "images,fonts,media"),
         ("scrapling", "off"), ("scrapling", "on"), ("crawl4ai", "off"), ("crawl4ai", "on")]
 PYTHON = {"webclaw": "venv-mcp", "scrapling": "venv-scrapling", "crawl4ai": "venv-crawl4ai"}
 OPTION = {"webclaw": "`block`", "scrapling": "`disable_resources`", "crawl4ai": "`text_mode`"}

@@ -1,0 +1,21 @@
+{
+ "de-staedte": {"data": [0, 1, 2, 3, 4, 5], "either": [6]},
+ "fr-ligue1": {"data": [5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 19, 21, 22, 25, 27], "either": [0, 1, 2, 10, 11, 23, 24, 26]},
+ "ja-prefs": {"data": [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]},
+ "es-paises": {"data": [0, 1, 3, 4, 5, 6]},
+ "f1-results": {"data": [0]},
+ "skysports": {"data": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]},
+ "cbs-nfl": {"data": [0, 1]},
+ "companiesmc": {"data": [0]},
+ "stockanalysis": {"data": [0, 1, 2, 3, 4, 5, 6]},
+ "boe-rate": {"data": [0], "either": [1]},
+ "census-qf": {"data": [1, 2, 3], "either": [0]},
+ "govuk-wage": {"data": [0, 1, 2, 3]},
+ "ssa-life": {"data": [0]},
+ "php-date": {"data": [0]},
+ "sqlite-types": {"data": [0]},
+ "man-signal": {"data": []},
+ "timeanddate": {"data": [0]},
+ "worldometers": {"data": [0]},
+ "usinfl": {"data": [0]}
+}

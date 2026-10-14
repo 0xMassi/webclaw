@@ -5,8 +5,6 @@ from lxml import html as lhtml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
-CORPUS = WORK / "tables-corpus"
-LABELS = json.loads((ROOT / "tables-labels.json").read_text())
 ARM_VENV = {"webclaw": "base", "crawl4ai": "crawl4ai", "scrapling": "scrapling"}
 PAGES = {
     "wiki-population": "https://en.wikipedia.org/wiki/List_of_countries_and_dependencies_by_population",
@@ -45,22 +43,63 @@ PAGES = {
     "spacejam": "https://www.spacejam.com/1996/",
     "ddg-lite": "https://lite.duckduckgo.com/lite/?q=rust+language",
 }
+HELD_PAGES = {
+    "de-staedte": "https://de.wikipedia.org/wiki/Liste_der_Gro%C3%9Fst%C3%A4dte_in_Deutschland",
+    "fr-ligue1": "https://fr.wikipedia.org/wiki/Championnat_de_France_de_football_2023-2024",
+    "ja-prefs": "https://ja.wikipedia.org/wiki/%E9%83%BD%E9%81%93%E5%BA%9C%E7%9C%8C%E3%81%AE%E4%BA%BA%E5%8F%A3%E4%B8%80%E8%A6%A7",
+    "es-paises": "https://es.wikipedia.org/wiki/Anexo:Pa%C3%ADses_y_territorios_dependientes_por_poblaci%C3%B3n",
+    "f1-results": "https://www.formula1.com/en/results/2024/drivers",
+    "skysports": "https://www.skysports.com/premier-league-table/2023",
+    "cbs-nfl": "https://www.cbssports.com/nfl/standings/",
+    "companiesmc": "https://companiesmarketcap.com/",
+    "stockanalysis": "https://stockanalysis.com/stocks/aapl/financials/",
+    "boe-rate": "https://www.bankofengland.co.uk/boeapps/database/Bank-Rate.asp",
+    "census-qf": "https://www.census.gov/quickfacts/fact/table/US/PST045224",
+    "govuk-wage": "https://www.gov.uk/national-minimum-wage-rates",
+    "ssa-life": "https://www.ssa.gov/oact/STATS/table4c6.html",
+    "php-date": "https://www.php.net/manual/en/function.date.php",
+    "sqlite-types": "https://www.sqlite.org/datatype3.html",
+    "man-signal": "https://man7.org/linux/man-pages/man7/signal.7.html",
+    "timeanddate": "https://www.timeanddate.com/holidays/us/2025",
+    "worldometers": "https://www.worldometers.info/world-population/population-by-country/",
+    "usinfl": "https://www.usinflationcalculator.com/inflation/historical-inflation-rates/",
+}
+SETS = {"corpus": (WORK / "tables-corpus", PAGES, "tables-labels.json"),
+        "held": (WORK / "tables-held", HELD_PAGES, "tables-held-labels.json")}
 BLOCK = {"address", "article", "aside", "blockquote", "caption", "dd", "div", "dl", "dt", "figcaption", "figure",
-         "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre",
-         "section", "table", "td", "th", "tr", "ul"}
+         "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "option",
+         "p", "pre", "section", "table", "td", "th", "tr", "ul"}
 
 
-def freeze():
-    CORPUS.mkdir(parents=True, exist_ok=True)
-    for slug, url in PAGES.items():
-        page = CORPUS / f"{slug}.html"
+def freeze(corpus, pages):
+    corpus.mkdir(parents=True, exist_ok=True)
+    for slug, url in pages.items():
+        page = corpus / f"{slug}.html"
         if page.exists():
             continue
         r = subprocess.run([os.environ["WEBCLAW_BIN"], url, "--raw-html"], capture_output=True, text=True)
         if r.returncode or "<table" not in r.stdout:
             sys.exit(f"could not freeze {url} (exit {r.returncode})")
         page.write_text(r.stdout)
-    (CORPUS / "urls.json").write_text(json.dumps(PAGES, indent=1))
+    (corpus / "urls.json").write_text(json.dumps(pages, indent=1))
+
+
+def browser_truth(name, corpus):
+    out = WORK / f"tables-truth-{name}.json"
+    if not out.exists():
+        subprocess.run([str(WORK / "venv-crawl4ai/bin/python"), str(ROOT / "scripts/tables_truth.py"),
+                        str(corpus), str(out)], check=True)
+    return {slug: [split(t) for t in tables] for slug, tables in json.loads(out.read_text()).items()}
+
+
+def split(t):
+    grid, width = t["grid"], len(t["grid"][0]) if t["grid"] else 0
+    k = 0
+    while k < len(grid) and (t["head"][k] or (width > 1 and t["single"][k] >= width)):
+        k += 1
+    titles = [r for r in range(k) if width > 1 and t["single"][r] >= width]
+    return {"head": [grid[r] for r in range(k) if r not in titles],
+            "body": [row for row in grid[k:] if any(row)]}
 
 
 def norm(s):
@@ -92,28 +131,28 @@ def text(el):
     return norm("".join(out))
 
 
-def span(value, limit):
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return 1
-    return limit if n == 0 else max(1, min(n, limit))
+def number(value):
+    m = re.match(r"\s*\+?(\d+)", value or "")
+    return int(m.group(1)) if m else None
 
 
 def reference(table):
     trs = [tr for tr in table.iter("tr") if next(tr.iterancestors("table")) is table
            and not hidden(tr) and not hidden(tr.getparent())]
-    slots, heads, single = {}, 0, []
+    trs.sort(key=lambda tr: {"thead": 0, "tfoot": 2}.get(tr.getparent().tag, 1))
+    slots, single, flags = {}, [], []
     for r, tr in enumerate(trs):
         cells = [c for c in tr if c.tag in ("td", "th") and not hidden(c)]
-        single.append(span(cells[0].get("colspan"), 1000) if len(cells) == 1 else 0)
-        if heads == r and cells and (tr.getparent().tag == "thead" or all(c.tag == "th" for c in cells)):
-            heads += 1
+        single.append(min(number(cells[0].get("colspan")) or 1, 1000) if len(cells) == 1 else 0)
+        flags.append(bool(cells) and (tr.getparent().tag == "thead" or all(c.tag == "th" for c in cells)))
+        left = sum(1 for x in trs[r:] if x.getparent() is tr.getparent())
         c = 0
         for cell in cells:
             while (r, c) in slots:
                 c += 1
-            cs, rs = span(cell.get("colspan"), 1000), span(cell.get("rowspan"), len(trs) - r)
+            cs = min(number(cell.get("colspan")) or 1, 1000)
+            rs = number(cell.get("rowspan"))
+            rs = left if rs == 0 else min(rs or 1, left)
             t = text(cell)
             for dr in range(rs):
                 for dc in range(cs):
@@ -121,43 +160,41 @@ def reference(table):
             c += cs
     width = max((c + 1 for _, c in slots), default=0)
     grid = [[slots.get((r, c), "") for c in range(width)] for r in range(len(trs))]
-    titles = 0
-    while titles < heads and width > 1 and single[titles] >= width:
-        titles += 1
-    return {"titles": grid[:titles], "head": grid[titles:heads], "body": [row for row in grid[heads:] if any(row)]}
+    return split({"grid": grid, "head": flags, "single": single})
 
 
 def fingerprint(rows):
     return {norm(x) for row in rows for x in row if norm(x)}
 
 
-def accept(head, c):
-    levels = list(dict.fromkeys(row[c] for row in head if row[c]))
-    return set(levels) | {" ".join(levels), " / ".join(levels)}
+def align(body, rows):
+    prev = [0] * (len(rows) + 1)
+    for want in body:
+        cur = [0] * (len(rows) + 1)
+        for j, have in enumerate(rows, start=1):
+            same = sum(1 for c, w in enumerate(want) if w and c < len(have) and have[c] == w)
+            cur[j] = max(prev[j - 1] + same, prev[j], cur[j - 1])
+        prev = cur
+    return prev[-1]
+
+
+def header_ok(head, header, c):
+    levels = list(dict.fromkeys(row[c] for row in head if c < len(row) and row[c]))
+    return set(levels) <= set(header.split(" / ")) or header in {" ".join(levels), " / ".join(levels)}
 
 
 def score_table(ref, got):
     rows = [[norm(x) for x in row] for row in got.get("rows") or [] if any(norm(x) for x in row)]
-    best = 0
-    for off in range(-3, 4):
-        ok = 0
-        for i, want in enumerate(ref["body"]):
-            j = i + off
-            if 0 <= j < len(rows):
-                ok += sum(1 for c, w in enumerate(want) if w and c < len(rows[j]) and rows[j][c] == w)
-        best = max(best, ok)
     total = sum(1 for row in ref["body"] for w in row if w)
     headers = [norm(h) for h in got.get("headers") or []]
-    width = len(ref["head"][0]) if ref["head"] else 0
-    hcols = [c for c in range(width) if any(row[c] for row in ref["head"])]
-    hok = sum(1 for c in hcols if c < len(headers) and headers[c] in accept(ref["head"], c))
-    return best, total, hok, len(hcols)
+    hcols = [c for c in range(len(ref["head"][0]) if ref["head"] else 0) if any(row[c] for row in ref["head"])]
+    hok = sum(1 for c in hcols if c < len(headers) and header_ok(ref["head"], headers[c], c))
+    return align(ref["body"], rows), total, hok, len(hcols)
 
 
-def score_page(slug, refs, got):
-    label = LABELS[slug]
+def score_page(label, refs, got):
     data, either = set(label["data"]), set(label.get("either", []))
-    prints = [fingerprint(r["titles"] + r["head"] + r["body"]) for r in refs]
+    prints = [fingerprint(r["head"] + r["body"]) for r in refs]
     pairs = []
     for a, table in enumerate(got):
         fp = fingerprint([table.get("headers") or []] + (table.get("rows") or []))
@@ -173,71 +210,107 @@ def score_page(slug, refs, got):
             match[i] = a
     s = {"found": len(got), "expected": len(data), "tp": 0, "ignored": 0, "cells": 0, "cells_total": 0,
          "head": 0, "head_total": 0, "exact": 0}
-    for i in range(len(refs)):
-        if i in data:
-            ok, total, hok, htotal = score_table(refs[i], got[match[i]]) if i in match else (0, 0, 0, 0)
-            total = total or sum(1 for row in refs[i]["body"] for w in row if w)
-            htotal = htotal or len([c for c in range(len(refs[i]["head"][0]) if refs[i]["head"] else 0)
-                                    if any(row[c] for row in refs[i]["head"])])
-            s["tp"] += i in match
-            s["cells"] += ok
-            s["cells_total"] += total
-            s["head"] += hok
-            s["head_total"] += htotal
-            s["exact"] += i in match and ok == total and hok == htotal
-        elif i in either and i in match:
-            s["ignored"] += 1
+    for i in sorted(data):
+        miss = (0, sum(1 for row in refs[i]["body"] for w in row if w), 0,
+                sum(1 for c in range(len(refs[i]["head"][0]) if refs[i]["head"] else 0)
+                    if any(row[c] for row in refs[i]["head"])))
+        ok, total, hok, htotal = score_table(refs[i], got[match[i]]) if i in match else miss
+        s["tp"] += i in match
+        s["cells"] += ok
+        s["cells_total"] += total
+        s["head"] += hok
+        s["head_total"] += htotal
+        s["exact"] += i in match and ok == total and hok == htotal
+    s["ignored"] = sum(1 for i in either if i in match)
     return s
 
 
-def main(label):
-    freeze()
-    urls = json.loads((CORPUS / "urls.json").read_text())
-    parser = lhtml.HTMLParser(encoding="utf-8")
-    refs = {slug: [reference(t) for t in lhtml.fromstring((CORPUS / f"{slug}.html").read_bytes(), parser=parser)
-                   .iter("table")] for slug in urls}
-    res = ROOT / "results" / label
-    res.mkdir(parents=True, exist_ok=True)
-    rows, pages = [], {}
+def run_arms(label, name, corpus):
+    out = {}
     for arm, venv in ARM_VENV.items():
-        out = WORK / "tables-out" / label / f"{arm}.json"
-        out.parent.mkdir(parents=True, exist_ok=True)
+        path = WORK / "tables-out" / label / f"{name}-{arm}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
         py = str(WORK / f"venv-{venv}" / "bin/python")
-        subprocess.run([py, str(ROOT / "scripts/tables_arms.py"), arm, str(CORPUS), str(out)], check=True)
-        got = json.loads(out.read_text())
-        per = {slug: score_page(slug, refs[slug], got["tables"][slug]) for slug in urls}
-        pages[arm] = per
+        subprocess.run([py, str(ROOT / "scripts/tables_arms.py"), arm, str(corpus), str(path)], check=True)
+        out[arm] = json.loads(path.read_text())
+    return out
+
+
+def total(name, truth, refs, labels, arms):
+    rows = []
+    for arm, got in arms.items():
+        per = {slug: score_page(labels[slug], refs[slug], got["tables"][slug]) for slug in labels}
         t = {k: sum(p[k] for p in per.values()) for k in next(iter(per.values()))}
         counted = t["found"] - t["ignored"]
-        rows.append({"arm": arm, **t, "precision": t["tp"] / counted if counted else 0.0,
-                     "recall": t["tp"] / t["expected"], "seconds": got["seconds"],
-                     "start_seconds": got.get("start_seconds")})
-        print(json.dumps(rows[-1]), flush=True)
-    (res / "tables-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    (res / "tables-pages.json").write_text(json.dumps(pages, indent=1))
-    n = len(urls)
-    lines = [f"# Table benchmark {label}", "",
-             f"Each tool reads the same {n} frozen pages and returns the data tables it finds. "
-             f"{rows[0]['expected']} tables are labelled as data tables by hand; the rest are layout tables, "
-             "except infoboxes and similar key/value boxes, which count neither way. Cell text is what a browser shows: "
-             "hidden elements are left out, and a cell spanning several rows or columns fills each slot it covers. "
-             "Header rows are the rows of `<thead>` and the leading rows made only of `<th>`; a header row that is "
-             "one cell spanning the whole table is a title, not column names, and columns named only by a title "
-             "are not scored. A returned table is matched "
-             "to the page table whose cell texts it overlaps most. Precision is matched data tables over returned "
-             "tables; recall is matched data tables over expected ones. `body cells` counts non-empty body cells "
-             "equal to the reference after whitespace collapsing, rows aligned at the best offset; `header cells` "
-             "counts columns whose header equals one header row's text, or the levels joined by a space or ` / `. "
-             "`exact` counts tables with every body and header cell right. Seconds are wall time for all pages; "
-             "webclaw runs its CLI once per page, and `of which start` is the time the same number of "
-             "`webclaw --version` runs takes.", "",
-             "| arm | returned | data tables found | precision | recall | body cells | header cells | exact | seconds | of which start |",
-             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        rows.append({"set": name, "truth": truth, "arm": arm, **t,
+                     "precision": t["tp"] / counted if counted else 0.0, "recall": t["tp"] / t["expected"],
+                     "truncated": sum(x.get("truncated", False) for ts in got["tables"].values() for x in ts),
+                     "seconds": got["seconds"], "start_seconds": got.get("start_seconds"), "pages": per})
+    return rows
+
+
+def table(rows, timing):
+    lines = ["| arm | returned | data tables found | precision | recall | body cells | header cells | exact |"
+             + (" seconds | of which start |" if timing else ""),
+             "|---|---:|---:|---:|---:|---:|---:|---:|" + ("---:|---:|" if timing else "")]
     for r in rows:
-        start = f"{r['start_seconds']:.2f}" if r["start_seconds"] is not None else "-"
-        lines.append(f"| {r['arm']} | {r['found']} | {r['tp']}/{r['expected']} | {r['precision']:.2f} | "
-                     f"{r['recall']:.2f} | {r['cells']}/{r['cells_total']} ({r['cells'] / r['cells_total']:.1%}) | "
-                     f"{r['head']}/{r['head_total']} | {r['exact']} | {r['seconds']:.2f} | {start} |")
+        line = (f"| {r['arm']} | {r['found']} | {r['tp']}/{r['expected']} | {r['precision']:.2f} | {r['recall']:.2f} | "
+                f"{r['cells']}/{r['cells_total']} ({r['cells'] / r['cells_total']:.1%}) | "
+                f"{r['head']}/{r['head_total']} | {r['exact']} |")
+        if timing:
+            start = f"{r['start_seconds']:.2f}" if r["start_seconds"] is not None else "-"
+            line += f" {r['seconds']:.2f} | {start} |"
+        lines.append(line)
+    return lines
+
+
+def main(label):
+    rows = []
+    for name, (corpus, pages, labels_file) in SETS.items():
+        freeze(corpus, pages)
+        labels = json.loads((ROOT / labels_file).read_text())
+        arms = run_arms(label, name, corpus)
+        chrome = browser_truth(name, corpus)
+        if name == "corpus":
+            parser = lhtml.HTMLParser(encoding="utf-8")
+            refs = {slug: [reference(t) for t in lhtml.fromstring((corpus / f"{slug}.html").read_bytes(),
+                                                                   parser=parser).iter("table")] for slug in pages}
+            rows += total(name, "lxml", refs, labels, arms)
+        styled = {slug: {"data": [i for i in lab["data"] if i not in lab.get("styled_hidden", [])],
+                         "either": lab.get("either", []) + lab.get("styled_hidden", [])}
+                  for slug, lab in labels.items()}
+        rows += total(name, "chrome", chrome, styled, arms)
+    res = ROOT / "results" / label
+    res.mkdir(parents=True, exist_ok=True)
+    (res / "tables-rows.jsonl").write_text("".join(json.dumps({k: v for k, v in r.items() if k != "pages"}) + "\n"
+                                                   for r in rows))
+    (res / "tables-pages.json").write_text(json.dumps({f"{r['set']}-{r['truth']}-{r['arm']}": r["pages"]
+                                                       for r in rows}, indent=1))
+    pick = lambda s, t: [r for r in rows if r["set"] == s and r["truth"] == t]
+    lines = [f"# Table benchmark {label}", "",
+             f"Each tool reads the same frozen pages and returns the data tables it finds: {len(PAGES)} pages in the "
+             f"corpus and {len(HELD_PAGES)} held-out pages that were not looked at while writing webclaw's rules. "
+             "Every table is labelled by hand in `tables-labels.json` and `tables-held-labels.json` as a data table, "
+             "a layout table, or neither (infoboxes and key/value boxes), which counts neither way. A returned table "
+             "is matched to the page table whose cell texts it overlaps most. Precision is matched data tables over "
+             "returned tables; recall is matched data tables over expected ones. `body cells` counts non-empty body "
+             "cells equal to the truth after whitespace collapsing, rows aligned in order; `header cells` counts "
+             "columns whose header holds each header row's text, joined with a space or ` / `. `exact` counts tables "
+             "with every body and header cell right.", "",
+             "Two truths. Chrome: the page loaded in headless Chrome with scripts off and stylesheets on, each "
+             "visible cell's `innerText` laid out on the grid by its spans; tables a stylesheet hides count neither "
+             "way. lxml: the raw HTML laid out the same way with lxml, hidden meaning `hidden`, inline "
+             "`display:none` or `<template>`. In both a spanning cell fills every slot it covers, and a header row "
+             "that is one cell across the table is a title, not column names.", "",
+             f"## Corpus against Chrome ({len(PAGES)} pages)", "",
+             "Seconds are wall time for all pages; webclaw runs its CLI once per page, and `of which start` is the "
+             "time the same number of `webclaw --version` runs takes. Crawl4AI's time is its whole scraping pass, "
+             "which is how its users get tables.", "", *table(pick("corpus", "chrome"), True), "",
+             f"## Held-out pages against Chrome ({len(HELD_PAGES)} pages)", "", *table(pick("held", "chrome"), False), "",
+             "## Corpus against the lxml reference", "", *table(pick("corpus", "lxml"), False), "",
+             "Tables cut short by webclaw's size limits: "
+             + ", ".join(f"{r['set']} {r['truncated']}" for r in rows if r["arm"] == "webclaw" and r["truth"] == "chrome")
+             + "."]
     (res / "tables-summary.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 

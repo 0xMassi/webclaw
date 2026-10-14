@@ -1,8 +1,8 @@
 //! Find elements by their text, or every element like an example.
 //!
-//! An element's text is its visible text, descendants included, whitespace
-//! collapsed; `script`, `style`, `noscript` and `template` content does not
-//! count. A text search returns the deepest elements that match: an element
+//! Text search looks inside `<body>` only. An element's text is its visible
+//! text, descendants included, whitespace collapsed; `script`, `style`,
+//! `noscript` and `template` content does not count. A text search returns the deepest elements that match: an element
 //! is left out when one of its child elements matches too.
 
 use std::collections::{HashMap, HashSet};
@@ -245,7 +245,13 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Fin
 fn matching<'a>(document: &'a Html, text: &TextMatch) -> Vec<ElementRef<'a>> {
     let mut hits = Vec::new();
     let mut hidden = 0usize;
-    for edge in document.root_element().traverse() {
+    let body = document
+        .root_element()
+        .children()
+        .filter_map(ElementRef::wrap)
+        .find(|e| e.value().name() == "body")
+        .unwrap_or(document.root_element());
+    for edge in body.traverse() {
         match edge {
             Edge::Open(node) => {
                 let Some(element) = ElementRef::wrap(node) else {
@@ -648,5 +654,14 @@ mod tests {
             crate::select(page, None, &found[0].selector).unwrap(),
             ["open secret"]
         );
+    }
+
+    #[test]
+    fn only_the_body_is_searched() {
+        let page =
+            "<html><head><title>Shop page</title></head><body><p>Shop page</p></body></html>";
+        let found = find_text(page, &TextMatch::text("shop page", true, false).unwrap());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].selector, "html > body > p");
     }
 }

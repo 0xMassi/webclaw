@@ -1279,7 +1279,12 @@ async fn copy_pdf(
     params: PrintToPdfParams,
     out: &mut (dyn std::io::Write + Send),
 ) -> Result<u64, String> {
-    let printed = page.execute(params).await.map_err(|e| e.to_string())?;
+    let printed = page.execute(params).await.map_err(|e| match e {
+        chromiumoxide::error::CdpError::Chrome(e) if e.message.contains("Printing failed") => {
+            "Chrome could not print the page: it navigated away while printing, or it is too large to print".to_string()
+        }
+        e => e.to_string(),
+    })?;
     let handle = printed
         .result
         .stream
@@ -2022,6 +2027,33 @@ mod tests {
                 .contains("the render timeout covers loading the page"),
             "{slow}"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_page_that_navigates_while_printing_fails_in_plain_words() {
+        let html = r#"<html><body><p>leaving</p><script>addEventListener("beforeprint", () => { location.href = "https://example.com/elsewhere"; })</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let printed = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let error = printed.expect_err("printing fails").to_string();
+        assert!(error.contains("navigated away while printing"), "{error}");
     }
 
     fn png_size(png: &[u8]) -> (u32, u32) {

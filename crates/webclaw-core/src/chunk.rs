@@ -391,11 +391,14 @@ fn pack(text: &str, max: usize, level: usize) -> Vec<Range<usize>> {
 
 fn cut_characters(text: &str, max: usize) -> Vec<Range<usize>> {
     let mut out = Vec::new();
-    let (mut start, mut cluster, mut tally, mut joined) = (0, 0, Tally::default(), false);
+    let (mut start, mut cluster, mut tally) = (0, 0, Tally::default());
+    let (mut joined, mut flags) = (false, 0);
     for (i, c) in text.char_indices().chain([(text.len(), ' ')]) {
         let end = i == text.len();
-        let extends = !end && (joined || extends_character(c));
-        joined = c == '\u{200d}';
+        let flag = matches!(c, '\u{1f1e6}'..='\u{1f1ff}');
+        let extends = !end && (joined || extends_character(c) || (flag && flags % 2 == 1));
+        joined = c == '\u{200d}' || is_virama(c);
+        flags = if flag { flags + 1 } else { 0 };
         if !extends && i > cluster {
             if tally.total() > max && cluster > start {
                 out.extend(trimmed(&text[start..cluster], start));
@@ -413,15 +416,27 @@ fn cut_characters(text: &str, max: usize) -> Vec<Range<usize>> {
     out
 }
 
-// ponytail: common combining ranges only; unicode-segmentation if rarer scripts split mid-cluster
+// ponytail: hand-kept combining ranges, Indic signs by their place in each block; unicode-segmentation if other scripts split mid-cluster
 fn extends_character(c: char) -> bool {
+    let n = c as u32;
+    if (0x900..0xd80).contains(&n) {
+        return matches!(n & 0x7f, 0x00..=0x03 | 0x3a..=0x3c | 0x3e..=0x4f | 0x51..=0x57 | 0x62..=0x63);
+    }
     matches!(c,
         '\u{300}'..='\u{36f}' | '\u{483}'..='\u{489}' | '\u{591}'..='\u{5c7}' | '\u{610}'..='\u{61a}'
-        | '\u{64b}'..='\u{65f}' | '\u{670}' | '\u{6d6}'..='\u{6ed}' | '\u{900}'..='\u{903}'
-        | '\u{93a}'..='\u{94f}' | '\u{951}'..='\u{957}' | '\u{962}'..='\u{963}' | '\u{e31}'
-        | '\u{e34}'..='\u{e3a}' | '\u{e47}'..='\u{e4e}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}'
+        | '\u{64b}'..='\u{65f}' | '\u{670}' | '\u{6d6}'..='\u{6ed}'
+        | '\u{d81}'..='\u{d83}' | '\u{dca}' | '\u{dcf}'..='\u{ddf}' | '\u{df2}'..='\u{df3}'
+        | '\u{e31}' | '\u{e33}'..='\u{e3a}' | '\u{e47}'..='\u{e4e}'
+        | '\u{eb1}' | '\u{eb3}'..='\u{ebc}' | '\u{ec8}'..='\u{ece}'
+        | '\u{1160}'..='\u{11ff}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}'
         | '\u{200c}'..='\u{200d}' | '\u{20d0}'..='\u{20ff}' | '\u{fe00}'..='\u{fe0f}' | '\u{fe20}'..='\u{fe2f}'
         | '\u{1f3fb}'..='\u{1f3ff}' | '\u{e0020}'..='\u{e007f}')
+}
+
+fn is_virama(c: char) -> bool {
+    let n = c as u32;
+    ((0x900..0xd80).contains(&n) && n & 0x7f == 0x4d)
+        || matches!(c, '\u{d3b}' | '\u{d3c}' | '\u{dca}')
 }
 
 fn trimmed(text: &str, offset: usize) -> Option<Range<usize>> {
@@ -654,6 +669,76 @@ mod tests {
                 assert!(all.contains(&format!("Month_number_{i})")), "{size}");
             }
         }
+    }
+
+    fn cut_only_between(clusters: &[&str]) {
+        let text = clusters.concat().repeat(30);
+        for size in 2..=9 {
+            let chunks = chunk(&text, size, 0);
+            assert_eq!(
+                chunks.iter().map(|c| c.text.as_str()).collect::<String>(),
+                text
+            );
+            for c in &chunks {
+                let mut rest = c.text.as_str();
+                while let Some(after) = clusters.iter().find_map(|k| rest.strip_prefix(k)) {
+                    rest = after;
+                }
+                assert!(rest.is_empty(), "size {size}: {:?}", c.text);
+            }
+        }
+    }
+
+    #[test]
+    fn devanagari_runs_are_cut_between_clusters() {
+        cut_only_between(&[
+            "\u{915}\u{94d}\u{937}",
+            "\u{924}\u{94d}\u{930}\u{93f}",
+            "\u{92f}",
+            "\u{939}\u{93f}\u{902}",
+        ]);
+    }
+
+    #[test]
+    fn bengali_runs_are_cut_between_clusters() {
+        cut_only_between(&[
+            "\u{995}\u{9cd}\u{9b7}",
+            "\u{9ae}\u{9be}",
+            "\u{9b0}\u{9cd}\u{9a5}",
+        ]);
+    }
+
+    #[test]
+    fn tamil_runs_are_cut_between_clusters() {
+        cut_only_between(&["\u{b95}\u{bcd}\u{bb7}", "\u{bae}\u{bca}", "\u{bb4}\u{bbf}"]);
+    }
+
+    #[test]
+    fn thai_runs_are_cut_between_clusters() {
+        cut_only_between(&[
+            "\u{e17}\u{e35}\u{e48}",
+            "\u{e19}\u{e49}\u{e33}",
+            "\u{e44}",
+            "\u{e01}\u{e34}",
+        ]);
+    }
+
+    #[test]
+    fn decomposed_hangul_is_cut_between_syllables() {
+        cut_only_between(&[
+            "\u{1112}\u{1161}\u{11ab}",
+            "\u{1100}\u{116e}\u{11a8}",
+            "\u{110b}\u{1165}",
+        ]);
+    }
+
+    #[test]
+    fn flags_are_cut_between_pairs() {
+        cut_only_between(&[
+            "\u{1f1eb}\u{1f1f7}",
+            "\u{1f1e9}\u{1f1ea}",
+            "\u{1f1ef}\u{1f1f5}",
+        ]);
     }
 
     #[test]

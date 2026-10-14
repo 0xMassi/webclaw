@@ -2,7 +2,8 @@
 //!
 //! Chunks are packed from whole blocks (paragraphs, lists, tables, code
 //! fences) and stay under a token budget. A block larger than the budget is
-//! cut at line breaks, then sentence ends, then spaces: a cut code fence is
+//! cut at line breaks, then sentence ends, then spaces, then between
+//! characters (never inside an accented letter or emoji sequence): a cut code fence is
 //! reopened in every piece and a cut table repeats its header rows. Each
 //! chunk records the headings it sits under.
 
@@ -47,23 +48,32 @@ struct Piece {
 /// a row, and one per Chinese, Japanese or Korean character. On web markdown
 /// it lands within about 20% of common BPE tokenizers for nine chunks in ten.
 pub fn approx_tokens(s: &str) -> usize {
-    #[derive(Clone, Copy, PartialEq)]
-    enum Run {
-        Space,
-        Letter,
-        Digit,
-        Symbol,
-    }
-    let count = |run, len: usize, wide: usize| match run {
-        Run::Space => 0,
-        Run::Letter => (len - wide).div_ceil(6) + wide.div_ceil(2),
-        Run::Digit => len.div_ceil(3),
-        Run::Symbol => len.div_ceil(2),
-    };
-    let (mut tokens, mut run, mut len, mut wide) = (0, Run::Space, 0, 0);
-    for c in s.chars() {
+    let mut tally = Tally::default();
+    s.chars().for_each(|c| tally.push(c));
+    tally.total()
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+enum Run {
+    #[default]
+    Space,
+    Letter,
+    Digit,
+    Symbol,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Tally {
+    tokens: usize,
+    run: Run,
+    len: usize,
+    wide: usize,
+}
+
+impl Tally {
+    fn push(&mut self, c: char) {
         let kind = if is_cjk(c) {
-            tokens += 1;
+            self.tokens += 1;
             Run::Space
         } else if c.is_whitespace() {
             Run::Space
@@ -74,16 +84,25 @@ pub fn approx_tokens(s: &str) -> usize {
         } else {
             Run::Symbol
         };
-        if kind != run {
-            tokens += count(run, len, wide);
-            (run, len, wide) = (kind, 0, 0);
+        if kind != self.run {
+            self.tokens = self.total();
+            (self.run, self.len, self.wide) = (kind, 0, 0);
         }
-        len += 1;
+        self.len += 1;
         if kind == Run::Letter && !c.is_ascii() {
-            wide += 1;
+            self.wide += 1;
         }
     }
-    tokens + count(run, len, wide)
+
+    fn total(&self) -> usize {
+        self.tokens
+            + match self.run {
+                Run::Space => 0,
+                Run::Letter => (self.len - self.wide).div_ceil(6) + self.wide.div_ceil(2),
+                Run::Digit => self.len.div_ceil(3),
+                Run::Symbol => self.len.div_ceil(2),
+            }
+    }
 }
 
 fn is_cjk(c: char) -> bool {
@@ -316,8 +335,11 @@ fn split_block(text: &str, budget: usize) -> Vec<(String, &'static str)> {
 }
 
 fn pack(text: &str, max: usize, level: usize) -> Vec<Range<usize>> {
-    if level > 2 || approx_tokens(text) <= max {
+    if approx_tokens(text) <= max {
         return trimmed(text, 0).into_iter().collect();
+    }
+    if level > 2 {
+        return cut_characters(text, max);
     }
     let mut out = Vec::new();
     let (mut start, mut end) = (0, 0);
@@ -342,6 +364,41 @@ fn pack(text: &str, max: usize, level: usize) -> Vec<Range<usize>> {
     }
     out.extend(trimmed(&text[start..], start));
     out
+}
+
+fn cut_characters(text: &str, max: usize) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let (mut start, mut cluster, mut tally, mut joined) = (0, 0, Tally::default(), false);
+    for (i, c) in text.char_indices().chain([(text.len(), ' ')]) {
+        let end = i == text.len();
+        let extends = !end && (joined || extends_character(c));
+        joined = c == '\u{200d}';
+        if !extends && i > cluster {
+            if tally.total() > max && cluster > start {
+                out.extend(trimmed(&text[start..cluster], start));
+                start = cluster;
+                tally = Tally::default();
+                text[cluster..i].chars().for_each(|c| tally.push(c));
+            }
+            cluster = i;
+        }
+        if !end {
+            tally.push(c);
+        }
+    }
+    out.extend(trimmed(&text[start..], start));
+    out
+}
+
+// ponytail: common combining ranges only; unicode-segmentation if rarer scripts split mid-cluster
+fn extends_character(c: char) -> bool {
+    matches!(c,
+        '\u{300}'..='\u{36f}' | '\u{483}'..='\u{489}' | '\u{591}'..='\u{5c7}' | '\u{610}'..='\u{61a}'
+        | '\u{64b}'..='\u{65f}' | '\u{670}' | '\u{6d6}'..='\u{6ed}' | '\u{900}'..='\u{903}'
+        | '\u{93a}'..='\u{94f}' | '\u{951}'..='\u{957}' | '\u{962}'..='\u{963}' | '\u{e31}'
+        | '\u{e34}'..='\u{e3a}' | '\u{e47}'..='\u{e4e}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}'
+        | '\u{200c}'..='\u{200d}' | '\u{20d0}'..='\u{20ff}' | '\u{fe00}'..='\u{fe0f}' | '\u{fe20}'..='\u{fe2f}'
+        | '\u{1f3fb}'..='\u{1f3ff}' | '\u{e0020}'..='\u{e007f}')
 }
 
 fn trimmed(text: &str, offset: usize) -> Option<Range<usize>> {
@@ -456,6 +513,37 @@ mod tests {
         );
         let chunks = chunk(&page, 60, 0);
         assert!(chunks.iter().all(|c| c.tokens <= 60), "{chunks:?}");
+    }
+
+    #[test]
+    fn a_run_without_spaces_is_cut_at_character_boundaries() {
+        let page = format!("Intro.\n\n{}\n\nOutro.", "a".repeat(5000));
+        let chunks = chunk(&page, 64, 0);
+        assert!(chunks.iter().all(|c| c.tokens <= 64), "{chunks:?}");
+        let squash = |s: &str| s.split_whitespace().collect::<String>();
+        let joined: String = chunks.iter().map(|c| squash(&c.text)).collect();
+        assert_eq!(joined, squash(&page));
+    }
+
+    #[test]
+    fn a_cut_without_spaces_keeps_emoji_sequences_and_accents_whole() {
+        let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}".repeat(300);
+        let chunks = chunk(&family, 16, 0);
+        assert!(chunks.len() > 1);
+        for c in &chunks {
+            assert!(c.tokens <= 16, "{c:?}");
+            assert!(
+                c.text.starts_with('\u{1f468}') && c.text.ends_with('\u{1f467}'),
+                "{c:?}"
+            );
+        }
+        let accents = "e\u{301}".repeat(400);
+        for c in chunk(&accents, 16, 0) {
+            assert!(
+                c.text.starts_with('e') && c.text.ends_with('\u{301}'),
+                "{c:?}"
+            );
+        }
     }
 
     #[test]

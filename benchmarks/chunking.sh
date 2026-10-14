@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[ -n "${2:-}" ] && set -- "$1" "$(cd "$2" && pwd)" "${@:3}"
+if [ -n "${2:-}" ]; then
+  [ -d "$2" ] || { echo "no bins dir at $2" >&2; exit 1; }
+  set -- "$1" "$(cd "$2" && pwd)" "${@:3}"
+fi
 cd "$(dirname "$0")"
 
 label=${1:-chunking-$(date +%F)}

@@ -142,8 +142,9 @@ pub fn find_text(html: &str, text: &TextMatch) -> Vec<Found> {
 /// Every element like the example. The search starts from the example's path
 /// from the root (its last 64 steps), each step its tag and first 32 classes, and
 /// widens it while every element that adds shares a child tag with the
-/// example (or has no child elements, like it) and sits under a parent
-/// holding no earlier match. It cuts steps from the top as long as one step
+/// example (or has no child elements, like it), sits under a parent holding
+/// no earlier match, and shares a class with the example (when both have
+/// classes), as does its ancestor at the step whose classes were dropped. It cuts steps from the top as long as one step
 /// with a class is left, and drops the classes of a step, all at once or one
 /// at a time, tried under the whole path and under its shortest tail that
 /// starts at a step with a class and picks the same elements; dropped classes
@@ -174,7 +175,6 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Fin
     let Some(example) = example else {
         return Ok(None);
     };
-    let example_shape = shape(example);
     let mut steps: Vec<(String, Vec<String>)> = example
         .ancestors()
         .filter_map(ElementRef::wrap)
@@ -207,7 +207,7 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Fin
             if more.len() == matched.len() {
                 continue;
             }
-            if alike(&matched, &more, &example_shape) {
+            if alike(&matched, &more, example, 0) {
                 from = cut;
                 matched = more;
                 changed = true;
@@ -235,7 +235,9 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Fin
                         continue;
                     }
                     let more = pick(&document, &wider, at)?;
-                    if more.len() > matched.len() && alike(&matched, &more, &example_shape) {
+                    if more.len() > matched.len()
+                        && alike(&matched, &more, example, steps.len() - 1 - level)
+                    {
                         steps = wider;
                         matched = more;
                         from = at;
@@ -316,17 +318,41 @@ fn anchored(steps: &[(String, Vec<String>)], from: usize) -> bool {
     from == 0 || steps[from..].iter().any(|(_, classes)| !classes.is_empty())
 }
 
-fn alike(matched: &[ElementRef], more: &[ElementRef], example_shape: &HashSet<&str>) -> bool {
+fn alike(matched: &[ElementRef], more: &[ElementRef], example: ElementRef, level: usize) -> bool {
     let known: HashSet<NodeId> = matched.iter().map(|e| e.id()).collect();
     let parents: HashSet<Option<NodeId>> = matched
         .iter()
         .filter(|_| matched.len() > 1)
         .map(|e| e.parent().map(|p| p.id()))
         .collect();
+    let example_shape = shape(example);
+    let example_classes = classes(Some(example));
+    let example_step = classes(up(example, level));
     more.iter().all(|e| {
         known.contains(&e.id())
-            || (fits(&shape(*e), example_shape) && !parents.contains(&e.parent().map(|p| p.id())))
+            || (fits(&shape(*e), &example_shape)
+                && !parents.contains(&e.parent().map(|p| p.id()))
+                && !apart(&classes(Some(*e)), &example_classes)
+                && !apart(&classes(up(*e, level)), &example_step))
     })
+}
+
+fn up(element: ElementRef, levels: usize) -> Option<ElementRef> {
+    match levels {
+        0 => Some(element),
+        _ => element
+            .ancestors()
+            .filter_map(ElementRef::wrap)
+            .nth(levels - 1),
+    }
+}
+
+fn classes<'a>(element: Option<ElementRef<'a>>) -> HashSet<&'a str> {
+    element.map_or_else(HashSet::new, |e| e.value().classes().collect())
+}
+
+fn apart(classes: &HashSet<&str>, example: &HashSet<&str>) -> bool {
+    !classes.is_empty() && !example.is_empty() && classes.is_disjoint(example)
 }
 
 fn pick<'a>(
@@ -779,5 +805,17 @@ mod tests {
         for f in &found {
             assert_eq!(crate::select(page, None, &f.selector).unwrap(), ["b"]);
         }
+    }
+
+    #[test]
+    fn a_sibling_part_with_other_classes_stays_out() {
+        let page = r#"<ol>
+            <li><h2><span class="company"><a>Acme</a></span><span class="location"><a>Paris</a></span></h2></li>
+            <li><h2><span class="company"><a>Beta</a></span><span class="location"><a>Rome</a></span></h2></li>
+            <li><h2><span class="company"><a>Gamma</a></span><span class="location"><a>Oslo</a></span></h2></li>
+        </ol>"#;
+        let text = TextMatch::text("beta", true, false).unwrap();
+        let similar = find_similar(page, Example::Text(&text)).unwrap().unwrap();
+        assert_eq!(texts(&similar.matches), ["Acme", "Beta", "Gamma"]);
     }
 }

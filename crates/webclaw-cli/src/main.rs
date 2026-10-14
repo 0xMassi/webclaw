@@ -208,6 +208,15 @@ struct Cli {
     #[arg(long)]
     cdp_url: Option<String>,
 
+    /// Keep the local browser's cookies, local storage and IndexedDB in this
+    /// directory, created when missing, so a login carries over to later
+    /// runs. Web pages then load in the browser with the profile's cookies,
+    /// and --cookie and --cookie-file cookies are saved in the profile. One
+    /// run at a time per directory; use a directory of its own, not your
+    /// everyday Chrome profile
+    #[arg(long, value_name = "DIR", conflicts_with = "cdp_url")]
+    browser_profile: Option<PathBuf>,
+
     /// When rendering, also wait until an element matching this CSS selector exists
     #[arg(long)]
     wait_for: Option<String>,
@@ -766,7 +775,7 @@ fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Render
     use webclaw_fetch::render::{BrowserSource, RenderPool};
     let source = match &cli.cdp_url {
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
-        None => BrowserSource::launch_for(config),
+        None => BrowserSource::launch_for(config, cli.browser_profile.clone()),
     };
     RenderPool::new(source, std::time::Duration::from_secs(cli.timeout))
 }
@@ -3275,6 +3284,12 @@ async fn main() {
 
     let mut cli = Cli::parse();
     init_logging(cli.verbose);
+    if cli.browser_profile.is_some() && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
+        eprintln!(
+            "error: --browser-profile needs the browser: a build with the `browser` feature, and --render auto or always"
+        );
+        process::exit(1);
+    }
 
     // Subcommand path. Handled before the flag dispatch so a subcommand
     // can't collide with a flag-based flow. When no subcommand is set

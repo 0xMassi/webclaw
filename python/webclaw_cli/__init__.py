@@ -238,9 +238,20 @@ def scrape(
     only_main_content: bool = ...,
     **options: Unpack[Options],
 ) -> dict[str, Any]: ...
+@overload
 def scrape(
     target: str,
-    format: Format | Literal["json"] = "markdown",
+    format: str,
+    *,
+    query: str | None = ...,
+    include_selectors: str | Sequence[str] = ...,
+    exclude_selectors: str | Sequence[str] = ...,
+    only_main_content: bool = ...,
+    **options: Unpack[Options],
+) -> str | dict[str, Any]: ...
+def scrape(
+    target: str,
+    format: str = "markdown",
     *,
     query: str | None = None,
     include_selectors: str | Sequence[str] = (),
@@ -286,12 +297,14 @@ def select(
     if (css is None) == (xpath is None):
         raise ValueError("pass exactly one of css or xpath")
     pick = f"--select={css}" if css is not None else f"--xpath={xpath}"
-    return json.loads(_run([pick, *_fields(fields)], target, options))
+    picked: list[Any] = json.loads(_run([pick, *_fields(fields)], target, options))
+    return picked
 
 
 def tables(target: str, **options: Unpack[Options]) -> list[dict[str, Any]]:
     """The page's data tables: caption, headers and rows of cell text."""
-    return json.loads(_run(["--tables"], target, options))
+    found: list[dict[str, Any]] = json.loads(_run(["--tables"], target, options))
+    return found
 
 
 def find_text(
@@ -309,7 +322,8 @@ def find_text(
         args.append("--exact")
     if case_sensitive:
         args.append("--case-sensitive")
-    return json.loads(_run(args, target, options))
+    found: list[dict[str, str]] = json.loads(_run(args, target, options))
+    return found
 
 
 def similar(
@@ -330,7 +344,8 @@ def similar(
     examples += [f"--find-text={text}"] if text is not None else []
     if len(examples) != 1:
         raise ValueError("pass exactly one of css, xpath or text")
-    return json.loads(_run([*examples, "--similar", *_fields(fields)], target, options))
+    like: dict[str, Any] = json.loads(_run([*examples, "--similar", *_fields(fields)], target, options))
+    return like
 
 
 def crawl(
@@ -366,7 +381,12 @@ def _stream(cmd: list[str], limit: float | None) -> Iterator[dict[str, Any]]:
     with tempfile.TemporaryFile() as err, _spawn(cmd, False, err) as proc:
         assert proc.stdout is not None
         expired = threading.Event()
-        timer = threading.Timer(limit or 0, lambda: (expired.set(), _kill(proc)))
+
+        def expire() -> None:
+            expired.set()
+            _kill(proc)
+
+        timer = threading.Timer(limit or 0, expire)
         if limit is not None:
             timer.start()
         pages = failed = 0

@@ -99,6 +99,16 @@ impl Action {
             Self::ExecuteJavascript { .. } => "executeJavascript",
         }
     }
+
+    fn selector(&self) -> Option<&str> {
+        match self {
+            Self::Click { selector, .. }
+            | Self::Type { selector, .. }
+            | Self::WaitForSelector { selector, .. } => Some(selector),
+            Self::Scroll { selector, .. } => selector.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 /// Parse a JSON array of [`Action`]s, such as
@@ -316,6 +326,9 @@ async fn step(
     if !matches!(action, Action::Wait { .. }) {
         ready(page).await?;
     }
+    if let Some(selector) = action.selector() {
+        check_selector(page, selector).await?;
+    }
     match action {
         Action::Click {
             selector,
@@ -483,14 +496,29 @@ async fn ready(page: &Page) -> Result<(), String> {
     }
 }
 
+async fn check_selector(page: &Page, selector: &str) -> Result<(), String> {
+    let check = format!(
+        "(() => {{ try {{ document.createDocumentFragment().querySelector({}); return true; }} catch (e) {{ return false; }} }})()",
+        serde_json::to_string(selector).unwrap_or_default()
+    );
+    let valid = page
+        .evaluate_expression(check)
+        .await
+        .map_err(js_error)?
+        .into_value::<bool>()
+        .unwrap_or(false);
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("{selector:?} is not a valid CSS selector"))
+    }
+}
+
 async fn find(page: &Page, selector: &str) -> Result<Vec<Element>, String> {
     let start = Instant::now();
     loop {
         match page.find_elements(selector).await {
             Ok(found) if !found.is_empty() => return Ok(found),
-            Err(e) if e.to_string().contains("not a valid selector") => {
-                return Err(format!("{selector:?} is not a valid CSS selector"));
-            }
             _ if start.elapsed() >= FIND => {
                 return Err(format!("no element matches {selector:?} after {FIND:?}"));
             }
@@ -992,5 +1020,24 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
             pooled.expect("the pool renders").1,
             vec![serde_json::json!(1)]
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_bad_selector_fails_at_once() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let started = std::time::Instant::now();
+        let bad = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "click", "selector": "a["}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        renderer.close().await;
+        let error = bad.unwrap_err().to_string();
+        assert!(error.contains("not a valid CSS selector"), "{error}");
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
     }
 }

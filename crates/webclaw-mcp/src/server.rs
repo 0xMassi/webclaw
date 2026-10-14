@@ -79,6 +79,7 @@ fn render_from_env(
         pool: Arc::new(RenderPool::new(source, LOCAL_FETCH_TIMEOUT)),
         always: mode == "always",
         wait_for: None,
+        block: webclaw_fetch::Block::default(),
     })
 }
 
@@ -87,10 +88,12 @@ fn apply_render(
     config: &mut webclaw_fetch::FetchConfig,
     mode: Option<&str>,
     wait_for: Option<String>,
+    block: Option<&str>,
 ) -> Result<(), String> {
     if !matches!(mode, None | Some("auto" | "always" | "never")) {
         return Err("render must be \"auto\", \"always\" or \"never\"".into());
     }
+    let block = block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
     if mode == Some("never") {
         config.render = None;
         return Ok(());
@@ -107,6 +110,9 @@ fn apply_render(
     if wait_for.is_some() {
         render.wait_for = wait_for;
     }
+    if let Some(block) = block {
+        render.block = block;
+    }
     Ok(())
 }
 
@@ -115,7 +121,9 @@ fn apply_render(
     _config: &mut webclaw_fetch::FetchConfig,
     mode: Option<&str>,
     wait_for: Option<String>,
+    block: Option<&str>,
 ) -> Result<(), String> {
+    block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
     match (mode, wait_for) {
         (None | Some("auto" | "never"), None) => Ok(()),
         _ => Err(
@@ -310,8 +318,10 @@ impl WebclawMcp {
             .as_ref()
             .filter(|c| !c.is_empty())
             .map(|c| c.join("; "));
-        let shared =
-            cookie_header.is_none() && params.render.is_none() && params.wait_for.is_none();
+        let shared = cookie_header.is_none()
+            && params.render.is_none()
+            && params.wait_for.is_none()
+            && params.block.is_none();
 
         let custom_client;
         let cached_firefox;
@@ -336,6 +346,7 @@ impl WebclawMcp {
                     &mut config,
                     params.render.as_deref(),
                     params.wait_for.clone(),
+                    params.block.as_deref(),
                 )?;
                 custom_client = webclaw_fetch::FetchClient::new(config)
                     .map_err(|e| format!("Failed to build client: {e}"))?;
@@ -400,10 +411,11 @@ impl WebclawMcp {
 
         let format = params.format.as_deref().unwrap_or("markdown");
 
+        let mut fetch = self.fetch_config.clone();
+        apply_render(&mut fetch, None, None, params.block.as_deref())?;
         let config = webclaw_fetch::CrawlConfig {
-            fetch: self.fetch_config.clone(),
+            fetch,
             max_depth: params.depth.unwrap_or(2) as usize,
-            // 0 = no cap; omitted keeps the modest default.
             max_pages: match params.max_pages {
                 Some(0) => None,
                 Some(n) => Some(n),
@@ -1120,6 +1132,13 @@ fn save_research(dir: &std::path::Path, slug: &str, data: &serde_json::Value) ->
 #[cfg(test)]
 mod tests {
     use super::slugify;
+
+    #[test]
+    fn an_unknown_block_type_is_refused_with_or_without_a_browser() {
+        let mut config = webclaw_fetch::FetchConfig::default();
+        assert!(super::apply_render(&mut config, None, None, Some("bogus")).is_err());
+        assert!(super::apply_render(&mut config, None, None, Some("images,fonts")).is_ok());
+    }
 
     #[test]
     fn every_browser_name_picks_its_profile() {

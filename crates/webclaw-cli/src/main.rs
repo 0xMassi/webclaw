@@ -213,9 +213,9 @@ struct Cli {
     wait_for: Option<String>,
 
     /// When rendering a page for its content, skip these resources: a comma
-    /// list of images, fonts and media, or none. Screenshots
+    /// list of images, fonts and media, or none. Screenshots and PDFs
     /// load everything
-    #[arg(long, value_name = "TYPES", conflicts_with = "screenshot")]
+    #[arg(long, value_name = "TYPES", conflicts_with_all = ["screenshot", "save_pdf"])]
     block: Option<webclaw_fetch::Block>,
 
     /// Steps to run in the local browser once the page has loaded, before it
@@ -269,7 +269,7 @@ struct Cli {
     /// each chunk stays under about this many tokens. Works with several URLs
     /// and --crawl (chunks per page)
     #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(1..),
-          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "output_dir", "metadata", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
+          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "save_pdf", "output_dir", "metadata", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
     chunk: Option<u32>,
 
     /// With --chunk, start each chunk with up to this many tokens from the end
@@ -334,6 +334,34 @@ struct Cli {
     /// With --screenshot, capture the whole scrollable page
     #[arg(long, requires = "screenshot")]
     full_page: bool,
+
+    /// Save the rendered page as a PDF to this file, every page of it, as the
+    /// browser prints it. Needs the `browser` feature
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot"])]
+    save_pdf: Option<PathBuf>,
+
+    /// With --save-pdf, the paper size
+    #[arg(long, value_enum, default_value_t = PaperArg::Letter, requires = "save_pdf")]
+    paper: PaperArg,
+
+    /// With --save-pdf, turn the paper sideways
+    #[arg(long, requires = "save_pdf")]
+    landscape: bool,
+
+    /// With --save-pdf, keep background colors and images, which browsers
+    /// leave out when printing
+    #[arg(long, requires = "save_pdf")]
+    print_background: bool,
+
+    /// With --save-pdf, zoom the page content, from 0.1 to 2
+    #[arg(
+        long,
+        value_name = "FACTOR",
+        default_value_t = 1.0,
+        value_parser = pdf_scale,
+        requires = "save_pdf"
+    )]
+    scale: f64,
 
     /// CSS selectors to include (comma-separated, e.g. "article,.content")
     #[arg(long)]
@@ -609,6 +637,12 @@ enum RenderMode {
     Never,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum PaperArg {
+    Letter,
+    A4,
+}
+
 #[derive(Clone, ValueEnum)]
 enum Browser {
     Chrome,
@@ -787,6 +821,13 @@ async fn close_browser(config: &FetchConfig) {
         render.pool.close().await;
     }
     let _ = config;
+}
+
+fn pdf_scale(text: &str) -> Result<f64, String> {
+    text.parse()
+        .ok()
+        .filter(|scale| (0.1..=2.0).contains(scale))
+        .ok_or_else(|| format!("{text} is not a number from 0.1 to 2"))
 }
 
 /// Parse a JSON cookie file (Chrome extension format) into a Cookie header string.
@@ -1228,6 +1269,51 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
 
 #[cfg(not(feature = "browser"))]
 async fn run_screenshot(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
+}
+
+#[cfg(feature = "browser")]
+async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
+    use webclaw_fetch::render::{Paper, PdfOptions};
+    let config = build_fetch_config(cli);
+    let render = config
+        .render
+        .as_ref()
+        .ok_or("--save-pdf needs the browser, so it cannot run with --render never")?;
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let printed = render
+        .pool
+        .pdf(
+            url,
+            render.wait_for.as_deref(),
+            &headers,
+            PdfOptions {
+                paper: match cli.paper {
+                    PaperArg::Letter => Paper::Letter,
+                    PaperArg::A4 => Paper::A4,
+                },
+                landscape: cli.landscape,
+                print_background: cli.print_background,
+                scale: cli.scale,
+            },
+        )
+        .await;
+    close_browser(&config).await;
+    let printed = printed.map_err(|e| format!("PDF error: {e}"))?;
+    webclaw_fetch::FetchError::check_status(printed.status).map_err(|e| e.to_string())?;
+    std::fs::write(path, &printed.data)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    eprintln!(
+        "saved {} ({} bytes) of {}",
+        path.display(),
+        printed.data.len(),
+        printed.url
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "browser"))]
+async fn run_save_pdf(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), String> {
     Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
@@ -3460,6 +3546,18 @@ async fn main() {
         return;
     }
 
+    if let Some(ref path) = cli.save_pdf {
+        let printed = match (entries.len(), cli.urls.first()) {
+            (1, Some(url)) => run_save_pdf(&cli, &normalize_url(url), path).await,
+            _ => Err("--save-pdf takes one URL".to_string()),
+        };
+        if let Err(e) = printed {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
     if cli.tables {
         let found = if entries.len() > 1 {
             Err("--tables takes one URL".to_string())
@@ -3773,6 +3871,46 @@ mod tests {
             ],
         ] {
             assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn pdf_flags_need_save_pdf_and_refuse_other_outputs() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        let cli = parse(&[
+            "--save-pdf",
+            "page.pdf",
+            "--paper",
+            "a4",
+            "--landscape",
+            "--print-background",
+            "--scale",
+            "0.8",
+            "--wait-for",
+            "main",
+        ])
+        .unwrap();
+        assert!(matches!(cli.paper, PaperArg::A4));
+        assert_eq!(cli.scale, 0.8);
+        for extra in [
+            &["--landscape"][..],
+            &["--paper", "a4"],
+            &["--print-background"],
+            &["--scale", "2"],
+            &["--save-pdf", "a.pdf", "--paper", "a3"],
+            &["--save-pdf", "a.pdf", "--scale", "3"],
+            &["--save-pdf", "a.pdf", "--scale", "0"],
+            &["--save-pdf", "a.pdf", "--screenshot", "a.png"],
+            &["--save-pdf", "a.pdf", "--select", "a"],
+            &["--save-pdf", "a.pdf", "--crawl"],
+            &["--save-pdf", "a.pdf", "--chunk", "64"],
+            &["--save-pdf", "a.pdf", "--block", "images"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?}");
         }
     }
 

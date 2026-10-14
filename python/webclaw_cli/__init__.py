@@ -59,12 +59,18 @@ class Options(TypedDict, total=False):
 
 
 class WebclawError(RuntimeError):
-    """The binary exited with an error. `stderr` and `returncode` hold what it reported."""
+    """The binary exited with an error.
+
+    `stderr` and `returncode` hold what it reported. `status_code` is the HTTP status
+    of the page when the error came from one, such as 404, and None otherwise.
+    """
 
     def __init__(self, message: str, stderr: str, returncode: int) -> None:
         super().__init__(message)
         self.stderr = stderr
         self.returncode = returncode
+        status = re.search(r"\bHTTP (\d{3})\b", message)
+        self.status_code = int(status.group(1)) if status else None
 
 
 class WebclawWarning(UserWarning):
@@ -216,8 +222,8 @@ def scrape(
     format: Format = ...,
     *,
     query: str | None = ...,
-    include: Sequence[str] = ...,
-    exclude: Sequence[str] = ...,
+    include_selectors: str | Sequence[str] = ...,
+    exclude_selectors: str | Sequence[str] = ...,
     only_main_content: bool = ...,
     **options: Unpack[Options],
 ) -> str: ...
@@ -227,8 +233,8 @@ def scrape(
     format: Literal["json"],
     *,
     query: str | None = ...,
-    include: Sequence[str] = ...,
-    exclude: Sequence[str] = ...,
+    include_selectors: str | Sequence[str] = ...,
+    exclude_selectors: str | Sequence[str] = ...,
     only_main_content: bool = ...,
     **options: Unpack[Options],
 ) -> dict[str, Any]: ...
@@ -237,8 +243,8 @@ def scrape(
     format: Format | Literal["json"] = "markdown",
     *,
     query: str | None = None,
-    include: Sequence[str] = (),
-    exclude: Sequence[str] = (),
+    include_selectors: str | Sequence[str] = (),
+    exclude_selectors: str | Sequence[str] = (),
     only_main_content: bool = False,
     **options: Unpack[Options],
 ) -> str | dict[str, Any]:
@@ -251,7 +257,7 @@ def scrape(
     args = [f"--format={format}"]
     if query:
         args.append(f"--query={query}")
-    args += _comma_list("--include", include) + _comma_list("--exclude", exclude)
+    args += _comma_list("--include", include_selectors) + _comma_list("--exclude", exclude_selectors)
     if only_main_content:
         args.append("--only-main-content")
     out = _run(args, target, options)
@@ -330,21 +336,29 @@ def similar(
 def crawl(
     url: str,
     *,
-    max_pages: int = 20,
-    depth: int = 1,
+    max_depth: int = 2,
+    max_pages: int = 50,
     query: str | None = None,
+    include_patterns: str | Sequence[str] = (),
+    exclude_patterns: str | Sequence[str] = (),
+    use_sitemap: bool = False,
     **options: Unpack[Options],
 ) -> Iterator[dict[str, Any]]:
     """Crawl same-site links and yield each page as it finishes.
 
     Each page is a dict with `url`, `depth`, `extraction` (the `scrape(..., "json")`
     shape) and `error`, set when that page failed. It raises `WebclawError` only when
-    no page succeeded. `max_pages=0` means no limit. Stopping the loop early stops
-    the crawl, and the browser it started.
+    no page succeeded. `max_pages=0` means no limit. `query` fetches the links most
+    likely to answer it first. `include_patterns` and `exclude_patterns` are globs on
+    the URL path, such as "/docs/**". `use_sitemap` also starts from the sitemap.
+    Stopping the loop early stops the crawl, and the browser it started.
     """
-    args = ["--crawl", "--format=jsonl", f"--max-pages={max_pages}", f"--depth={depth}"]
+    args = ["--crawl", "--format=jsonl", f"--max-pages={max_pages}", f"--depth={max_depth}"]
     if query:
         args.append(f"--query={query}")
+    args += _comma_list("--include-paths", include_patterns) + _comma_list("--exclude-paths", exclude_patterns)
+    if use_sitemap:
+        args.append("--sitemap")
     return _stream([binary_path(), *args, *_options(options), "--", url], options.get("time_limit"))
 
 

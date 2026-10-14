@@ -54,12 +54,12 @@ class Offline(unittest.TestCase):
         self.assertIn("Garden tools", result["content"]["markdown"])
 
     def test_scrape_options(self):
-        out = wc.scrape(SHOP, exclude=["ul", "table"])
+        out = wc.scrape(SHOP, exclude_selectors=["ul", "table"])
         self.assertIn("carbon steel", out)
         self.assertNotIn("Spade", out)
-        self.assertNotIn("Spade", wc.scrape(SHOP, exclude="ul"))
+        self.assertNotIn("Spade", wc.scrape(SHOP, exclude_selectors="ul"))
         with self.assertRaises(ValueError):
-            wc.scrape(SHOP, include=["p:is(.a, .b)"])
+            wc.scrape(SHOP, include_selectors=["p:is(.a, .b)"])
 
     def test_select(self):
         self.assertEqual(wc.select(SHOP, css=".item a"), ["Spade", "Rake", "Hoe"])
@@ -92,6 +92,7 @@ class Offline(unittest.TestCase):
         self.assertEqual(cm.exception.returncode, 1)
         self.assertIn(str(cm.exception), cm.exception.stderr)
         self.assertNotIn("error: ", str(cm.exception))
+        self.assertIsNone(cm.exception.status_code)
 
     def test_error_is_the_error_line(self):
         with self.assertRaises(wc.WebclawError) as cm:
@@ -146,6 +147,16 @@ class Offline(unittest.TestCase):
                     self.assertEqual(wc.scrape("https://a/"), "1\n")
 
     @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_crawl_flags(self):
+        with tempfile.TemporaryDirectory() as d:
+            echo = fake_binary(d, "print(json.dumps({'url': ' '.join(sys.argv[1:]), 'error': None}))")
+            with mock.patch.object(wc, "binary_path", return_value=echo):
+                [page] = wc.crawl("https://a/", include_patterns=["/a/*", "/b/*"], use_sitemap=True, query="q")
+        self.assertEqual(page["url"].split(), ["--crawl", "--format=jsonl", "--max-pages=50", "--depth=2",
+                                               "--query=q", "--include-paths=/a/*,/b/*", "--sitemap", "--",
+                                               "https://a/"])
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
     def test_time_limit(self):
         with tempfile.TemporaryDirectory() as d:
             slow = fake_binary(d, "print(json.dumps({'url': 'https://a/', 'error': None}), flush=True)\ntime.sleep(30)")
@@ -191,6 +202,7 @@ class RealSites(unittest.TestCase):
         with self.assertRaises(wc.WebclawError) as cm:
             wc.scrape("https://books.toscrape.com/no-such-page")
         self.assertIn("404", str(cm.exception))
+        self.assertEqual(cm.exception.status_code, 404)
 
     def test_headers_and_cookies(self):
         out = wc.scrape("https://httpbin.org/headers", "text", headers={"X-Test": "yes-please"},
@@ -214,7 +226,7 @@ class RealSites(unittest.TestCase):
         self.assertTrue(any(len(t["rows"]) > 100 for t in found))
 
     def test_crawl(self):
-        pages = list(wc.crawl("https://quotes.toscrape.com/", max_pages=3))
+        pages = list(wc.crawl("https://quotes.toscrape.com/", max_pages=3, max_depth=1))
         self.assertEqual(len(pages), 3)
         self.assertTrue(all(p["extraction"]["content"]["markdown"] for p in pages))
 

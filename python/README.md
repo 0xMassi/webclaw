@@ -67,15 +67,27 @@ Every function takes these keyword arguments:
 
 Rendering and screenshots use Chrome or Chromium already installed on your machine. Nothing is downloaded.
 
+## Differences from the hosted SDK
+
+The shared names match the [`webclaw`](https://pypi.org/project/webclaw/) package: `include_selectors`, `exclude_selectors`, `only_main_content` and `query` on `scrape`; `max_depth` (default 2), `max_pages` (default 50), `include_patterns`, `exclude_patterns` and `use_sitemap` on `crawl`; `limit` on `map`; `status_code` on `WebclawError`. What differs comes from running locally:
+
+- Functions, not a client: no API key and no base URL.
+- `scrape` takes one `format` and returns that text (a dict for `json`), not a response object with several formats.
+- `crawl` yields each page as a dict while it runs, instead of returning a job to poll.
+- `map` returns a list of URLs.
+- `select`, `tables`, `find_text`, `similar` and `screenshot` run locally; there is no `extract`, `summarize`, `search`, `batch` or `research`, which need the hosted service.
+- `proxy`, `browser`, `headers`, `cookies`, `timeout`, `time_limit`, `render` and `cache` control the local fetch.
+- `WebclawError` also carries the binary's `stderr` and `returncode`.
+
 ## Errors
 
-When the binary fails, the function raises `webclaw_cli.WebclawError`. Its message is the error the binary printed, and it carries the full `stderr` and the `returncode`.
+When the binary fails, the function raises `webclaw_cli.WebclawError`. Its message is the error the binary printed, and it carries the full `stderr`, the `returncode` and, when a page answered with an HTTP error, its `status_code`. Warnings the binary prints on a run that succeeded, such as a page with no content, come as `webclaw_cli.WebclawWarning`.
 
 ```python
 try:
     wc.scrape("https://example.com/missing")
 except wc.WebclawError as e:
-    print(e, e.returncode)
+    print(e, e.status_code)
 ```
 
 ## Advanced

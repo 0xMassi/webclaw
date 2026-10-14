@@ -160,6 +160,21 @@ class Offline(unittest.TestCase):
         self.assertEqual([str(w.message) for w in seen], ["frontier full, dropping links cap=500"])
 
     @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_kill_runs_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = wc._spawn([fake_binary(d, "time.sleep(30)")], False, subprocess.DEVNULL)
+            with mock.patch.object(wc, "_kill_group", wraps=wc._kill_group) as group:
+                threads = [threading.Thread(target=wc._kill, args=(proc,)) for _ in range(4)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+                wc._kill(proc)
+            proc.stdout.close()
+        self.assertEqual(group.call_count, 1)
+        self.assertIsNotNone(proc.returncode)
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
     def test_crawl_flags(self):
         with tempfile.TemporaryDirectory() as d:
             echo = fake_binary(d, "print(json.dumps({'url': ' '.join(sys.argv[1:]), 'error': None}))")

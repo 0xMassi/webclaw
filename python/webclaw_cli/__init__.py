@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import threading
 import warnings
+import weakref
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, overload
@@ -171,7 +172,19 @@ def _spawn(cmd: list[str], stdin: bool, stderr: Any) -> subprocess.Popen[str]:
     )
 
 
+_KILL_LOCK = threading.Lock()
+_KILLED: weakref.WeakSet[subprocess.Popen[str]] = weakref.WeakSet()
+
+
 def _kill(proc: subprocess.Popen[str]) -> None:
+    with _KILL_LOCK:
+        if proc in _KILLED:
+            return
+        _KILLED.add(proc)
+        _kill_group(proc)
+
+
+def _kill_group(proc: subprocess.Popen[str]) -> None:
     if os.name == "nt":
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
     else:

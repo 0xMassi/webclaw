@@ -114,6 +114,16 @@ It screenshots 10 public pages with each tool, the viewport and the whole page, 
 
 It renders 20 script-heavy pages (the `spa` cases, eight JavaScript-built homepages from `facts.json`, Books to Scrape, BBC News and The Verge) with each tool in one browser kept open, 3 rounds, with its blocking off and on: webclaw's `block` list through the MCP `scrape` tool, Scrapling's `disable_resources` (images, fonts, media, stylesheets, beacons, websockets and a few more, by resource type), and Crawl4AI's `text_mode` (images, fonts, media, documents and archives by file extension, plus Chrome flags that turn images and remote fonts off). Every request goes through a local proxy that counts the bytes it carries, leaving out Chrome's own background downloads. It records the time, the bytes, the golden facts and the word count, lists the pages that lost content against the same tool with blocking off, and writes `results/<label>/render-block-summary.md`.
 
+### Page actions
+
+```bash
+./benchmarks/actions.sh        # webclaw --actions against Scrapling's page_action and Crawl4AI's scroll, wait and script options
+```
+
+It runs nine pages that need interaction, each in a fresh headless browser, 2 rounds: infinite scroll (quotes.toscrape.com/scroll, the webscraper.io scroll shop, the Y Combinator directory filtered to one batch), "load more" buttons (the webscraper.io shop, a GitHub topic, NPR news), a pagination button that loads page 3 in place, content that appears after ten seconds, and a login form. `actions-cases.json` holds each page's steps, a CSS selector for its items, the ground truth, and how that truth was checked by hand (static copies of the same pages, the site's own counters, or the requests behind each button fetched over plain HTTP). Each tool gets the same steps. webclaw runs them with `--actions`. Scrapling has no scroll or click helpers, so its arm is a `page_action` that runs the steps through Playwright with a fixed pause after each one. Crawl4AI uses its own options: `scan_full_page` for scrolling, `wait_for` for waiting, C4A-Script for typing, key presses and single clicks, and a `js_code` loop for "load more" buttons, since C4A-Script's `REPEAT` takes a count fixed before the loop starts and cannot stop once the button is gone. `webclaw-none` renders the same pages with no actions. The script counts the items each tool's HTML holds against the truth, times each run, and writes `results/<label>/actions-summary.md`.
+
+On 2026-10-14 ([results/actions-2026-10-14/actions-summary.md](results/actions-2026-10-14/actions-summary.md)) webclaw got every item in 18 of 18 runs (median 7.8 s), Scrapling in 16 (12.3 s) and Crawl4AI in 14 (5.0 s); rendering with no actions got none. Scrapling and Crawl4AI both kept NPR's first 24 stories. Our reading, not checked further: NPR shows its button only once its scripts have run and covers it with a cookie banner, so Crawl4AI's loop found no visible button and Scrapling's Playwright clicks waited for the banner and timed out. Crawl4AI's `scan_full_page` also stopped the webscraper.io scroll shop at 12 and 15 of 117 items. webclaw is slower than Crawl4AI on the Y Combinator directory (13.9 s against 7.4 s) because it scrolls twice more without new content before it stops.
+
 ### MCP over HTTP
 
 ```bash

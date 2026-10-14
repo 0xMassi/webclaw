@@ -246,7 +246,9 @@ webclaw https://docs.python.org/3/ --crawl --depth 4 --max-pages 25 \
   --query "How do I sort a list of dictionaries by a key?"
 ```
 
-Each link is scored by the question's words in its text, its URL path and the paragraph or list item around it, plus how well the page that links to it answers the question; words that most pages share count for little. Every page then keeps only the parts that answer the question, carries a `relevance` from 0 to 1, and the output lists pages best match first (`-f jsonl` streams them in crawl order instead). `--max-pages` is the budget. A resumed `--crawl-state` keeps the order. The MCP `crawl` tool takes the same `query`.
+Each link is scored by the question's words in its text, its URL path and the paragraph or list item around it, plus how well the page that links to it answers the question; words that most pages share count for little. Every page then keeps only the parts that answer the question, carries a `relevance` from 0 to 1, and the output lists pages best match first (`-f jsonl` streams them in crawl order instead). `--max-pages` is the budget. A resumed `--crawl-state` keeps the order when it gets the same `--query`. The MCP `crawl` tool takes the same `query`, up to 1,000 characters.
+
+The scoring matches words, so it works best on English questions; questions in other languages find their page less often (Japanese, French, Spanish and Chinese questions in the benchmark: 12 of 16 by page 50 against 42 of 48 English ones). Only the first 32 distinct words of a question count.
 
 ### Workflow examples
 

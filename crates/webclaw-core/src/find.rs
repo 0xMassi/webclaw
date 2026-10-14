@@ -52,7 +52,10 @@ pub enum FindError {
     /// expression that matches empty text; either would match every element.
     #[error("nothing to find: `{0}` matches every element")]
     Empty(String),
-    /// A regular expression, or text to find, that does not compile.
+    /// Text to find, in characters, too long to search for.
+    #[error("the text to find is too long ({0} characters)")]
+    TooLong(usize),
+    /// A regular expression that does not compile.
     #[error("invalid regex `{pattern}`: {reason}")]
     Regex {
         /// The pattern, shortened.
@@ -86,7 +89,10 @@ impl TextMatch {
         } else {
             escaped
         };
-        Self::build(&pattern, case_sensitive, text)
+        Self::build(&pattern, case_sensitive, text).map_err(|error| match error {
+            FindError::Regex { .. } => FindError::TooLong(collapsed.chars().count()),
+            other => other,
+        })
     }
 
     /// Text in which the regular expression `pattern` finds a match. A
@@ -899,5 +905,13 @@ mod tests {
                 assert_eq!(similar.matches.len(), items, "{example} in {page}");
             }
         }
+    }
+
+    #[test]
+    fn a_huge_text_says_it_is_too_long() {
+        let err = TextMatch::text(&"a".repeat(1_000_000), false, false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("too long") && !err.contains("regex"), "{err}");
     }
 }

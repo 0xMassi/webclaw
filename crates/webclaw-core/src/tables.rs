@@ -74,6 +74,8 @@ const BLOCK: &[&str] = &[
     "ul",
 ];
 
+const SEPARATED: &[&str] = &["br", "caption", "option", "td", "th", "tr"];
+
 static TABLE: LazyLock<Selector> = LazyLock::new(|| Selector::parse("table").unwrap());
 
 /// Every data table in `html`, in document order. Hidden tables and cells
@@ -357,6 +359,10 @@ fn has_block(cell: ElementRef<'_>) -> bool {
         .any(|el| BLOCK.contains(&el.value().name()))
 }
 
+fn separates(name: &str) -> bool {
+    BLOCK.contains(&name) || SEPARATED.contains(&name)
+}
+
 fn cell_text(cell: ElementRef<'_>, nodes: &mut usize) -> Option<String> {
     let mut out = String::new();
     let mut skip = None;
@@ -369,15 +375,13 @@ fn cell_text(cell: ElementRef<'_>, nodes: &mut usize) -> Option<String> {
             (Edge::Open(node), None) => match node.value() {
                 Node::Text(text) => out.push_str(text),
                 Node::Element(el) if SKIP.contains(&el.name()) => skip = Some(node.id()),
-                Node::Element(el) if el.name() == "br" || BLOCK.contains(&el.name()) => {
-                    out.push(' ')
-                }
+                Node::Element(el) if separates(el.name()) => out.push(' '),
                 _ => {}
             },
             (Edge::Close(node), Some(id)) if node.id() == id => skip = None,
             (Edge::Close(node), None) => {
                 if let Node::Element(el) = node.value()
-                    && BLOCK.contains(&el.name())
+                    && separates(el.name())
                 {
                     out.push(' ');
                 }
@@ -635,6 +639,14 @@ mod tests {
         );
         assert_eq!(t.headers, ["a", "b"]);
         assert_eq!(t.rows, strings(&[&["1", "2"], &["3", "4"]]));
+    }
+
+    #[test]
+    fn nested_cells_and_options_are_separated() {
+        let t = one(r#"<table><tr><th>a</th><th>b</th></tr>
+            <tr><td><table><tr><td>left</td><td>right</td></tr></table></td><td>1</td></tr>
+            <tr><td><select><option>one</option><option>two</option></select></td><td>2</td></tr></table>"#);
+        assert_eq!(t.rows, strings(&[&["left right", "1"], &["one two", "2"]]));
     }
 
     #[test]

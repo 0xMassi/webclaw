@@ -254,7 +254,7 @@ pub(crate) async fn run(
     if actions.is_empty() {
         return Ok(Vec::new());
     }
-    let deadline = Instant::now() + budget;
+    let deadline = later(budget);
     let (requests, watching) = Requests::watch(page)
         .await
         .map_err(|e| FetchError::Build(format!("browser: {e}")))?;
@@ -417,7 +417,7 @@ async fn step(
             settle(page, requests, QUIET, true).await;
         }
         Action::Wait { milliseconds } => {
-            let until = (Instant::now() + Duration::from_millis(*milliseconds)).min(deadline);
+            let until = later(Duration::from_millis(*milliseconds)).min(deadline);
             tokio::time::sleep_until(until.into()).await;
         }
         Action::WaitForSelector { selector, timeout } => {
@@ -457,6 +457,12 @@ async fn step(
         }
     }
     Ok(None)
+}
+
+fn later(wait: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(wait)
+        .unwrap_or_else(|| now + Duration::from_secs(1 << 30))
 }
 
 async fn ready(page: &Page) -> Result<(), String> {
@@ -946,6 +952,45 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
             started.elapsed() < Duration::from_secs(10),
             "{:?}",
             started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_huge_timeout_does_not_overflow() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let done = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "wait", "milliseconds": 18446744073709551615},
+                {"type": "executeJavascript", "code": "1"}]"##,
+            Duration::MAX,
+        );
+        let done = tokio::time::timeout(Duration::from_secs(5), done).await;
+        renderer.close().await;
+        assert!(done.is_err(), "the wait should still be running: {done:?}");
+        let pool = crate::render::RenderPool::new(
+            crate::render::BrowserSource::Launch { proxy: None },
+            Duration::MAX,
+        );
+        let headers = http::HeaderMap::new();
+        let pooled = pool
+            .render_actions(
+                "https://example.com/feed",
+                Some(Prefetched {
+                    html: FEED,
+                    headers: &headers,
+                }),
+                None,
+                &[],
+                crate::Block::default(),
+                &parse_actions(r##"[{"type": "executeJavascript", "code": "1"}]"##).unwrap(),
+            )
+            .await;
+        pool.close().await;
+        assert_eq!(
+            pooled.expect("the pool renders").1,
+            vec![serde_json::json!(1)]
         );
     }
 }

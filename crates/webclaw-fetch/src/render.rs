@@ -565,7 +565,9 @@ impl Renderer {
                     .map_err(browser_error)?,
             ),
         };
-        let limit = options.timeout * if actions.is_empty() { 1 } else { 2 };
+        let limit = options
+            .timeout
+            .saturating_mul(if actions.is_empty() { 1 } else { 2 });
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
             tokio::select! {
@@ -826,7 +828,10 @@ impl RenderPool {
         if self.browser.read().await.is_none() {
             let mut slot = self.browser.write().await;
             if slot.is_none() {
-                let commands = self.timeout.saturating_add(COMMAND_TIMEOUT);
+                let commands = self
+                    .timeout
+                    .saturating_add(COMMAND_TIMEOUT)
+                    .min(Duration::from_secs(86_400));
                 let started = match &self.source {
                     BrowserSource::Launch { proxy } => {
                         Renderer::launch_timed(proxy.as_deref(), &[], commands).await

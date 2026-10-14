@@ -128,10 +128,12 @@ pub struct Prefetched<'a> {
 ///   served from a blocked address, as after DNS rebinding. The request
 ///   itself still goes out, and a popup the page opens is not checked.
 ///
-/// Service workers are untested. A browser reached through
-/// [`Renderer::connect`] is checked page by page instead, so its other tabs
-/// are left alone; the frames, workers, WebSockets and WebRTC of a page it
-/// renders are not covered there.
+/// Behind a proxy, the proxy resolves host names itself and the document
+/// check is off, so HTTP too is only as safe as the proxy. Service workers
+/// are untested. A browser reached through [`Renderer::connect`] is checked
+/// page by page instead, so its other tabs are left alone; the frames,
+/// workers, WebSockets, WebRTC and speculation rules of a page it renders
+/// are not covered there.
 pub struct Renderer {
     browser: Arc<Browser>,
     guard: Option<tokio::task::JoinHandle<()>>,

@@ -542,6 +542,14 @@ impl Renderer {
                 let _ = guard_page.execute(resume).await;
             }
         });
+        let popups = match actions {
+            [] => None,
+            _ => Some(
+                crate::actions::Popups::watch(&self.browser, page.target_id().clone())
+                    .await
+                    .map_err(browser_error)?,
+            ),
+        };
         let limit = options.timeout * if actions.is_empty() { 1 } else { 2 };
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
@@ -582,6 +590,10 @@ impl Renderer {
         guard.abort();
         document_watch.abort();
         let (status, private) = documents.lock().map_or((None, None), |seen| *seen);
+        let popped = match popups {
+            Some(popups) => popups.close(&self.browser).await,
+            None => Ok(()),
+        };
         let _ = page.close().await;
 
         if let Some(address) = private {
@@ -590,6 +602,7 @@ impl Renderer {
                  a system proxy or a host that resolves differently in the browser can cause this"
             )));
         }
+        popped?;
         let (value, final_url, scripts) =
             outcome.map_err(|_| FetchError::Build(format!("rendering {url} timed out")))??;
         Ok(Visited {
@@ -1303,6 +1316,67 @@ mod tests {
         );
         let error = rendered.expect_err("the render must fail").to_string();
         assert!(error.contains("private address 127.0.0.1"), "{error}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn windows_opened_by_actions_are_closed() {
+        let (loopback, reached) = loopback_listener().await;
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let pages = async || {
+            renderer
+                .browser
+                .execute(chromiumoxide::cdp::browser_protocol::target::GetTargetsParams::default())
+                .await
+                .map(|r| {
+                    r.result
+                        .target_infos
+                        .iter()
+                        .filter(|t| t.r#type == "page")
+                        .count()
+                })
+                .unwrap_or(0)
+        };
+        let before = pages().await;
+        let html = format!(
+            r#"<html><body><a id="tab" target="_blank" href="https://example.org/">tab</a><button id="open" onclick="window.open('https://example.org/x')">open</button><a id="private" target="_blank" href="{loopback}/popup">private</a></body></html>"#
+        );
+        let headers = http::HeaderMap::new();
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        };
+        let render = async |steps: &str| {
+            renderer
+                .render_actions(
+                    "https://example.com/",
+                    Some(Prefetched {
+                        html: &html,
+                        headers: &headers,
+                    }),
+                    &options,
+                    &super::parse_actions(steps).unwrap(),
+                )
+                .await
+        };
+        let public = render(
+            r##"[{"type": "click", "selector": "#tab"}, {"type": "click", "selector": "#open"}, {"type": "wait", "milliseconds": 1500}]"##,
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let after = pages().await;
+        let private = render(
+            r##"[{"type": "click", "selector": "#private"}, {"type": "wait", "milliseconds": 1500}]"##,
+        )
+        .await;
+        renderer.close().await;
+        assert!(public.is_ok(), "{:?}", public.err());
+        assert_eq!(after, before, "popups were left open");
+        if let Err(e) = private {
+            assert!(e.to_string().contains("private"), "{e}");
+        }
+        let reached = reached.lock().unwrap().clone();
+        assert!(reached.is_empty(), "a popup reached loopback: {reached:?}");
     }
 
     #[tokio::test]

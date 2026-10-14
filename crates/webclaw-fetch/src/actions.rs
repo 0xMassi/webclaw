@@ -4,12 +4,15 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use chromiumoxide::Page;
 use chromiumoxide::cdp::browser_protocol::network::{
     EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent, RequestId, ResourceType,
 };
+use chromiumoxide::cdp::browser_protocol::target::{
+    CloseTargetParams, EventTargetCreated, GetTargetsParams, TargetId,
+};
 use chromiumoxide::element::Element;
 use chromiumoxide::error::CdpError;
+use chromiumoxide::{Browser, Page};
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
@@ -170,6 +173,69 @@ impl Requests {
         self.0
             .lock()
             .is_ok_and(|open| open.values().any(|at| at.elapsed() < LONG_POLL))
+    }
+}
+
+pub(crate) struct Popups {
+    opener: TargetId,
+    opened: Arc<Mutex<Vec<String>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Popups {
+    pub(crate) async fn watch(browser: &Arc<Browser>, opener: TargetId) -> Result<Self, CdpError> {
+        let mut created = browser.event_listener::<EventTargetCreated>().await?;
+        let weak = Arc::downgrade(browser);
+        let opened = Arc::new(Mutex::new(Vec::new()));
+        let log = opened.clone();
+        let parent = opener.clone();
+        let task = tokio::spawn(async move {
+            while let Some(event) = created.next().await {
+                let info = &event.target_info;
+                if info.opener_id.as_ref() != Some(&parent) {
+                    continue;
+                }
+                if let Ok(mut log) = log.lock() {
+                    log.push(info.url.clone());
+                }
+                let Some(browser) = weak.upgrade() else {
+                    break;
+                };
+                let _ = browser
+                    .execute(CloseTargetParams::new(info.target_id.clone()))
+                    .await;
+            }
+        });
+        Ok(Self {
+            opener,
+            opened,
+            task,
+        })
+    }
+
+    pub(crate) async fn close(self, browser: &Browser) -> Result<(), FetchError> {
+        self.task.abort();
+        if let Ok(targets) = browser.execute(GetTargetsParams::default()).await {
+            for target in &targets.result.target_infos {
+                if target.opener_id.as_ref() == Some(&self.opener) {
+                    if let Ok(mut log) = self.opened.lock() {
+                        log.push(target.url.clone());
+                    }
+                    let _ = browser
+                        .execute(CloseTargetParams::new(target.target_id.clone()))
+                        .await;
+                }
+            }
+        }
+        let opened = self.opened.lock().map(|l| l.clone()).unwrap_or_default();
+        for url in opened.iter().filter(|u| u.starts_with("http")) {
+            if let Err(e) = crate::url_security::validate_public_http_url(url).await {
+                return Err(FetchError::Build(format!(
+                    "the actions opened a window on {url}: {e}"
+                )));
+            }
+        }
+        Ok(())
     }
 }
 

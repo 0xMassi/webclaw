@@ -24,7 +24,8 @@ pub struct Chunk {
     pub url: Option<String>,
     /// Position of the chunk in its page, from 0.
     pub index: usize,
-    /// Headings the chunk sits under, outermost first.
+    /// Headings in effect where the chunk starts, outermost first. A chunk
+    /// that runs on into a later section keeps the path of its start.
     pub heading_path: Vec<String>,
     /// Approximate token count of `text`, from [`approx_tokens`].
     pub tokens: usize,

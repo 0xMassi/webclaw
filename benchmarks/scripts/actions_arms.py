@@ -9,11 +9,15 @@ Arms:
   webclaw-none  the CLI with --render always and no actions: the number before this feature
   scrapling     DynamicFetcher with a page_action that runs the steps through Playwright, since it has
                 no scroll or click helpers of its own: a fixed 1 s pause after each click, key press and
-                scroll to the end, 0.3 s after each scroll by pixels
-  crawl4ai      its own options where it has them: scan_full_page for scrolling, wait_for for waiting,
-                C4A-Script for typing, key presses and single clicks, and js_code with a 1 s pause per
-                click for a "load more" button, since C4A-Script's REPEAT takes a count fixed before
-                the loop starts and cannot stop once the button is gone
+                scroll to the end, 0.3 s after each scroll by pixels. A "load more" loop waits up to 10 s
+                for a visible button the first time and 2 s after, clicks it with force=True (a cookie
+                banner covers NPR's) and pauses 1.5 s
+  crawl4ai      its own options where it has them: scan_full_page with its documented scroll_delay=1.0
+                for scrolling, wait_for for waiting, C4A-Script for typing, key presses and single
+                clicks, and a js_code loop for a "load more" button, since C4A-Script's REPEAT takes a
+                count fixed before the loop starts and cannot stop once the button is gone. The loop
+                waits up to 10 s for a visible button the first time and 2 s after, clicks it and
+                pauses 1.5 s
 """
 import asyncio, json, os, subprocess, sys, time
 from pathlib import Path
@@ -52,15 +56,18 @@ def playwright_steps(steps):
             kind = s["type"]
             if kind == "click":
                 loc = page.locator(s["selector"])
-                for _ in range(s.get("repeat") or 1):
-                    target = loc.nth(s.get("nth") or 0)
-                    if s.get("repeat"):
-                        visible = [i for i in range(loc.count()) if loc.nth(i).is_visible()]
-                        if not visible:
-                            break
-                        target = loc.nth(visible[0])
-                    target.click(timeout=10000)
+                if not s.get("repeat"):
+                    loc.nth(s.get("nth") or 0).click(timeout=10000)
                     page.wait_for_timeout(1000)
+                    continue
+                shown = page.locator(f"{s['selector']} >> visible=true").first
+                for i in range(s["repeat"]):
+                    try:
+                        shown.wait_for(timeout=10000 if i == 0 else 2000)
+                    except Exception:
+                        break
+                    shown.click(timeout=10000, force=True)
+                    page.wait_for_timeout(1500)
             elif kind == "type":
                 page.locator(s["selector"]).first.press_sequentially(s["value"])
             elif kind == "press":
@@ -119,16 +126,17 @@ def crawl4ai_config(steps):
     opts = {"cache_mode": CacheMode.BYPASS, "page_timeout": 60000, "verbose": False}
     kinds = {s["type"] for s in steps}
     if kinds == {"scroll"}:
-        opts.update(scan_full_page=True, max_scroll_steps=max(s.get("repeat") or 1 for s in steps) * 10)
+        opts.update(scan_full_page=True, scroll_delay=1.0, max_scroll_steps=600)
     elif kinds == {"waitForSelector"}:
         s = steps[0]
         opts.update(wait_for=f"css:{s['selector']}", wait_for_timeout=s.get("timeout") or 10000)
     elif kinds == {"click"} and steps[0].get("repeat"):
         s = steps[0]
         opts["js_code"] = (
-            f"for (let i = 0; i < {s['repeat']}; i++) {{ "
-            f"const b = [...document.querySelectorAll({json.dumps(s['selector'])})].find(e => e.offsetParent); "
-            "if (!b) break; b.click(); await new Promise(r => setTimeout(r, 1000)); }")
+            f"for (let i = 0; i < {s['repeat']}; i++) {{ let b; const t = Date.now(); const wait = i ? 2000 : 10000; "
+            f"while (!(b = [...document.querySelectorAll({json.dumps(s['selector'])})].find(e => e.offsetParent)) && Date.now() - t < wait) "
+            "await new Promise(r => setTimeout(r, 200)); "
+            "if (!b) break; b.click(); await new Promise(r => setTimeout(r, 1500)); }")
     else:
         opts["c4a_script"] = c4a(steps)
     return CrawlerRunConfig(**opts)

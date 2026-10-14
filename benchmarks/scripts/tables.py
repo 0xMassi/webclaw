@@ -289,7 +289,8 @@ def main(label):
     pick = lambda s, t: [r for r in rows if r["set"] == s and r["truth"] == t]
     lines = [f"# Table benchmark {label}", "",
              f"Each tool reads the same frozen pages and returns the data tables it finds: {len(PAGES)} pages in the "
-             f"corpus and {len(HELD_PAGES)} held-out pages that were not looked at while writing webclaw's rules. "
+             f"corpus and {len(HELD_PAGES)} held-out pages chosen by a reviewer; one rule (the legend row) was fixed "
+             "after seeing them. "
              "Every table is labelled by hand in `tables-labels.json` and `tables-held-labels.json` as a data table, "
              "a layout table, or neither (infoboxes and key/value boxes), which counts neither way. A returned table "
              "is matched to the page table whose cell texts it overlaps most. Precision is matched data tables over "

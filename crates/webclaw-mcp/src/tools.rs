@@ -118,11 +118,24 @@ pub struct ScrapeParams {
 pub struct SelectParams {
     /// URL to read
     pub url: String,
-    /// CSS selector, optionally ending in "::text" (default), "::attr(NAME)" or "::html", e.g. "h3 a::attr(href)". Give this, `xpath` or `tables`
+    /// CSS selector, optionally ending in "::text" (default), "::attr(NAME)" or "::html", e.g. "h3 a::attr(href)". Give exactly one of `selector`, `xpath`, `tables`, `text` and `regex`
     pub selector: Option<String>,
     /// XPath 1.0 expression instead of a CSS selector, e.g. "//h3/a/@title". Elements and text give their text, attributes their value
     pub xpath: Option<String>,
-    /// Return one object per match instead: field name to a selector run inside that match, e.g. {"title": "h3 a::attr(title)", "price": ".price_color"}, or with `xpath` an expression relative to the match, e.g. {"title": ".//h3/a/@title"}
+    /// Find the deepest elements whose visible text contains this, any case. Returns [{"selector", "text"}], each selector picking its element alone
+    pub text: Option<String>,
+    /// Like `text` with a regular expression, e.g. "^£\d+\.\d\d$"
+    pub regex: Option<String>,
+    /// With `text`, match the whole text instead of a part (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub exact: Option<bool>,
+    /// With `text` or `regex`, match letter case (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub case_sensitive: Option<bool>,
+    /// Use the first element `selector`, `xpath`, `text` or `regex` picks as an example and return every element like it with one CSS selector that picks them all: {"selector", "matches"}, or with `fields` {"selector", "records"} (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub similar: Option<bool>,
+    /// Return one object per match instead: field name to a selector run inside that match, e.g. {"title": "h3 a::attr(title)", "price": ".price_color"}, or with `xpath` an expression relative to the match, e.g. {"title": ".//h3/a/@title"}. With `similar` the fields are CSS
     pub fields: Option<std::collections::BTreeMap<String, String>>,
     /// Return the page's data tables instead, each as {"caption", "headers", "rows"} with rows of cell text; layout tables are skipped
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]

@@ -208,6 +208,30 @@ Header rows are the rows of `<thead>` and the leading rows made only of `<th>`; 
 
 Text hidden with `hidden`, an inline `display:none` or `<template>` is left out. Text hidden by a stylesheet is kept, because pages are not styled. A cell keeps its first 64 KB of text, and a very large table is cut short with `"truncated": true`. Once the tables on a page reach 64 MB, the tables after that are left out.
 
+### Find elements by text, or everything like one example
+
+```bash
+webclaw https://books.toscrape.com --find-text "tipping the"
+webclaw https://books.toscrape.com --find-regex '^£5\d\.\d\d$'
+webclaw https://books.toscrape.com --find-text "Tipping the Velvet" --similar
+```
+
+`--find-text` prints the elements in the page body whose visible text contains the text, any case, as `{"selector", "text"}` objects. Each match is the deepest element holding the text, so text split by inline tags still matches, and its `selector` is the element's path from the nearest ancestor with a unique id, or from the root. That path picks the element alone, except on pages nested more than 64 levels deep with no such id, where it keeps only the last 64 steps and can pick more. `--exact` matches the whole text, `--case-sensitive` matches letter case, and `--find-regex` takes a regular expression instead.
+
+`--similar` takes the first element that `--find-text`, `--find-regex`, `--select` or `--xpath` picks as an example and returns every element like it on the page, such as the other items of a list, grid or table, with one CSS selector that picks them all. When the example selector ends in `::attr(NAME)` or `::text`, or the XPath picks a text or attribute node, the element holding it is the example:
+
+```json
+{
+  "selector": "article.product_pod > h3 > a",
+  "matches": [
+    { "selector": "html > body > ... > li:nth-of-type(1) > article > h3 > a", "text": "A Light in the ..." },
+    ...
+  ]
+}
+```
+
+Reuse the selector with `--select`, or add `--field` to get records straight away; with `--similar` the fields are CSS and the output is `{"selector", "records"}`. Pick the item itself as the example (for instance `--select "article.product_pod" --similar`) when the fields live inside it. The MCP `select` tool takes `text` or `regex` (with `exact` and `case_sensitive`) and `similar` the same way. One call takes one picker: `--select`, `--xpath`, `--tables`, `--find-text` or `--find-regex` (in MCP: `selector`, `xpath`, `tables`, `text` or `regex`), and `--similar` and `--field` do not apply to tables.
+
 ### Keep only what answers a question
 
 ```bash
@@ -360,7 +384,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | Tool | What it does | Local |
 | --- | --- | :-: |
 | `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
-| `select` | Pick values or records from a page with CSS selectors or XPath, or its data tables, as JSON | Yes |
+| `select` | Pick values or records from a page with CSS selectors or XPath, its data tables, elements found by text, or every element like an example, as JSON | Yes |
 | `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages | Yes |
 | `map` | Discover URLs without extracting every page | Yes |

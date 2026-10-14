@@ -10,6 +10,7 @@ pub mod domain;
 pub mod endpoints;
 pub mod error;
 pub mod extractor;
+pub mod find;
 pub mod focus;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
 pub mod js_eval;
@@ -30,6 +31,9 @@ pub use brand::BrandIdentity;
 pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;
+pub use find::{
+    FindError, FindExample, FoundElement, SimilarSet, TextMatch, find_similar, find_text,
+};
 pub use focus::{focus, focus_extraction};
 pub use llm::to_llm_text;
 pub use select::{SelectError, select, select_records};

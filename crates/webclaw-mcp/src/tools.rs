@@ -178,6 +178,8 @@ pub struct CrawlParams {
     pub format: Option<String>,
     /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none"
     pub block: Option<String>,
+    /// A question, up to 1000 characters: follow the links most likely to answer it first, keep only the parts of each page that answer it, and list pages best match first
+    pub query: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

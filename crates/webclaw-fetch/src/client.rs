@@ -731,12 +731,9 @@ impl FetchClient {
     }
 
     fn solves(&self, fetched: &FetchResult) -> bool {
-        #[cfg(feature = "browser")]
-        if let Some(render) = &self.render {
-            return render.solve && crate::render::is_challenge(fetched);
-        }
-        let _ = fetched;
-        false
+        crate::fetcher::Fetcher::solves_challenges(self)
+            && fetched.document_bytes.is_none()
+            && crate::cloud::is_cloudflare_challenge(&fetched.html, &fetched.headers)
     }
 
     /// Render `fetched` with `FetchConfig::render` when it is set and the
@@ -963,6 +960,14 @@ impl crate::fetcher::Fetcher for FetchClient {
         http_words: usize,
     ) -> Option<FetchResult> {
         FetchClient::render_if_needed(self, fetched, http_words).await
+    }
+
+    fn solves_challenges(&self) -> bool {
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.render {
+            return render.solve;
+        }
+        false
     }
 }
 

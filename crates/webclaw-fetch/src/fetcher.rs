@@ -83,6 +83,13 @@ pub trait Fetcher: Send + Sync {
     ) -> Option<FetchResult> {
         None
     }
+
+    /// Whether [`Self::render_if_needed`] gets past Cloudflare challenges,
+    /// so that a page holding a Turnstile widget is content to read rather
+    /// than a block to escalate.
+    fn solves_challenges(&self) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +121,10 @@ impl<T: Fetcher + ?Sized> Fetcher for &T {
     ) -> Option<FetchResult> {
         (**self).render_if_needed(fetched, http_words).await
     }
+
+    fn solves_challenges(&self) -> bool {
+        (**self).solves_challenges()
+    }
 }
 
 #[async_trait]
@@ -140,5 +151,9 @@ impl<T: Fetcher + ?Sized> Fetcher for std::sync::Arc<T> {
         http_words: usize,
     ) -> Option<FetchResult> {
         (**self).render_if_needed(fetched, http_words).await
+    }
+
+    fn solves_challenges(&self) -> bool {
+        (**self).solves_challenges()
     }
 }

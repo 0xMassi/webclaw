@@ -616,7 +616,14 @@ pub async fn smart_fetch(
         .map_err(|e| format!("Fetch failed: {e}"))?;
 
     let mut rendered_already = false;
-    if fetch_result.status >= 400 || is_bot_protected(&fetch_result.html, &fetch_result.headers) {
+    let widget_only = client.solves_challenges()
+        && fetch_result.status < 400
+        && !is_cloudflare_challenge(&fetch_result.html, &fetch_result.headers)
+        && contains_ignore_case(&fetch_result.html, "challenges.cloudflare.com/turnstile");
+    if !widget_only
+        && (fetch_result.status >= 400
+            || is_bot_protected(&fetch_result.html, &fetch_result.headers))
+    {
         let solved = if is_cloudflare_challenge(&fetch_result.html, &fetch_result.headers) {
             client.render_if_needed(&fetch_result, 0).await
         } else {
@@ -1158,6 +1165,44 @@ mod tests {
         )
         .await;
         assert!(blocked.is_err());
+    }
+
+    struct WidgetPage {
+        solves: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for WidgetPage {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            StaticPage(r#"<html><body><main><h1>Sign up</h1><p>Create an account to follow every plan, compare monthly prices and get support for all your projects.</p></main><div class="cf-turnstile"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body></html>"#).fetch(url).await
+        }
+
+        fn solves_challenges(&self) -> bool {
+            self.solves
+        }
+    }
+
+    #[tokio::test]
+    async fn a_turnstile_widget_is_content_when_the_fetcher_solves() {
+        let run = |solves| async move {
+            smart_fetch(
+                &WidgetPage { solves },
+                None,
+                "https://example.com/signup",
+                &[],
+                &[],
+                false,
+                &["markdown"],
+            )
+            .await
+        };
+        assert!(
+            matches!(run(true).await, Ok(SmartFetchResult::Local(e)) if e.content.markdown.contains("Create an account"))
+        );
+        assert!(run(false).await.is_err());
     }
 
     #[test]

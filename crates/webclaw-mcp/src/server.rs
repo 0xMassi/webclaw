@@ -169,6 +169,15 @@ const MAX_CRAWL_QUERY_CHARS: usize = 1000;
 /// Maximum poll iterations for research jobs (~10 minutes at 3s intervals).
 const RESEARCH_MAX_POLLS: u32 = 200;
 
+#[cfg(feature = "browser")]
+const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
+
+enum Capture {
+    Png,
+    Jpeg,
+    Pdf,
+}
+
 #[tool_router]
 impl WebclawMcp {
     pub async fn new() -> Self {
@@ -250,7 +259,7 @@ impl WebclawMcp {
         url: &str,
         wait_for: Option<&str>,
         full_page: bool,
-        jpeg: bool,
+        format: Capture,
         actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
         let actions = parse_actions(actions)?;
@@ -259,6 +268,38 @@ impl WebclawMcp {
             .render
             .as_ref()
             .ok_or("screenshots need the browser, which is turned off for this server (WEBCLAW_RENDER=never)")?;
+        let jpeg = match format {
+            Capture::Png => false,
+            Capture::Jpeg => true,
+            Capture::Pdf => {
+                let printed = render
+                    .pool
+                    .pdf(
+                        url,
+                        wait_for,
+                        &[],
+                        webclaw_fetch::render::PdfOptions::default(),
+                    )
+                    .await
+                    .map_err(|e| format!("PDF failed: {e}"))?;
+                webclaw_fetch::FetchError::check_status(printed.status)
+                    .map_err(|e| e.to_string())?;
+                if printed.data.len() > MAX_PDF_BYTES {
+                    return Err(format!(
+                        "the PDF is {} bytes, over the {MAX_PDF_BYTES} bytes this tool returns; \
+                         save it with the webclaw CLI's --save-pdf instead",
+                        printed.data.len()
+                    ));
+                }
+                return Ok(CallToolResult::success(vec![
+                    rmcp::model::ContentBlock::resource(
+                        rmcp::model::ResourceContents::blob(printed.base64(), printed.url.clone())
+                            .with_mime_type("application/pdf"),
+                    ),
+                    rmcp::model::ContentBlock::text(printed.url),
+                ]));
+            }
+        };
         let (shot, js_results) = render
             .pool
             .screenshot_actions(
@@ -380,7 +421,7 @@ impl WebclawMcp {
         _url: &str,
         _wait_for: Option<&str>,
         _full_page: bool,
-        _jpeg: bool,
+        _format: Capture,
         _actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
         Err(
@@ -673,19 +714,20 @@ impl WebclawMcp {
         .map_err(|e| e.to_string())?
     }
 
-    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL, and with `actions` the values of their executeJavascript steps.
+    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL, and with `actions` the values of their executeJavascript steps. With format "pdf", prints the whole page to a Letter-size PDF instead and returns it as an application/pdf resource.
     #[tool]
     async fn screenshot(
         &self,
         Parameters(params): Parameters<ScreenshotParams>,
     ) -> Result<CallToolResult, String> {
         validate_url(&params.url).await?;
-        let jpeg = match params.format.as_deref() {
-            None | Some("png") => false,
-            Some("jpeg" | "jpg") => true,
+        let format = match params.format.as_deref() {
+            None | Some("png") => Capture::Png,
+            Some("jpeg" | "jpg") => Capture::Jpeg,
+            Some("pdf") => Capture::Pdf,
             Some(other) => {
                 return Err(format!(
-                    "format must be \"png\" or \"jpeg\", got \"{other}\""
+                    "format must be \"png\", \"jpeg\" or \"pdf\", got \"{other}\""
                 ));
             }
         };
@@ -693,7 +735,7 @@ impl WebclawMcp {
             &params.url,
             params.wait_for.as_deref(),
             params.full_page.unwrap_or(false),
-            jpeg,
+            format,
             params.actions.as_deref(),
         )
         .await

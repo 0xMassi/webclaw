@@ -192,7 +192,7 @@ pub struct ScreenshotParams {
     /// Capture the whole scrollable page instead of the 1280x720 viewport (default: false)
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub full_page: Option<bool>,
-    /// Image format: "png" (default) or "jpeg", which is smaller
+    /// Image format: "png" (default) or "jpeg", which is smaller, or "pdf" to print the whole page to a PDF instead
     pub format: Option<String>,
     /// Also wait until an element matching this CSS selector exists before capturing
     pub wait_for: Option<String>,

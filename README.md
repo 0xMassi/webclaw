@@ -299,9 +299,11 @@ What a rendered page can reach, in the browser webclaw launches:
 
 Behind a proxy, the proxy resolves host names itself and the document check is off, so HTTP too is only as safe as the proxy. Service workers are not tested. A browser you connect with `--cdp-url` is checked page by page and your other tabs are left alone, but the frames, workers, WebSockets, WebRTC and speculative prefetching of the pages webclaw renders there are not covered.
 
-`--block images,fonts,media` skips those resources while a page renders for its content. Stylesheets always load, since many apps fetch CSS on demand and break without it. Scripts and the data they fetch still load, so most pages keep all their text and download about 40% less. A page that shows some text only after a font or an image has loaded (through `document.fonts.load()`, `FontFace.load()`, an image's `onload` or `decode()`) loses that text when you block it. We found no such page among the real sites we tested, but compare with and without `--block` on yours. Rendering is not much faster, since webclaw already stops waiting once the text settles, so blocking stays off unless you ask. Screenshots always load everything. The MCP `scrape` and `crawl` tools take the same list as `block`.
+`--block images,fonts,media` skips those resources while a page renders for its content. Stylesheets always load, since many apps fetch CSS on demand and break without it. Scripts and the data they fetch still load, so most pages keep all their text and download about 40% less. A page that shows some text only after a font or an image has loaded (through `document.fonts.load()`, `FontFace.load()`, an image's `onload` or `decode()`) loses that text when you block it. We found no such page among the real sites we tested, but compare with and without `--block` on yours. Rendering is not much faster, since webclaw already stops waiting once the text settles, so blocking stays off unless you ask. Screenshots and PDFs always load everything. The MCP `scrape` and `crawl` tools take the same list as `block`.
 
 `--screenshot page.png` saves the rendered page's 1280x720 viewport, `--full-page` the whole page, and a `.jpg` name gives a JPEG. The MCP `screenshot` tool returns the same image to the agent.
+
+`--save-pdf page.pdf` prints the rendered page to a PDF the way the browser's Save as PDF does: every page, with the site's print styles and the default margins. `--paper a4` changes the US Letter default, `--landscape` turns the paper sideways, `--print-background` keeps background colors and images, and `--scale 0.8` zooms the content (0.1 to 2). It waits for `--wait-for` like any render. The flag is not `--pdf` because `--pdf-mode` is about reading PDFs you fetch, not making them. The MCP `screenshot` tool returns the same PDF with `format: "pdf"`, as an `application/pdf` resource of up to 10 MB.
 
 Crawls, batches, `--watch` and the MCP server render the same way and share one browser, started only when a page needs it. Per site, webclaw keeps count: once at least three renders show that rendering adds content (at least four in five did), it renders every page of that site that runs scripts, and once rendering stops adding content (at most one in five did), it stops rendering there.
 
@@ -459,7 +461,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | --- | --- | :-: |
 | `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
 | `select` | Pick values or records from a page with CSS selectors or XPath, its data tables, elements found by text, or every element like an example, as JSON | Yes |
-| `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG | Yes, with a `browser` build |
+| `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG, or print it to PDF | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages, most relevant first with a `query` | Yes |
 | `map` | Discover URLs without extracting every page | Yes |
 | `batch` | Scrape multiple URLs in parallel | Yes |

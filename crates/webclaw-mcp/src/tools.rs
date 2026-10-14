@@ -186,7 +186,7 @@ pub struct CrawlParams {
     pub block: Option<String>,
     /// A question, up to 1000 characters: follow the links most likely to answer it first, keep only the parts of each page that answer it, and list pages best match first
     pub query: Option<String>,
-    /// Return every page as chunks for retrieval instead, one JSON array, each chunk under about this many tokens with its page url, index, heading_path, tokens and markdown text
+    /// Return chunks for retrieval instead: one JSON object with the crawl counts (total, ok, errors, skipped_by_robots), the failed pages with their error, and the chunks of every page, each under about this many tokens with its page url, index, heading_path, tokens and markdown text
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub chunk: Option<usize>,
     /// With `chunk`, start each chunk with up to this many tokens from the end of the one before (at most half the chunk size)

@@ -371,6 +371,13 @@ impl WebclawMcp {
                 if let Some(ref query) = params.query {
                     webclaw_core::focus_extraction(&mut extraction, query);
                 }
+                if let Some(size) = params.chunk {
+                    return chunks_json(
+                        &[(&params.url, &extraction.content.markdown)],
+                        size,
+                        params.chunk_overlap,
+                    );
+                }
                 let output = match format {
                     "llm" => webclaw_core::to_llm_text(&extraction, Some(&params.url)),
                     "text" => extraction.content.plain_text,
@@ -382,6 +389,14 @@ impl WebclawMcp {
             SmartFetchResult::Cloud(mut resp) => {
                 if let Some(ref query) = params.query {
                     webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
+                }
+                if let Some(size) = params.chunk {
+                    let markdown = resp
+                        .get("markdown")
+                        .or_else(|| resp.get("content")?.get("markdown"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    return chunks_json(&[(&params.url, markdown)], size, params.chunk_overlap);
                 }
                 let content = resp
                     .get(format)
@@ -448,6 +463,20 @@ impl WebclawMcp {
                 .unwrap_or(0.0)
                 .total_cmp(&a.relevance.unwrap_or(0.0))
         });
+
+        if let Some(size) = params.chunk {
+            let pages: Vec<(&str, &str)> = result
+                .pages
+                .iter()
+                .filter_map(|p| {
+                    Some((
+                        p.url.as_str(),
+                        p.extraction.as_ref()?.content.markdown.as_str(),
+                    ))
+                })
+                .collect();
+            return chunks_json(&pages, size, params.chunk_overlap);
+        }
 
         let mut output = format!(
             "Crawled {} pages ({} ok, {} errors, {} disallowed by robots.txt) in {:.1}s\n\n",
@@ -1055,6 +1084,28 @@ impl WebclawMcp {
     }
 }
 
+fn chunks_json(
+    pages: &[(&str, &str)],
+    size: usize,
+    overlap: Option<usize>,
+) -> Result<String, String> {
+    if size == 0 {
+        return Err("chunk must be at least 1 token".into());
+    }
+    let chunks: Vec<webclaw_core::Chunk> = pages
+        .iter()
+        .flat_map(|(url, markdown)| {
+            webclaw_core::chunk(markdown, size, overlap.unwrap_or(0))
+                .into_iter()
+                .map(|mut c| {
+                    c.url = Some(url.to_string());
+                    c
+                })
+        })
+        .collect();
+    serde_json::to_string_pretty(&chunks).map_err(|e| e.to_string())
+}
+
 #[tool_handler]
 impl ServerHandler for WebclawMcp {
     fn get_info(&self) -> ServerInfo {
@@ -1252,6 +1303,25 @@ fn pick(
 #[cfg(test)]
 mod tests {
     use super::{check_select, slugify};
+
+    #[test]
+    fn chunks_json_tags_every_chunk_with_its_page() {
+        let out = super::chunks_json(
+            &[
+                ("https://a.test/", "# A\n\nOne."),
+                ("https://b.test/", "# B\n\nTwo."),
+            ],
+            100,
+            None,
+        )
+        .unwrap();
+        let chunks: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(chunks[0]["url"], "https://a.test/");
+        assert_eq!(chunks[1]["url"], "https://b.test/");
+        assert_eq!(chunks[1]["index"], 0);
+        assert_eq!(chunks[1]["heading_path"][0], "B");
+        assert!(super::chunks_json(&[], 0, None).is_err());
+    }
 
     #[test]
     fn an_unknown_block_type_is_refused_with_or_without_a_browser() {

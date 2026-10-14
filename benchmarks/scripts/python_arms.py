@@ -12,9 +12,9 @@ ARM, MODE = sys.argv[1:3]
 TIMEOUT = 30
 
 
-def webclaw(render="auto"):
+def webclaw():
     import webclaw_cli
-    return lambda url: webclaw_cli.scrape(url, "llm", timeout=TIMEOUT, render=render)
+    return lambda url: webclaw_cli.scrape(url, "llm", timeout=TIMEOUT)
 
 
 def scrapling():
@@ -51,8 +51,7 @@ def timed(fn, url):
 
 
 def main():
-    fn = {"webclaw": webclaw, "webclaw-never": lambda: webclaw("never"), "scrapling": scrapling,
-          "crawl4ai": crawl4ai}[ARM]()
+    fn = {"webclaw": webclaw, "scrapling": scrapling, "crawl4ai": crawl4ai}[ARM]()
     import_s = round(time.perf_counter() - T0, 3)
     if MODE == "first":
         print(json.dumps({"import_s": import_s, **timed(fn, sys.argv[3])}), flush=True)

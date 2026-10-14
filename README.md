@@ -192,6 +192,30 @@ webclaw https://books.toscrape.com --xpath "//article[@class='product_pod']" \
 
 `--xpath` takes an XPath 1.0 expression instead, over the same parsed page: elements and text nodes give their text, attributes their value, and `count()` or `string()` style expressions one value. With `--xpath`, each `--field` is an expression evaluated from the match, so it usually starts with `.`. The MCP `select` tool takes `xpath` in place of `selector`.
 
+### Find elements by text, or everything like one example
+
+```bash
+webclaw https://books.toscrape.com --find-text "tipping the"
+webclaw https://books.toscrape.com --find-regex '^£5\d\.\d\d$'
+webclaw https://books.toscrape.com --find-text "Tipping the Velvet" --similar
+```
+
+`--find-text` prints the elements whose visible text contains the text, any case, as `{"selector", "text"}` objects. Each match is the deepest element holding the text, so text split by inline tags still matches, and its `selector` picks that element alone. `--exact` matches the whole text, `--case-sensitive` matches letter case, and `--find-regex` takes a regular expression instead.
+
+`--similar` takes the first element that `--find-text`, `--find-regex`, `--select` or `--xpath` picks as an example and returns every element like it on the page, such as the other items of a list, grid or table, with one CSS selector that picks them all:
+
+```json
+{
+  "selector": "article.product_pod > h3 > a",
+  "matches": [
+    { "selector": "html > body > ... > li:nth-of-type(1) > article > h3 > a", "text": "A Light in the ..." },
+    ...
+  ]
+}
+```
+
+Reuse the selector with `--select`, or add `--field` to get records straight away; with `--similar` the fields are CSS and the output is `{"selector", "records"}`. Pick the item itself as the example (for instance `--select "article.product_pod" --similar`) when the fields live inside it. The MCP `select` tool takes `text` or `regex` (with `exact` and `case_sensitive`) and `similar` the same way.
+
 ### Keep only what answers a question
 
 ```bash
@@ -342,7 +366,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | Tool | What it does | Local |
 | --- | --- | :-: |
 | `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
-| `select` | Pick values or records from a page with CSS selectors or XPath, as JSON | Yes |
+| `select` | Pick values or records from a page with CSS selectors or XPath, find elements by text, or find every element like an example, as JSON | Yes |
 | `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages | Yes |
 | `map` | Discover URLs without extracting every page | Yes |

@@ -335,6 +335,31 @@ struct Cli {
     #[arg(long, requires = "screenshot")]
     full_page: bool,
 
+    /// Render the page in the local browser and print the responses it
+    /// loaded as a JSON array instead of the page: url, method, status,
+    /// resource type, MIME type, request headers and the body of text
+    /// responses. PATTERN is a regular expression the URL must match, e.g.
+    /// "/api/". With --actions or --scroll, the steps run first, so the
+    /// responses they trigger are captured too. Needs the `browser` feature
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        num_args = 0..=1,
+        default_missing_value = "",
+        conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "brand", "raw_html", "cloud"]
+    )]
+    capture_network: Option<String>,
+
+    /// With --capture-network, the resource types to keep: a comma list such
+    /// as xhr,fetch (the default), document, script, or all
+    #[arg(long, value_name = "TYPES", requires = "capture_network")]
+    capture_types: Option<String>,
+
+    /// With --capture-network, also keep request headers that carry
+    /// credentials, such as Authorization or API keys
+    #[arg(long, requires = "capture_network")]
+    capture_credentials: bool,
+
     /// CSS selectors to include (comma-separated, e.g. "article,.content")
     #[arg(long)]
     include: Option<String>,
@@ -1224,6 +1249,49 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
         shot.url
     );
     Ok(())
+}
+
+#[cfg(feature = "browser")]
+async fn run_capture(cli: &Cli, url: &str, pattern: &str) -> Result<(), String> {
+    let actions = page_actions(cli)?;
+    let capture = webclaw_fetch::render::NetworkCapture::new(
+        Some(pattern),
+        cli.capture_types.as_deref(),
+        cli.capture_credentials,
+    )?;
+    let config = build_fetch_config(cli);
+    let render = config
+        .render
+        .as_ref()
+        .ok_or("--capture-network needs the browser, so it cannot run with --render never")?;
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let captured = webclaw_fetch::with_progress(
+        url,
+        render.pool.capture(
+            url,
+            render.wait_for.as_deref(),
+            &headers,
+            render.block,
+            &actions,
+            &capture,
+        ),
+    )
+    .await;
+    close_browser(&config).await;
+    let (page, js_results, network) = captured.map_err(|e| format!("render error: {e}"))?;
+    print_script_results(&js_results);
+    webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&network).map_err(|e| e.to_string())?
+    );
+    eprintln!("captured {} responses of {}", network.len(), page.url);
+    Ok(())
+}
+
+#[cfg(not(feature = "browser"))]
+async fn run_capture(_cli: &Cli, _url: &str, _pattern: &str) -> Result<(), String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
 #[cfg(not(feature = "browser"))]
@@ -3454,6 +3522,18 @@ async fn main() {
             _ => Err("--screenshot takes one URL".to_string()),
         };
         if let Err(e) = shot {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    if let Some(ref pattern) = cli.capture_network {
+        let captured = match (entries.len(), cli.urls.first()) {
+            (1, Some(url)) => run_capture(&cli, &normalize_url(url), pattern).await,
+            _ => Err("--capture-network takes one URL".to_string()),
+        };
+        if let Err(e) = captured {
             eprintln!("error: {e}");
             process::exit(1);
         }

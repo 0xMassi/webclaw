@@ -9,6 +9,9 @@
 
 use std::ops::Range;
 
+use std::sync::LazyLock;
+
+use regex::Regex;
 use serde::Serialize;
 
 use crate::focus::{Block, split_blocks};
@@ -28,6 +31,9 @@ pub struct Chunk {
     /// The chunk's markdown.
     pub text: String,
 }
+
+static LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[([^\]]*)\]\([^)]*\)").expect("valid link pattern"));
 
 #[derive(Clone)]
 struct Part {
@@ -305,16 +311,22 @@ fn split_block(text: &str, budget: usize) -> Vec<(String, &'static str)> {
             .collect();
     }
     let header = lines[..lines.len().min(2)].join("\n");
+    let short = LINK.replace_all(&header, "$1");
+    let head = if approx_tokens(&header) <= budget / 2 {
+        header.as_str()
+    } else {
+        short.as_ref()
+    };
     if lines.len() > 2
         && lines[0].trim_start().starts_with('|')
         && is_separator(lines[1])
-        && approx_tokens(&header) <= budget / 4
+        && approx_tokens(head) <= budget / 2
     {
         let rows = lines[2..].join("\n");
-        let room = budget - approx_tokens(&header);
+        let room = budget - approx_tokens(head);
         return pack(&rows, room, 0)
             .into_iter()
-            .map(|r| (format!("{header}\n{}", &rows[r]), "\n\n"))
+            .map(|r| (format!("{head}\n{}", &rows[r]), "\n\n"))
             .collect();
     }
     let mut prev = 0;
@@ -603,6 +615,29 @@ mod tests {
         let page = "Intro.\n\n```inline``` code here\n\n## Next\n\nOutro.";
         let kept = crate::focus::focus(page, "outro");
         assert_eq!(kept, "## Next\n\nOutro.");
+    }
+
+    #[test]
+    fn a_table_header_full_of_links_is_repeated_without_them() {
+        let header = (0..8)
+            .map(|i| format!("[Month {i}](https://example.org/wiki/Month_number_{i})"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let rows: String = (0..90)
+            .map(|i| format!("| {} |\n", vec![format!("{i}.5"); 8].join(" | ")))
+            .collect();
+        let page = format!("| {header} |\n|{}\n{rows}", "---|".repeat(8));
+        for (size, head) in [
+            (512, format!("| {header} |")),
+            (128, "| Month 0 | Month 1 |".to_string()),
+        ] {
+            let chunks = chunk(&page, size, 0);
+            assert!(chunks.len() > 2);
+            for c in &chunks {
+                assert!(c.text.starts_with(&head), "{c:?}");
+                assert!(c.tokens <= size, "{c:?}");
+            }
+        }
     }
 
     #[test]

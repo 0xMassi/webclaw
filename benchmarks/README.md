@@ -106,6 +106,17 @@ It renders 20 script-heavy pages (the `spa` cases, eight JavaScript-built homepa
 
 It starts each server on loopback with a bearer token, drives it with the official MCP Python client (handshake, then one fetch-and-extract call per page), checks that a client without the token is refused, and writes `results/<label>/mcp-http-summary.md`.
 
+### Python package
+
+```bash
+./benchmarks/python.sh         # the webclaw-cli wheel against Scrapling's Fetcher and Crawl4AI's AsyncWebCrawler
+./benchmarks/python.sh my-run ./path/to/webclaw_cli.whl
+```
+
+It builds the wheel from `python/` (or takes the one you pass), then installs each tool into a fresh venv with an empty uv cache and runs its documented post-install step (`scrapling install`, `crawl4ai-setup`) into a fresh browser directory. It records the install time, the number of installed packages and the size on disk. Then it calls each tool through its Python API on the static golden pages (`cases.jsonl` without `spa` and `pdf`): a first call in a new Python process (import plus one scrape, on 5 pages), then one process calling every page twice. It scores the golden facts the same way as `run.sh`, samples the peak RSS of the Python process and all its children, and writes `results/<label>/python-summary.md`.
+
+webclaw raises an error when a page answers with an HTTP error status (403, 404, 429), where Scrapling returns that page's body as content. Those calls count as failures here.
+
 ## Methodology
 
 See [methodology.md](methodology.md) for each tool's exact call, the url and html modes, how facts are matched, the metrics and the limits of this setup.

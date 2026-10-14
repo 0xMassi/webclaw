@@ -166,6 +166,13 @@ class Offline(unittest.TestCase):
             wc.select(SHOP, css="a", xpath="//a")
         with self.assertRaises(ValueError):
             wc.similar(SHOP)
+        with self.assertRaises(ValueError):
+            wc.select(SHOP, css="li", fields={"a=b": "a"})
+        for bad in ({"X-A": "1\r\nInjected: 1"}, {"Bad Name": "1"}, {"": "1"}):
+            with self.assertRaises(ValueError):
+                wc.scrape(SHOP, headers=bad)
+        with self.assertRaises(ValueError):
+            wc.scrape(SHOP, cookies={"a": "1; b=2"})
 
 
 def chrome_left() -> set:

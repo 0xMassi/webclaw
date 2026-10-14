@@ -100,6 +100,9 @@ def binary_path() -> str:
     raise FileNotFoundError(f"cannot find the {exe} binary of the webclaw-cli package; reinstall it")
 
 
+_TOKEN = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+
+
 def _options(o: Options) -> list[str]:
     unknown = set(o) - Options.__optional_keys__
     if unknown:
@@ -110,11 +113,18 @@ def _options(o: Options) -> list[str]:
     if "browser" in o:
         args.append(f"--browser={o['browser']}")
     for name, value in o.get("headers", {}).items():
+        if not _TOKEN.fullmatch(name) or any(c in value for c in "\r\n\0"):
+            raise ValueError(f"invalid header {name!r}: {value!r}")
         args.append(f"--header={name}: {value}")
     cookies = o.get("cookies")
     if cookies:
         if not isinstance(cookies, str):
+            for name, value in cookies.items():
+                if not _TOKEN.fullmatch(name) or any(c in value for c in ";\r\n\0"):
+                    raise ValueError(f"invalid cookie {name!r}: {value!r}")
             cookies = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        if any(c in cookies for c in "\r\n\0"):
+            raise ValueError(f"invalid cookie string {cookies!r}")
         args.append(f"--cookie={cookies}")
     if "timeout" in o:
         args.append(f"--timeout={o['timeout']}")
@@ -249,6 +259,9 @@ def scrape(
 
 
 def _fields(fields: Mapping[str, str] | None) -> list[str]:
+    for name in fields or {}:
+        if "=" in name or not name.strip():
+            raise ValueError(f"a field name cannot be empty or contain '=': {name!r}")
     return [f"--field={name}={selector}" for name, selector in (fields or {}).items()]
 
 

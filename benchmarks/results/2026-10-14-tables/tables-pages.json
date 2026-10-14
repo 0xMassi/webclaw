@@ -375,7 +375,7 @@
    "exact": 0
   },
   "ddg-lite": {
-   "found": 1,
+   "found": 0,
    "expected": 0,
    "tp": 0,
    "ignored": 0,
@@ -1536,7 +1536,7 @@
    "exact": 0
   },
   "ddg-lite": {
-   "found": 1,
+   "found": 0,
    "expected": 0,
    "tp": 0,
    "ignored": 0,

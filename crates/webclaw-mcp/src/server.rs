@@ -450,27 +450,7 @@ impl WebclawMcp {
         &self,
         Parameters(mut params): Parameters<SelectParams>,
     ) -> Result<String, String> {
-        let case_sensitive = params.case_sensitive.unwrap_or(false);
-        let text = match (&params.text, &params.regex) {
-            (Some(text), _) => Some(webclaw_core::TextMatch::text(
-                text,
-                params.exact.unwrap_or(false),
-                case_sensitive,
-            )),
-            (None, Some(regex)) => Some(webclaw_core::TextMatch::regex(regex, case_sensitive)),
-            (None, None) => None,
-        }
-        .transpose()
-        .map_err(|e| e.to_string())?;
-        let given = [
-            params.selector.is_some(),
-            params.xpath.is_some(),
-            params.text.is_some(),
-            params.regex.is_some(),
-        ];
-        if given.iter().filter(|g| **g).count() != 1 {
-            return Err("give exactly one of `selector`, `xpath`, `text` and `regex`".into());
-        }
+        let text = select_text(&params)?;
         let similar = params.similar.unwrap_or(false);
         let fields: Vec<(String, String)> = params
             .fields
@@ -478,9 +458,6 @@ impl WebclawMcp {
             .unwrap_or_default()
             .into_iter()
             .collect();
-        if text.is_some() && !similar && !fields.is_empty() {
-            return Err("`fields` works with `selector`, `xpath` or `similar`".into());
-        }
         validate_url(&params.url).await?;
         let fetched = tokio::time::timeout(
             LOCAL_FETCH_TIMEOUT,
@@ -1139,6 +1116,41 @@ fn save_research(dir: &std::path::Path, slug: &str, data: &serde_json::Value) ->
     )
 }
 
+fn select_text(params: &SelectParams) -> Result<Option<webclaw_core::TextMatch>, String> {
+    let given = [
+        params.selector.is_some(),
+        params.xpath.is_some(),
+        params.text.is_some(),
+        params.regex.is_some(),
+    ];
+    if given.iter().filter(|g| **g).count() != 1 {
+        return Err("give exactly one of `selector`, `xpath`, `text` and `regex`".into());
+    }
+    if params.exact.is_some() && params.text.is_none() {
+        return Err("`exact` works with `text`".into());
+    }
+    if params.case_sensitive.is_some() && params.text.is_none() && params.regex.is_none() {
+        return Err("`case_sensitive` works with `text` or `regex`".into());
+    }
+    let has_fields = params.fields.as_ref().is_some_and(|f| !f.is_empty());
+    if (params.text.is_some() || params.regex.is_some())
+        && !params.similar.unwrap_or(false)
+        && has_fields
+    {
+        return Err("`fields` works with `selector`, `xpath` or `similar`".into());
+    }
+    let case_sensitive = params.case_sensitive.unwrap_or(false);
+    match (&params.text, &params.regex) {
+        (Some(text), _) => {
+            webclaw_core::TextMatch::text(text, params.exact.unwrap_or(false), case_sensitive)
+                .map(Some)
+        }
+        (None, Some(regex)) => webclaw_core::TextMatch::regex(regex, case_sensitive).map(Some),
+        (None, None) => Ok(None),
+    }
+    .map_err(|e| e.to_string())
+}
+
 fn pick(
     params: &SelectParams,
     text: Option<&webclaw_core::TextMatch>,
@@ -1163,7 +1175,7 @@ fn pick(
                 serde_json::to_string_pretty(&similar)
             } else {
                 let records = webclaw_core::select_records(html, url, &similar.selector, fields)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("with `similar`, fields are CSS selectors: {e}"))?;
                 serde_json::to_string_pretty(
                     &serde_json::json!({"selector": similar.selector, "records": records}),
                 )
@@ -1190,7 +1202,7 @@ fn pick(
 
 #[cfg(test)]
 mod tests {
-    use super::slugify;
+    use super::{select_text, slugify};
 
     #[test]
     fn every_browser_name_picks_its_profile() {
@@ -1263,5 +1275,31 @@ mod tests {
     fn slugify_caps_long_ascii_at_60_chars() {
         let s = slugify(&"word ".repeat(40));
         assert!(s.len() <= 60);
+    }
+
+    #[test]
+    fn select_options_are_checked_before_anything_runs() {
+        let check = |args: serde_json::Value| {
+            select_text(&serde_json::from_value(args).unwrap()).map(|text| text.is_some())
+        };
+        let url = "https://example.com/";
+        let err =
+            check(serde_json::json!({"url": url, "selector": "a", "regex": "("})).unwrap_err();
+        assert!(err.contains("exactly one"), "{err}");
+        assert!(check(serde_json::json!({"url": url, "regex": "x", "exact": true})).is_err());
+        assert!(check(serde_json::json!({"url": url, "selector": "a", "exact": true})).is_err());
+        assert!(
+            check(serde_json::json!({"url": url, "selector": "a", "case_sensitive": true}))
+                .is_err()
+        );
+        assert!(check(serde_json::json!({"url": url, "text": "a", "fields": {"x": "b"}})).is_err());
+        assert_eq!(
+            check(serde_json::json!({"url": url, "text": "a", "exact": true})),
+            Ok(true)
+        );
+        assert_eq!(
+            check(serde_json::json!({"url": url, "selector": "a", "similar": true})),
+            Ok(false)
+        );
     }
 }

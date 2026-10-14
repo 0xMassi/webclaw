@@ -232,6 +232,9 @@ fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
     {
         body += 1;
     }
+    if body == kept && kept > start + 1 {
+        body = start + 1;
+    }
     let cells = || rows[start..kept].iter().flat_map(|row| &row.cells);
     if start == body
         && (has_table(table)
@@ -623,6 +626,15 @@ mod tests {
             <tr><td colspan="3"><div>Legend: home rows</div></td></tr></table>"#);
         assert_eq!(t.rows.len(), 4);
         assert_eq!(t.rows[1], ["A", "", "1-0"]);
+    }
+
+    #[test]
+    fn a_table_of_header_cells_keeps_its_rows() {
+        let t = one(
+            "<table><tr><th>a</th><th>b</th></tr><tr><th>1</th><th>2</th></tr><tr><th>3</th><th>4</th></tr></table>",
+        );
+        assert_eq!(t.headers, ["a", "b"]);
+        assert_eq!(t.rows, strings(&[&["1", "2"], &["3", "4"]]));
     }
 
     #[test]

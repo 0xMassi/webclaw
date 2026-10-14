@@ -12,10 +12,13 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
     FulfillRequestParams, HeaderEntry,
 };
+use chromiumoxide::cdp::browser_protocol::io::{CloseParams, ReadParams};
 use chromiumoxide::cdp::browser_protocol::network::{
     ErrorReason, EventResponseReceived, ResourceType, SetCookieParams,
 };
-use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, PrintToPdfParams};
+use chromiumoxide::cdp::browser_protocol::page::{
+    CaptureScreenshotFormat, PrintToPdfParams, PrintToPdfTransferMode,
+};
 use chromiumoxide::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams,
 };
@@ -128,22 +131,16 @@ impl Default for PdfOptions {
     }
 }
 
-/// A rendered page printed to PDF.
+/// A rendered page printed to PDF. The file itself went to the writer the
+/// print was given.
 #[derive(Debug, Clone)]
 pub struct Pdf {
-    /// The PDF file.
-    pub data: Vec<u8>,
+    /// Size of the PDF in bytes.
+    pub bytes: u64,
     /// HTTP status of the page's document.
     pub status: u16,
     /// The page's URL after redirects.
     pub url: String,
-}
-
-impl Pdf {
-    /// The PDF in standard base64, as MCP resource content carries it.
-    pub fn base64(&self) -> String {
-        base64(&self.data)
-    }
 }
 
 const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
@@ -453,14 +450,17 @@ impl Renderer {
     }
 
     /// Render `url` like [`Renderer::screenshot`] and print it to PDF with
-    /// the page's print styles, every page of it.
+    /// the page's print styles, every page of it, into `out`. Chrome hands
+    /// the file over in chunks, so a writer that fails, say past a size
+    /// limit, stops the copy there and fails the print.
     pub async fn pdf(
         &self,
         url: &str,
         options: &RenderOptions,
         pdf: PdfOptions,
+        out: &mut (dyn std::io::Write + Send),
     ) -> Result<Pdf, FetchError> {
-        self.print(url, None, options, pdf).await
+        self.print(url, None, options, pdf, out).await
     }
 
     async fn print(
@@ -469,6 +469,7 @@ impl Renderer {
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
         pdf: PdfOptions,
+        out: &mut (dyn std::io::Write + Send),
     ) -> Result<Pdf, FetchError> {
         if !(0.1..=2.0).contains(&pdf.scale) {
             return Err(FetchError::Build(format!(
@@ -486,6 +487,8 @@ impl Renderer {
             .landscape(pdf.landscape)
             .print_background(pdf.print_background)
             .scale(pdf.scale)
+            .transfer_mode(PrintToPdfTransferMode::ReturnAsStream)
+            .generate_tagged_pdf(false)
             .build();
         let visited = self
             .visit(
@@ -497,11 +500,11 @@ impl Renderer {
                 },
                 &[],
                 Some(SCREENSHOT_VIEWPORT),
-                async move |page| page.pdf(params).await,
+                async move |page| Ok(copy_pdf(page, params, out).await),
             )
             .await?;
         Ok(Pdf {
-            data: visited.value,
+            bytes: visited.value.map_err(FetchError::Build)?,
             status: visited.status,
             url: visited.url,
         })
@@ -923,6 +926,7 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         pdf: PdfOptions,
+        out: &mut (dyn std::io::Write + Send),
     ) -> Result<Pdf, FetchError> {
         let _tab = self
             .tabs
@@ -931,7 +935,12 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .pdf(url, &self.options(wait_for, headers, Block::default()), pdf)
+            .pdf(
+                url,
+                &self.options(wait_for, headers, Block::default()),
+                pdf,
+                out,
+            )
             .await
     }
 
@@ -1208,7 +1217,8 @@ fn percent_decode(text: &str) -> String {
         .map_or_else(|| text.to_string(), |(_, v)| v.into_owned())
 }
 
-fn base64(bytes: &[u8]) -> String {
+/// `bytes` in standard base64, as MCP image and resource content carries them.
+pub fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -1223,6 +1233,44 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+async fn copy_pdf(
+    page: &chromiumoxide::Page,
+    params: PrintToPdfParams,
+    out: &mut (dyn std::io::Write + Send),
+) -> Result<u64, String> {
+    let printed = page.execute(params).await.map_err(|e| e.to_string())?;
+    let handle = printed
+        .result
+        .stream
+        .ok_or("Chrome printed the PDF without a stream")?;
+    let mut bytes = 0;
+    let copied = loop {
+        let mut read = ReadParams::new(handle.clone());
+        read.size = Some(1 << 20);
+        let chunk = match page.execute(read).await {
+            Ok(chunk) => chunk.result,
+            Err(e) => break Err(e.to_string()),
+        };
+        let data = if chunk.base64_encoded == Some(true) {
+            match chromiumoxide::utils::base64::decode(&chunk.data) {
+                Ok(data) => data,
+                Err(e) => break Err(e.to_string()),
+            }
+        } else {
+            chunk.data.into_bytes()
+        };
+        if let Err(e) = out.write_all(&data) {
+            break Err(format!("writing the PDF failed: {e}"));
+        }
+        bytes += data.len() as u64;
+        if chunk.eof {
+            break Ok(bytes);
+        }
+    };
+    let _ = page.execute(CloseParams::new(handle)).await;
+    copied
 }
 
 fn browser_error(e: impl std::fmt::Display) -> FetchError {
@@ -1848,21 +1896,28 @@ mod tests {
             timeout: std::time::Duration::from_secs(20),
             ..Default::default()
         };
-        let printed = renderer
-            .print(
-                "https://example.com/",
-                Some(Prefetched {
-                    html,
-                    headers: &headers,
-                }),
-                &options,
-                super::PdfOptions {
-                    paper: super::Paper::A4,
-                    print_background: true,
-                    ..Default::default()
-                },
-            )
-            .await;
+        let print = async |out: &mut (dyn std::io::Write + Send)| {
+            renderer
+                .print(
+                    "https://example.com/",
+                    Some(Prefetched {
+                        html,
+                        headers: &headers,
+                    }),
+                    &options,
+                    super::PdfOptions {
+                        paper: super::Paper::A4,
+                        print_background: true,
+                        ..Default::default()
+                    },
+                    out,
+                )
+                .await
+        };
+        let mut data = Vec::new();
+        let printed = print(&mut data).await;
+        let mut full = std::io::Cursor::new([0u8; 100]);
+        let refused = print(&mut full).await;
         let bad_scale = renderer
             .pdf(
                 "https://example.com/",
@@ -1871,12 +1926,19 @@ mod tests {
                     scale: 3.0,
                     ..Default::default()
                 },
+                &mut Vec::new(),
             )
             .await;
         renderer.close().await;
         let printed = printed.expect("PDF prints");
-        assert_eq!(&printed.data[..5], b"%PDF-");
-        let read = webclaw_pdf::extract_pdf(&printed.data, webclaw_pdf::PdfMode::Auto)
+        assert_eq!(printed.bytes, data.len() as u64);
+        assert_eq!(&data[..5], b"%PDF-");
+        let refused = refused.expect_err("a full writer stops the print");
+        assert!(
+            refused.to_string().contains("writing the PDF failed"),
+            "{refused}"
+        );
+        let read = webclaw_pdf::extract_pdf(&data, webclaw_pdf::PdfMode::Auto)
             .expect("webclaw-pdf reads the PDF");
         assert_eq!(read.page_count, 2);
         for text in [

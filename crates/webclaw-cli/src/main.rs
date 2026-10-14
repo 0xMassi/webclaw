@@ -1281,6 +1281,8 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
         .as_ref()
         .ok_or("--save-pdf needs the browser, so it cannot run with --render never")?;
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let mut file =
+        std::fs::File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     let printed = render
         .pool
         .pdf(
@@ -1296,17 +1298,29 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
                 print_background: cli.print_background,
                 scale: cli.scale,
             },
+            &mut file,
         )
         .await;
     close_browser(&config).await;
-    let printed = printed.map_err(|e| format!("PDF error: {e}"))?;
-    webclaw_fetch::FetchError::check_status(printed.status).map_err(|e| e.to_string())?;
-    std::fs::write(path, &printed.data)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let printed = printed
+        .map_err(|e| format!("PDF error: {e}"))
+        .and_then(|printed| {
+            webclaw_fetch::FetchError::check_status(printed.status)
+                .map(|()| printed)
+                .map_err(|e| e.to_string())
+        });
+    let printed = match printed {
+        Ok(printed) => printed,
+        Err(e) => {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            return Err(e);
+        }
+    };
     eprintln!(
         "saved {} ({} bytes) of {}",
         path.display(),
-        printed.data.len(),
+        printed.bytes,
         printed.url
     );
     Ok(())

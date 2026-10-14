@@ -172,6 +172,27 @@ const RESEARCH_MAX_POLLS: u32 = 200;
 #[cfg(feature = "browser")]
 const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
 
+#[cfg(feature = "browser")]
+struct Capped(Vec<u8>);
+
+#[cfg(feature = "browser")]
+impl std::io::Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.0.len() + buf.len() > MAX_PDF_BYTES {
+            return Err(std::io::Error::other(format!(
+                "the PDF is over the {} MiB this tool returns; save it with the webclaw CLI's --save-pdf instead",
+                MAX_PDF_BYTES >> 20
+            )));
+        }
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 enum Capture {
     Png,
     Jpeg,
@@ -272,6 +293,7 @@ impl WebclawMcp {
             Capture::Png => false,
             Capture::Jpeg => true,
             Capture::Pdf => {
+                let mut data = Capped(Vec::new());
                 let printed = render
                     .pool
                     .pdf(
@@ -279,22 +301,19 @@ impl WebclawMcp {
                         wait_for,
                         &[],
                         webclaw_fetch::render::PdfOptions::default(),
+                        &mut data,
                     )
                     .await
                     .map_err(|e| format!("PDF failed: {e}"))?;
                 webclaw_fetch::FetchError::check_status(printed.status)
                     .map_err(|e| e.to_string())?;
-                if printed.data.len() > MAX_PDF_BYTES {
-                    return Err(format!(
-                        "the PDF is {} bytes, over the {MAX_PDF_BYTES} bytes this tool returns; \
-                         save it with the webclaw CLI's --save-pdf instead",
-                        printed.data.len()
-                    ));
-                }
                 return Ok(CallToolResult::success(vec![
                     rmcp::model::ContentBlock::resource(
-                        rmcp::model::ResourceContents::blob(printed.base64(), printed.url.clone())
-                            .with_mime_type("application/pdf"),
+                        rmcp::model::ResourceContents::blob(
+                            webclaw_fetch::render::base64(&data.0),
+                            printed.url.clone(),
+                        )
+                        .with_mime_type("application/pdf"),
                     ),
                     rmcp::model::ContentBlock::text(printed.url),
                 ]));

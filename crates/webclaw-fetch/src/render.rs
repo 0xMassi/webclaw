@@ -143,6 +143,14 @@ impl Renderer {
                 .map_or(0, |d| d.as_nanos()),
             LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        std::fs::create_dir_all(profile.join("Default"))
+            .and_then(|()| {
+                std::fs::write(
+                    profile.join("Default").join("Preferences"),
+                    r#"{"net":{"network_prediction_options":2}}"#,
+                )
+            })
+            .map_err(|e| FetchError::Build(format!("browser profile: {e}")))?;
         let mut config = BrowserConfig::builder()
             .headless_mode(HeadlessMode::New)
             .enable_request_intercept()
@@ -1091,7 +1099,7 @@ mod tests {
                 "200 OK",
                 "text/html",
                 fill(
-                    r#"<html><body><p id="msg">rendered</p><iframe src="http://example.org/frame"></iframe><script>new WebSocket("WSLOOP/main-ws"); document.getElementById("msg").textContent = "scripts ran";</script></body></html>"#,
+                    r#"<html><body><p id="msg">rendered</p><iframe src="http://example.org/frame"></iframe><script type="speculationrules">{"prefetch": [{"source": "list", "urls": ["LOOP/spec-prefetch"]}], "prerender": [{"source": "list", "urls": ["LOOP/spec-prerender"]}]}</script><script>new WebSocket("WSLOOP/main-ws"); document.getElementById("msg").textContent = "scripts ran";</script></body></html>"#,
                 ),
             ),
             "/frame" => ("200 OK", "text/html", fill(CROSS_SITE_FRAME)),

@@ -223,9 +223,11 @@ fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
 
     let mut start = 0;
     while start < kept
-        && width > 1
-        && rows[start].cells.len() == 1
-        && colspan(rows[start].cells[0]) >= width
+        && match rows[start].cells.as_slice() {
+            [] => true,
+            [cell] => width > 1 && colspan(*cell) >= width,
+            _ => false,
+        }
     {
         start += 1;
     }
@@ -245,7 +247,11 @@ fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
             || cells().all(|&cell| links_only(cell))
             || rows[start..kept]
                 .iter()
-                .filter(|row| row.cells.len() > 1 || !has_text(row.cells[0]))
+                .filter(|row| match row.cells.as_slice() {
+                    [] => false,
+                    [cell] => !has_text(*cell),
+                    _ => true,
+                })
                 .flat_map(|row| &row.cells)
                 .any(|&cell| has_block(cell)))
     {
@@ -679,6 +685,38 @@ mod tests {
         assert!(found[0].truncated);
         assert!(!found[1].truncated);
         assert_eq!(found[1].rows, strings(&[&["1", "2"]]));
+    }
+
+    #[test]
+    fn empty_rows_anywhere_are_skipped() {
+        let rows = strings(&[&["a", "b"], &["c", "d"]]);
+        for html in [
+            "<table><tr></tr><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
+            "<table><tr><td>a</td><td>b</td></tr><tr></tr><tr><td>c</td><td>d</td></tr></table>",
+            "<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr><tr></tr></table>",
+        ] {
+            let t = one(html);
+            assert!(t.headers.is_empty(), "{html}");
+            assert_eq!(t.rows, rows, "{html}");
+        }
+        for html in [
+            "<table><tr></tr><tr><th>h</th><th>k</th></tr><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
+            "<table><tr><th>h</th><th>k</th></tr><tr></tr><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
+            "<table><tr><th>h</th><th>k</th></tr><tr><td>a</td><td>b</td></tr><tr></tr><tr><td>c</td><td>d</td></tr></table>",
+            "<table><tr><th>h</th><th>k</th></tr><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr><tr></tr></table>",
+        ] {
+            let t = one(html);
+            assert_eq!(t.headers, ["h", "k"], "{html}");
+            assert_eq!(t.rows, rows, "{html}");
+        }
+        for html in [
+            "<table></table>",
+            "<table><tr></tr></table>",
+            "<table><tr></tr><tr></tr></table>",
+            "<table><thead><tr></tr></thead><tbody></tbody><tfoot><tr></tr></tfoot></table>",
+        ] {
+            assert!(tables(html).is_empty(), "{html}");
+        }
     }
 
     #[test]

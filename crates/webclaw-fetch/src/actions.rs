@@ -38,7 +38,7 @@ pub enum Action {
     /// (from 0), or with `all` every match. With `repeat`, click the first
     /// visible match again and again, up to that many times, and stop early
     /// once none is left or two clicks in a row change nothing, as for a
-    /// "load more" button.
+    /// "load more" button. Running out of time before that fails the step.
     Click {
         selector: String,
         #[serde(default)]
@@ -55,7 +55,7 @@ pub enum Action {
     /// in `direction` (`down` by default, or `up`), or without `amount` all
     /// the way to the end. With `repeat`, scroll again and again, up to that
     /// many times, and stop early once two scrolls in a row add nothing, as
-    /// for infinite scroll.
+    /// for infinite scroll. Running out of time before that fails the step.
     Scroll {
         #[serde(default)]
         direction: Direction,
@@ -342,7 +342,7 @@ async fn step(
                     .await
                     .or_else(|| found.into_iter().next());
                 let mut misses = 0;
-                for _ in 0..*times {
+                for done in 1..=*times {
                     let Some(element) = target.take() else { break };
                     let before = signature(page).await;
                     click(page, &element).await?;
@@ -351,8 +351,13 @@ async fn step(
                     } else {
                         misses + 1
                     };
-                    if misses == 2 || Instant::now() + PATIENCE > deadline {
+                    if misses == 2 || done == *times {
                         break;
+                    }
+                    if Instant::now() + PATIENCE > deadline {
+                        return Err(format!(
+                            "ran out of time after {done} clicks; raise the timeout or lower repeat"
+                        ));
                     }
                     target = first_visible(page, selector).await;
                 }
@@ -405,7 +410,8 @@ async fn step(
                 serde_json::to_string(amount).unwrap_or_default(),
             );
             let mut misses = 0;
-            for _ in 0..repeat.unwrap_or(1) {
+            let times = repeat.unwrap_or(1);
+            for done in 1..=times {
                 let before = signature(page).await;
                 let moved = page
                     .evaluate_expression(script.as_str())
@@ -429,8 +435,13 @@ async fn step(
                 )
                 .await;
                 misses = if grew || stepping { 0 } else { misses + 1 };
-                if misses == 2 || Instant::now() + PATIENCE > deadline {
+                if misses == 2 || done == times {
                     break;
+                }
+                if Instant::now() + PATIENCE > deadline {
+                    return Err(format!(
+                        "ran out of time after {done} scrolls; raise the timeout or lower repeat"
+                    ));
                 }
             }
             settle(page, requests, signature(page).await, QUIET, true).await;
@@ -1068,5 +1079,25 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         renderer.close().await;
         let html = done.expect("clicks run").0.html;
         assert!(html.contains("row 4") && !html.contains("row 5"), "{html}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_repeat_cut_short_by_the_budget_fails() {
+        let page = r#"<html><body><button id="more" onclick="const p = document.createElement('p'); p.textContent = 'row ' + document.querySelectorAll('p').length; document.body.appendChild(p);">more</button></body></html>"#;
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let endless = render_feed(
+            &renderer,
+            page,
+            r##"[{"type": "click", "selector": "#more", "repeat": 100000}]"##,
+            Duration::from_secs(4),
+        )
+        .await;
+        renderer.close().await;
+        let error = endless.unwrap_err().to_string();
+        assert!(
+            error.contains("action 1 (click)") && error.contains("ran out of time"),
+            "{error}"
+        );
     }
 }

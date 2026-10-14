@@ -118,6 +118,8 @@ pub struct ScrapeParams {
     /// With `chunk`, start each chunk with up to this many tokens from the end of the one before (at most half the chunk size)
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub chunk_overlap: Option<usize>,
+    /// Steps to run in the local browser once the page has loaded, before it is read. The page is always rendered when this is set. Each step is an object with a "type": {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "text": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "selector" for a scrollable element, "by": pixels, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "ms": 1000}; {"type": "wait_for", "selector": CSS, "timeout_ms": 10000}; {"type": "eval", "script": "JavaScript expression"} whose value is returned after the content. A failing step fails the call and its number is in the error
+    pub actions: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -159,6 +161,8 @@ pub struct ScreenshotParams {
     pub format: Option<String>,
     /// Also wait until an element matching this CSS selector exists before capturing
     pub wait_for: Option<String>,
+    /// Steps to run in the local browser once the page has loaded, before it is captured. Each step is an object with a "type": {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "text": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "selector" for a scrollable element, "by": pixels, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "ms": 1000}; {"type": "wait_for", "selector": CSS, "timeout_ms": 10000}; {"type": "eval", "script": "JavaScript expression"} whose value is returned after the content. A failing step fails the call and its number is in the error
+    pub actions: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

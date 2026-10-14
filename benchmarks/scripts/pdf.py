@@ -18,8 +18,6 @@ URLS = [
 PYTHON = {"webclaw": {"cold": "venv-base", "warm": "venv-mcp"},
           "crawl4ai": {"cold": "venv-crawl4ai", "warm": "venv-crawl4ai"}}
 UNSUPPORTED = {"scrapling": "no PDF export: its fetchers, sessions and MCP tools return pages, text and screenshots only"}
-BACKGROUND = {("webclaw", "cold"): "yes", ("webclaw", "warm"): "no", ("crawl4ai", "cold"): "yes",
-              ("crawl4ai", "warm"): "yes"}
 ONLY = os.environ.get("PDF_ONLY")
 WARM_ROUNDS = 2
 WORD = re.compile(r"[^\W\d_]{4,}")
@@ -105,15 +103,16 @@ def main(label):
              f"Each tool prints {len(URLS)} pages to PDF. `cold` starts a fresh browser per page, as one command per "
              "PDF does: `webclaw --save-pdf --print-background`, and Crawl4AI's `pdf=True` with a new crawler. `warm` "
              "keeps one browser open for every page: webclaw through its MCP server's `screenshot` tool with format "
-             f"`pdf` (default options, so no backgrounds), Crawl4AI with one crawler, {WARM_ROUNDS} rounds. Both print "
-             "US Letter. `ok` counts files that start with `%PDF-` and that webclaw's PDF reader opens with at least "
+             f"`pdf` and `print_background`, Crawl4AI with one crawler, {WARM_ROUNDS} rounds. Every arm prints US "
+             "Letter with backgrounds. `ok` counts files that start with `%PDF-` and that webclaw's PDF reader opens with at least "
              "one page. `recall` is the share of the distinct words (4+ letters) of the page's content, as "
              "`webclaw --render always -f text` reads it once at the start, found in the PDF's text, averaged over "
-             "pages.", "",
-             "| tool | mode | backgrounds | ok | ms (median) | ms (p95) | KB (median) | pages (median) | recall |",
-             "|---|---|---|---:|---:|---:|---:|---:|---:|"]
+             "pages. webclaw's PDF reader drops some right-to-left text, so recall is understated on pages that "
+             "have it, for every tool alike.", "",
+             "| tool | mode | ok | ms (median) | ms (p95) | KB (median) | pages (median) | recall |",
+             "|---|---|---:|---:|---:|---:|---:|---:|"]
     for r in rows:
-        lines.append(f"| {r['arm']} | {r['mode']} | {BACKGROUND[(r['arm'], r['mode'])]} | {r['ok']}/{r['pdfs']} | "
+        lines.append(f"| {r['arm']} | {r['mode']} | {r['ok']}/{r['pdfs']} | "
                      f"{r['ms']:.0f} | {r['p95_ms']:.0f} | {r['kb']:.0f} | {r['pages']:g} | {r['recall']:.3f} |")
     lines.append("")
     lines += [f"{arm}: {why}." for arm, why in UNSUPPORTED.items()]

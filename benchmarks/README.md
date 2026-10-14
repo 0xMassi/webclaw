@@ -112,7 +112,7 @@ It screenshots 10 public pages with each tool, the viewport and the whole page, 
 ./benchmarks/pdf.sh            # webclaw --save-pdf and the MCP screenshot tool's pdf format against the other tools
 ```
 
-It prints the 10 pages of the screenshot benchmark to PDF with each tool, first with a fresh browser per page and then with one browser kept open (webclaw through its MCP server). It records the time, the file size and the page count, reads each PDF's text back with webclaw's PDF reader, and scores the share of the page's content words, as webclaw reads the rendered page, that the PDF holds. Crawl4AI's `pdf=True` prints with backgrounds and no margins. Scrapling has no PDF export, so it has no arm. It writes `results/<label>/pdf-summary.md`.
+It prints the 10 pages of the screenshot benchmark to PDF with each tool, first with a fresh browser per page and then with one browser kept open (webclaw through its MCP server). It records the time, the file size and the page count, reads each PDF's text back with webclaw's PDF reader, and scores the share of the page's content words, as webclaw reads the rendered page, that the PDF holds. Every arm prints US Letter with backgrounds; Crawl4AI's `pdf=True` prints with no margins, webclaw with Chrome's default margins. Scrapling has no PDF export, so it has no arm. Recall is a relative measure: webclaw's PDF reader drops some right-to-left text (the Arabic line on example.com, for one), which understates the absolute number for every tool alike; read with macOS PDFKit instead, the cold run scores 0.939 for webclaw and 0.934 for Crawl4AI, against 0.911 and 0.906 with webclaw's reader, so the comparison holds. It writes `results/<label>/pdf-summary.md`.
 
 ### Blocking resources while rendering
 

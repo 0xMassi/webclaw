@@ -72,7 +72,7 @@ async def webclaw_warm():
         await session.initialize()
         for i, url in enumerate(URLS):
             t0 = time.perf_counter()
-            r = await session.call_tool("screenshot", {"url": url, "format": "pdf"})
+            r = await session.call_tool("screenshot", {"url": url, "format": "pdf", "print_background": True})
             ms = 1000 * (time.perf_counter() - t0)
             blobs = [c.resource for c in r.content if getattr(c, "type", "") == "resource"
                      and getattr(c.resource, "mime_type", "") == "application/pdf"]

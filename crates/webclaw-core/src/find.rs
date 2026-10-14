@@ -5,7 +5,7 @@
 //! count. A text search returns the deepest elements that match: an element
 //! is left out when one of its child elements matches too.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ego_tree::NodeId;
 use ego_tree::iter::Edge;
@@ -83,7 +83,7 @@ pub enum Example<'a> {
 /// The deepest elements whose text matches, in document order.
 pub fn find_text(html: &str, text: &TextMatch) -> Vec<Found> {
     let document = Html::parse_document(html);
-    matching(&document, text).into_iter().map(found).collect()
+    found_all(matching(&document, text))
 }
 
 /// Every element like the example. The search starts from the example's path
@@ -202,7 +202,7 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Sel
     let start = tail(&document, &steps, from, &matched)?;
     Ok(Some(Similar {
         selector: render(&steps, start),
-        matches: matched.into_iter().map(found).collect(),
+        matches: found_all(matched),
     }))
 }
 
@@ -284,28 +284,52 @@ fn shape<'a>(element: ElementRef<'a>) -> HashSet<&'a str> {
         .collect()
 }
 
-fn found(element: ElementRef) -> Found {
-    let mut steps = Vec::new();
-    let mut node = element;
-    while let Some(parent) = node.parent().and_then(ElementRef::wrap) {
-        let name = node.value().name();
-        let same: Vec<NodeId> = parent
-            .children()
-            .filter_map(ElementRef::wrap)
-            .filter(|c| c.value().name() == name)
-            .map(|c| c.id())
-            .collect();
-        steps.push(match same.iter().position(|id| *id == node.id()) {
-            Some(n) if same.len() > 1 => format!("{}:nth-of-type({})", ident(name), n + 1),
-            _ => ident(name),
-        });
-        node = parent;
+fn found_all(elements: Vec<ElementRef>) -> Vec<Found> {
+    let mut steps: HashMap<NodeId, String> = HashMap::new();
+    elements
+        .into_iter()
+        .map(|element| {
+            let mut path = Vec::new();
+            let mut node = element;
+            loop {
+                if !steps.contains_key(&node.id()) {
+                    sibling_steps(node, &mut steps);
+                }
+                path.push(steps[&node.id()].clone());
+                match node.parent().and_then(ElementRef::wrap) {
+                    Some(parent) => node = parent,
+                    None => break,
+                }
+            }
+            path.reverse();
+            Found {
+                selector: path.join(" > "),
+                text: visible_text(element),
+            }
+        })
+        .collect()
+}
+
+fn sibling_steps(element: ElementRef, steps: &mut HashMap<NodeId, String>) {
+    let siblings: Vec<ElementRef> = match element.parent() {
+        Some(parent) => parent.children().filter_map(ElementRef::wrap).collect(),
+        None => vec![element],
+    };
+    let mut total: HashMap<&str, usize> = HashMap::new();
+    for sibling in &siblings {
+        *total.entry(sibling.value().name()).or_default() += 1;
     }
-    steps.push(ident(node.value().name()));
-    steps.reverse();
-    Found {
-        selector: steps.join(" > "),
-        text: visible_text(element),
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    for sibling in siblings {
+        let name = sibling.value().name();
+        let n = seen.entry(name).or_default();
+        *n += 1;
+        let step = if total[name] > 1 {
+            format!("{}:nth-of-type({n})", ident(name))
+        } else {
+            ident(name)
+        };
+        steps.insert(sibling.id(), step);
     }
 }
 
@@ -501,5 +525,25 @@ mod tests {
             crate::select(page, None, &similar.selector).unwrap(),
             ["a", "b"]
         );
+    }
+
+    #[test]
+    fn many_siblings_stay_fast() {
+        let page = format!(
+            "<ul>{}</ul>",
+            (0..100_000)
+                .map(|i| format!("<li>item {i}</li>"))
+                .collect::<String>()
+        );
+        let start = std::time::Instant::now();
+        let found = find_text(&page, &TextMatch::text("item 99999", true, false).unwrap());
+        assert_eq!(
+            found[0].selector,
+            "html > body > ul > li:nth-of-type(100000)"
+        );
+        let text = TextMatch::text("item 7", true, false).unwrap();
+        let similar = find_similar(&page, Example::Text(&text)).unwrap().unwrap();
+        assert_eq!(similar.matches.len(), 100_000);
+        assert!(start.elapsed().as_secs() < 30, "{:?}", start.elapsed());
     }
 }

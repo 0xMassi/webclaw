@@ -616,7 +616,8 @@ impl Renderer {
         let limit = options
             .timeout
             .saturating_mul(if actions.is_empty() { 1 } else { 2 });
-        let deadline = Instant::now() + options.timeout * 3 / 4;
+        let deadline = Instant::now()
+            + (options.timeout - options.timeout / 4).min(Duration::from_secs(86_400));
         let solved = async |page: &chromiumoxide::Page| {
             if !options.solve {
                 return Ok(());

@@ -270,7 +270,7 @@ pub fn page_links(html: &str, base_url: &str) -> Vec<String> {
 }
 
 /// A link on a page with the words a reader sees on and around it.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Anchor {
     /// Absolute target without its fragment.
     pub href: String,
@@ -282,9 +282,13 @@ pub struct Anchor {
 }
 
 const ANCHOR_CONTEXT_CHARS: usize = 300;
+const ANCHOR_CONTEXT_LINKS: usize = 10_000;
 
-/// Every `<a href>` that [`page_links`] would take, one per occurrence and so
-/// not deduplicated, each with its text and surrounding words.
+/// The links [`page_links`] would take, each with its text and surrounding
+/// words: one entry per distinct target, text and context, so a target
+/// linked from several places can come more than once. Past the first
+/// 10,000 `<a href>` of a page, each new target comes once, without text or
+/// context.
 pub fn page_anchors(html: &str, base_url: &str) -> Vec<Anchor> {
     static ANCHORS: std::sync::LazyLock<scraper::Selector> =
         std::sync::LazyLock::new(|| scraper::Selector::parse("a[href]").unwrap());
@@ -312,7 +316,9 @@ pub fn page_anchors(html: &str, base_url: &str) -> Vec<Anchor> {
     let mut doc = Html::parse_document(html);
     noise::strip_hidden(&mut doc);
     let mut anchors = Vec::new();
-    for a in doc.select(&ANCHORS) {
+    let mut seen = std::collections::HashSet::new();
+    let mut targets = std::collections::HashSet::new();
+    for (n, a) in doc.select(&ANCHORS).enumerate() {
         let Some(mut url) = a
             .value()
             .attr("href")
@@ -324,8 +330,19 @@ pub fn page_anchors(html: &str, base_url: &str) -> Vec<Anchor> {
             continue;
         }
         url.set_fragment(None);
-        anchors.push(Anchor {
-            href: url.to_string(),
+        let href = url.to_string();
+        if n >= ANCHOR_CONTEXT_LINKS {
+            if targets.insert(href.clone()) {
+                anchors.push(Anchor {
+                    href,
+                    ..Default::default()
+                });
+            }
+            continue;
+        }
+        targets.insert(href.clone());
+        let anchor = Anchor {
+            href,
             text: squash(a.text()),
             context: a
                 .ancestors()
@@ -337,7 +354,10 @@ pub fn page_anchors(html: &str, base_url: &str) -> Vec<Anchor> {
                     words.trim_end().to_string()
                 })
                 .unwrap_or_default(),
-        });
+        };
+        if seen.insert(anchor.clone()) {
+            anchors.push(anchor);
+        }
     }
     anchors
 }
@@ -426,6 +446,28 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn repeated_identical_links_come_once() {
+        let html = format!("<p>{}</p>", "<a href='/x'>x</a>".repeat(20_000));
+        assert_eq!(page_anchors(&html, "https://example.com/").len(), 1);
+    }
+
+    #[test]
+    fn links_past_the_cap_keep_their_target_without_context() {
+        let links: String = (0..ANCHOR_CONTEXT_LINKS + 5)
+            .map(|k| format!("<li><a href='/p{k}'>Page {k}</a></li>"))
+            .collect();
+        let anchors = page_anchors(&format!("<ul>{links}</ul>"), "https://example.com/");
+        assert_eq!(anchors.len(), ANCHOR_CONTEXT_LINKS + 5);
+        assert_eq!(anchors[0].context, "Page 0");
+        let last = &anchors[ANCHOR_CONTEXT_LINKS + 4];
+        assert_eq!(
+            last.href,
+            format!("https://example.com/p{}", ANCHOR_CONTEXT_LINKS + 4)
+        );
+        assert!(last.text.is_empty() && last.context.is_empty());
     }
 
     #[test]

@@ -387,7 +387,7 @@ impl WebclawMcp {
         }
     }
 
-    /// Crawl a website starting from a seed URL, following links breadth-first up to a configurable depth and page limit.
+    /// Crawl a website starting from a seed URL, following links breadth-first up to a configurable depth and page limit. With `query`, the links most likely to answer it are followed first and pages come back best match first, each cut to the parts that answer it.
     #[tool]
     async fn crawl(&self, Parameters(params): Parameters<CrawlParams>) -> Result<String, String> {
         validate_url(&params.url).await?;
@@ -412,13 +412,19 @@ impl WebclawMcp {
             concurrency: params.concurrency.unwrap_or(5),
             use_sitemap: params.use_sitemap.unwrap_or(false),
             respect_robots: !params.ignore_robots.unwrap_or(false),
+            query: params.query.clone(),
             ..Default::default()
         };
 
         let crawler = webclaw_fetch::Crawler::new(&params.url, config)
             .map_err(|e| format!("Crawler init failed: {e}"))?;
 
-        let result = crawler.crawl(&params.url, None).await;
+        let mut result = crawler.crawl(&params.url, None).await;
+        result.pages.sort_by(|a, b| {
+            b.relevance
+                .unwrap_or(0.0)
+                .total_cmp(&a.relevance.unwrap_or(0.0))
+        });
 
         let mut output = format!(
             "Crawled {} pages ({} ok, {} errors, {} disallowed by robots.txt) in {:.1}s\n\n",
@@ -426,7 +432,13 @@ impl WebclawMcp {
         );
 
         for page in &result.pages {
-            output.push_str(&format!("--- {} (depth {}) ---\n", page.url, page.depth));
+            match page.relevance {
+                Some(r) => output.push_str(&format!(
+                    "--- {} (depth {}, relevance {r:.2}) ---\n",
+                    page.url, page.depth
+                )),
+                None => output.push_str(&format!("--- {} (depth {}) ---\n", page.url, page.depth)),
+            }
             if let Some(ref extraction) = page.extraction {
                 let content = match format {
                     "llm" => webclaw_core::to_llm_text(extraction, Some(&page.url)),

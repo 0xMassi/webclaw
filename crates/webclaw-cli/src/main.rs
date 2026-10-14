@@ -229,8 +229,9 @@ struct Cli {
     raw_html: bool,
 
     /// Keep only the parts of the page that answer this question, under their
-    /// headings (single-page extraction)
-    #[arg(long, value_name = "QUESTION", conflicts_with_all = ["crawl", "watch"])]
+    /// headings. With --crawl, also follow the links most likely to answer it
+    /// first and list pages best match first
+    #[arg(long, value_name = "QUESTION", conflicts_with = "watch")]
     query: Option<String>,
 
     /// Print what a CSS selector picks as a JSON array. End it in `::text`
@@ -1840,6 +1841,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         respect_robots: !cli.ignore_robots,
         checkpoint: state_path.clone(),
         on_page,
+        query: cli.query.clone(),
     };
 
     let resume_state = state_path
@@ -1873,7 +1875,14 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     });
 
     let crawler = Crawler::new(url, config).map_err(|e| format!("crawler error: {e}"))?;
-    let result = crawler.crawl(url, resume_state).await;
+    let mut result = crawler.crawl(url, resume_state).await;
+    if cli.query.is_some() {
+        result.pages.sort_by(|a, b| {
+            b.relevance
+                .unwrap_or(0.0)
+                .total_cmp(&a.relevance.unwrap_or(0.0))
+        });
+    }
 
     drop(crawler);
     close_browser(&fetch).await;
@@ -1882,15 +1891,6 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     let was_cancelled = cancel_flag.load(Ordering::Relaxed);
     if was_cancelled {
         if let Some(ref path) = state_path {
-            Crawler::save_state(
-                path,
-                url,
-                &result.visited,
-                &result.remaining_frontier,
-                completed_offset + result.total,
-                cli.max_pages,
-                cli.depth,
-            )?;
             eprintln!(
                 "Crawl state saved to {} ({} pages completed). Resume with --crawl-state {}",
                 path.display(),

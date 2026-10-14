@@ -10,7 +10,11 @@
 ///
 /// When `use_sitemap` is enabled, the crawler first discovers URLs from the
 /// site's sitemaps and seeds the BFS frontier before crawling.
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+///
+/// With a `query`, the frontier is best-first instead: links that match the
+/// question are fetched first.
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -97,6 +101,13 @@ pub struct CrawlConfig {
     /// done in a checkpoint. Unlike `progress_tx` it never drops a page, so
     /// output written here survives a crash together with the checkpoint.
     pub on_page: Option<PageSink>,
+    /// A question to crawl for. Links are fetched best match first, scored
+    /// by the question's words in their text, URL path and surrounding block
+    /// and by how well the page linking to them answers it; ties go to the
+    /// shallower link. Each page gets a [`PageResult::relevance`] and keeps
+    /// only the parts that answer the question, as with
+    /// [`webclaw_core::focus_extraction`].
+    pub query: Option<String>,
 }
 
 /// A callback that receives each finished page; see [`CrawlConfig::on_page`].
@@ -129,6 +140,7 @@ impl Default for CrawlConfig {
             respect_robots: true,
             checkpoint: None,
             on_page: None,
+            query: None,
         }
     }
 }
@@ -161,6 +173,10 @@ pub struct PageResult {
     pub error: Option<String>,
     #[serde(skip)]
     pub elapsed: Duration,
+    /// How well the page answers [`CrawlConfig::query`], from 0 to 1. Set
+    /// only when the crawl has a query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevance: Option<f64>,
 }
 
 /// Serializable crawl state for resume after Ctrl+C cancellation.
@@ -172,6 +188,10 @@ pub struct CrawlState {
     pub completed_pages: usize,
     pub max_pages: usize,
     pub max_depth: usize,
+    /// Priority of each frontier URL in a query crawl, so a resumed crawl
+    /// keeps its order.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub scores: HashMap<String, f64>,
 }
 
 /// Recursive crawler that wraps a shared [`FetchClient`].
@@ -301,15 +321,22 @@ impl Crawler {
         max_pages: usize,
         max_depth: usize,
     ) -> Result<(), String> {
-        let state = CrawlState {
-            seed_url: seed_url.to_string(),
-            visited: visited.iter().cloned().collect(),
-            frontier: frontier.to_vec(),
-            completed_pages,
-            max_pages,
-            max_depth,
-        };
-        let json = serde_json::to_string(&state).map_err(|e| format!("serialize state: {e}"))?;
+        Self::write_state(
+            path,
+            &CrawlState {
+                seed_url: seed_url.to_string(),
+                visited: visited.iter().cloned().collect(),
+                frontier: frontier.to_vec(),
+                completed_pages,
+                max_pages,
+                max_depth,
+                scores: HashMap::new(),
+            },
+        )
+    }
+
+    fn write_state(path: &Path, state: &CrawlState) -> Result<(), String> {
+        let json = serde_json::to_string(state).map_err(|e| format!("serialize state: {e}"))?;
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -345,7 +372,8 @@ impl Crawler {
     /// A worker pool keeps up to `config.concurrency` fetches in flight and
     /// starts the next URL from a FIFO frontier as soon as one finishes, so the
     /// crawl stays roughly breadth-first without waiting for the slowest page
-    /// of each depth. Links come from the whole fetched page. With
+    /// of each depth. With `config.query` the next URL is the best scored one
+    /// instead. Links come from the whole fetched page. With
     /// `respect_robots`, redirects are not followed blindly: each `Location`
     /// goes back through the scope and robots.txt checks like any link.
     ///
@@ -388,7 +416,17 @@ impl Crawler {
                 let extraction = fetcher(url).await;
                 let links = extraction
                     .as_ref()
-                    .map(|e| e.content.links.iter().map(|l| l.href.clone()).collect())
+                    .map(|e| {
+                        e.content
+                            .links
+                            .iter()
+                            .map(|l| webclaw_core::Anchor {
+                                href: l.href.clone(),
+                                text: l.text.clone(),
+                                context: String::new(),
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default();
                 Page {
                     extraction,
@@ -423,6 +461,7 @@ impl Crawler {
                         extraction: None,
                         error: Some(format!("invalid URL: {start_url}")),
                         elapsed: Duration::ZERO,
+                        relevance: None,
                     }],
                     total: 1,
                     ok: 0,
@@ -447,7 +486,8 @@ impl Crawler {
         if let Some(state) = resume_state {
             visited = state.visited.into_iter().collect();
             for (url, depth) in state.frontier {
-                frontier.push_back(url, depth);
+                let score = state.scores.get(&url).copied().unwrap_or(0.0);
+                frontier.push_back(url, depth, score);
             }
             info!(
                 visited = visited.len(),
@@ -456,7 +496,7 @@ impl Crawler {
             );
         } else {
             visited = HashSet::new();
-            frontier.push_back(without_fragment(&seed), 0);
+            frontier.push_back(without_fragment(&seed), 0, 0.0);
             if self.config.use_sitemap && seed_rules.is_allowed("/sitemap.xml") {
                 let base_url = format!("{}://{}", seed.scheme(), seed.host_str().unwrap_or(""));
                 match sitemap::discover(&self.client, &base_url).await {
@@ -464,7 +504,7 @@ impl Crawler {
                         let before = frontier.len();
                         for entry in entries {
                             if let Some(url) = self.qualify_link(&entry.url, &visited) {
-                                frontier.push_back(url, 0);
+                                frontier.push_back(url, 0, 0.0);
                             }
                         }
                         info!(
@@ -494,7 +534,12 @@ impl Crawler {
         let mut started: usize = resumed_pages;
         let mut in_flight = FuturesUnordered::new();
         let mut in_flight_depths: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut in_flight_urls: HashMap<String, usize> = HashMap::new();
+        let mut in_flight_urls: HashMap<String, (usize, f64)> = HashMap::new();
+        let mut rating = self
+            .config
+            .query
+            .as_deref()
+            .map(|q| (webclaw_core::Relevance::new(q), q));
         let mut last_checkpoint = Instant::now();
         let mut dirty = false;
         let mut redirect_hops: HashMap<String, usize> = HashMap::new();
@@ -504,11 +549,14 @@ impl Crawler {
                 && self.under_page_cap(started)
                 && !self.is_cancelled()
             {
-                let deepest_allowed = in_flight_depths
-                    .keys()
-                    .next()
-                    .map_or(usize::MAX, |shallowest| shallowest + 1);
-                let Some((url, depth)) = frontier.pop(deepest_allowed) else {
+                let deepest_allowed = match rating {
+                    Some(_) => usize::MAX,
+                    None => in_flight_depths
+                        .keys()
+                        .next()
+                        .map_or(usize::MAX, |shallowest| shallowest + 1),
+                };
+                let Some((url, depth, score)) = frontier.pop(deepest_allowed) else {
                     break;
                 };
                 if visited.contains(&dedup_key(&url)) || denied.contains(&url) {
@@ -523,7 +571,7 @@ impl Crawler {
                 visited.insert(dedup_key(&url));
                 started += 1;
                 *in_flight_depths.entry(depth).or_default() += 1;
-                in_flight_urls.insert(url.clone(), depth);
+                in_flight_urls.insert(url.clone(), (depth, score));
                 let wait = self.start_delay(&url, &mut next_start).await;
                 let fetch = Arc::clone(&fetch);
                 let cancel_flag = self.config.cancel_flag.clone();
@@ -585,7 +633,7 @@ impl Crawler {
                     in_flight_depths.remove(&depth);
                 }
             }
-            in_flight_urls.remove(&url);
+            let score = in_flight_urls.remove(&url).map_or(0.0, |(_, s)| s);
 
             let mut extraction = page.extraction;
             if let Some(location) = page.redirect {
@@ -599,7 +647,7 @@ impl Crawler {
                     {
                         debug!(from = %url, to = %target, "following redirect");
                         redirect_hops.insert(target.clone(), hop);
-                        frontier.push_front(target, depth);
+                        frontier.push_front(target, depth, score);
                     }
                     continue;
                 }
@@ -609,18 +657,36 @@ impl Crawler {
                 ));
             }
 
+            let mut relevance = None;
+            let mut link_scores = Vec::new();
+            if let (Some((rater, query)), Ok(e)) = (&mut rating, &mut extraction) {
+                let (rated, scores) = rater.rate(&e.content.markdown, &page.links);
+                relevance = Some(rated);
+                link_scores = scores;
+                webclaw_core::focus_extraction(e, query);
+            }
+
             if depth < self.config.max_depth && extraction.is_ok() {
-                for link in &page.links {
-                    if frontier.len() >= frontier_cap {
-                        warn!(
-                            cap = frontier_cap,
-                            "frontier full, dropping newly found links"
-                        );
-                        break;
+                let mut best: Vec<(&str, f64)> = Vec::new();
+                let mut at: HashMap<&str, usize> = HashMap::new();
+                for (i, link) in page.links.iter().enumerate() {
+                    let score = link_scores.get(i).copied().unwrap_or(0.0);
+                    match at.get(link.href.as_str()) {
+                        Some(&j) => best[j].1 = best[j].1.max(score),
+                        None => {
+                            at.insert(&link.href, best.len());
+                            best.push((&link.href, score));
+                        }
                     }
-                    if let Some(candidate) = self.qualify_link(link, &visited) {
-                        frontier.push_back(candidate, depth + 1);
+                }
+                let mut dropped = false;
+                for (href, score) in best {
+                    if let Some(candidate) = self.qualify_link(href, &visited) {
+                        dropped |= !frontier.push_capped(candidate, depth + 1, score, frontier_cap);
                     }
+                }
+                if dropped {
+                    warn!(cap = frontier_cap, "frontier full, dropping links");
                 }
             }
 
@@ -635,6 +701,7 @@ impl Crawler {
                         extraction: Some(extraction),
                         error: None,
                         elapsed,
+                        relevance,
                     }
                 }
                 Err(e) => {
@@ -646,6 +713,7 @@ impl Crawler {
                         extraction: None,
                         error: Some(e),
                         elapsed,
+                        relevance: None,
                     }
                 }
             };
@@ -680,6 +748,19 @@ impl Crawler {
             }
         }
 
+        if self.is_cancelled()
+            && let Some(path) = &self.config.checkpoint
+        {
+            self.write_checkpoint(
+                path,
+                start_url,
+                &visited,
+                &frontier,
+                &in_flight_urls,
+                resumed_pages + completed,
+            );
+        }
+
         let total_elapsed = start.elapsed();
         info!(
             total = completed,
@@ -707,25 +788,33 @@ impl Crawler {
         seed_url: &str,
         visited: &HashSet<String>,
         frontier: &Frontier,
-        in_flight: &HashMap<String, usize>,
+        in_flight: &HashMap<String, (usize, f64)>,
         completed_pages: usize,
     ) {
         let in_flight_keys: HashSet<String> = in_flight.keys().map(|u| dedup_key(u)).collect();
-        let visited: HashSet<String> = visited.difference(&in_flight_keys).cloned().collect();
-        let pending: Vec<(String, usize)> = in_flight
+        let mut scores: HashMap<String, f64> = HashMap::new();
+        let mut pending = Vec::new();
+        for (url, (depth, score)) in in_flight
             .iter()
-            .map(|(url, depth)| (url.clone(), *depth))
+            .map(|(url, entry)| (url.clone(), *entry))
             .chain(frontier.snapshot())
-            .collect();
-        if let Err(e) = Self::save_state(
-            path,
-            seed_url,
-            &visited,
-            &pending,
+        {
+            if score > 0.0 {
+                let best = scores.entry(url.clone()).or_default();
+                *best = best.max(score);
+            }
+            pending.push((url, depth));
+        }
+        let state = CrawlState {
+            seed_url: seed_url.to_string(),
+            visited: visited.difference(&in_flight_keys).cloned().collect(),
+            frontier: pending,
             completed_pages,
-            self.config.max_pages.unwrap_or(0),
-            self.config.max_depth,
-        ) {
+            max_pages: self.config.max_pages.unwrap_or(0),
+            max_depth: self.config.max_depth,
+            scores,
+        };
+        if let Err(e) = Self::write_state(path, &state) {
             warn!(error = %e, "checkpoint failed");
         }
     }
@@ -835,55 +924,82 @@ const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
 // ponytail: a fixed 1s interval rewrites the whole visited set each time; space it out by size if crawls past ~100k pages make it costly.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
 
+type FrontierKey = (Reverse<u64>, usize, i64);
+
 #[derive(Default)]
 struct Frontier {
-    levels: BTreeMap<usize, VecDeque<String>>,
-    len: usize,
+    queue: BTreeMap<FrontierKey, String>,
+    back: i64,
+    front: i64,
 }
 
 impl Frontier {
-    fn push_back(&mut self, url: String, depth: usize) {
-        self.levels.entry(depth).or_default().push_back(url);
-        self.len += 1;
+    fn key(score: f64, depth: usize, seq: i64) -> FrontierKey {
+        let score = if score.is_finite() && score > 0.0 {
+            score
+        } else {
+            0.0
+        };
+        (Reverse(score.to_bits()), depth, seq)
     }
 
-    fn push_front(&mut self, url: String, depth: usize) {
-        self.levels.entry(depth).or_default().push_front(url);
-        self.len += 1;
+    fn push_back(&mut self, url: String, depth: usize, score: f64) {
+        self.queue.insert(Self::key(score, depth, self.back), url);
+        self.back += 1;
     }
 
-    fn pop(&mut self, deepest_allowed: usize) -> Option<(String, usize)> {
-        let (&depth, queue) = self.levels.iter_mut().find(|(_, q)| !q.is_empty())?;
+    fn push_front(&mut self, url: String, depth: usize, score: f64) {
+        self.front -= 1;
+        self.queue.insert(Self::key(score, depth, self.front), url);
+    }
+
+    fn push_capped(&mut self, url: String, depth: usize, score: f64, cap: usize) -> bool {
+        if self.queue.len() >= cap {
+            let key = Self::key(score, depth, self.back);
+            match self.queue.last_key_value() {
+                Some((last, _)) if key < *last => {
+                    self.queue.pop_last();
+                }
+                _ => return false,
+            }
+        }
+        self.push_back(url, depth, score);
+        true
+    }
+
+    fn pop(&mut self, deepest_allowed: usize) -> Option<(String, usize, f64)> {
+        let (&(_, depth, _), _) = self.queue.first_key_value()?;
         if depth > deepest_allowed {
             return None;
         }
-        let url = queue.pop_front()?;
-        self.len -= 1;
-        Some((url, depth))
+        let ((Reverse(score), depth, _), url) = self.queue.pop_first()?;
+        Some((url, depth, f64::from_bits(score)))
     }
 
     fn len(&self) -> usize {
-        self.len
+        self.queue.len()
     }
 
-    fn snapshot(&self) -> Vec<(String, usize)> {
-        self.levels
+    fn snapshot(&self) -> Vec<(String, (usize, f64))> {
+        self.queue
             .iter()
-            .flat_map(|(depth, urls)| urls.iter().map(move |url| (url.clone(), *depth)))
+            .map(|((Reverse(score), depth, _), url)| {
+                (url.clone(), (*depth, f64::from_bits(*score)))
+            })
             .collect()
     }
 
     fn into_vec(self) -> Vec<(String, usize)> {
-        self.levels
+        self.queue
             .into_iter()
-            .flat_map(|(depth, urls)| urls.into_iter().map(move |url| (url, depth)))
+            .map(|((_, depth, _), url)| (url, depth))
             .collect()
     }
 }
 
 struct Page {
     extraction: Result<webclaw_core::ExtractionResult, String>,
-    links: Vec<String>,
+    links: Vec<webclaw_core::Anchor>,
     redirect: Option<String>,
 }
 
@@ -917,7 +1033,7 @@ async fn fetch_page(client: &FetchClient, url: &str, follow_redirects: bool) -> 
     }
     let (page, extraction) = client.extract_page(fetched, &Default::default()).await;
     let links = if page.document_bytes.is_none() {
-        webclaw_core::page_links(&page.html, &page.url)
+        webclaw_core::page_anchors(&page.html, &page.url)
     } else {
         Vec::new()
     };
@@ -1286,7 +1402,7 @@ mod tests {
             .map_err(|e| e.to_string());
         Page {
             extraction,
-            links: webclaw_core::page_links(html, url),
+            links: webclaw_core::page_anchors(html, url),
             redirect: None,
         }
     }
@@ -1373,8 +1489,8 @@ mod tests {
             .map(String::from)
             .collect();
         let mut frontier = Frontier::default();
-        frontier.push_back("https://example.com/b".into(), 1);
-        let in_flight = HashMap::from([("https://example.com/a/".to_string(), 1)]);
+        frontier.push_back("https://example.com/b".into(), 1, 0.0);
+        let in_flight = HashMap::from([("https://example.com/a/".to_string(), (1, 0.0))]);
         crawler.write_checkpoint(
             &path,
             "https://example.com/",
@@ -1393,6 +1509,165 @@ mod tests {
                 ("https://example.com/a/".to_string(), 1),
                 ("https://example.com/b".to_string(), 1)
             ]
+        );
+    }
+
+    fn food_site(url: &str) -> Page {
+        let path = Url::parse(url).unwrap().path().to_string();
+        let html = match path.as_str() {
+            "/" => {
+                "<main><h1>Food</h1><p>Recipes from our kitchen.</p><ul><li><a href='/apples'>Apples</a></li><li><a href='/bread'>Bread</a></li></ul></main>"
+            }
+            "/bread" => {
+                "<main><h1>Bread</h1><p>All our bread.</p><ul><li><a href='/bread/rye'>Rye</a></li><li><a href='/bread/banana'>Banana bread recipe</a></li></ul></main>"
+            }
+            "/bread/banana" => {
+                "<main><h1>Banana bread</h1><p>This banana bread recipe needs ripe bananas.</p><h2>Storage</h2><p>Keep it in a tin for three days.</p></main>"
+            }
+            _ => "<main><h1>Leaf</h1><p>Nothing to see on this page.</p></main>",
+        };
+        html_page(url, html)
+    }
+
+    async fn crawl_food(query: Option<&str>) -> (CrawlResult, Vec<String>) {
+        let done = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = done.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_depth: 2,
+                concurrency: 1,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                query: query.map(String::from),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result = crawler
+            .run("https://example.com/", None, move |url| {
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push(Url::parse(&url).unwrap().path().to_string());
+                async move { food_site(&url) }
+            })
+            .await;
+        let order = done.lock().unwrap().clone();
+        (result, order)
+    }
+
+    #[tokio::test]
+    async fn a_query_crawl_follows_the_best_link_first() {
+        let (_, bfs) = crawl_food(None).await;
+        assert_eq!(bfs[..3], ["/", "/apples", "/bread"]);
+        let (result, guided) = crawl_food(Some("banana bread recipe")).await;
+        assert_eq!(guided[..3], ["/", "/bread", "/bread/banana"]);
+        let banana = result
+            .pages
+            .iter()
+            .find(|p| p.url.ends_with("/bread/banana"))
+            .unwrap();
+        let best = result
+            .pages
+            .iter()
+            .filter_map(|p| p.relevance)
+            .fold(0.0, f64::max);
+        assert_eq!(banana.relevance, Some(best));
+        let markdown = &banana.extraction.as_ref().unwrap().content.markdown;
+        assert!(markdown.contains("ripe bananas"), "{markdown}");
+        assert!(!markdown.contains("tin"), "{markdown}");
+        assert!(result.pages.iter().all(|p| p.relevance.is_some()));
+    }
+
+    #[test]
+    fn a_full_frontier_drops_its_lowest_priority_link() {
+        let mut frontier = Frontier::default();
+        assert!(frontier.push_capped("a".into(), 1, 0.5, 2));
+        assert!(frontier.push_capped("b".into(), 1, 0.1, 2));
+        assert!(frontier.push_capped("c".into(), 1, 0.3, 2));
+        assert!(!frontier.push_capped("d".into(), 1, 0.2, 2));
+        assert!(!frontier.push_capped("e".into(), 1, 0.3, 2));
+        assert_eq!(
+            frontier.into_vec(),
+            vec![("a".to_string(), 1), ("c".to_string(), 1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resumed_query_crawl_keeps_its_priorities() {
+        let dir = std::env::temp_dir().join(format!("webclaw-resume-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_depth: 1,
+                concurrency: 1,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                query: Some("banana".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut frontier = Frontier::default();
+        frontier.push_back("https://example.com/low".into(), 1, 0.1);
+        frontier.push_back("https://example.com/high".into(), 1, 0.9);
+        let visited = HashSet::from(["https://example.com".to_string()]);
+        crawler.write_checkpoint(
+            &path,
+            "https://example.com/",
+            &visited,
+            &frontier,
+            &HashMap::new(),
+            1,
+        );
+        let mut state = Crawler::load_state(&path).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(state.scores.get("https://example.com/high"), Some(&0.9));
+        assert_eq!(state.scores.get("https://example.com/low"), Some(&0.1));
+        state.frontier.reverse();
+        let done = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = done.clone();
+        crawler
+            .run("https://example.com/", Some(state), move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move { food_site(&url) }
+            })
+            .await;
+        assert_eq!(
+            *done.lock().unwrap(),
+            vec!["https://example.com/high", "https://example.com/low"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_crawl_leaves_its_checkpoint_behind() {
+        let dir = std::env::temp_dir().join(format!("webclaw-cancel-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                respect_robots: false,
+                delay: Duration::ZERO,
+                cancel_flag: Some(Arc::new(AtomicBool::new(true))),
+                checkpoint: Some(path.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler
+            .run("https://example.com/", None, |url| async move {
+                food_site(&url)
+            })
+            .await;
+        let state = Crawler::load_state(&path);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(
+            state.unwrap().frontier,
+            vec![("https://example.com/".to_string(), 0)]
         );
     }
 
@@ -1585,6 +1860,7 @@ mod tests {
             completed_pages: 0,
             max_pages: 50,
             max_depth: 2,
+            scores: HashMap::new(),
         };
         let result = crawler
             .crawl_with_fetcher("https://example.com/", Some(resume), move |url| {

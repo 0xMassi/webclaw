@@ -158,6 +158,8 @@ pub struct CrawlParams {
     pub ignore_robots: Option<bool>,
     /// Output format for each page: "markdown" (default), "llm", "text"
     pub format: Option<String>,
+    /// A question: follow the links most likely to answer it first, keep only the parts of each page that answer it, and list pages best match first
+    pub query: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

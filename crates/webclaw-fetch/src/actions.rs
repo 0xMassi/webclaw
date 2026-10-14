@@ -594,6 +594,7 @@ fn exception_text(e: &chromiumoxide::cdp::js_protocol::runtime::ExceptionDetails
 fn js_error(e: CdpError) -> String {
     match e {
         CdpError::JavascriptException(e) => exception_text(&e),
+        CdpError::Timeout => "the browser did not answer within its command time limit, the render timeout plus 30 s when rendering through a pool and 30 s otherwise".into(),
         other => other.to_string(),
     }
 }
@@ -871,6 +872,37 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         assert!(
             error.contains("action 2 (executeJavascript)") && error.contains("characters left"),
             "{error}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_script_may_run_longer_than_thirty_seconds_within_the_budget() {
+        let pool = crate::render::RenderPool::new(
+            crate::render::BrowserSource::Launch { proxy: None },
+            Duration::from_secs(60),
+        );
+        let headers = http::HeaderMap::new();
+        let done = pool
+            .render_actions(
+                "https://example.com/feed",
+                Some(Prefetched {
+                    html: FEED,
+                    headers: &headers,
+                }),
+                None,
+                &[],
+                crate::Block::default(),
+                &parse_actions(
+                    r##"[{"type": "executeJavascript", "code": "new Promise(r => setTimeout(() => r('late'), 35000))"}]"##,
+                )
+                .unwrap(),
+            )
+            .await;
+        pool.close().await;
+        assert_eq!(
+            done.expect("the script finishes").1,
+            vec![serde_json::json!("late")]
         );
     }
 }

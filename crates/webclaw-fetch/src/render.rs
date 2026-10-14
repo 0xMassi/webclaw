@@ -96,6 +96,7 @@ impl Screenshot {
 }
 
 const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct Visited<T> {
     value: T,
@@ -156,6 +157,14 @@ impl Renderer {
     }
 
     async fn launch_with(proxy: Option<&str>, args: &[&str]) -> Result<Self, FetchError> {
+        Self::launch_timed(proxy, args, COMMAND_TIMEOUT).await
+    }
+
+    async fn launch_timed(
+        proxy: Option<&str>,
+        args: &[&str],
+        command_timeout: Duration,
+    ) -> Result<Self, FetchError> {
         static LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let profile = std::env::temp_dir().join(format!(
             "webclaw-chrome-{}-{}-{}",
@@ -181,6 +190,7 @@ impl Renderer {
             .arg("--enable-features=NetworkService,NetworkServiceInProcess,LocalNetworkAccessChecks:LocalNetworkAccessChecksWarn/false,LocalNetworkAccessChecksWebSockets")
             .arg("--webrtc-ip-handling-policy=disable_non_proxied_udp")
             .args(args.iter().copied())
+            .request_timeout(command_timeout)
             .user_data_dir(&profile);
         let installed = std::env::var("WEBCLAW_CHROME").ok().or_else(|| {
             INSTALL_PATHS
@@ -233,8 +243,13 @@ impl Renderer {
     /// Use a browser that is already running with its DevTools endpoint at
     /// `cdp_url` (`ws://...` or `http://host:port`). Its own proxy settings apply.
     pub async fn connect(cdp_url: &str) -> Result<Self, FetchError> {
+        Self::connect_timed(cdp_url, COMMAND_TIMEOUT).await
+    }
+
+    async fn connect_timed(cdp_url: &str, command_timeout: Duration) -> Result<Self, FetchError> {
         let config = chromiumoxide::handler::HandlerConfig {
             request_intercept: true,
+            request_timeout: command_timeout,
             ..Default::default()
         };
         let (browser, handler) = Browser::connect_with_config(cdp_url, config)
@@ -811,9 +826,14 @@ impl RenderPool {
         if self.browser.read().await.is_none() {
             let mut slot = self.browser.write().await;
             if slot.is_none() {
+                let commands = self.timeout.saturating_add(COMMAND_TIMEOUT);
                 let started = match &self.source {
-                    BrowserSource::Launch { proxy } => Renderer::launch(proxy.as_deref()).await,
-                    BrowserSource::Connect(endpoint) => Renderer::connect(endpoint).await,
+                    BrowserSource::Launch { proxy } => {
+                        Renderer::launch_timed(proxy.as_deref(), &[], commands).await
+                    }
+                    BrowserSource::Connect(endpoint) => {
+                        Renderer::connect_timed(endpoint, commands).await
+                    }
                 };
                 if let Err(e) = &started {
                     warn!("no browser for rendering: {e}");

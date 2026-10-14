@@ -720,6 +720,64 @@ mod tests {
     }
 
     #[test]
+    fn random_table_snippets_never_panic() {
+        const PARTS: &[&str] = &[
+            "<table>",
+            "</table>",
+            "<table role=\"none\">",
+            "<caption>c</caption>",
+            "<thead>",
+            "</thead>",
+            "<tbody>",
+            "</tbody>",
+            "<tfoot>",
+            "</tfoot>",
+            "<tr>",
+            "</tr>",
+            "<tr></tr>",
+            "<td>",
+            "</td>",
+            "<th>",
+            "</th>",
+            "<td colspan=\"0\">",
+            "<td colspan=\"3\">",
+            "<th colspan=\"2px\">",
+            "<td rowspan=\"0\">",
+            "<td rowspan=\"2\">",
+            "<th rowspan=\"99999999999999999999\">",
+            "x",
+            "12",
+            " ",
+            "<br>",
+            "<div>d</div>",
+            "<p>",
+            "<a href=\"/\">l</a>",
+            "<form></form>",
+            "<select><option>o</option></select>",
+            "<span hidden>h</span>",
+            "<td style=\"display:none\">",
+        ];
+        let mut seed: u64 = 0x5eed_7ab1e;
+        let mut next = |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n
+        };
+        for _ in 0..500 {
+            let len = 1 + next(40);
+            let html: String = (0..len).map(|_| PARTS[next(PARTS.len())]).collect();
+            for t in tables(&html) {
+                assert!(
+                    t.headers.is_empty() || t.rows.iter().all(|r| r.len() == t.headers.len()),
+                    "{html}"
+                );
+                assert!(t.rows.iter().all(|r| r.len() == t.rows[0].len()), "{html}");
+            }
+        }
+    }
+
+    #[test]
     fn junk_spans_count_as_one() {
         let t = one(
             r#"<table><tr><th colspan="x">a</th><th rowspan="-2">b</th></tr><tr><td>1</td><td>2</td></tr></table>"#,

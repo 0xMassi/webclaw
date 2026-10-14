@@ -1136,6 +1136,16 @@ fn page_actions(cli: &Cli) -> Result<Vec<webclaw_fetch::render::Action>, String>
     Ok(actions)
 }
 
+fn one_url_error(cli: &Cli) -> String {
+    let error = "--actions and --scroll take one URL";
+    match cli.urls.iter().find(|u| u.parse::<u32>().is_ok()) {
+        Some(count) if cli.scroll.is_some() => {
+            format!("{error}; for a scroll count write --scroll={count}")
+        }
+        _ => error.to_string(),
+    }
+}
+
 fn print_script_results(results: &[serde_json::Value]) {
     for (i, value) in results.iter().enumerate() {
         eprintln!("js_results[{i}]: {value}");
@@ -3426,7 +3436,7 @@ async fn main() {
 
     if cli.actions.is_some() || cli.scroll.is_some() {
         if entries.len() != 1 {
-            eprintln!("error: --actions and --scroll take one URL");
+            eprintln!("error: {}", one_url_error(&cli));
             process::exit(1);
         }
         if cli.render == RenderMode::Never {
@@ -3684,6 +3694,18 @@ mod tests {
             ])
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_scroll_count_after_a_space_gets_a_hint() {
+        let cli = Cli::try_parse_from(["webclaw", "--scroll", "3", "https://example.com"]).unwrap();
+        assert_eq!(
+            one_url_error(&cli),
+            "--actions and --scroll take one URL; for a scroll count write --scroll=3"
+        );
+        let cli =
+            Cli::try_parse_from(["webclaw", "--scroll", "https://a.com", "https://b.com"]).unwrap();
+        assert_eq!(one_url_error(&cli), "--actions and --scroll take one URL");
     }
 
     #[test]

@@ -144,7 +144,10 @@ pub fn find_text(html: &str, text: &TextMatch) -> Vec<FoundElement> {
 /// widens it while every element that adds shares a child tag with the
 /// example (or has no child elements, like it), sits under a parent holding
 /// no earlier match, and shares a class with the example (when both have
-/// classes), as does its ancestor at the step whose classes were dropped. It cuts steps from the top as long as one step
+/// classes), as does its ancestor at the step whose classes were dropped.
+/// The class test is skipped for an element whose parent already holds two
+/// matches at that step, since it is then another item of a list rather
+/// than another part of one item. It cuts steps from the top as long as one step
 /// with a class is left, and drops the classes of a step, all at once or one
 /// at a time, tried under the whole path and under its shortest tail that
 /// starts at a step with a class and picks the same elements; dropped classes
@@ -328,12 +331,38 @@ fn alike(matched: &[ElementRef], more: &[ElementRef], example: ElementRef, level
     let example_shape = shape(example);
     let example_classes = classes(Some(example));
     let example_step = classes(up(example, level));
+    let items = siblings(matched, 0);
+    let step_items = siblings(matched, level);
     more.iter().all(|e| {
+        let step = up(*e, level);
+        let other_part = lone(Some(*e), &items) && apart(&classes(Some(*e)), &example_classes);
+        let other_step = lone(step, &step_items) && apart(&classes(step), &example_step);
         known.contains(&e.id())
             || (fits(&shape(*e), &example_shape)
                 && !parents.contains(&e.parent().map(|p| p.id()))
-                && !apart(&classes(Some(*e)), &example_classes)
-                && !apart(&classes(up(*e, level)), &example_step))
+                && !other_part
+                && !other_step)
+    })
+}
+
+fn siblings(matched: &[ElementRef], levels: usize) -> HashMap<Option<NodeId>, usize> {
+    let mut seen = HashSet::new();
+    let mut count = HashMap::new();
+    for element in matched.iter().filter_map(|e| up(*e, levels)) {
+        if seen.insert(element.id()) {
+            *count.entry(element.parent().map(|p| p.id())).or_default() += 1;
+        }
+    }
+    count
+}
+
+fn lone(element: Option<ElementRef>, siblings: &HashMap<Option<NodeId>, usize>) -> bool {
+    element.is_some_and(|e| {
+        siblings
+            .get(&e.parent().map(|p| p.id()))
+            .copied()
+            .unwrap_or(0)
+            < 2
     })
 }
 
@@ -829,5 +858,46 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(texts(&similar.matches), ["Acme", "Beta", "Gamma"]);
+    }
+
+    #[test]
+    fn items_with_wholly_different_classes_stay_in() {
+        let zebra = format!(
+            "<ul>{}</ul>",
+            (0..10)
+                .map(|i| format!("<li class=\"row-{}\"><a>n{i}</a></li>", ["b", "a"][i % 2]))
+                .collect::<String>()
+        );
+        let ends = format!(
+            "<ul>{}</ul>",
+            (0..10)
+                .map(|i| {
+                    let class = match i {
+                        0 => "first",
+                        9 => "last",
+                        _ => "mid",
+                    };
+                    format!("<li class=\"{class}\"><a>n{i}</a></li>")
+                })
+                .collect::<String>()
+        );
+        let grid = format!(
+            "<div class=\"grid\">{}</div>",
+            (0..9)
+                .map(|i| {
+                    let class = ["card-big", "card-small", "card-ad"][i % 3];
+                    format!("<div class=\"{class}\"><h3>n{i}</h3></div>")
+                })
+                .collect::<String>()
+        );
+        for (page, items) in [(&zebra, 10), (&ends, 10), (&grid, 9)] {
+            for example in ["n3", "n4"] {
+                let text = TextMatch::text(example, true, false).unwrap();
+                let similar = find_similar(page, FindExample::Text(&text))
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(similar.matches.len(), items, "{example} in {page}");
+            }
+        }
     }
 }

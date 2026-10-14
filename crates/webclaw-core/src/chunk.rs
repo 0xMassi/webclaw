@@ -242,15 +242,9 @@ fn overlap_tail(pieces: &[Piece], members: &[usize], overlap: usize) -> Vec<Part
     if overlap == 0 {
         return Vec::new();
     }
-    let mut start = members.len();
-    while start > 0 {
-        let parts: Vec<Part> = members[start - 1..]
-            .iter()
-            .map(|&i| pieces[i].part.clone())
-            .collect();
-        if approx_tokens(&join(&parts)) > overlap {
-            break;
-        }
+    let (mut start, mut size) = (members.len(), 0);
+    while start > 0 && size + pieces[members[start - 1]].tokens <= overlap {
+        size += pieces[members[start - 1]].tokens;
         start -= 1;
     }
     if start < members.len() {
@@ -266,9 +260,10 @@ fn overlap_tail(pieces: &[Piece], members: &[usize], overlap: usize) -> Vec<Part
     if fence_marker(&part.text).is_some() || part.text.starts_with('|') {
         return Vec::new();
     }
-    let mut offset = part.text.len();
+    let (mut offset, mut size) = (part.text.len(), 0);
     for unit in units(&part.text, 1).iter().rev() {
-        if approx_tokens(&part.text[offset - unit.len()..]) > overlap {
+        size += approx_tokens(unit);
+        if size > overlap {
             break;
         }
         offset -= unit.len();
@@ -342,23 +337,24 @@ fn pack(text: &str, max: usize, level: usize) -> Vec<Range<usize>> {
         return cut_characters(text, max);
     }
     let mut out = Vec::new();
-    let (mut start, mut end) = (0, 0);
+    let (mut start, mut end, mut size) = (0, 0, 0);
     for unit in units(text, level) {
+        let tokens = approx_tokens(unit);
         let unit_end = end + unit.len();
-        if approx_tokens(&text[start..unit_end]) > max {
-            if end > start {
-                out.extend(trimmed(&text[start..end], start));
-                start = end;
-            }
-            if approx_tokens(&text[start..unit_end]) > max {
-                let at = start;
-                out.extend(
-                    pack(&text[at..unit_end], max, level + 1)
-                        .into_iter()
-                        .map(|r| r.start + at..r.end + at),
-                );
-                start = unit_end;
-            }
+        if size + tokens > max && end > start {
+            out.extend(trimmed(&text[start..end], start));
+            (start, size) = (end, 0);
+        }
+        if tokens > max {
+            let at = end;
+            out.extend(
+                pack(unit, max, level + 1)
+                    .into_iter()
+                    .map(|r| r.start + at..r.end + at),
+            );
+            (start, size) = (unit_end, 0);
+        } else {
+            size += tokens;
         }
         end = unit_end;
     }
@@ -552,6 +548,20 @@ mod tests {
         let chunks = chunk(&page, 64, 0);
         let words: usize = chunks.iter().map(|c| c.text.matches("word").count()).sum();
         assert_eq!(words, 400, "{chunks:?}");
+    }
+
+    #[test]
+    fn a_huge_paragraph_is_chunked_in_linear_time() {
+        let paragraph = (0..10_000)
+            .map(|i| format!("Sentence {i} says a few words about it."))
+            .collect::<Vec<_>>()
+            .join(" ");
+        for overlap in [0, 10_000] {
+            let started = std::time::Instant::now();
+            let chunks = chunk(&paragraph, 20_000, overlap);
+            assert!(chunks.len() > 1);
+            assert!(started.elapsed().as_secs() < 2, "{:?}", started.elapsed());
+        }
     }
 
     #[test]

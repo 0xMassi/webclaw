@@ -14,6 +14,9 @@ use chromiumoxide::cdp::browser_protocol::page::{
 use chromiumoxide::cdp::browser_protocol::target::{
     CloseTargetParams, EventTargetCreated, GetTargetsParams, TargetId,
 };
+use chromiumoxide::cdp::js_protocol::runtime::{
+    CallFunctionOnParams, EvaluateParams, ReleaseObjectParams,
+};
 use chromiumoxide::element::Element;
 use chromiumoxide::error::CdpError;
 use chromiumoxide::{Browser, Page};
@@ -71,8 +74,9 @@ pub enum Action {
         selector: String,
         timeout: Option<u64>,
     },
-    /// Run JavaScript, an expression or a function body that ends in
-    /// `return`, and keep its value, awaited when it is a promise, as JSON.
+    /// Run JavaScript, an expression, statements whose last one gives the
+    /// value, or a function body that ends in `return`, and keep that value,
+    /// awaited when it is a promise, as JSON.
     /// The page turns the value into JSON itself, and a value longer than
     /// what is left of the 1 MiB all such steps share fails the step there.
     ExecuteJavascript { code: String },
@@ -456,37 +460,81 @@ async fn step(
                 .await
                 .map_err(|_| format!("no element matches {selector:?} after {limit:?}"))?;
         }
-        Action::ExecuteJavascript { code } => {
-            let expression = format!("(async () => (\n{code}\n))");
-            let parses = page
-                .evaluate_expression(format!("typeof {expression}"))
-                .await
-                .is_ok();
-            let function = if parses {
-                expression
-            } else {
-                format!("(async () => {{\n{code}\n}})")
-            };
-            let capped = format!(
-                "(async () => {{ const value = await {function}(); let text; \
-                 try {{ text = JSON.stringify(value === undefined ? null : value); }} \
-                 catch (e) {{ throw new Error('the value is not JSON: ' + e.message); }} \
-                 if (text === undefined) text = 'null'; \
-                 if (text.length > {room}) throw new Error('the value is ' + text.length + ' characters long, with {room} characters left of the 1 MiB all script values share'); \
-                 return text; }})()"
-            );
-            let text: String = page
-                .evaluate_expression(capped)
-                .await
-                .map_err(js_error)?
-                .into_value()
-                .map_err(|e| e.to_string())?;
-            return serde_json::from_str(&text)
-                .map(Some)
-                .map_err(|e| e.to_string());
-        }
+        Action::ExecuteJavascript { code } => return run_script(page, code, room).await.map(Some),
     }
     Ok(None)
+}
+
+const CAP: &str = "let text; \
+                   try { text = JSON.stringify(value === undefined ? null : value); } \
+                   catch (e) { throw new Error('the value is not JSON: ' + e.message); } \
+                   if (text === undefined) text = 'null'; \
+                   if (text.length > ROOM) throw new Error('the value is ' + text.length + ' characters long, with ROOM characters left of the 1 MiB all script values share'); \
+                   return text;";
+
+async fn run_script(page: &Page, code: &str, room: usize) -> Result<Value, String> {
+    let cap = CAP.replace("ROOM", &room.to_string());
+    let expression = format!("(async () => (\n{code}\n))");
+    let capped = async |function: String| {
+        let text: String = page
+            .evaluate_expression(format!(
+                "(async () => {{ const value = await {function}(); {cap} }})()"
+            ))
+            .await
+            .map_err(js_error)?
+            .into_value()
+            .map_err(|e| e.to_string())?;
+        serde_json::from_str(&text).map_err(|e| e.to_string())
+    };
+    if page
+        .evaluate_expression(format!("typeof {expression}"))
+        .await
+        .is_ok()
+    {
+        return capped(expression).await;
+    }
+    let as_is = EvaluateParams::builder()
+        .expression(code)
+        .await_promise(true)
+        .return_by_value(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let object = match page.evaluate_expression(as_is).await {
+        Err(CdpError::JavascriptException(e))
+            if exception_text(&e).contains("Illegal return statement") =>
+        {
+            return capped(format!("(async () => {{\n{code}\n}})")).await;
+        }
+        other => other.map_err(js_error)?.object().clone(),
+    };
+    let Some(id) = object.object_id else {
+        let value = object.value.unwrap_or(Value::Null);
+        let length = value.to_string().len();
+        if length > room {
+            return Err(format!(
+                "the value is {length} characters long, with {room} characters left of the 1 MiB all script values share"
+            ));
+        }
+        return Ok(value);
+    };
+    let call = CallFunctionOnParams::builder()
+        .function_declaration(format!("function() {{ const value = this; {cap} }}"))
+        .object_id(id.clone())
+        .return_by_value(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let text = page.execute(call).await;
+    let _ = page.execute(ReleaseObjectParams::new(id)).await;
+    let text = text.map_err(js_error)?.result;
+    if let Some(e) = text.exception_details {
+        return Err(exception_text(&e));
+    }
+    let text = text
+        .result
+        .value
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "null".into());
+    serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
 fn later(wait: Duration) -> Instant {
@@ -1099,5 +1147,44 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
             error.contains("action 1 (click)") && error.contains("ran out of time"),
             "{error}"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn script_statements_give_the_value_of_the_last_one() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let done = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "executeJavascript", "code": "document.title = 'feed'; document.title;"},
+                {"type": "executeJavascript", "code": "x = 1; 1"},
+                {"type": "executeJavascript", "code": "const f = () => 2; new Promise(r => setTimeout(() => r(f()), 50))"},
+                {"type": "executeJavascript", "code": "const o = {n: [1, 2]}; o"},
+                {"type": "executeJavascript", "code": "const y = 3; return y;"},
+                {"type": "executeJavascript", "code": "let u = 1; undefined"}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        let big = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "executeJavascript", "code": "const big = {s: 'x'.repeat(2000000)}; big"}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        renderer.close().await;
+        assert_eq!(
+            done.expect("scripts run").1,
+            vec![
+                serde_json::json!("feed"),
+                serde_json::json!(1),
+                serde_json::json!(2),
+                serde_json::json!({"n": [1, 2]}),
+                serde_json::json!(3),
+                serde_json::Value::Null
+            ]
+        );
+        let error = big.unwrap_err().to_string();
+        assert!(error.contains("characters left"), "{error}");
     }
 }

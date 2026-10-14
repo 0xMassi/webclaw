@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
@@ -146,6 +147,17 @@ class Offline(unittest.TestCase):
             with mock.patch.object(wc, "binary_path", return_value=fake):
                 with self.assertWarnsRegex(wc.WebclawWarning, "^No content extracted from x$"):
                     self.assertEqual(wc.scrape("https://a/"), "1\n")
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_repeated_log_warnings_collapse(self):
+        log = ("for i in range(3): print(f'\\x1b[2m2026-10-14T19:39:41.0{i}Z\\x1b[0m \\x1b[33m WARN\\x1b[0m "
+               "webclaw_fetch::crawler: frontier full, dropping links cap=500', file=sys.stderr)")
+        with tempfile.TemporaryDirectory() as d:
+            fake = fake_binary(d, log)
+            with mock.patch.object(wc, "binary_path", return_value=fake), warnings.catch_warnings(record=True) as seen:
+                warnings.simplefilter("default")
+                wc.scrape("https://a/")
+        self.assertEqual([str(w.message) for w in seen], ["frontier full, dropping links cap=500"])
 
     @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
     def test_crawl_flags(self):

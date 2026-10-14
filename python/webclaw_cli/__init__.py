@@ -78,6 +78,7 @@ class WebclawWarning(UserWarning):
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_LOG_PREFIX = re.compile(r"^(?:\S+\s+)?WARN\s+(?:[\w:]+:\s+)?")
 
 
 def _warn(stderr: str, stacklevel: int) -> None:
@@ -86,7 +87,7 @@ def _warn(stderr: str, stacklevel: int) -> None:
         if "warning:" in line:
             warnings.warn(line.split("warning:", 1)[1].strip(), WebclawWarning, stacklevel=stacklevel)
         elif re.search(r"\bWARN\b", line):
-            warnings.warn(line, WebclawWarning, stacklevel=stacklevel)
+            warnings.warn(_LOG_PREFIX.sub("", line), WebclawWarning, stacklevel=stacklevel)
 
 
 @functools.lru_cache(maxsize=None)

@@ -185,6 +185,7 @@ impl Relevance {
             .collect();
         shares.sort_by(|a, b| b.total_cmp(a));
         let page = shares.iter().take(BEST_BLOCKS).sum::<f64>() / BEST_BLOCKS as f64;
+        let page = if page > 0.0 { page } else { 0.0 };
         let scores = links
             .iter()
             .map(|(own, around)| {
@@ -499,6 +500,13 @@ mod tests {
         let (off_topic, plain) = rel.rate("# Indexes\n\nB-tree.", &links);
         assert!(on_topic > 0.9 && off_topic == 0.0, "{on_topic} {off_topic}");
         assert!(lifted[0] > plain[0], "{lifted:?} {plain:?}");
+    }
+
+    #[test]
+    fn an_empty_page_rates_a_plain_zero() {
+        let mut rel = super::Relevance::new("window functions");
+        let (page, _) = rel.rate("", &[]);
+        assert!(page == 0.0 && page.is_sign_positive(), "{page}");
     }
 
     #[test]

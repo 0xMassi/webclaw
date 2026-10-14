@@ -307,7 +307,7 @@ Crawls, batches, `--watch` and the MCP server render the same way and share one 
 
 ### Click, type and scroll before reading
 
-With a `browser` build, `--actions` runs steps in the browser once the page has loaded and before webclaw reads it, in the same format as the hosted API's `actions`, so content behind infinite scroll, "load more" buttons, pagination buttons, forms or a slow script ends up in the output. `--scroll` alone scrolls to the end until the page stops growing, at most 20 times (`--scroll 50` for more).
+With a `browser` build, `--actions` runs steps in the browser once the page has loaded and before webclaw reads it, in the same format as the hosted API's `actions`, so content behind infinite scroll, "load more" buttons, pagination buttons, forms or a slow script ends up in the output. `--scroll` alone scrolls to the end until the page stops growing, at most 20 times (`--scroll=50` for more).
 
 ```bash
 webclaw https://quotes.toscrape.com/scroll --scroll

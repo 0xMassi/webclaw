@@ -228,12 +228,13 @@ struct Cli {
     actions: Option<String>,
 
     /// Scroll to the end of the page in the local browser, again and again
-    /// until it stops growing, at most TIMES times (default 20), before
-    /// reading it. Runs before --actions
+    /// until it stops growing, at most TIMES times (default 20, or
+    /// --scroll=50), before reading it. Runs before --actions
     #[arg(
         long,
         value_name = "TIMES",
         num_args = 0..=1,
+        require_equals = true,
         default_missing_value = "20",
         conflicts_with_all = ["crawl", "watch", "map", "brand", "raw_html", "cloud"]
     )]
@@ -3598,6 +3599,15 @@ mod tests {
     use super::*;
 
     use webclaw_core::Content;
+
+    #[test]
+    fn scroll_takes_its_count_only_after_an_equals_sign() {
+        let cli = Cli::try_parse_from(["webclaw", "--scroll", "https://example.com"]).unwrap();
+        assert_eq!(cli.scroll, Some(20));
+        assert_eq!(cli.urls, vec!["https://example.com".to_string()]);
+        let cli = Cli::try_parse_from(["webclaw", "--scroll=5", "https://example.com"]).unwrap();
+        assert_eq!(cli.scroll, Some(5));
+    }
 
     #[test]
     fn one_picker_at_a_time_and_tables_take_no_pick_options() {

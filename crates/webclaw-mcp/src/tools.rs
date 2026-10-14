@@ -155,6 +155,13 @@ pub struct ScrapeParams {
     /// Steps to run in the local browser once the page has loaded, before it is read. The page is always rendered when this is set. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error
     #[schemars(schema_with = "actions_schema")]
     pub actions: Option<Vec<serde_json::Value>>,
+    /// Render the page and also return the responses it loaded whose URL matches this regular expression, "" for all: url, method, status, resource_type, mime_type, request_headers and the body of text responses (at most 100 responses, 1 MB per body, 5 MB in all). Single-page apps load their data as JSON this way, often cleaner than the page. Runs after `actions`, so it also catches what they trigger
+    pub capture_network: Option<String>,
+    /// With `capture_network`, the resource types to keep: a comma list such as "xhr,fetch" (the default), "document", "script", or "all"
+    pub capture_types: Option<String>,
+    /// With `capture_network`, also keep request headers that carry credentials, such as Authorization or API keys (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub capture_credentials: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

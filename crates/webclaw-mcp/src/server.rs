@@ -298,6 +298,20 @@ impl WebclawMcp {
         {
             return Err("chunk returns only the page's chunks, so it cannot carry js_results: drop the executeJavascript steps or chunk".into());
         }
+        let capture = params
+            .capture_network
+            .as_deref()
+            .map(|pattern| {
+                webclaw_fetch::render::NetworkCapture::new(
+                    Some(pattern),
+                    params.capture_types.as_deref(),
+                    params.capture_credentials.unwrap_or(false),
+                )
+            })
+            .transpose()?;
+        if sizes.is_some() && capture.is_some() {
+            return Err("chunk returns only the page's chunks, so it cannot carry captured responses: drop capture_network or chunk".into());
+        }
         let mut config = self.fetch_config.clone();
         apply_render(
             &mut config,
@@ -308,23 +322,39 @@ impl WebclawMcp {
         let render = config
             .render
             .as_ref()
-            .ok_or("actions run in the browser, which is turned off for this call or server")?;
+            .ok_or("actions and capture_network run in the browser, which is turned off for this call or server")?;
         let mut headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
         if let Some(cookies) = params.cookies.as_ref().filter(|c| !c.is_empty()) {
             headers.push(("Cookie".into(), cookies.join("; ")));
         }
-        let (page, results) = render
-            .pool
-            .render_actions(
-                &params.url,
-                None,
-                render.wait_for.as_deref(),
-                &headers,
-                render.block,
-                &actions,
-            )
-            .await
-            .map_err(|e| format!("Render failed: {e}"))?;
+        let (page, results, network) = match &capture {
+            Some(capture) => {
+                render
+                    .pool
+                    .capture(
+                        &params.url,
+                        render.wait_for.as_deref(),
+                        &headers,
+                        render.block,
+                        &actions,
+                        capture,
+                    )
+                    .await
+            }
+            None => render
+                .pool
+                .render_actions(
+                    &params.url,
+                    None,
+                    render.wait_for.as_deref(),
+                    &headers,
+                    render.block,
+                    &actions,
+                )
+                .await
+                .map(|(page, results)| (page, results, Vec::new())),
+        }
+        .map_err(|e| format!("Render failed: {e}"))?;
         webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
         let options = webclaw_core::ExtractionOptions {
             include_selectors: params.include_selectors.clone().unwrap_or_default(),
@@ -347,19 +377,31 @@ impl WebclawMcp {
             .map_err(|e| e.to_string())?;
         }
         let format = params.format.as_deref().unwrap_or("markdown");
-        if format == "json" && !results.is_empty() {
+        let network = capture.is_some().then_some(network);
+        if format == "json" && (!results.is_empty() || network.is_some()) {
             let mut value = serde_json::to_value(&extraction).map_err(|e| e.to_string())?;
-            value["js_results"] = serde_json::Value::Array(results);
+            if !results.is_empty() {
+                value["js_results"] = serde_json::Value::Array(results);
+            }
+            if let Some(network) = network {
+                value["network"] = serde_json::to_value(network).map_err(|e| e.to_string())?;
+            }
             return serde_json::to_string_pretty(&value).map_err(|e| e.to_string());
         }
-        let output = format_page(extraction, format, &params.url);
-        if results.is_empty() {
-            return Ok(output);
+        let mut output = format_page(extraction, format, &params.url);
+        if !results.is_empty() {
+            output = format!(
+                "{output}\n\njs_results:\n```json\n{}\n```",
+                serde_json::to_string_pretty(&results).unwrap_or_default()
+            );
         }
-        Ok(format!(
-            "{output}\n\njs_results:\n```json\n{}\n```",
-            serde_json::to_string_pretty(&results).unwrap_or_default()
-        ))
+        if let Some(network) = network {
+            output = format!(
+                "{output}\n\nnetwork:\n```json\n{}\n```",
+                serde_json::to_string_pretty(&network).unwrap_or_default()
+            );
+        }
+        Ok(output)
     }
 
     #[cfg(not(feature = "browser"))]
@@ -427,13 +469,21 @@ impl WebclawMcp {
     /// Scrape a single URL and extract its content as markdown, LLM-optimized text, plain text, or full JSON.
     /// Pages whose content needs JavaScript are rendered in a local Chrome when this server has browser support; otherwise, and on bot protection, it falls back to the webclaw cloud API when WEBCLAW_API_KEY is set.
     /// With `actions`, in the hosted API's format, the page is rendered and the steps (click, type, press, scroll, wait, waitForSelector, executeJavascript) run before it is read, for infinite scroll, "load more" buttons, tabs and forms.
+    /// With `capture_network`, the page is rendered and the XHR and fetch responses it loaded (the JSON a single-page app gets from its API) come back after the content.
     #[tool]
     async fn scrape(&self, Parameters(params): Parameters<ScrapeParams>) -> Result<String, String> {
         validate_url(&params.url).await?;
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
         let browser = parse_browser(params.browser.as_deref())?;
-        if params.actions.as_ref().is_some_and(|a| !a.is_empty()) {
+        if params.capture_network.is_none()
+            && (params.capture_types.is_some() || params.capture_credentials.is_some())
+        {
+            return Err("capture_types and capture_credentials need capture_network".into());
+        }
+        if params.actions.as_ref().is_some_and(|a| !a.is_empty())
+            || params.capture_network.is_some()
+        {
             return self.act_and_scrape(&params, sizes).await;
         }
         let include = params.include_selectors.unwrap_or_default();

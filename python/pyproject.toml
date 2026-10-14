@@ -8,6 +8,7 @@ description = "Extract web pages for LLMs from Python with the local webclaw bin
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "AGPL-3.0" }
+license-files = ["LICENSE"]
 keywords = ["scraping", "crawler", "markdown", "llm"]
 classifiers = [
     "Programming Language :: Python :: 3",

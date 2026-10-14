@@ -116,8 +116,9 @@ pub struct Prefetched<'a> {
 /// as webclaw's own HTTP client, so a rendered page cannot reach private or
 /// loopback addresses over HTTP. A launched browser also refuses WebSockets
 /// from a public page to those addresses. WebRTC is not checked. A browser
-/// reached through [`Renderer::connect`] gets the HTTP check on every request
-/// it makes while connected.
+/// reached through [`Renderer::connect`] is checked page by page instead,
+/// so its other tabs are left alone, and the frames and workers of a page
+/// it renders are not covered.
 pub struct Renderer {
     browser: Arc<Browser>,
     guard: Option<tokio::task::JoinHandle<()>>,
@@ -189,7 +190,7 @@ impl Renderer {
                 return Err(browser_error(e));
             }
         };
-        Self::start(browser, handler, Some(profile), proxy_login).await
+        Self::start(browser, handler, Some(profile), proxy_login, true).await
     }
 
     /// Use a browser that is already running with its DevTools endpoint at
@@ -202,7 +203,7 @@ impl Renderer {
         let (browser, handler) = Browser::connect_with_config(cdp_url, config)
             .await
             .map_err(browser_error)?;
-        Self::start(browser, handler, None, None).await
+        Self::start(browser, handler, None, None, false).await
     }
 
     async fn start(
@@ -210,6 +211,7 @@ impl Renderer {
         mut handler: chromiumoxide::Handler,
         profile: Option<std::path::PathBuf>,
         proxy_login: Option<(String, String)>,
+        browser_wide: bool,
     ) -> Result<Self, FetchError> {
         let events = tokio::spawn(async move {
             while let Some(event) = handler.next().await {
@@ -220,9 +222,12 @@ impl Renderer {
         });
         let ready = async {
             browser.start_incognito_context().await?;
+            if !browser_wide {
+                return Ok(None);
+            }
             let paused = browser.event_listener::<EventRequestPaused>().await?;
             browser.execute(EnableParams::default()).await?;
-            Ok::<_, chromiumoxide::error::CdpError>(paused)
+            Ok::<_, chromiumoxide::error::CdpError>(Some(paused))
         }
         .await;
         let browser = Arc::new(browser);
@@ -235,7 +240,7 @@ impl Renderer {
         };
         match ready {
             Ok(paused) => {
-                renderer.guard = Some(tokio::spawn(keep_public(browser, paused)));
+                renderer.guard = paused.map(|paused| tokio::spawn(keep_public(browser, paused)));
                 Ok(renderer)
             }
             Err(e) => {
@@ -423,6 +428,7 @@ impl Renderer {
             prefetched.map(|p| (base64(p.html.as_bytes()), response_headers(p.headers)));
         let origin = target.origin();
         let block = options.block;
+        let check_here = self.guard.is_none();
         let guard_page = page.clone();
         let guard = tokio::spawn(async move {
             while let Some(event) = paused.next().await {
@@ -441,7 +447,9 @@ impl Renderer {
                     let _ = guard_page.execute(fulfill).await;
                     continue;
                 }
-                if block.blocks(&event.resource_type) {
+                if block.blocks(&event.resource_type)
+                    || (check_here && !is_public(request_url).await)
+                {
                     let _ = guard_page
                         .execute(FailRequestParams::new(id, ErrorReason::BlockedByClient))
                         .await;
@@ -758,13 +766,8 @@ async fn keep_public(
     let browser = &browser;
     paused
         .for_each_concurrent(None, |event| async move {
-            let url = event.request.url.as_str();
             let id = event.request_id.clone();
-            if !url.starts_with("http")
-                || crate::url_security::validate_public_http_url(url)
-                    .await
-                    .is_ok()
-            {
+            if is_public(event.request.url.as_str()).await {
                 let _ = browser.execute(ContinueRequestParams::new(id)).await;
             } else {
                 let _ = browser
@@ -773,6 +776,13 @@ async fn keep_public(
             }
         })
         .await;
+}
+
+async fn is_public(url: &str) -> bool {
+    !url.starts_with("http")
+        || crate::url_security::validate_public_http_url(url)
+            .await
+            .is_ok()
 }
 
 fn host(url: &str) -> Option<String> {
@@ -945,6 +955,127 @@ mod tests {
         assert_eq!(hits.load(Ordering::SeqCst), 0, "the page reached loopback");
     }
 
+    async fn loopback_listener() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let reached = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = reached.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let log = log.clone();
+                tokio::spawn(async move {
+                    let mut buffer = [0; 1024];
+                    let n = socket.read(&mut buffer).await.unwrap_or(0);
+                    if n > 0 {
+                        let request = String::from_utf8_lossy(&buffer[..n]);
+                        log.lock()
+                            .unwrap()
+                            .push(request.lines().next().unwrap_or_default().to_string());
+                        let body = "<html><body><p>loopback secret</p></body></html>";
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    }
+                });
+            }
+        });
+        (address, reached)
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_connected_browser_checks_its_renders_and_leaves_other_tabs_alone() {
+        let (loopback, reached) = loopback_listener().await;
+        let profile =
+            std::env::temp_dir().join(format!("webclaw-connect-test-{}", std::process::id()));
+        let chrome = std::env::var("WEBCLAW_CHROME")
+            .ok()
+            .or_else(|| {
+                super::INSTALL_PATHS
+                    .iter()
+                    .find(|path| std::path::Path::new(path).exists())
+                    .map(|path| path.to_string())
+            })
+            .expect("a Chrome install");
+        let mut chrome = std::process::Command::new(chrome)
+            .args([
+                "--headless=new",
+                "--remote-debugging-port=0",
+                "--no-first-run",
+            ])
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("Chrome starts");
+        let mut port = None;
+        for _ in 0..100 {
+            port = std::fs::read_to_string(profile.join("DevToolsActivePort"))
+                .ok()
+                .and_then(|text| text.lines().next().map(str::to_string))
+                .filter(|line| !line.is_empty());
+            if port.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let renderer = Renderer::connect(&format!(
+            "http://127.0.0.1:{}",
+            port.expect("DevTools port")
+        ))
+        .await
+        .expect("connects");
+        let html = format!(
+            r#"<html><body><p id="msg">rendered</p><img src="{loopback}/render-img"><script>document.getElementById("msg").textContent = "scripts ran";</script></body></html>"#
+        );
+        let headers = http::HeaderMap::new();
+        let rendered = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: &html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let tab = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            renderer
+                .browser
+                .new_page(format!("{loopback}/user-tab").as_str()),
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let reached = reached.lock().unwrap().clone();
+        renderer.close().await;
+        let _ = chrome.kill();
+        let _ = chrome.wait();
+        let _ = std::fs::remove_dir_all(&profile);
+        assert!(
+            rendered
+                .expect("render succeeds")
+                .html
+                .contains("scripts ran")
+        );
+        assert!(tab.is_ok(), "the other tab stalled");
+        assert!(
+            reached.iter().any(|r| r.contains("/user-tab")),
+            "the other tab was blocked: {reached:?}"
+        );
+        assert!(
+            !reached.iter().any(|r| r.contains("/render-img")),
+            "the render reached loopback: {reached:?}"
+        );
+    }
+
     const CROSS_SITE_FRAME: &str = r#"<html><body><p>framed</p><img src="LOOP/frame-img"><img src="NAMED/frame-named"><img src="http://example.org/redirect"><iframe src="LOOP/frame-nested"></iframe><iframe src="http://example.org/nav"></iframe><script>fetch("LOOP/frame-fetch").catch(() => {}); const xhr = new XMLHttpRequest(); xhr.open("GET", "LOOP/frame-xhr"); xhr.send(); new Worker("/worker.js"); new SharedWorker("/shared.js"); new WebSocket("WSLOOP/frame-ws");</script></body></html>"#;
 
     fn cross_site_fixture(path: &str, loopback: &str) -> (&'static str, &'static str, String) {
@@ -988,25 +1119,7 @@ mod tests {
     #[ignore = "launches Chrome and needs public DNS"]
     async fn no_frame_or_worker_of_a_rendered_page_reaches_loopback() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let loopback = format!("http://{}", target.local_addr().unwrap());
-        let reached = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let log = reached.clone();
-        tokio::spawn(async move {
-            while let Ok((mut socket, _)) = target.accept().await {
-                let log = log.clone();
-                tokio::spawn(async move {
-                    let mut buffer = [0; 1024];
-                    let n = socket.read(&mut buffer).await.unwrap_or(0);
-                    if n > 0 {
-                        let line = String::from_utf8_lossy(&buffer[..n]);
-                        log.lock()
-                            .unwrap()
-                            .push(line.lines().next().unwrap_or_default().to_string());
-                    }
-                });
-            }
-        });
+        let (loopback, reached) = loopback_listener().await;
         let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
         let served = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));

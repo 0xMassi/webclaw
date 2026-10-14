@@ -130,6 +130,11 @@ fn own_rows(table: ElementRef<'_>) -> Vec<Row<'_>> {
             _ => {}
         }
     }
+    sections.sort_by_key(|(name, _)| match *name {
+        "thead" => 0,
+        "tfoot" => 2,
+        _ => 1,
+    });
     let mut rows = Vec::new();
     for (name, trs) in sections {
         let section_end = rows.len() + trs.len();
@@ -597,6 +602,14 @@ mod tests {
         );
         assert_eq!(t.headers, ["A", "B / B2"]);
         assert_eq!(t.rows, strings(&[&["1", "2"], &["3", "4"]]));
+    }
+
+    #[test]
+    fn tfoot_rows_come_last() {
+        let t = one(r#"<table><thead><tr><th>a</th><th>b</th></tr></thead>
+            <tfoot><tr><td>sum</td><td>9</td></tr></tfoot>
+            <tbody><tr><td>x</td><td>4</td></tr><tr><td>y</td><td>5</td></tr></tbody></table>"#);
+        assert_eq!(t.rows, strings(&[&["x", "4"], &["y", "5"], &["sum", "9"]]));
     }
 
     #[test]

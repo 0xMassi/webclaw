@@ -1219,6 +1219,43 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn an_action_that_navigates_to_a_rebound_name_fails_the_render() {
+        let (loopback, reached) = loopback_listener().await;
+        let port = loopback.rsplit(':').next().unwrap().to_string();
+        let rules = format!("--host-resolver-rules=MAP example.net 127.0.0.1:{port}");
+        let renderer = Renderer::launch_with(None, &[rules.as_str()])
+            .await
+            .expect("Chrome launches");
+        let html =
+            r#"<html><body><a id="go" href="http://example.net:81/rebound">go</a></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let rendered = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    actions: super::parse_actions(r##"[{"type": "click", "selector": "#go"}]"##)
+                        .unwrap(),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        let reached = reached.lock().unwrap().clone();
+        assert!(
+            reached.iter().any(|r| r.contains("/rebound")),
+            "the click never navigated: {reached:?}"
+        );
+        let error = rendered.expect_err("the render must fail").to_string();
+        assert!(error.contains("private address 127.0.0.1"), "{error}");
+    }
+
+    #[tokio::test]
     #[ignore = "launches Chrome"]
     async fn a_dropped_renderer_leaves_no_chrome_running() {
         let renderer = Renderer::launch(None).await.expect("Chrome launches");

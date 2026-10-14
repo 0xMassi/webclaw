@@ -129,6 +129,15 @@ class Offline(unittest.TestCase):
             with mock.patch.object(wc, "binary_path", return_value=every), self.assertRaises(wc.WebclawError):
                 list(wc.crawl("https://a/"))
 
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_warnings_and_no_color(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = fake_binary(d, "print(os.environ.get('NO_COLOR'))\n"
+                                  "print('\\x1b[33mwarning:\\x1b[0m No content extracted from x', file=sys.stderr)")
+            with mock.patch.object(wc, "binary_path", return_value=fake):
+                with self.assertWarnsRegex(wc.WebclawWarning, "^No content extracted from x$"):
+                    self.assertEqual(wc.scrape("https://a/"), "1\n")
+
     def test_bad_arguments(self):
         with self.assertRaises(TypeError):
             wc.scrape(SHOP, proxies="x")

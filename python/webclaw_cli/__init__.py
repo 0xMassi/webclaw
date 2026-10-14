@@ -11,10 +11,12 @@ import functools
 import importlib.metadata
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import tempfile
+import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, overload
@@ -25,6 +27,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Options",
     "WebclawError",
+    "WebclawWarning",
     "binary_path",
     "crawl",
     "find_text",
@@ -55,6 +58,22 @@ class WebclawError(RuntimeError):
         super().__init__(message)
         self.stderr = stderr
         self.returncode = returncode
+
+
+class WebclawWarning(UserWarning):
+    """A warning the binary printed on a run that succeeded, such as a page with no content."""
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _warn(stderr: str, stacklevel: int) -> None:
+    for line in stderr.splitlines():
+        line = _ANSI.sub("", line).strip()
+        if "warning:" in line:
+            warnings.warn(line.split("warning:", 1)[1].strip(), WebclawWarning, stacklevel=stacklevel)
+        elif re.search(r"\bWARN\b", line):
+            warnings.warn(line, WebclawWarning, stacklevel=stacklevel)
 
 
 @functools.lru_cache(maxsize=None)
@@ -120,6 +139,7 @@ def _spawn(cmd: list[str], stdin: bool, stderr: Any) -> subprocess.Popen[str]:
         stderr=stderr,
         text=True,
         encoding="utf-8",
+        env={**os.environ, "NO_COLOR": "1"},
         start_new_session=os.name != "nt",
     )
 
@@ -147,6 +167,7 @@ def _run(args: list[str], target: str, options: Options) -> str:
             raise
     if proc.returncode != 0:
         raise _error(err, proc.returncode)
+    _warn(err, 4)
     return out
 
 
@@ -306,9 +327,12 @@ def crawl(
         except BaseException:
             _kill(proc)
             raise
-        if proc.wait() != 0 and failed == pages:
-            err.seek(0)
-            raise _error(err.read().decode("utf-8", "replace"), proc.returncode)
+        proc.wait()
+        err.seek(0)
+        stderr = err.read().decode("utf-8", "replace")
+        if proc.returncode != 0 and failed == pages:
+            raise _error(stderr, proc.returncode)
+        _warn(stderr, 3)
 
 
 def map(url: str, *, limit: int | None = None, **options: Unpack[Options]) -> list[str]:

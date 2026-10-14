@@ -247,9 +247,8 @@ impl Renderer {
             Ok::<_, chromiumoxide::error::CdpError>(Some(paused))
         }
         .await;
-        let browser = Arc::new(browser);
         let mut renderer = Self {
-            browser: browser.clone(),
+            browser: Arc::new(browser),
             guard: None,
             events,
             profile,
@@ -258,11 +257,11 @@ impl Renderer {
         };
         match ready {
             Ok(paused) => {
+                let browser = Arc::downgrade(&renderer.browser);
                 renderer.guard = paused.map(|paused| tokio::spawn(keep_public(browser, paused)));
                 Ok(renderer)
             }
             Err(e) => {
-                drop(browser);
                 renderer.close().await;
                 Err(browser_error(e))
             }
@@ -788,12 +787,15 @@ impl RenderPool {
 }
 
 async fn keep_public(
-    browser: Arc<Browser>,
+    browser: std::sync::Weak<Browser>,
     paused: impl futures_util::Stream<Item = Arc<EventRequestPaused>>,
 ) {
     let browser = &browser;
     paused
         .for_each_concurrent(None, |event| async move {
+            let Some(browser) = browser.upgrade() else {
+                return;
+            };
             let id = event.request_id.clone();
             if is_public(event.request.url.as_str()).await {
                 let _ = browser.execute(ContinueRequestParams::new(id)).await;
@@ -1150,6 +1152,29 @@ mod tests {
             ),
             Err(e) => assert!(e.to_string().contains("private"), "{e}"),
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_dropped_renderer_leaves_no_chrome_running() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let profile = renderer.profile.clone().expect("a launched profile");
+        let running = || {
+            let ps = std::process::Command::new("/bin/ps")
+                .args(["-axo", "command="])
+                .output()
+                .expect("ps runs");
+            String::from_utf8_lossy(&ps.stdout)
+                .lines()
+                .filter(|line| line.contains(profile.to_str().unwrap()))
+                .count()
+        };
+        assert!(running() > 0, "no Chrome found for {}", profile.display());
+        drop(renderer);
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let left = running();
+        let _ = std::fs::remove_dir_all(&profile);
+        assert_eq!(left, 0, "Chrome processes still running after drop");
     }
 
     const CROSS_SITE_FRAME: &str = r#"<html><body><p>framed</p><img src="LOOP/frame-img"><img src="NAMED/frame-named"><img src="http://example.org/redirect"><iframe src="LOOP/frame-nested"></iframe><iframe src="http://example.org/nav"></iframe><script>fetch("LOOP/frame-fetch").catch(() => {}); const xhr = new XMLHttpRequest(); xhr.open("GET", "LOOP/frame-xhr"); xhr.send(); new Worker("/worker.js"); new SharedWorker("/shared.js"); new WebSocket("WSLOOP/frame-ws");</script></body></html>"#;

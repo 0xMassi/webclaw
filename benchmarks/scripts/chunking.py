@@ -88,6 +88,7 @@ def tool_markdown(arm, venv, pages, out):
 def main(label):
     import tiktoken
     enc = tiktoken.get_encoding("cl100k_base")
+    o200k = tiktoken.get_encoding("o200k_base")
     res = ROOT / "results" / label
     out = WORK / "chunking-out" / label
     shutil.rmtree(out, ignore_errors=True)
@@ -185,7 +186,8 @@ def main(label):
                      "sentences": len(sentences), "sentences_whole": sum(any(x in c for c in flat) for x in sentences),
                      "ends": max(len(r["chunks"]) - 1, 0),
                      "ends_mid": sum(map(ends_mid_sentence, r["chunks"][:-1])),
-                     "estimates": r.get("estimates"), "questions": q_rows})
+                     "estimates": r.get("estimates"), "questions": q_rows,
+                     "o200k": [len(o200k.encode(c, disallowed_special=())) for c in r["chunks"]] if "estimates" in r else None})
     (res / "chunking-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
 
     arms = list(dict.fromkeys(r["arm"] for r in rows))
@@ -229,10 +231,13 @@ def main(label):
                 f"{sum(q['within512'] for q in qs)}/{len(qs)} | {sum(q['within1024'] for q in qs)}/{len(qs)} | "
                 f"{pct([r['seconds'] for r in group], .5):.3f} |")
         lines.append("")
-    ratios = [t / max(e, 1) for r in rows if r["arm"] == "webclaw --chunk" and r["estimates"]
-              for t, e in zip(r["tokens"], r["estimates"])]
-    lines += [f"webclaw's `tokens` estimate against cl100k over {len(ratios)} chunks: cl100k / estimate p5 "
-              f"{pct(ratios, .05):.2f}, p50 {pct(ratios, .5):.2f}, p95 {pct(ratios, .95):.2f}.", ""]
+    own = [r for r in rows if r["arm"] == "webclaw --chunk" and r["estimates"]]
+    for name, key in (("cl100k", "tokens"), ("o200k", "o200k")):
+        ratios = [t / max(e, 1) for r in own for t, e in zip(r[key], r["estimates"])]
+        above = 100 * sum(t > r["size"] for r in own for t in r[key]) / max(len(ratios), 1)
+        lines += [f"webclaw's `tokens` estimate against {name} over {len(ratios)} chunks: {name} / estimate p5 "
+                  f"{pct(ratios, .05):.2f}, p50 {pct(ratios, .5):.2f}, p95 {pct(ratios, .95):.2f}; "
+                  f"{above:.1f}% of chunks are above the target in {name} tokens.", ""]
     unreachable = sorted({r["arm"] for r in rows if not all(q["any"] for q in r["questions"])})
     lines += ["Every answer sits in some chunk for every arm." if not unreachable else
               "Arms where some answer is in no chunk: " + ", ".join(unreachable), ""]

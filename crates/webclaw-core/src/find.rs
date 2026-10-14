@@ -21,7 +21,7 @@ const MAX_CLASSES: usize = 32;
 
 /// One element a search found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Found {
+pub struct FoundElement {
     /// A CSS selector that picks this element alone on this page: its path
     /// from the nearest ancestor with an id no other element has, or from
     /// the root. The path keeps its last 64 steps, so on a page nested deeper
@@ -33,12 +33,12 @@ pub struct Found {
 
 /// Every element like an example, and one CSS selector that picks them all.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Similar {
+pub struct SimilarSet {
     /// Picks exactly `matches` on this page; reuse it with [`crate::select()`]
     /// or [`crate::select_records()`].
     pub selector: String,
     /// The example and every element like it, in document order.
-    pub matches: Vec<Found>,
+    pub matches: Vec<FoundElement>,
 }
 
 /// Why a search could not run. Echoed input is cut to its first 100
@@ -122,7 +122,7 @@ impl TextMatch {
 /// What picks the example for [`find_similar`]: the first element it matches
 /// in document order.
 #[derive(Debug, Clone, Copy)]
-pub enum Example<'a> {
+pub enum FindExample<'a> {
     /// A CSS selector; a `::text`, `::html` or `::attr(NAME)` ending is
     /// ignored.
     Css(&'a str),
@@ -134,7 +134,7 @@ pub enum Example<'a> {
 }
 
 /// The deepest elements whose text matches, in document order.
-pub fn find_text(html: &str, text: &TextMatch) -> Vec<Found> {
+pub fn find_text(html: &str, text: &TextMatch) -> Vec<FoundElement> {
     let document = Html::parse_document(html);
     found_all(&document, matching(&document, text))
 }
@@ -151,17 +151,17 @@ pub fn find_text(html: &str, text: &TextMatch) -> Vec<Found> {
 /// that every match carries come back. So a class that only some items carry
 /// goes, while one that tells two parts of an item apart stays. The selector
 /// returned is that shortest tail. `None` when nothing matches the example.
-pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, FindError> {
+pub fn find_similar(html: &str, example: FindExample) -> Result<Option<SimilarSet>, FindError> {
     let document = Html::parse_document(html);
     let example = match example {
-        Example::Css(css) => {
+        FindExample::Css(css) => {
             let selector = crate::select::Query::parse(css)
                 .ok()
                 .and_then(|query| query.css)
                 .ok_or_else(|| FindError::Selector(short(css)))?;
             document.select(&selector).next()
         }
-        Example::XPath(expression) => {
+        FindExample::XPath(expression) => {
             crate::xpath::first_element(html, expression)?.and_then(|index| {
                 document
                     .root_element()
@@ -170,7 +170,7 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Fin
                     .nth(index)
             })
         }
-        Example::Text(text) => matching(&document, text).into_iter().next(),
+        FindExample::Text(text) => matching(&document, text).into_iter().next(),
     };
     let Some(example) = example else {
         return Ok(None);
@@ -260,7 +260,7 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Fin
         }
     }
     let start = tail(&document, &steps, from, &matched)?;
-    Ok(Some(Similar {
+    Ok(Some(SimilarSet {
         selector: render(&steps, start),
         matches: found_all(&document, matched),
     }))
@@ -389,7 +389,7 @@ fn shape<'a>(element: ElementRef<'a>) -> HashSet<&'a str> {
         .collect()
 }
 
-fn found_all(document: &Html, elements: Vec<ElementRef>) -> Vec<Found> {
+fn found_all(document: &Html, elements: Vec<ElementRef>) -> Vec<FoundElement> {
     let mut ids: HashMap<&str, usize> = HashMap::new();
     for element in document
         .root_element()
@@ -425,7 +425,7 @@ fn found_all(document: &Html, elements: Vec<ElementRef>) -> Vec<Found> {
                 }
             }
             path.reverse();
-            Found {
+            FoundElement {
                 selector: path.join(" > "),
                 text: visible_text(element),
             }
@@ -525,7 +525,7 @@ mod tests {
         <script>var x = "Tipping";</script>
         </body></html>"#;
 
-    fn texts(found: &[Found]) -> Vec<&str> {
+    fn texts(found: &[FoundElement]) -> Vec<&str> {
         found.iter().map(|f| f.text.as_str()).collect()
     }
 
@@ -576,7 +576,9 @@ mod tests {
     #[test]
     fn similar_from_text_finds_the_siblings_and_a_reusable_selector() {
         let text = TextMatch::text("Tipping", true, false).unwrap();
-        let similar = find_similar(SHOP, Example::Text(&text)).unwrap().unwrap();
+        let similar = find_similar(SHOP, FindExample::Text(&text))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             texts(&similar.matches),
             ["A Light", "Tipping", "Soumission"]
@@ -590,11 +592,11 @@ mod tests {
 
     #[test]
     fn a_variant_class_is_dropped_but_a_distinguishing_one_is_kept() {
-        let similar = find_similar(SHOP, Example::Css("article.sale"))
+        let similar = find_similar(SHOP, FindExample::Css("article.sale"))
             .unwrap()
             .unwrap();
         assert_eq!(similar.matches.len(), 3);
-        let similar = find_similar(SHOP, Example::Css("p.price"))
+        let similar = find_similar(SHOP, FindExample::Css("p.price"))
             .unwrap()
             .unwrap();
         assert_eq!(texts(&similar.matches), ["£51.77", "£53.74", "£50.10"]);
@@ -609,7 +611,9 @@ mod tests {
             <li><h3><span><em>Markets</em></span></h3></li>
         </ul>"#;
         let text = TextMatch::text("live vote count", true, false).unwrap();
-        let similar = find_similar(page, Example::Text(&text)).unwrap().unwrap();
+        let similar = find_similar(page, FindExample::Text(&text))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             texts(&similar.matches),
             ["Live Vote count", "Storm warning", "Markets"]
@@ -621,7 +625,7 @@ mod tests {
     fn an_active_item_finds_its_siblings() {
         let page = r#"<nav><a class="tab">Home</a><a class="tab active">Docs</a><a class="tab">Blog</a></nav>
             <p><a class="more">Read more</a></p>"#;
-        let similar = find_similar(page, Example::Css("a.active"))
+        let similar = find_similar(page, FindExample::Css("a.active"))
             .unwrap()
             .unwrap();
         assert_eq!(texts(&similar.matches), ["Home", "Docs", "Blog"]);
@@ -636,13 +640,15 @@ mod tests {
             "</div>".repeat(3000)
         );
         let text = TextMatch::text("b", true, false).unwrap();
-        let similar = find_similar(&page, Example::Text(&text)).unwrap().unwrap();
+        let similar = find_similar(&page, FindExample::Text(&text))
+            .unwrap()
+            .unwrap();
         assert_eq!(texts(&similar.matches), ["a", "b"]);
     }
 
     #[test]
     fn similar_from_xpath() {
-        let similar = find_similar(SHOP, Example::XPath("//p[@class='label']"))
+        let similar = find_similar(SHOP, FindExample::XPath("//p[@class='label']"))
             .unwrap()
             .unwrap();
         assert_eq!(texts(&similar.matches), ["New", "Sale", "Old"]);
@@ -650,14 +656,14 @@ mod tests {
 
     #[test]
     fn nothing_matches_the_example() {
-        assert_eq!(find_similar(SHOP, Example::Css("table")).unwrap(), None);
-        assert!(find_similar(SHOP, Example::Css("li[")).is_err());
+        assert_eq!(find_similar(SHOP, FindExample::Css("table")).unwrap(), None);
+        assert!(find_similar(SHOP, FindExample::Css("li[")).is_err());
     }
 
     #[test]
     fn odd_class_names_are_escaped() {
         let page = r#"<ul><li class="w-1/2 2col md:flex -1">a</li><li class="w-1/2 2col md:flex -1">b</li></ul>"#;
-        let similar = find_similar(page, Example::Css("li")).unwrap().unwrap();
+        let similar = find_similar(page, FindExample::Css("li")).unwrap().unwrap();
         assert_eq!(texts(&similar.matches), ["a", "b"]);
         assert_eq!(
             crate::select(page, None, &similar.selector).unwrap(),
@@ -680,7 +686,9 @@ mod tests {
             "html > body > ul > li:nth-of-type(100000)"
         );
         let text = TextMatch::text("item 7", true, false).unwrap();
-        let similar = find_similar(&page, Example::Text(&text)).unwrap().unwrap();
+        let similar = find_similar(&page, FindExample::Text(&text))
+            .unwrap()
+            .unwrap();
         assert_eq!(similar.matches.len(), 100_000);
         assert!(start.elapsed().as_secs() < 30, "{:?}", start.elapsed());
     }
@@ -698,7 +706,9 @@ mod tests {
                 .collect::<String>()
         );
         let text = TextMatch::text("t3", true, false).unwrap();
-        let similar = find_similar(&page, Example::Text(&text)).unwrap().unwrap();
+        let similar = find_similar(&page, FindExample::Text(&text))
+            .unwrap()
+            .unwrap();
         assert_eq!(similar.matches.len(), 20);
         for step in similar.selector.split(" > ") {
             assert!(step.matches('.').count() <= MAX_CLASSES, "{step}");
@@ -713,7 +723,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.len() < 400, "{} bytes", err.len());
-        let err = find_similar(SHOP, Example::Css(&format!("{}[", "a".repeat(100_000))))
+        let err = find_similar(SHOP, FindExample::Css(&format!("{}[", "a".repeat(100_000))))
             .unwrap_err()
             .to_string();
         assert!(err.len() < 400, "{} bytes", err.len());
@@ -769,10 +779,10 @@ mod tests {
     #[test]
     fn an_example_picked_through_a_value_uses_its_element() {
         for example in [
-            Example::Css("h3 a::attr(href)"),
-            Example::Css("h3 a::text"),
-            Example::XPath("//h3/a/@href"),
-            Example::XPath("//h3/a/text()"),
+            FindExample::Css("h3 a::attr(href)"),
+            FindExample::Css("h3 a::text"),
+            FindExample::XPath("//h3/a/@href"),
+            FindExample::XPath("//h3/a/text()"),
         ] {
             let similar = find_similar(SHOP, example).unwrap().unwrap();
             assert_eq!(
@@ -815,7 +825,9 @@ mod tests {
             <li><h2><span class="company"><a>Gamma</a></span><span class="location"><a>Oslo</a></span></h2></li>
         </ol>"#;
         let text = TextMatch::text("beta", true, false).unwrap();
-        let similar = find_similar(page, Example::Text(&text)).unwrap().unwrap();
+        let similar = find_similar(page, FindExample::Text(&text))
+            .unwrap()
+            .unwrap();
         assert_eq!(texts(&similar.matches), ["Acme", "Beta", "Gamma"]);
     }
 }

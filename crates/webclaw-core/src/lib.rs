@@ -30,7 +30,9 @@ pub use brand::BrandIdentity;
 pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;
-pub use find::{Example, FindError, Found, Similar, TextMatch, find_similar, find_text};
+pub use find::{
+    FindError, FindExample, FoundElement, SimilarSet, TextMatch, find_similar, find_text,
+};
 pub use focus::{focus, focus_extraction};
 pub use llm::to_llm_text;
 pub use select::{SelectError, select, select_records};

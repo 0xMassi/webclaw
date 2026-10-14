@@ -1333,9 +1333,9 @@ async fn run_select(cli: &Cli) -> Result<(), String> {
     let json = match (&cli.select, &cli.xpath, &text) {
         _ if cli.similar => {
             let example = match (&cli.select, &cli.xpath, &text) {
-                (Some(css), _, _) => webclaw_core::Example::Css(css),
-                (_, Some(xpath), _) => webclaw_core::Example::XPath(xpath),
-                (_, _, Some(text)) => webclaw_core::Example::Text(text),
+                (Some(css), _, _) => webclaw_core::FindExample::Css(css),
+                (_, Some(xpath), _) => webclaw_core::FindExample::XPath(xpath),
+                (_, _, Some(text)) => webclaw_core::FindExample::Text(text),
                 _ => return Err("--similar needs an example".into()),
             };
             let similar = webclaw_core::find_similar(html, example)

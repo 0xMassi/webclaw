@@ -28,7 +28,8 @@ pub struct Table {
     /// Body rows, each as wide as the table. Empty rows are left out.
     pub rows: Vec<Vec<String>>,
     /// Set when the table was cut short to keep memory bounded: it holds its
-    /// first rows only, and the tables after it on the page are left out.
+    /// first rows only. When the cut came from the page's own budget, the
+    /// tables after it on the page are left out as well.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
 }
@@ -314,16 +315,18 @@ fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
         spend(names)?
     };
     let mut out = Vec::new();
+    let mut page_cut = false;
     for &r in &body_rows {
         match spend((0..width).map(|c| text(r, c).to_string()).collect()) {
             Some(cells) => out.push(cells),
             None => {
                 truncated = true;
+                page_cut = budget.bytes <= MAX_TABLE_BYTES;
                 break;
             }
         }
     }
-    budget.bytes = if truncated {
+    budget.bytes = if page_cut {
         0
     } else {
         budget.bytes - (MAX_TABLE_BYTES.min(budget.bytes) - left)
@@ -662,6 +665,20 @@ mod tests {
             <tr><td colspan="2"><form action="/next"><input type="submit" value="Next"></form></td></tr></table>"#,
         )
         .is_empty());
+    }
+
+    #[test]
+    fn a_table_at_the_slot_cap_leaves_later_tables() {
+        let big = format!(
+            "<table><tr><th>a</th><th>b</th></tr>{}</table>",
+            r#"<tr><td colspan="999">x</td><td>y</td></tr>"#.repeat(1200)
+        );
+        let small = "<table><tr><th>k</th><th>v</th></tr><tr><td>1</td><td>2</td></tr></table>";
+        let found = tables(&format!("{big}{small}"));
+        assert_eq!(found.len(), 2);
+        assert!(found[0].truncated);
+        assert!(!found[1].truncated);
+        assert_eq!(found[1].rows, strings(&[&["1", "2"]]));
     }
 
     #[test]

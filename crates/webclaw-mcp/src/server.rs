@@ -294,20 +294,21 @@ impl WebclawMcp {
             Capture::Jpeg => true,
             Capture::Pdf => {
                 let mut data = Capped(Vec::new());
-                let printed = render
+                let (printed, js_results) = render
                     .pool
-                    .pdf(
+                    .pdf_actions(
                         url,
                         wait_for,
                         &[],
                         webclaw_fetch::render::PdfOptions::default(),
+                        &actions,
                         &mut data,
                     )
                     .await
                     .map_err(|e| format!("PDF failed: {e}"))?;
                 webclaw_fetch::FetchError::check_status(printed.status)
                     .map_err(|e| e.to_string())?;
-                return Ok(CallToolResult::success(vec![
+                let mut content = vec![
                     rmcp::model::ContentBlock::resource(
                         rmcp::model::ResourceContents::blob(
                             webclaw_fetch::render::base64(&data.0),
@@ -316,7 +317,13 @@ impl WebclawMcp {
                         .with_mime_type("application/pdf"),
                     ),
                     rmcp::model::ContentBlock::text(printed.url),
-                ]));
+                ];
+                if !js_results.is_empty() {
+                    content.push(rmcp::model::ContentBlock::text(
+                        serde_json::to_string_pretty(&js_results).unwrap_or_default(),
+                    ));
+                }
+                return Ok(CallToolResult::success(content));
             }
         };
         let (shot, js_results) = render

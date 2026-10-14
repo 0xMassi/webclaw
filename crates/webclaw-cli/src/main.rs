@@ -1275,6 +1275,7 @@ async fn run_screenshot(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), Stri
 #[cfg(feature = "browser")]
 async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
     use webclaw_fetch::render::{Paper, PdfOptions};
+    let actions = page_actions(cli)?;
     let config = build_fetch_config(cli);
     let render = config
         .render
@@ -1285,7 +1286,7 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
         std::fs::File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     let printed = render
         .pool
-        .pdf(
+        .pdf_actions(
             url,
             render.wait_for.as_deref(),
             &headers,
@@ -1298,18 +1299,20 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
                 print_background: cli.print_background,
                 scale: cli.scale,
             },
+            &actions,
             &mut file,
         )
         .await;
     close_browser(&config).await;
     let printed = printed
         .map_err(|e| match e.to_string() {
-            e if e.contains(" timed out after ") => {
+            e if e.contains("the render timeout covers") => {
                 format!("PDF error: {e}; raise it with --timeout")
             }
             e => format!("PDF error: {e}"),
         })
-        .and_then(|printed| {
+        .and_then(|(printed, js_results)| {
+            print_script_results(&js_results);
             webclaw_fetch::FetchError::check_status(printed.status)
                 .map(|()| printed)
                 .map_err(|e| e.to_string())

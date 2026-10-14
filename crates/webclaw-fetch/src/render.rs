@@ -460,7 +460,19 @@ impl Renderer {
         pdf: PdfOptions,
         out: &mut (dyn std::io::Write + Send),
     ) -> Result<Pdf, FetchError> {
-        self.print(url, None, options, pdf, out).await
+        Ok(self.pdf_actions(url, options, pdf, &[], out).await?.0)
+    }
+
+    /// [`Renderer::pdf`] after `actions`, as [`Renderer::render_actions`] runs them.
+    pub async fn pdf_actions(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        pdf: PdfOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
+        self.print(url, None, options, pdf, actions, out).await
     }
 
     async fn print(
@@ -469,8 +481,9 @@ impl Renderer {
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
         pdf: PdfOptions,
+        actions: &[Action],
         out: &mut (dyn std::io::Write + Send),
-    ) -> Result<Pdf, FetchError> {
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
         if !(0.1..=2.0).contains(&pdf.scale) {
             return Err(FetchError::Build(format!(
                 "PDF scale must be between 0.1 and 2, got {}",
@@ -498,7 +511,7 @@ impl Renderer {
                     block: Block::default(),
                     ..options.clone()
                 },
-                &[],
+                actions,
                 Some(SCREENSHOT_VIEWPORT),
                 async move |page| Ok(copy_pdf(page, params, out).await),
             )
@@ -506,17 +519,17 @@ impl Renderer {
             .map_err(|e| match e {
                 FetchError::Build(message) if message.ends_with(" timed out") => {
                     FetchError::Build(format!(
-                        "{message} after {}s, a limit that covers loading the page and printing it",
-                        options.timeout.as_secs()
+                        "{message}: the render timeout covers loading the page, its actions and printing it"
                     ))
                 }
                 e => e,
             })?;
-        Ok(Pdf {
+        let printed = Pdf {
             bytes: visited.value.map_err(FetchError::Build)?,
             status: visited.status,
             url: visited.url,
-        })
+        };
+        Ok((printed, visited.scripts))
     }
 
     async fn visit<T>(
@@ -937,6 +950,22 @@ impl RenderPool {
         pdf: PdfOptions,
         out: &mut (dyn std::io::Write + Send),
     ) -> Result<Pdf, FetchError> {
+        Ok(self
+            .pdf_actions(url, wait_for, headers, pdf, &[], out)
+            .await?
+            .0)
+    }
+
+    /// Print `url` to PDF after `actions`; see [`Renderer::pdf_actions`].
+    pub async fn pdf_actions(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        pdf: PdfOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
         let _tab = self
             .tabs
             .acquire()
@@ -944,10 +973,11 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .pdf(
+            .pdf_actions(
                 url,
                 &self.options(wait_for, headers, Block::default()),
                 pdf,
+                actions,
                 out,
             )
             .await
@@ -1898,7 +1928,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "launches Chrome"]
     async fn a_rendered_page_prints_to_a_pdf_with_its_text() {
-        let html = r#"<html><body><h1>Quarterly harvest report</h1><p id="late"></p><h2 style="break-before: page">Second sheet</h2><script>document.getElementById("late").textContent = "Pumpkins grown by script";</script></body></html>"#;
+        let html = r#"<html><body><h1>Quarterly harvest report</h1><p id="late"></p><button id="more" onclick="document.getElementById('extra').textContent = 'Turnips added by a click'">more</button><p id="extra"></p><h2 style="break-before: page">Second sheet</h2><script>document.getElementById("late").textContent = "Pumpkins grown by script";</script></body></html>"#;
+        let actions = super::parse_actions(
+            r##"[{"type": "click", "selector": "#more"}, {"type": "executeJavascript", "code": "document.title = 'harvest'"}]"##,
+        )
+        .unwrap();
         let headers = http::HeaderMap::new();
         let renderer = Renderer::launch(None).await.expect("Chrome launches");
         let options = RenderOptions {
@@ -1919,6 +1953,7 @@ mod tests {
                         print_background: true,
                         ..Default::default()
                     },
+                    &actions,
                     out,
                 )
                 .await
@@ -1940,6 +1975,7 @@ mod tests {
                     ..Default::default()
                 },
                 super::PdfOptions::default(),
+                &[],
                 &mut Vec::new(),
             )
             .await;
@@ -1955,7 +1991,8 @@ mod tests {
             )
             .await;
         renderer.close().await;
-        let printed = printed.expect("PDF prints");
+        let (printed, js_results) = printed.expect("PDF prints");
+        assert_eq!(js_results, [serde_json::json!("harvest")]);
         assert_eq!(printed.bytes, data.len() as u64);
         assert_eq!(&data[..5], b"%PDF-");
         let refused = refused.expect_err("a full writer stops the print");
@@ -1969,6 +2006,7 @@ mod tests {
         for text in [
             "Quarterly harvest report",
             "Pumpkins grown by script",
+            "Turnips added by a click",
             "Second sheet",
         ] {
             assert!(
@@ -1981,7 +2019,7 @@ mod tests {
         let slow = slow.expect_err("a page that never settles times out");
         assert!(
             slow.to_string()
-                .contains("covers loading the page and printing it"),
+                .contains("the render timeout covers loading the page"),
             "{slow}"
         );
     }

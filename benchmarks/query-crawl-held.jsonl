@@ -1,0 +1,48 @@
+{"site": "kubernetes.io", "q": "How do I run a copy of a pod on every node?", "answer": ["https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/"], "snippet": "DaemonSet"}
+{"site": "kubernetes.io", "q": "Where should I store passwords and API tokens that my pods need?", "answer": ["https://kubernetes.io/docs/concepts/configuration/secret/"], "snippet": "Secret"}
+{"site": "kubernetes.io", "q": "How do I expose HTTP routes from outside the cluster to services inside it?", "answer": ["https://kubernetes.io/docs/concepts/services-networking/ingress/"], "snippet": "Ingress"}
+{"site": "kubernetes.io", "q": "What is a PersistentVolumeClaim?", "answer": ["https://kubernetes.io/docs/concepts/storage/persistent-volumes/"], "snippet": "PersistentVolumeClaim"}
+{"site": "kubernetes.io", "q": "How do taints and tolerations keep pods off certain nodes?", "answer": ["https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/"], "snippet": "toleration"}
+{"site": "kubernetes.io", "q": "How can I run a setup step before the app containers in a pod start?", "answer": ["https://kubernetes.io/docs/concepts/workloads/pods/init-containers/"], "snippet": "init container"}
+{"site": "kubernetes.io", "q": "How do I schedule a job to run every night at midnight?", "answer": ["https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/"], "snippet": "CronJob"}
+{"site": "kubernetes.io", "q": "How do I set CPU and memory limits for a container?", "answer": ["https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"], "snippet": "limits"}
+{"site": "kubernetes.io", "q": "How can I block traffic between pods in different namespaces?", "answer": ["https://kubernetes.io/docs/concepts/services-networking/network-policies/"], "snippet": "NetworkPolicy"}
+{"site": "kubernetes.io", "q": "Which workload gives each replica a stable network identity and its own storage?", "answer": ["https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/"], "snippet": "StatefulSet"}
+{"site": "kubernetes.io", "q": "How do label selectors work?", "answer": ["https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/"], "snippet": "selector"}
+{"site": "kubernetes.io", "q": "What is the PreStop hook?", "answer": ["https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/"], "snippet": "PreStop"}
+{"site": "docs.djangoproject.com", "q": "How do I wrap several database writes in one atomic transaction?", "answer": ["https://docs.djangoproject.com/en/6.1/topics/db/transactions/"], "snippet": "atomic"}
+{"site": "docs.djangoproject.com", "q": "What does select_related do?", "answer": ["https://docs.djangoproject.com/en/6.1/ref/models/querysets/"], "snippet": "select_related"}
+{"site": "docs.djangoproject.com", "q": "How do I run code every time a model instance is saved?", "answer": ["https://docs.djangoproject.com/en/6.1/topics/signals/", "https://docs.djangoproject.com/en/6.1/ref/signals/"], "snippet": "pre_save"}
+{"site": "docs.djangoproject.com", "q": "How do I cache the output of a whole view?", "answer": ["https://docs.djangoproject.com/en/6.1/topics/cache/"], "snippet": "cache_page"}
+{"site": "docs.djangoproject.com", "q": "How do I replace the default User model with my own?", "answer": ["https://docs.djangoproject.com/en/6.1/topics/auth/customizing/"], "snippet": "AUTH_USER_MODEL"}
+{"site": "docs.djangoproject.com", "q": "How do I add my own manage.py command?", "answer": ["https://docs.djangoproject.com/en/6.1/howto/custom-management-commands/"], "snippet": "BaseCommand"}
+{"site": "docs.djangoproject.com", "q": "How do I write code that runs on every request and response?", "answer": ["https://docs.djangoproject.com/en/6.1/topics/http/middleware/"], "snippet": "get_response"}
+{"site": "docs.djangoproject.com", "q": "Why does my form POST fail with a 403 CSRF verification failed error?", "answer": ["https://docs.djangoproject.com/en/6.1/ref/csrf/", "https://docs.djangoproject.com/en/6.1/howto/csrf/"], "snippet": "csrf_token"}
+{"site": "docs.djangoproject.com", "q": "How do I split a long list of results across several pages?", "answer": ["https://docs.djangoproject.com/en/6.1/topics/pagination/", "https://docs.djangoproject.com/en/6.1/ref/paginator/"], "snippet": "Paginator"}
+{"site": "docs.djangoproject.com", "q": "How do I send an email from Django?", "answer": ["https://docs.djangoproject.com/en/6.1/topics/email/"], "snippet": "send_mail"}
+{"site": "docs.djangoproject.com", "q": "How do I choose which columns appear in the admin change list?", "answer": ["https://docs.djangoproject.com/en/6.1/ref/contrib/admin/"], "snippet": "list_display"}
+{"site": "docs.djangoproject.com", "q": "How do I serve CSS and JavaScript files?", "answer": ["https://docs.djangoproject.com/en/6.1/howto/static-files/"], "snippet": "STATIC_URL"}
+{"site": "sqlite.org", "q": "How do I insert a row or update it if it already exists?", "answer": ["https://sqlite.org/lang_upsert.html"], "snippet": "ON CONFLICT"}
+{"site": "sqlite.org", "q": "What is write-ahead logging and how does it help concurrency?", "answer": ["https://sqlite.org/wal.html"], "snippet": "WAL"}
+{"site": "sqlite.org", "q": "How does type affinity work for columns?", "answer": ["https://sqlite.org/datatype3.html"], "snippet": "affinity"}
+{"site": "sqlite.org", "q": "How do I write a recursive query over a tree of rows?", "answer": ["https://sqlite.org/lang_with.html"], "snippet": "RECURSIVE"}
+{"site": "sqlite.org", "q": "How do I do full-text search?", "answer": ["https://sqlite.org/fts5.html", "https://sqlite.org/fts3.html"], "snippet": "full-text"}
+{"site": "sqlite.org", "q": "How do I turn on foreign key enforcement?", "answer": ["https://sqlite.org/foreignkeys.html", "https://sqlite.org/pragma.html"], "snippet": "foreign_keys"}
+{"site": "sqlite.org", "q": "Should I use AUTOINCREMENT on my primary key?", "answer": ["https://sqlite.org/autoinc.html"], "snippet": "AUTOINCREMENT"}
+{"site": "sqlite.org", "q": "How do I compute a running total over ordered rows?", "answer": ["https://sqlite.org/windowfunctions.html"], "snippet": "window"}
+{"site": "sqlite.org", "q": "How do I shrink the database file after deleting lots of data?", "answer": ["https://sqlite.org/lang_vacuum.html"], "snippet": "VACUUM"}
+{"site": "sqlite.org", "q": "How do I extract a value from a JSON column?", "answer": ["https://sqlite.org/json1.html"], "snippet": "json_extract"}
+{"site": "sqlite.org", "q": "What is the maximum size of a database file?", "answer": ["https://sqlite.org/limits.html"], "snippet": "Maximum"}
+{"site": "sqlite.org", "q": "Can I drop a column from an existing table?", "answer": ["https://sqlite.org/lang_altertable.html"], "snippet": "DROP COLUMN"}
+{"site": "go.dev", "q": "How should I name getters in Go?", "answer": ["https://go.dev/doc/effective_go"], "snippet": "Getters"}
+{"site": "go.dev", "q": "Why does Go not have exceptions?", "answer": ["https://go.dev/doc/faq"], "snippet": "exceptions"}
+{"site": "go.dev", "q": "How do I upgrade a module dependency to a newer version?", "answer": ["https://go.dev/doc/modules/managing-dependencies"], "snippet": "go get"}
+{"site": "go.dev", "q": "How do I write a function that works with several numeric types using type parameters?", "answer": ["https://go.dev/doc/tutorial/generics"], "snippet": "type parameter"}
+{"site": "go.dev", "q": "How do I run several SQL statements in one transaction?", "answer": ["https://go.dev/doc/database/execute-transactions"], "snippet": "Tx"}
+{"site": "go.dev", "q": "How does GOGC control how often the garbage collector runs?", "answer": ["https://go.dev/doc/gc-guide"], "snippet": "GOGC"}
+{"site": "go.dev", "q": "How do I find data races in my program?", "answer": ["https://go.dev/doc/articles/race_detector"], "snippet": "-race"}
+{"site": "go.dev", "q": "How do I write a fuzz test?", "answer": ["https://go.dev/doc/tutorial/fuzz", "https://go.dev/doc/security/fuzz/"], "snippet": "Fuzz"}
+{"site": "go.dev", "q": "What is profile-guided optimization and how do I enable it?", "answer": ["https://go.dev/doc/pgo"], "snippet": "default.pgo"}
+{"site": "go.dev", "q": "How should I lay out the directories of a module with several commands?", "answer": ["https://go.dev/doc/modules/layout"], "snippet": "cmd"}
+{"site": "go.dev", "q": "How can I work on two modules at the same time on my machine?", "answer": ["https://go.dev/doc/tutorial/workspaces"], "snippet": "go.work"}
+{"site": "go.dev", "q": "How do I check my code for known vulnerabilities?", "answer": ["https://go.dev/doc/security/vuln/", "https://go.dev/doc/tutorial/govulncheck"], "snippet": "govulncheck"}

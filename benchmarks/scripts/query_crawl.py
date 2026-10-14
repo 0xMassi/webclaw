@@ -2,9 +2,13 @@
 
 usage: query_crawl.py <label>              crawl, then score
        query_crawl.py <label> --rescore    score the saved outputs again
-Each question in ../query-crawl.jsonl names the page(s) that answer it. Every arm crawls from the site's seed
-with the same page budget, depth, concurrency and path prefix, robots.txt obeyed. Breadth-first arms ignore the
-question, so they crawl each site once. QC_ARMS=a,b runs a subset; QC_CACHE=1 lets webclaw reuse its cache.
+Each question names the page(s) that answer it. The questions come in three sets, scored apart: `tuned`
+(../query-crawl.jsonl, the set the scoring weights were chosen on), `held-out` (../query-crawl-held.jsonl, four
+other documentation sites, written by a reviewer after the weights were fixed) and `intl` (../query-crawl-intl.jsonl,
+questions in Japanese, French, Spanish and Chinese on the translated Python docs). Every arm crawls from the site's
+seed with the same page budget, depth, concurrency and path prefix, robots.txt obeyed. Breadth-first arms ignore
+the question, so they crawl each site once. QC_ARMS=a,b and QC_SETS=a,b run a subset; QC_CACHE=1 lets webclaw
+reuse its cache.
 """
 import json, os, statistics, subprocess, sys, time
 from collections import defaultdict
@@ -18,7 +22,16 @@ SITES = {
     "www.postgresql.org": ("https://www.postgresql.org/docs/current/", "/docs/current/"),
     "developer.mozilla.org": ("https://developer.mozilla.org/en-US/docs/Web/HTTP", "/en-US/docs/Web/HTTP"),
     "quotes.toscrape.com": ("https://quotes.toscrape.com/", "/"),
+    "kubernetes.io": ("https://kubernetes.io/docs/concepts/", "/docs/concepts/"),
+    "docs.djangoproject.com": ("https://docs.djangoproject.com/en/6.1/", "/en/6.1/"),
+    "sqlite.org": ("https://sqlite.org/docs.html", "/"),
+    "go.dev": ("https://go.dev/doc/", "/doc/"),
+    "py-ja": ("https://docs.python.org/ja/3/", "/ja/3/"),
+    "py-fr": ("https://docs.python.org/fr/3/", "/fr/3/"),
+    "py-es": ("https://docs.python.org/es/3/", "/es/3/"),
+    "py-zh": ("https://docs.python.org/zh-cn/3/", "/zh-cn/3/"),
 }
+SETS = {"tuned": "query-crawl.jsonl", "held-out": "query-crawl-held.jsonl", "intl": "query-crawl-intl.jsonl"}
 ARMS = {"webclaw-bfs": ("base", False), "webclaw-query": ("base", True), "scrapling-bfs": ("scrapling", False),
         "crawl4ai-bfs": ("crawl4ai", False), "crawl4ai-best-first": ("crawl4ai", True),
         "crawl4ai-adaptive": ("crawl4ai", True)}
@@ -61,13 +74,14 @@ def score(q, arm, crawl):
     order = [norm(p["url"]) for p in crawl["pages"]][:BUDGET]
     hit = next((i + 1 for i, u in enumerate(order) if u in want), None)
     ranked = [norm(u) for u in crawl["ranked"]][:TOP]
-    return {"site": q["site"], "q": q["q"], "arm": arm, "hit": hit, "pages": len(order),
+    return {"set": q["set"], "site": q["site"], "q": q["q"], "arm": arm, "hit": hit, "pages": len(order),
             "hit_t": crawl["pages"][hit - 1].get("t") if hit else None,
             "top": any(u in want for u in ranked), "seconds": crawl["seconds"], "previews": crawl["previews"]}
 
 
 def main(label, rescore):
-    questions = [json.loads(l) for l in open(ROOT / "query-crawl.jsonl")]
+    sets = [s for s in SETS if s in os.environ.get("QC_SETS", ",".join(SETS)).split(",")]
+    questions = [{**json.loads(l), "set": s} for s in sets for l in open(ROOT / SETS[s])]
     arms = [a for a in ARMS if a in os.environ.get("QC_ARMS", ",".join(ARMS)).split(",")]
     res, out_dir = ROOT / "results" / label, WORK / "query-crawl-out" / label
     res.mkdir(parents=True, exist_ok=True)
@@ -78,15 +92,16 @@ def main(label, rescore):
     for arm in arms:
         guided = ARMS[arm][1]
         for i, q in enumerate(questions):
-            key = f"{arm}-{q['site']}-{i if guided else 'all'}"
+            key = f"{arm}-{q['set']}-{q['site']}-{i if guided else 'all'}"
             out = out_dir / f"{key}.json"
-            if not rescore and (guided or not any(r["arm"] == arm and r["site"] == q["site"] for r in rows)):
+            if not rescore and (guided or not any(r["arm"] == arm and r["site"] == q["site"] and r["set"] == q["set"]
+                                                   for r in rows)):
                 run(arm, q["site"], out, q["q"] if guided else None)
             row = score(q, arm, json.loads(out.read_text()))
             rows.append(row)
             print(json.dumps(row), flush=True)
     (res / "query-crawl-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    write_summary(label, rows, arms)
+    write_summary(label, rows, arms, sets)
 
 
 def table(rows, arms):
@@ -110,7 +125,7 @@ def table(rows, arms):
     return lines
 
 
-def write_summary(label, rows, arms):
+def write_summary(label, rows, arms, sets):
     lines = [f"# Question-guided crawl benchmark {label}", "",
              f"Each question names the page that answers it. Every arm crawls from the site's start page with a "
              f"budget of {BUDGET} pages, depth {DEPTH}, concurrency {CONCURRENCY}, the same path prefix, robots.txt "
@@ -118,11 +133,15 @@ def write_summary(label, rows, arms):
              f"fetched. `median pages to answer` counts a miss as {BUDGET + 1}. `answer in output top {TOP}` counts "
              f"questions whose answer page is in the first {TOP} pages of the tool's own ranking (breadth-first arms: "
              f"crawl order). `median seconds to answer` covers found answers only.", "",
-             "## All sites", ""] + table(rows, arms)
-    for site in SITES:
-        site_rows = [r for r in rows if r["site"] == site]
-        if site_rows:
-            lines += ["", f"## {site}", ""] + table(site_rows, arms)
+             "Question sets: `tuned` is the set the scoring weights were chosen on, `held-out` was written after "
+             "they were fixed, on four other sites, and `intl` asks in Japanese, French, Spanish and Chinese."]
+    for name in sets:
+        set_rows = [r for r in rows if r["set"] == name]
+        lines += ["", f"## {name}: all sites", ""] + table(set_rows, arms)
+        for site in SITES:
+            site_rows = [r for r in set_rows if r["site"] == site]
+            if site_rows:
+                lines += ["", f"### {name}: {site}", ""] + table(site_rows, arms)
     previews = [r["previews"] for r in rows if r["arm"] == "crawl4ai-adaptive"]
     if previews:
         lines += ["", f"crawl4ai-adaptive also requested the `<head>` of up to {statistics.median(previews):.0f} "

@@ -23,7 +23,7 @@ def in_scope(url):
 
 
 def keywords(question):
-    return [w for w in re.findall(r"[a-z0-9_]+", question.lower()) if len(w) > 2 and w not in STOP]
+    return [w for w in re.findall(r"\w+", question.lower()) if len(w) > 2 and w not in STOP]
 
 
 def webclaw():

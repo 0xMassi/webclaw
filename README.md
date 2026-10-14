@@ -330,6 +330,21 @@ After a click, a key press or a scroll, webclaw waits until the page and the sit
 
 `--actions` takes one URL and renders the page even with `--render auto`. `js_results` comes in the output with `-f json` or `-f jsonl` and on stderr otherwise, and `--raw-html` prints the page after the steps. The MCP `scrape` and `screenshot` tools take the same list as `actions` and return `js_results` after the content. Local additions are `nth`, `all` and `repeat` on `click`, and `selector`, `repeat` and scrolling to the end on `scroll`. The hosted `screenshot` step is left out, since `--screenshot` does that.
 
+### Capture the JSON a page loads
+
+Single-page apps fetch their data as JSON and build the page from it. With a `browser` build, `--capture-network` renders the page and prints the responses it loaded as a JSON array instead of the page, so you get that JSON as the site's own API returned it:
+
+```bash
+webclaw https://quotes.toscrape.com/scroll --capture-network                  # every XHR and fetch response
+webclaw https://github.com/rust-lang/cargo --capture-network latest-commit
+webclaw https://quotes.toscrape.com/scroll --scroll --capture-network /api/quotes
+webclaw https://example.com --capture-network --capture-types all             # documents, scripts, images too
+```
+
+Each response has its `url`, `method`, `status`, `resource_type`, `mime_type`, the `request_headers` the page set, and the `body` of text responses (JSON, HTML, JavaScript, XML, plain text). Binary bodies are left out. The pattern is a regular expression the URL must match. Only `xhr` and `fetch` responses are kept unless `--capture-types` names others, as a comma list of the browser's resource types or `all`. Request headers that carry credentials (Authorization, API keys, tokens, sessions) are left out unless you pass `--capture-credentials`. Cookies are added by the browser after the page sends a request, so they are never there. At most 100 responses are kept, each body is cut to 1 MB and all bodies together to 5 MB, and a cut body has `truncated` set.
+
+A capturing render waits until the page's requests go quiet, up to a third of `--timeout`, before it reads them. With `--actions` or `--scroll` the steps run first, so the responses they trigger are captured too. The capture only sees what the browser was allowed to load: a request the address checks above or `--block` stop never gets a response. The requests a cross-site frame makes itself are not captured. The MCP `scrape` tool takes the same options as `capture_network`, `capture_types` and `capture_credentials`, and returns the responses after the content, or under `network` with `format: "json"`.
+
 ### Crawl a documentation site
 
 ```bash

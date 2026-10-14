@@ -38,6 +38,8 @@ const MAX_SLOTS: usize = 1_000_000;
 const MAX_TABLE_BYTES: usize = 32 << 20;
 const MAX_PAGE_BYTES: usize = 64 << 20;
 const SLOT_BYTES: usize = 32;
+const MAX_CELL_BYTES: usize = 64 << 10;
+const MAX_PAGE_NODES: usize = 10_000_000;
 const EMPTY: u32 = u32::MAX;
 const SKIP: &[&str] = &["script", "style", "noscript", "template"];
 const BLOCK: &[&str] = &[
@@ -76,15 +78,31 @@ static TABLE: LazyLock<Selector> = LazyLock::new(|| Selector::parse("table").unw
 
 /// Every data table in `html`, in document order. Hidden tables and cells
 /// are left out, the way [`crate::page_links`] leaves out hidden links.
-/// Very large tables are cut short and flagged with [`Table::truncated`].
+/// Very large tables are cut short and flagged with [`Table::truncated`],
+/// and a cell keeps its first 64 KB of text.
 pub fn tables(html: &str) -> Vec<Table> {
     let mut doc = Html::parse_document(html);
     noise::strip_hidden(&mut doc);
-    let mut budget = MAX_PAGE_BYTES;
-    doc.select(&TABLE)
-        .map_while(|table| (budget > 0).then(|| data_table(table, &mut budget)))
-        .flatten()
-        .collect()
+    let mut budget = Budget {
+        bytes: MAX_PAGE_BYTES,
+        nodes: MAX_PAGE_NODES,
+    };
+    let mut found: Vec<Table> = Vec::new();
+    for table in doc.select(&TABLE) {
+        if budget.bytes == 0 {
+            if let Some(last) = found.last_mut() {
+                last.truncated = true;
+            }
+            break;
+        }
+        found.extend(data_table(table, &mut budget));
+    }
+    found
+}
+
+struct Budget {
+    bytes: usize,
+    nodes: usize,
 }
 
 struct Row<'a> {
@@ -127,7 +145,7 @@ fn span(cell: ElementRef<'_>, name: &str, limit: usize) -> usize {
     }
 }
 
-fn data_table(table: ElementRef<'_>, budget: &mut usize) -> Option<Table> {
+fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
     if matches!(table.value().attr("role"), Some("presentation" | "none")) {
         return None;
     }
@@ -163,29 +181,13 @@ fn data_table(table: ElementRef<'_>, budget: &mut usize) -> Option<Table> {
     let width = grid.iter().map(Vec::len).max().unwrap_or(0);
     let kept = rows.len().min(MAX_SLOTS / width.max(1));
     truncated |= kept < rows.len();
-    let texts: Vec<String> = placed.iter().map(|&cell| cell_text(cell)).collect();
-    let text = |r: usize, c: usize| {
-        grid[r]
-            .get(c)
-            .and_then(|&id| texts.get(id as usize))
-            .map_or("", String::as_str)
-    };
 
-    let mut caption = table
-        .children()
-        .filter_map(ElementRef::wrap)
-        .find(|el| el.value().name() == "caption")
-        .map(cell_text)
-        .filter(|t| !t.is_empty());
     let mut start = 0;
     while start < kept
         && width > 1
         && rows[start].cells.len() == 1
         && span(rows[start].cells[0], "colspan", MAX_COLSPAN) >= width
     {
-        if caption.is_none() {
-            caption = Some(text(start, 0).to_string()).filter(|t| !t.is_empty());
-        }
         start += 1;
     }
     let mut body = start;
@@ -195,30 +197,54 @@ fn data_table(table: ElementRef<'_>, budget: &mut usize) -> Option<Table> {
     {
         body += 1;
     }
+    let cells = || rows[start..kept].iter().flat_map(|row| &row.cells);
+    if start == body
+        && (has_table(table)
+            || cells().all(|&cell| links_only(cell))
+            || cells().any(|&cell| has_block(cell)))
+    {
+        return None;
+    }
+
+    let mut texts = Vec::with_capacity(placed.len());
+    for &cell in &placed {
+        match cell_text(cell, &mut budget.nodes) {
+            Some(text) => texts.push(text),
+            None => {
+                budget.bytes = 0;
+                truncated = true;
+                break;
+            }
+        }
+    }
+    let text = |r: usize, c: usize| {
+        grid[r]
+            .get(c)
+            .and_then(|&id| texts.get(id as usize))
+            .map_or("", String::as_str)
+    };
+    let caption = table
+        .children()
+        .filter_map(ElementRef::wrap)
+        .find(|el| el.value().name() == "caption")
+        .and_then(|el| cell_text(el, &mut budget.nodes))
+        .filter(|t| !t.is_empty())
+        .or_else(|| {
+            (0..start)
+                .map(|r| text(r, 0))
+                .find(|t| !t.is_empty())
+                .map(str::to_string)
+        });
     let body_rows: Vec<usize> = (body..kept)
         .filter(|&r| (0..width).any(|c| !text(r, c).is_empty()))
         .collect();
     let text_columns = (0..width)
         .filter(|&c| body_rows.iter().any(|&r| !text(r, c).is_empty()))
         .count();
-    if body_rows.is_empty() || text_columns < 2 {
+    if body_rows.is_empty() || text_columns < 2 || (start == body && body_rows.len() < 2) {
         return None;
     }
-    if start == body
-        && (body_rows.len() < 2
-            || has_table(table)
-            || rows[start..]
-                .iter()
-                .flat_map(|row| &row.cells)
-                .all(|&cell| links_only(cell))
-            || rows[start..]
-                .iter()
-                .flat_map(|row| &row.cells)
-                .any(|&cell| has_block(cell)))
-    {
-        return None;
-    }
-    let mut left = MAX_TABLE_BYTES.min(*budget);
+    let mut left = MAX_TABLE_BYTES.min(budget.bytes);
     let mut spend = |cells: Vec<String>| {
         let cost: usize = cells.iter().map(|s| s.len() + SLOT_BYTES).sum();
         (cost <= left).then(|| {
@@ -252,10 +278,10 @@ fn data_table(table: ElementRef<'_>, budget: &mut usize) -> Option<Table> {
             }
         }
     }
-    *budget = if truncated {
+    budget.bytes = if truncated {
         0
     } else {
-        *budget - (MAX_TABLE_BYTES.min(*budget) - left)
+        budget.bytes - (MAX_TABLE_BYTES.min(budget.bytes) - left)
     };
     (!out.is_empty()).then_some(Table {
         caption,
@@ -289,10 +315,14 @@ fn has_block(cell: ElementRef<'_>) -> bool {
         .any(|el| BLOCK.contains(&el.value().name()))
 }
 
-fn cell_text(cell: ElementRef<'_>) -> String {
+fn cell_text(cell: ElementRef<'_>, nodes: &mut usize) -> Option<String> {
     let mut out = String::new();
     let mut skip = None;
     for edge in cell.traverse() {
+        *nodes = nodes.checked_sub(1)?;
+        if out.len() > 2 * MAX_CELL_BYTES {
+            break;
+        }
         match (edge, skip) {
             (Edge::Open(node), None) => match node.value() {
                 Node::Text(text) => out.push_str(text),
@@ -313,7 +343,15 @@ fn cell_text(cell: ElementRef<'_>) -> String {
             _ => {}
         }
     }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut text = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.len() > MAX_CELL_BYTES {
+        let mut end = MAX_CELL_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    Some(text)
 }
 
 #[cfg(test)]
@@ -481,6 +519,30 @@ mod tests {
         assert!(found[..3].iter().all(|t| !t.truncated));
         assert!(found[3].truncated);
         assert!(found.iter().map(bytes).sum::<usize>() <= MAX_PAGE_BYTES);
+    }
+
+    #[test]
+    fn a_cell_keeps_its_first_64_kb() {
+        let html = format!(
+            "<table><tr><th>a</th><th>b</th></tr><tr><td>{}</td><td>1</td></tr></table>",
+            "word ".repeat(40_000)
+        );
+        let t = one(&html);
+        assert!(t.rows[0][0].len() <= MAX_CELL_BYTES);
+        assert!(t.rows[0][0].starts_with("word word"));
+    }
+
+    #[test]
+    fn deeply_nested_tables_stop_at_the_work_budget() {
+        let depth = 2_000;
+        let html = format!(
+            "{}{}",
+            "<table><tr><th>h</th><th>k</th></tr><tr><td>x".repeat(depth),
+            "</td><td>y</td></tr></table>".repeat(depth)
+        );
+        let found = tables(&html);
+        assert!(found.last().unwrap().truncated);
+        assert!(found.len() < depth);
     }
 
     #[test]

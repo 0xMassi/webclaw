@@ -344,8 +344,9 @@ async fn step(
                 let mut misses = 0;
                 for _ in 0..*times {
                     let Some(element) = target.take() else { break };
+                    let before = signature(page).await;
                     click(page, &element).await?;
-                    misses = if settle(page, requests, PATIENCE, false).await {
+                    misses = if settle(page, requests, before, PATIENCE, false).await {
                         0
                     } else {
                         misses + 1
@@ -355,12 +356,13 @@ async fn step(
                     }
                     target = first_visible(page, selector).await;
                 }
-                settle(page, requests, QUIET, true).await;
+                settle(page, requests, signature(page).await, QUIET, true).await;
             } else if *all {
+                let before = signature(page).await;
                 for element in &found {
                     click(page, element).await?;
                 }
-                settle(page, requests, PATIENCE, true).await;
+                settle(page, requests, before, PATIENCE, true).await;
             } else {
                 let index = nth.unwrap_or(0);
                 let element = found.get(index).ok_or_else(|| {
@@ -369,8 +371,9 @@ async fn step(
                         found.len()
                     )
                 })?;
+                let before = signature(page).await;
                 click(page, element).await?;
-                settle(page, requests, PATIENCE, true).await;
+                settle(page, requests, before, PATIENCE, true).await;
             }
         }
         Action::Type { selector, value } => {
@@ -381,8 +384,9 @@ async fn step(
                 .map_err(js_error)?;
         }
         Action::Press { key } => {
+            let before = signature(page).await;
             page.press_key(key).await.map_err(js_error)?;
-            settle(page, requests, PATIENCE, true).await;
+            settle(page, requests, before, PATIENCE, true).await;
         }
         Action::Scroll {
             direction,
@@ -402,6 +406,7 @@ async fn step(
             );
             let mut misses = 0;
             for _ in 0..repeat.unwrap_or(1) {
+                let before = signature(page).await;
                 let moved = page
                     .evaluate_expression(script.as_str())
                     .await
@@ -418,6 +423,7 @@ async fn step(
                 let grew = settle(
                     page,
                     requests,
+                    before,
                     if stepping { QUIET } else { PATIENCE },
                     false,
                 )
@@ -427,7 +433,7 @@ async fn step(
                     break;
                 }
             }
-            settle(page, requests, QUIET, true).await;
+            settle(page, requests, signature(page).await, QUIET, true).await;
         }
         Action::Wait { milliseconds } => {
             let until = later(Duration::from_millis(*milliseconds)).min(deadline);
@@ -585,24 +591,30 @@ async fn click(page: &Page, element: &Element) -> Result<(), String> {
         .map_err(js_error)
 }
 
-async fn settle(page: &Page, requests: &Requests, patience: Duration, until_quiet: bool) -> bool {
+async fn signature(page: &Page) -> Option<String> {
     const SIGNATURE: &str = "(() => { const t = document.body ? document.body.innerText : ''; \
                              let h = 0; for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; \
                              return [document.documentElement.scrollHeight, document.getElementsByTagName('*').length, t.length, h].join(); })()";
-    let read = async || {
-        page.evaluate_expression(SIGNATURE)
-            .await
-            .ok()
-            .and_then(|r| r.into_value::<String>().ok())
-    };
+    page.evaluate_expression(SIGNATURE)
+        .await
+        .ok()
+        .and_then(|r| r.into_value::<String>().ok())
+}
+
+async fn settle(
+    page: &Page,
+    requests: &Requests,
+    before: Option<String>,
+    patience: Duration,
+    until_quiet: bool,
+) -> bool {
     let start = Instant::now();
-    let before = read().await;
     let mut last = before.clone();
     let mut changed = false;
     let mut calm_since = start;
     loop {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let now = read().await;
+        let now = signature(page).await;
         let busy = requests.busy();
         if now != last {
             changed = true;
@@ -1039,5 +1051,22 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         let error = bad.unwrap_err().to_string();
         assert!(error.contains("not a valid CSS selector"), "{error}");
         assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_click_that_changes_the_page_at_once_counts_as_a_change() {
+        let page = r#"<html><body><button id="more" onclick="const p = document.createElement('p'); p.textContent = 'row ' + document.querySelectorAll('p').length; document.body.appendChild(p);">more</button></body></html>"#;
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let done = render_feed(
+            &renderer,
+            page,
+            r##"[{"type": "click", "selector": "#more", "repeat": 5}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        renderer.close().await;
+        let html = done.expect("clicks run").0.html;
+        assert!(html.contains("row 4") && !html.contains("row 5"), "{html}");
     }
 }

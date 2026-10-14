@@ -218,6 +218,29 @@ struct Cli {
     #[arg(long, value_name = "TYPES", conflicts_with = "screenshot")]
     block: Option<webclaw_fetch::Block>,
 
+    /// Steps to run in the local browser once the page has loaded, before it
+    /// is read, in the hosted API's format: a JSON array, or @FILE to read
+    /// one, e.g. '[{"type": "click", "selector": "button.more", "repeat":
+    /// 10}]'. Steps: click, type, press, scroll, wait, waitForSelector and
+    /// executeJavascript; see the README. The values of executeJavascript
+    /// steps come back as js_results: in the output with -f json, on stderr
+    /// otherwise. Renders the page even with --render auto
+    #[arg(long, value_name = "JSON", conflicts_with_all = ["crawl", "watch", "map", "brand", "cloud"])]
+    actions: Option<String>,
+
+    /// Scroll to the end of the page in the local browser, again and again
+    /// until it stops growing, at most TIMES times (default 20, or
+    /// --scroll=50), before reading it. Runs before --actions
+    #[arg(
+        long,
+        value_name = "TIMES",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "20",
+        conflicts_with_all = ["crawl", "watch", "map", "brand", "cloud"]
+    )]
+    scroll: Option<u32>,
+
     /// Extract from local HTML file instead of fetching
     #[arg(long)]
     file: Option<String>,
@@ -1044,7 +1067,7 @@ fn backfill_single_file_url(urls: &mut Vec<String>, entries: &[(String, Option<S
 
 /// Result that can be either a local extraction or a cloud API JSON response.
 enum FetchOutput {
-    Local(Box<ExtractionResult>),
+    Local(Box<ExtractionResult>, Vec<serde_json::Value>),
     Cloud(serde_json::Value),
 }
 
@@ -1052,7 +1075,10 @@ impl FetchOutput {
     /// Get the local ExtractionResult, or try to parse it from the cloud response.
     fn into_extraction(self) -> Result<ExtractionResult, String> {
         match self {
-            FetchOutput::Local(r) => Ok(*r),
+            FetchOutput::Local(r, js_results) => {
+                print_script_results(&js_results);
+                Ok(*r)
+            }
             FetchOutput::Cloud(resp) => {
                 // Cloud response has an "extraction" field with the full ExtractionResult
                 resp.get("extraction")
@@ -1088,29 +1114,80 @@ const VERSION: &str = if BROWSER_BUILD {
 };
 
 #[cfg(feature = "browser")]
-async fn render_page(config: &FetchConfig, url: &str) -> Result<FetchResult, String> {
+fn page_actions(cli: &Cli) -> Result<Vec<webclaw_fetch::render::Action>, String> {
+    let mut actions = Vec::new();
+    if let Some(times) = cli.scroll {
+        actions.push(webclaw_fetch::render::Action::Scroll {
+            direction: webclaw_fetch::render::Direction::Down,
+            amount: None,
+            selector: None,
+            repeat: Some(times),
+        });
+    }
+    if let Some(json) = &cli.actions {
+        let json = match json.strip_prefix('@') {
+            Some(path) => {
+                std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?
+            }
+            None => json.clone(),
+        };
+        actions.extend(webclaw_fetch::render::parse_actions(&json)?);
+    }
+    Ok(actions)
+}
+
+fn one_url_error(cli: &Cli) -> String {
+    let error = "--actions and --scroll take one URL";
+    match cli.urls.iter().find(|u| u.parse::<u32>().is_ok()) {
+        Some(count) if cli.scroll.is_some() => {
+            format!("{error}; for a scroll count write --scroll={count}")
+        }
+        _ => error.to_string(),
+    }
+}
+
+fn print_script_results(results: &[serde_json::Value]) {
+    for (i, value) in results.iter().enumerate() {
+        eprintln!("js_results[{i}]: {value}");
+    }
+}
+
+#[cfg(feature = "browser")]
+async fn render_page(
+    cli: &Cli,
+    config: &FetchConfig,
+    url: &str,
+) -> Result<(FetchResult, Vec<serde_json::Value>), String> {
+    let actions = page_actions(cli)?;
     let render = config.render.as_ref().ok_or("rendering is off")?;
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
-    render
+    let (page, js_results) = render
         .pool
-        .render(
+        .render_actions(
             url,
             None,
             render.wait_for.as_deref(),
             &headers,
             render.block,
+            &actions,
         )
         .await
-        .map_err(|e| format!("render error: {e}"))
+        .map_err(|e| format!("render error: {e}"))?;
+    Ok((page, js_results))
 }
 
 #[cfg(not(feature = "browser"))]
-async fn render_page(_config: &FetchConfig, _url: &str) -> Result<FetchResult, String> {
+async fn render_page(
+    _cli: &Cli,
+    _config: &FetchConfig,
+    _url: &str,
+) -> Result<(FetchResult, Vec<serde_json::Value>), String> {
     Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
 #[cfg(feature = "browser")]
 async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
+    let actions = page_actions(cli)?;
     let config = build_fetch_config(cli);
     let render = config
         .render
@@ -1123,7 +1200,7 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
     let shot = render
         .pool
-        .screenshot(
+        .screenshot_actions(
             url,
             render.wait_for.as_deref(),
             &headers,
@@ -1131,10 +1208,12 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
                 full_page: cli.full_page,
                 jpeg,
             },
+            &actions,
         )
         .await;
     close_browser(&config).await;
-    let shot = shot.map_err(|e| format!("screenshot error: {e}"))?;
+    let (shot, js_results) = shot.map_err(|e| format!("screenshot error: {e}"))?;
+    print_script_results(&js_results);
     webclaw_fetch::FetchError::check_status(shot.status).map_err(|e| e.to_string())?;
     std::fs::write(path, &shot.image)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -1160,7 +1239,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
             .map_err(|e| format!("failed to read stdin: {e}"))?;
         let options = build_extraction_options(cli);
         return extract_with_options(&buf, None, &options)
-            .map(|r| FetchOutput::Local(Box::new(r)))
+            .map(|r| FetchOutput::Local(Box::new(r), Vec::new()))
             .map_err(|e| format!("extraction error: {e}"));
     }
 
@@ -1169,7 +1248,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
             std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
         let options = build_extraction_options(cli);
         return extract_with_options(&html, None, &options)
-            .map(|r| FetchOutput::Local(Box::new(r)))
+            .map(|r| FetchOutput::Local(Box::new(r), Vec::new()))
             .map_err(|e| format!("extraction error: {e}"));
     }
 
@@ -1207,10 +1286,13 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
     let config = build_fetch_config(cli);
     let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
+    let mut js_results = Vec::new();
     let extracted = if cli.render == RenderMode::Always {
-        let rendered = webclaw_fetch::with_progress(url, render_page(&config, url)).await;
+        let rendered = webclaw_fetch::with_progress(url, render_page(cli, &config, url)).await;
         close_browser(&config).await;
-        client.extract(&rendered?, &options)
+        let (page, values) = rendered?;
+        js_results = values;
+        client.extract(&page, &options)
     } else {
         let fetched = webclaw_fetch::with_progress(url, client.fetch_smart(url))
             .await
@@ -1268,7 +1350,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         warn_empty(url, &reason);
     }
 
-    Ok(FetchOutput::Local(Box::new(result)))
+    Ok(FetchOutput::Local(Box::new(result), js_results))
 }
 
 /// Fetch raw HTML from a URL (no extraction). Used for --raw-html and brand extraction.
@@ -1327,7 +1409,12 @@ async fn fetch_page(cli: &Cli) -> Result<FetchResult, String> {
         let config = build_fetch_config(cli);
         let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
         let page = if cli.render == RenderMode::Always {
-            render_page(&config, &url).await
+            render_page(cli, &config, &url)
+                .await
+                .map(|(page, js_results)| {
+                    print_script_results(&js_results);
+                    page
+                })
         } else {
             match client.fetch_smart(&url).await {
                 Ok(fetched) => Ok(client
@@ -1514,6 +1601,20 @@ fn format_frontmatter(meta: &Metadata) -> String {
     lines.push("---".to_string());
     lines.push(String::new()); // blank line after frontmatter
     lines.join("\n")
+}
+
+fn with_js_results(
+    result: &ExtractionResult,
+    js_results: &[serde_json::Value],
+    pretty: bool,
+) -> String {
+    let mut value = serde_json::to_value(result).unwrap_or_default();
+    value["js_results"] = serde_json::Value::from(js_results.to_vec());
+    if pretty {
+        serde_json::to_string_pretty(&value).unwrap_or_default()
+    } else {
+        value.to_string()
+    }
 }
 
 fn print_output(result: &ExtractionResult, format: &OutputFormat, show_metadata: bool) {
@@ -3333,6 +3434,20 @@ async fn main() {
         process::exit(1);
     }
 
+    if cli.actions.is_some() || cli.scroll.is_some() {
+        if entries.len() != 1 {
+            eprintln!("error: {}", one_url_error(&cli));
+            process::exit(1);
+        }
+        if cli.render == RenderMode::Never {
+            eprintln!(
+                "error: --actions and --scroll run in the browser, so they cannot run with --render never"
+            );
+            process::exit(1);
+        }
+        cli.render = RenderMode::Always;
+    }
+
     if let Some(ref path) = cli.screenshot {
         let shot = match (entries.len(), cli.urls.first()) {
             (1, Some(url)) => run_screenshot(&cli, &normalize_url(url), path).await,
@@ -3452,7 +3567,12 @@ async fn main() {
 
     // --raw-html: skip extraction, dump the fetched HTML
     if cli.raw_html && cli.include.is_none() && cli.exclude.is_none() {
-        match fetch_html(&cli).await {
+        let page = if cli.actions.is_some() || cli.scroll.is_some() {
+            fetch_page(&cli).await
+        } else {
+            fetch_html(&cli).await
+        };
+        match page {
             Ok(r) => {
                 println!("{}", r.html);
                 if let Err(e) = webclaw_fetch::FetchError::check_status(r.status) {
@@ -3470,7 +3590,7 @@ async fn main() {
 
     // Single-page extraction (handles both HTML and PDF via content-type detection)
     match fetch_and_extract(&cli).await {
-        Ok(FetchOutput::Local(mut result)) => {
+        Ok(FetchOutput::Local(mut result, js_results)) => {
             if let Some(ref query) = cli.query {
                 webclaw_core::focus_extraction(&mut result, query);
             }
@@ -3494,8 +3614,25 @@ async fn main() {
                     sizes,
                 );
                 print_chunks(&chunks, &cli.format);
+            } else if !js_results.is_empty()
+                && matches!(cli.format, OutputFormat::Json | OutputFormat::Jsonl)
+            {
+                println!(
+                    "{}",
+                    with_js_results(
+                        &result,
+                        &js_results,
+                        matches!(cli.format, OutputFormat::Json)
+                    )
+                );
             } else {
                 print_output(&result, &cli.format, cli.metadata);
+            }
+            if !matches!(cli.format, OutputFormat::Json | OutputFormat::Jsonl)
+                || cli.output_dir.is_some()
+                || chunk_sizes(&cli).is_some()
+            {
+                print_script_results(&js_results);
             }
         }
         Ok(FetchOutput::Cloud(mut resp)) => {
@@ -3526,6 +3663,50 @@ mod tests {
     use super::*;
 
     use webclaw_core::Content;
+
+    #[test]
+    fn scroll_takes_its_count_only_after_an_equals_sign() {
+        let cli = Cli::try_parse_from(["webclaw", "--scroll", "https://example.com"]).unwrap();
+        assert_eq!(cli.scroll, Some(20));
+        assert_eq!(cli.urls, vec!["https://example.com".to_string()]);
+        let cli = Cli::try_parse_from(["webclaw", "--scroll=5", "https://example.com"]).unwrap();
+        assert_eq!(cli.scroll, Some(5));
+    }
+
+    #[test]
+    fn json_output_carries_js_results_and_raw_html_takes_actions() {
+        let result = empty_result(Some("t"), Some("https://example.com/"), "body");
+        let json: serde_json::Value = serde_json::from_str(&with_js_results(
+            &result,
+            &[serde_json::json!(3), serde_json::json!({"a": 1})],
+            true,
+        ))
+        .unwrap();
+        assert_eq!(json["js_results"], serde_json::json!([3, {"a": 1}]));
+        assert_eq!(json["content"]["markdown"], "body");
+        assert!(
+            Cli::try_parse_from([
+                "webclaw",
+                "https://example.com",
+                "--actions",
+                "[]",
+                "--raw-html"
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_scroll_count_after_a_space_gets_a_hint() {
+        let cli = Cli::try_parse_from(["webclaw", "--scroll", "3", "https://example.com"]).unwrap();
+        assert_eq!(
+            one_url_error(&cli),
+            "--actions and --scroll take one URL; for a scroll count write --scroll=3"
+        );
+        let cli =
+            Cli::try_parse_from(["webclaw", "--scroll", "https://a.com", "https://b.com"]).unwrap();
+        assert_eq!(one_url_error(&cli), "--actions and --scroll take one URL");
+    }
 
     #[test]
     fn one_picker_at_a_time_and_tables_take_no_pick_options() {

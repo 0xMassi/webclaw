@@ -133,6 +133,27 @@ fn apply_render(
     }
 }
 
+#[cfg(feature = "browser")]
+fn parse_actions(
+    actions: Option<&[serde_json::Value]>,
+) -> Result<Vec<webclaw_fetch::render::Action>, String> {
+    match actions {
+        None | Some([]) => Ok(Vec::new()),
+        Some(actions) => webclaw_fetch::render::parse_actions(
+            &serde_json::to_string(actions).map_err(|e| e.to_string())?,
+        ),
+    }
+}
+
+fn format_page(extraction: webclaw_core::ExtractionResult, format: &str, url: &str) -> String {
+    match format {
+        "llm" => webclaw_core::to_llm_text(&extraction, Some(url)),
+        "text" => extraction.content.plain_text,
+        "json" => serde_json::to_string_pretty(&extraction).unwrap_or_default(),
+        _ => extraction.content.markdown,
+    }
+}
+
 /// Validate that a URL is public HTTP(S), matching the fetch-layer SSRF guard.
 async fn validate_url(url: &str) -> Result<(), String> {
     webclaw_fetch::url_security::validate_public_http_url(url)
@@ -230,28 +251,127 @@ impl WebclawMcp {
         wait_for: Option<&str>,
         full_page: bool,
         jpeg: bool,
+        actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
+        let actions = parse_actions(actions)?;
         let render = self
             .fetch_config
             .render
             .as_ref()
             .ok_or("screenshots need the browser, which is turned off for this server (WEBCLAW_RENDER=never)")?;
-        let shot = render
+        let (shot, js_results) = render
             .pool
-            .screenshot(
+            .screenshot_actions(
                 url,
                 wait_for,
                 &[],
                 webclaw_fetch::render::ScreenshotOptions { full_page, jpeg },
+                &actions,
             )
             .await
             .map_err(|e| format!("Screenshot failed: {e}"))?;
         webclaw_fetch::FetchError::check_status(shot.status).map_err(|e| e.to_string())?;
         let mime = if jpeg { "image/jpeg" } else { "image/png" };
-        Ok(CallToolResult::success(vec![
+        let mut content = vec![
             rmcp::model::ContentBlock::image(shot.base64(), mime),
             rmcp::model::ContentBlock::text(shot.url),
-        ]))
+        ];
+        if !js_results.is_empty() {
+            content.push(rmcp::model::ContentBlock::text(
+                serde_json::to_string_pretty(&js_results).unwrap_or_default(),
+            ));
+        }
+        Ok(CallToolResult::success(content))
+    }
+
+    #[cfg(feature = "browser")]
+    async fn act_and_scrape(
+        &self,
+        params: &ScrapeParams,
+        sizes: Option<(usize, usize)>,
+    ) -> Result<String, String> {
+        let actions = parse_actions(params.actions.as_deref())?;
+        if sizes.is_some()
+            && actions
+                .iter()
+                .any(|a| matches!(a, webclaw_fetch::render::Action::ExecuteJavascript { .. }))
+        {
+            return Err("chunk returns only the page's chunks, so it cannot carry js_results: drop the executeJavascript steps or chunk".into());
+        }
+        let mut config = self.fetch_config.clone();
+        apply_render(
+            &mut config,
+            params.render.as_deref(),
+            params.wait_for.clone(),
+            params.block.as_deref(),
+        )?;
+        let render = config
+            .render
+            .as_ref()
+            .ok_or("actions run in the browser, which is turned off for this call or server")?;
+        let mut headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+        if let Some(cookies) = params.cookies.as_ref().filter(|c| !c.is_empty()) {
+            headers.push(("Cookie".into(), cookies.join("; ")));
+        }
+        let (page, results) = render
+            .pool
+            .render_actions(
+                &params.url,
+                None,
+                render.wait_for.as_deref(),
+                &headers,
+                render.block,
+                &actions,
+            )
+            .await
+            .map_err(|e| format!("Render failed: {e}"))?;
+        webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+        let options = webclaw_core::ExtractionOptions {
+            include_selectors: params.include_selectors.clone().unwrap_or_default(),
+            exclude_selectors: params.exclude_selectors.clone().unwrap_or_default(),
+            only_main_content: params.only_main_content.unwrap_or(false),
+            include_raw_html: false,
+        };
+        let mut extraction =
+            webclaw_core::extract_with_options(&page.html, Some(&page.url), &options)
+                .map_err(|e| format!("Extraction failed: {e}"))?;
+        if let Some(ref query) = params.query {
+            webclaw_core::focus_extraction(&mut extraction, query);
+        }
+        if let Some((size, overlap)) = sizes {
+            let (url, markdown) = (params.url.clone(), extraction.content.markdown);
+            return tokio::task::spawn_blocking(move || {
+                chunks_json(&[(&url, &markdown)], size, overlap)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        let format = params.format.as_deref().unwrap_or("markdown");
+        if format == "json" && !results.is_empty() {
+            let mut value = serde_json::to_value(&extraction).map_err(|e| e.to_string())?;
+            value["js_results"] = serde_json::Value::Array(results);
+            return serde_json::to_string_pretty(&value).map_err(|e| e.to_string());
+        }
+        let output = format_page(extraction, format, &params.url);
+        if results.is_empty() {
+            return Ok(output);
+        }
+        Ok(format!(
+            "{output}\n\njs_results:\n```json\n{}\n```",
+            serde_json::to_string_pretty(&results).unwrap_or_default()
+        ))
+    }
+
+    #[cfg(not(feature = "browser"))]
+    async fn act_and_scrape(
+        &self,
+        _params: &ScrapeParams,
+        _sizes: Option<(usize, usize)>,
+    ) -> Result<String, String> {
+        Err(
+            "this webclaw-mcp build has no browser support; build it with `--features browser`"
+                .into(),
+        )
     }
 
     #[cfg(not(feature = "browser"))]
@@ -261,6 +381,7 @@ impl WebclawMcp {
         _wait_for: Option<&str>,
         _full_page: bool,
         _jpeg: bool,
+        _actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
         Err(
             "this webclaw-mcp build has no browser support; build it with `--features browser`"
@@ -305,12 +426,16 @@ impl WebclawMcp {
 
     /// Scrape a single URL and extract its content as markdown, LLM-optimized text, plain text, or full JSON.
     /// Pages whose content needs JavaScript are rendered in a local Chrome when this server has browser support; otherwise, and on bot protection, it falls back to the webclaw cloud API when WEBCLAW_API_KEY is set.
+    /// With `actions`, in the hosted API's format, the page is rendered and the steps (click, type, press, scroll, wait, waitForSelector, executeJavascript) run before it is read, for infinite scroll, "load more" buttons, tabs and forms.
     #[tool]
     async fn scrape(&self, Parameters(params): Parameters<ScrapeParams>) -> Result<String, String> {
         validate_url(&params.url).await?;
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
         let browser = parse_browser(params.browser.as_deref())?;
+        if params.actions.as_ref().is_some_and(|a| !a.is_empty()) {
+            return self.act_and_scrape(&params, sizes).await;
+        }
         let include = params.include_selectors.unwrap_or_default();
         let exclude = params.exclude_selectors.unwrap_or_default();
         let main_only = params.only_main_content.unwrap_or(false);
@@ -380,13 +505,7 @@ impl WebclawMcp {
                     .await
                     .map_err(|e| e.to_string())?;
                 }
-                let output = match format {
-                    "llm" => webclaw_core::to_llm_text(&extraction, Some(&params.url)),
-                    "text" => extraction.content.plain_text,
-                    "json" => serde_json::to_string_pretty(&extraction).unwrap_or_default(),
-                    _ => extraction.content.markdown,
-                };
-                Ok(output)
+                Ok(format_page(*extraction, format, &params.url))
             }
             SmartFetchResult::Cloud(mut resp) => {
                 if let Some(ref query) = params.query {
@@ -554,7 +673,7 @@ impl WebclawMcp {
         .map_err(|e| e.to_string())?
     }
 
-    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL.
+    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL, and with `actions` the values of their executeJavascript steps.
     #[tool]
     async fn screenshot(
         &self,
@@ -575,6 +694,7 @@ impl WebclawMcp {
             params.wait_for.as_deref(),
             params.full_page.unwrap_or(false),
             jpeg,
+            params.actions.as_deref(),
         )
         .await
     }

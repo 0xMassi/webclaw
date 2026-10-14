@@ -305,6 +305,31 @@ Behind a proxy, the proxy resolves host names itself and the document check is o
 
 Crawls, batches, `--watch` and the MCP server render the same way and share one browser, started only when a page needs it. Per site, webclaw keeps count: once at least three renders show that rendering adds content (at least four in five did), it renders every page of that site that runs scripts, and once rendering stops adding content (at most one in five did), it stops rendering there.
 
+### Click, type and scroll before reading
+
+With a `browser` build, `--actions` runs steps in the browser once the page has loaded and before webclaw reads it, in the same format as the hosted API's `actions`, so content behind infinite scroll, "load more" buttons, pagination buttons, forms or a slow script ends up in the output. `--scroll` alone scrolls to the end until the page stops growing, at most 20 times (`--scroll=50` for more).
+
+```bash
+webclaw https://quotes.toscrape.com/scroll --scroll
+webclaw https://github.com/topics/rust --actions '[{"type": "click", "selector": "button.ajax-pagination-btn", "repeat": 3}]'
+webclaw https://quotes.toscrape.com/login --actions '[{"type": "type", "selector": "#username", "value": "me"}, {"type": "type", "selector": "#password", "value": "secret"}, {"type": "press", "key": "Enter"}]'
+webclaw https://example.com --actions @steps.json
+```
+
+| Step | Fields | What it does |
+| --- | --- | --- |
+| `click` | `selector`, and `nth`, `all` or `repeat` | Clicks the first match, the match at index `nth` (from 0), or every match. With `repeat`, clicks the first visible match again and again, up to that many times, until none is left or two clicks in a row change nothing |
+| `type` | `selector`, `value` | Focuses the element and types the value |
+| `press` | `key` | Presses a key such as `Enter`, `Tab` or `ArrowDown` |
+| `scroll` | `direction` (`down` or `up`), `amount`, `selector`, `repeat`, all optional | Scrolls the page, or the element, `amount` pixels, or without `amount` to its end. With `repeat`, scrolls again until two scrolls in a row add nothing; with `amount` it keeps stepping to the end, which loads lazy images on the way |
+| `wait` | `milliseconds` | Pauses |
+| `waitForSelector` | `selector`, `timeout` | Waits until an element matches, up to `timeout` milliseconds, 10 seconds by default |
+| `executeJavascript` | `code` | Runs JavaScript, an expression, statements whose last one gives the value, or a function body that ends in `return`, and keeps that value, awaited when it is a promise, as JSON in `js_results` |
+
+After a click, a key press or a scroll, webclaw waits until the page and the site's own requests go quiet, up to 5 seconds, before the next step. Content a site draws on a timer after its request has finished can come later than that: add a `waitForSelector` step for it. A step that needs an element waits up to 10 seconds for it, and a selector the browser cannot parse fails at once. Alerts, confirms and prompts that steps open are dismissed, and tabs or windows they open are closed. The steps get their own time budget, equal to `--timeout`, on top of loading the page. The first step that fails or runs out of time fails the command and the error names it; a `repeat` that runs out of time before it is done fails too, rather than return part of the page. Use `--timeout` for long feeds. The values of all `executeJavascript` steps together are capped at 1 MiB. Steps run in the same browser under the same checks as the page's own scripts, and a step that navigates to a private or loopback address, or to a name that resolves to one, fails the command.
+
+`--actions` takes one URL and renders the page even with `--render auto`. `js_results` comes in the output with `-f json` or `-f jsonl` and on stderr otherwise, and `--raw-html` prints the page after the steps. The MCP `scrape` and `screenshot` tools take the same list as `actions` and return `js_results` after the content. Local additions are `nth`, `all` and `repeat` on `click`, and `selector`, `repeat` and scrolling to the end on `scroll`. The hosted `screenshot` step is left out, since `--screenshot` does that.
+
 ### Crawl a documentation site
 
 ```bash

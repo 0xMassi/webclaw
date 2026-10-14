@@ -27,6 +27,7 @@ use tracing::warn;
 use url::Url;
 
 use crate::Block;
+pub use crate::actions::{Action, Direction, parse_actions};
 use crate::client::FetchResult;
 use crate::error::FetchError;
 
@@ -95,11 +96,13 @@ impl Screenshot {
 }
 
 const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct Visited<T> {
     value: T,
     status: u16,
     url: String,
+    scripts: Vec<serde_json::Value>,
 }
 
 /// A page already fetched over HTTP, handed to the browser so it does not
@@ -154,6 +157,14 @@ impl Renderer {
     }
 
     async fn launch_with(proxy: Option<&str>, args: &[&str]) -> Result<Self, FetchError> {
+        Self::launch_timed(proxy, args, COMMAND_TIMEOUT).await
+    }
+
+    async fn launch_timed(
+        proxy: Option<&str>,
+        args: &[&str],
+        command_timeout: Duration,
+    ) -> Result<Self, FetchError> {
         static LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let profile = std::env::temp_dir().join(format!(
             "webclaw-chrome-{}-{}-{}",
@@ -179,6 +190,7 @@ impl Renderer {
             .arg("--enable-features=NetworkService,NetworkServiceInProcess,LocalNetworkAccessChecks:LocalNetworkAccessChecksWarn/false,LocalNetworkAccessChecksWebSockets")
             .arg("--webrtc-ip-handling-policy=disable_non_proxied_udp")
             .args(args.iter().copied())
+            .request_timeout(command_timeout)
             .user_data_dir(&profile);
         let installed = std::env::var("WEBCLAW_CHROME").ok().or_else(|| {
             INSTALL_PATHS
@@ -231,8 +243,13 @@ impl Renderer {
     /// Use a browser that is already running with its DevTools endpoint at
     /// `cdp_url` (`ws://...` or `http://host:port`). Its own proxy settings apply.
     pub async fn connect(cdp_url: &str) -> Result<Self, FetchError> {
+        Self::connect_timed(cdp_url, COMMAND_TIMEOUT).await
+    }
+
+    async fn connect_timed(cdp_url: &str, command_timeout: Duration) -> Result<Self, FetchError> {
         let config = chromiumoxide::handler::HandlerConfig {
             request_intercept: true,
+            request_timeout: command_timeout,
             ..Default::default()
         };
         let (browser, handler) = Browser::connect_with_config(cdp_url, config)
@@ -304,20 +321,36 @@ impl Renderer {
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
     ) -> Result<FetchResult, FetchError> {
+        Ok(self.render_actions(url, prefetched, options, &[]).await?.0)
+    }
+
+    /// [`Renderer::render`], running `actions` in order once the page has
+    /// loaded and before it is read. They get their own time budget, equal to
+    /// `options.timeout`, and the first failing step fails the render with
+    /// its number in the error. Returns the page and the values of its
+    /// `executeJavascript` steps, the hosted API's `js_results`.
+    pub async fn render_actions(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+        actions: &[Action],
+    ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
         let start = Instant::now();
         let visited = self
-            .visit(url, prefetched, options, None, async |page| {
+            .visit(url, prefetched, options, actions, None, async |page| {
                 page.content().await
             })
             .await?;
-        Ok(FetchResult {
+        let page = FetchResult {
             html: visited.value,
             document_bytes: None,
             status: visited.status,
             url: visited.url,
             headers: http::HeaderMap::new(),
             elapsed: start.elapsed(),
-        })
+        };
+        Ok((page, visited.scripts))
     }
 
     /// Render `url` in a 1280x720 viewport and capture it once its content
@@ -329,6 +362,17 @@ impl Renderer {
         options: &RenderOptions,
         shot: ScreenshotOptions,
     ) -> Result<Screenshot, FetchError> {
+        Ok(self.screenshot_actions(url, options, shot, &[]).await?.0)
+    }
+
+    /// [`Renderer::screenshot`] after `actions`, as [`Renderer::render_actions`] runs them.
+    pub async fn screenshot_actions(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        shot: ScreenshotOptions,
+        actions: &[Action],
+    ) -> Result<(Screenshot, Vec<serde_json::Value>), FetchError> {
         let mut params = ScreenshotParams::builder().full_page(shot.full_page);
         params = if shot.jpeg {
             params.format(CaptureScreenshotFormat::Jpeg).quality(80)
@@ -344,15 +388,17 @@ impl Renderer {
                     block: Block::default(),
                     ..options.clone()
                 },
+                actions,
                 Some(SCREENSHOT_VIEWPORT),
                 async move |page| page.screenshot(params).await,
             )
             .await?;
-        Ok(Screenshot {
+        let shot = Screenshot {
             image: visited.value,
             status: visited.status,
             url: visited.url,
-        })
+        };
+        Ok((shot, visited.scripts))
     }
 
     async fn visit<T>(
@@ -360,6 +406,7 @@ impl Renderer {
         url: &str,
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
+        actions: &[Action],
         viewport: Option<(i64, i64)>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
     ) -> Result<Visited<T>, FetchError> {
@@ -369,7 +416,7 @@ impl Renderer {
             .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
         if !private {
             return self
-                .visit_in(None, url, prefetched, options, viewport, read)
+                .visit_in(None, url, prefetched, options, actions, viewport, read)
                 .await;
         }
         let context = self
@@ -385,6 +432,7 @@ impl Renderer {
                 url,
                 prefetched,
                 options,
+                actions,
                 viewport,
                 read,
             )
@@ -393,12 +441,14 @@ impl Renderer {
         visited
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn visit_in<T>(
         &self,
         context: Option<BrowserContextId>,
         url: &str,
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
+        actions: &[Action],
         viewport: Option<(i64, i64)>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
     ) -> Result<Visited<T>, FetchError> {
@@ -507,24 +557,60 @@ impl Renderer {
                 let _ = guard_page.execute(resume).await;
             }
         });
-        let outcome = tokio::time::timeout(options.timeout, async {
-            page.goto(url.as_str()).await?;
+        let popups = match actions {
+            [] => None,
+            _ => Some(
+                crate::actions::Popups::watch(&self.browser, page.target_id().clone())
+                    .await
+                    .map_err(browser_error)?,
+            ),
+        };
+        let limit = options
+            .timeout
+            .saturating_mul(if actions.is_empty() { 1 } else { 2 });
+        let outcome = tokio::time::timeout(limit, async {
+            page.goto(url.as_str()).await.map_err(browser_error)?;
             tokio::select! {
                 _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3) => {}
                 _ = text_settled(&page, settled_words) => {}
             }
             if let Some(selector) = &options.wait_for {
                 page.wait_for_selector(selector.as_str(), Some(options.timeout))
-                    .await?;
+                    .await
+                    .map_err(browser_error)?;
             }
-            let value = read(&page).await?;
-            let final_url = page.url().await?.unwrap_or_else(|| url.clone());
-            Ok::<_, chromiumoxide::error::CdpError>((value, final_url))
+            let scripts = crate::actions::run(&page, actions, options.timeout).await?;
+            let value = read(&page).await.map_err(browser_error)?;
+            let final_url = page
+                .url()
+                .await
+                .map_err(browser_error)?
+                .unwrap_or_else(|| url.clone());
+            if !actions.is_empty() {
+                if final_url.starts_with("chrome-error:") {
+                    return Err(FetchError::Build(
+                        "the actions navigated to a page the browser refused or could not load"
+                            .into(),
+                    ));
+                }
+                if final_url.starts_with("http") {
+                    crate::url_security::validate_public_http_url(&final_url)
+                        .await
+                        .map_err(|e| {
+                            FetchError::Build(format!("the actions led to {final_url}: {e}"))
+                        })?;
+                }
+            }
+            Ok::<_, FetchError>((value, final_url, scripts))
         })
         .await;
         guard.abort();
         document_watch.abort();
         let (status, private) = documents.lock().map_or((None, None), |seen| *seen);
+        let popped = match popups {
+            Some(popups) => popups.close(&self.browser).await,
+            None => Ok(()),
+        };
         let _ = page.close().await;
 
         if let Some(address) = private {
@@ -533,15 +619,16 @@ impl Renderer {
                  a system proxy or a host that resolves differently in the browser can cause this"
             )));
         }
-        let (value, final_url) = outcome
-            .map_err(|_| FetchError::Build(format!("rendering {url} timed out")))?
-            .map_err(browser_error)?;
+        popped?;
+        let (value, final_url, scripts) =
+            outcome.map_err(|_| FetchError::Build(format!("rendering {url} timed out")))??;
         Ok(Visited {
             value,
             status: status
                 .and_then(|code| u16::try_from(code).ok())
                 .unwrap_or(200),
             url: final_url,
+            scripts,
         })
     }
 
@@ -652,6 +739,22 @@ impl RenderPool {
         headers: &[(String, String)],
         block: Block,
     ) -> Result<FetchResult, FetchError> {
+        Ok(self
+            .render_actions(url, prefetched, wait_for, headers, block, &[])
+            .await?
+            .0)
+    }
+
+    /// Render `url` running `actions`; see [`Renderer::render_actions`].
+    pub async fn render_actions(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        block: Block,
+        actions: &[Action],
+    ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
         let _tab = self
             .tabs
             .acquire()
@@ -659,7 +762,12 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .render(url, prefetched, &self.options(wait_for, headers, block))
+            .render_actions(
+                url,
+                prefetched,
+                &self.options(wait_for, headers, block),
+                actions,
+            )
             .await
     }
 
@@ -671,6 +779,21 @@ impl RenderPool {
         headers: &[(String, String)],
         shot: ScreenshotOptions,
     ) -> Result<Screenshot, FetchError> {
+        Ok(self
+            .screenshot_actions(url, wait_for, headers, shot, &[])
+            .await?
+            .0)
+    }
+
+    /// Screenshot `url` after `actions`; see [`Renderer::screenshot_actions`].
+    pub async fn screenshot_actions(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        shot: ScreenshotOptions,
+        actions: &[Action],
+    ) -> Result<(Screenshot, Vec<serde_json::Value>), FetchError> {
         let _tab = self
             .tabs
             .acquire()
@@ -678,10 +801,11 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .screenshot(
+            .screenshot_actions(
                 url,
                 &self.options(wait_for, headers, Block::default()),
                 shot,
+                actions,
             )
             .await
     }
@@ -704,9 +828,17 @@ impl RenderPool {
         if self.browser.read().await.is_none() {
             let mut slot = self.browser.write().await;
             if slot.is_none() {
+                let commands = self
+                    .timeout
+                    .saturating_add(COMMAND_TIMEOUT)
+                    .min(Duration::from_secs(86_400));
                 let started = match &self.source {
-                    BrowserSource::Launch { proxy } => Renderer::launch(proxy.as_deref()).await,
-                    BrowserSource::Connect(endpoint) => Renderer::connect(endpoint).await,
+                    BrowserSource::Launch { proxy } => {
+                        Renderer::launch_timed(proxy.as_deref(), &[], commands).await
+                    }
+                    BrowserSource::Connect(endpoint) => {
+                        Renderer::connect_timed(endpoint, commands).await
+                    }
                 };
                 if let Err(e) = &started {
                     warn!("no browser for rendering: {e}");
@@ -1173,6 +1305,103 @@ mod tests {
             ),
             Err(e) => assert!(e.to_string().contains("private address 127.0.0.1"), "{e}"),
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn an_action_that_navigates_to_a_rebound_name_fails_the_render() {
+        let (loopback, reached) = loopback_listener().await;
+        let port = loopback.rsplit(':').next().unwrap().to_string();
+        let rules = format!("--host-resolver-rules=MAP example.net 127.0.0.1:{port}");
+        let renderer = Renderer::launch_with(None, &[rules.as_str()])
+            .await
+            .expect("Chrome launches");
+        let html =
+            r#"<html><body><a id="go" href="http://example.net:81/rebound">go</a></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let rendered = renderer
+            .render_actions(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                &super::parse_actions(r##"[{"type": "click", "selector": "#go"}]"##).unwrap(),
+            )
+            .await;
+        renderer.close().await;
+        let reached = reached.lock().unwrap().clone();
+        assert!(
+            reached.iter().any(|r| r.contains("/rebound")),
+            "the click never navigated: {reached:?}"
+        );
+        let error = rendered.expect_err("the render must fail").to_string();
+        assert!(error.contains("private address 127.0.0.1"), "{error}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn windows_opened_by_actions_are_closed() {
+        let (loopback, reached) = loopback_listener().await;
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let pages = async || {
+            renderer
+                .browser
+                .execute(chromiumoxide::cdp::browser_protocol::target::GetTargetsParams::default())
+                .await
+                .map(|r| {
+                    r.result
+                        .target_infos
+                        .iter()
+                        .filter(|t| t.r#type == "page")
+                        .count()
+                })
+                .unwrap_or(0)
+        };
+        let before = pages().await;
+        let html = format!(
+            r#"<html><body><a id="tab" target="_blank" href="https://example.org/">tab</a><button id="open" onclick="window.open('https://example.org/x')">open</button><a id="private" target="_blank" href="{loopback}/popup">private</a></body></html>"#
+        );
+        let headers = http::HeaderMap::new();
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        };
+        let render = async |steps: &str| {
+            renderer
+                .render_actions(
+                    "https://example.com/",
+                    Some(Prefetched {
+                        html: &html,
+                        headers: &headers,
+                    }),
+                    &options,
+                    &super::parse_actions(steps).unwrap(),
+                )
+                .await
+        };
+        let public = render(
+            r##"[{"type": "click", "selector": "#tab"}, {"type": "click", "selector": "#open"}, {"type": "wait", "milliseconds": 1500}]"##,
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let after = pages().await;
+        let private = render(
+            r##"[{"type": "click", "selector": "#private"}, {"type": "wait", "milliseconds": 1500}]"##,
+        )
+        .await;
+        renderer.close().await;
+        assert!(public.is_ok(), "{:?}", public.err());
+        assert_eq!(after, before, "popups were left open");
+        if let Err(e) = private {
+            assert!(e.to_string().contains("private"), "{e}");
+        }
+        let reached = reached.lock().unwrap().clone();
+        assert!(reached.is_empty(), "a popup reached loopback: {reached:?}");
     }
 
     #[tokio::test]

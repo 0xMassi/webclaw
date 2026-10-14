@@ -210,6 +210,8 @@ impl Renderer {
                     percent_decode(parsed.password().unwrap_or_default()),
                 ));
             }
+        } else {
+            config = config.arg("--no-proxy-server");
         }
         let config = config.build().map_err(browser_error)?;
         let (browser, handler) = match Browser::launch(config).await {
@@ -415,7 +417,7 @@ impl Renderer {
             .event_listener::<EventResponseReceived>()
             .await
             .map_err(browser_error)?;
-        let documents = Arc::new(Mutex::new((None, false)));
+        let documents = Arc::new(Mutex::new((None, None)));
         let seen = documents.clone();
         let check_documents = self.check_documents;
         let document_watch = tokio::spawn(async move {
@@ -426,8 +428,8 @@ impl Renderer {
                 let Ok(mut seen) = seen.lock() else {
                     break;
                 };
-                if check_documents && served_from_private(&event.response) {
-                    seen.1 = true;
+                if check_documents && seen.1.is_none() {
+                    seen.1 = private_address(&event.response);
                 }
                 if seen.0.is_none() && (main_frame.is_none() || event.frame_id == main_frame) {
                     seen.0 = Some(event.response.status);
@@ -520,12 +522,13 @@ impl Renderer {
         .await;
         guard.abort();
         document_watch.abort();
-        let (status, private) = documents.lock().map_or((None, false), |seen| *seen);
+        let (status, private) = documents.lock().map_or((None, None), |seen| *seen);
         let _ = page.close().await;
 
-        if private {
-            return Err(FetchError::InvalidUrl(format!(
-                "rendering {url} loaded a document from a blocked private or internal address"
+        if let Some(address) = private {
+            return Err(FetchError::Build(format!(
+                "rendering {url} loaded a document from the private address {address}; \
+                 a system proxy or a host that resolves differently in the browser can cause this"
             )));
         }
         let (value, final_url) = outcome
@@ -822,12 +825,14 @@ async fn keep_public(
         .await;
 }
 
-fn served_from_private(response: &chromiumoxide::cdp::browser_protocol::network::Response) -> bool {
+fn private_address(
+    response: &chromiumoxide::cdp::browser_protocol::network::Response,
+) -> Option<std::net::IpAddr> {
     response
         .remote_ip_address
         .as_deref()
         .and_then(|ip| ip.trim_matches(['[', ']']).parse().ok())
-        .is_some_and(crate::url_security::is_blocked_ip)
+        .filter(|ip| crate::url_security::is_blocked_ip(*ip))
 }
 
 async fn is_public(url: &str) -> bool {
@@ -1164,7 +1169,7 @@ mod tests {
                 !page.html.contains("loopback secret"),
                 "the render returned the loopback page"
             ),
-            Err(e) => assert!(e.to_string().contains("private"), "{e}"),
+            Err(e) => assert!(e.to_string().contains("private address 127.0.0.1"), "{e}"),
         }
     }
 
@@ -1235,6 +1240,33 @@ mod tests {
             0,
             "STUN packets reached loopback"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_system_proxy_does_not_take_over_a_render_without_one() {
+        let (system_proxy, reached) = loopback_listener().await;
+        let flag = format!("--proxy-server={system_proxy}");
+        let renderer = Renderer::launch_with(None, &[flag.as_str()])
+            .await
+            .expect("Chrome launches");
+        let shot = renderer
+            .screenshot(
+                "https://example.com/",
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                super::ScreenshotOptions::default(),
+            )
+            .await;
+        renderer.close().await;
+        let reached = reached.lock().unwrap().clone();
+        assert!(
+            reached.is_empty(),
+            "the render used the system proxy: {reached:?}"
+        );
+        shot.expect("screenshot succeeds");
     }
 
     const CROSS_SITE_FRAME: &str = r#"<html><body><p>framed</p><img src="LOOP/frame-img"><img src="NAMED/frame-named"><img src="http://example.org/redirect"><iframe src="LOOP/frame-nested"></iframe><iframe src="http://example.org/nav"></iframe><script>fetch("LOOP/frame-fetch").catch(() => {}); const xhr = new XMLHttpRequest(); xhr.open("GET", "LOOP/frame-xhr"); xhr.send(); new Worker("/worker.js"); new SharedWorker("/shared.js"); new WebSocket("WSLOOP/frame-ws");</script></body></html>"#;

@@ -262,12 +262,26 @@ fn extract_with_options_inner(
 /// deduplicated, in document order. Links inside elements a browser does not
 /// render (`hidden`, `display:none`, `<template>`) are left out.
 pub fn page_links(html: &str, base_url: &str) -> Vec<String> {
+    let Ok(base) = Url::parse(base_url) else {
+        return Vec::new();
+    };
+    let mut doc = Html::parse_document(html);
+    noise::strip_hidden(&mut doc);
     let mut seen = std::collections::HashSet::new();
-    page_anchors(html, base_url)
-        .into_iter()
-        .filter_map(|a| seen.insert(a.href.clone()).then_some(a.href))
+    doc.select(&ANCHORS)
+        .filter_map(|a| a.value().attr("href"))
+        .filter_map(|href| base.join(href.trim()).ok())
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .filter_map(|mut u| {
+            u.set_fragment(None);
+            let link = u.to_string();
+            seen.insert(link.clone()).then_some(link)
+        })
         .collect()
 }
+
+static ANCHORS: std::sync::LazyLock<scraper::Selector> =
+    std::sync::LazyLock::new(|| scraper::Selector::parse("a[href]").unwrap());
 
 /// A link on a page with the words a reader sees on and around it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
@@ -290,8 +304,6 @@ const ANCHOR_CONTEXT_LINKS: usize = 10_000;
 /// 10,000 `<a href>` of a page, each new target comes once, without text or
 /// context.
 pub fn page_anchors(html: &str, base_url: &str) -> Vec<Anchor> {
-    static ANCHORS: std::sync::LazyLock<scraper::Selector> =
-        std::sync::LazyLock::new(|| scraper::Selector::parse("a[href]").unwrap());
     const BLOCKS: &[&str] = &[
         "p",
         "li",

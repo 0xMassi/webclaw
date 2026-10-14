@@ -254,7 +254,7 @@ const HIDDEN_TEXT_CEILING: usize = 5000;
 
 pub(crate) fn strip_hidden(doc: &mut Html) {
     let mut doomed = Vec::new();
-    collect_hidden(doc.root_element(), false, &mut doomed);
+    collect_hidden(doc.root_element(), &mut doomed);
     let erased: Vec<NodeId> = doomed
         .iter()
         .filter_map(|id| doc.tree.get(*id))
@@ -274,35 +274,38 @@ pub(crate) fn strip_hidden(doc: &mut Html) {
     }
 }
 
-fn collect_hidden(el: ElementRef<'_>, hidden: bool, doomed: &mut Vec<NodeId>) {
-    for child in el.children() {
-        let Some(child_el) = ElementRef::wrap(child) else {
-            if hidden && matches!(child.value(), Node::Text(t) if !t.trim().is_empty()) {
-                doomed.push(child.id());
+fn collect_hidden(root: ElementRef<'_>, doomed: &mut Vec<NodeId>) {
+    let mut stack = vec![(root, false)];
+    while let Some((el, hidden)) = stack.pop() {
+        for child in el.children() {
+            let Some(child_el) = ElementRef::wrap(child) else {
+                if hidden && matches!(child.value(), Node::Text(t) if !t.trim().is_empty()) {
+                    doomed.push(child.id());
+                }
+                continue;
+            };
+            let v = child_el.value();
+            if v.attr("role") == Some("tabpanel") {
+                stack.push((child_el, false));
+                continue;
             }
-            continue;
-        };
-        let v = child_el.value();
-        if v.attr("role") == Some("tabpanel") {
-            collect_hidden(child_el, false, doomed);
-            continue;
+            let small = || !text_exceeds(child_el, HIDDEN_TEXT_CEILING);
+            let style = v.attr("style");
+            let not_rendered = v.name() == "template"
+                || v.attr("hidden")
+                    .is_some_and(|h| !h.eq_ignore_ascii_case("until-found"))
+                || style.and_then(|s| style_value(s, "display")).as_deref() == Some("none");
+            if not_rendered && small() {
+                doomed.push(child.id());
+                continue;
+            }
+            let child_hidden = match style.and_then(|s| style_value(s, "visibility")).as_deref() {
+                Some("hidden" | "collapse") => small(),
+                Some("visible") => false,
+                _ => hidden,
+            };
+            stack.push((child_el, child_hidden));
         }
-        let small = || !text_exceeds(child_el, HIDDEN_TEXT_CEILING);
-        let style = v.attr("style");
-        let not_rendered = v.name() == "template"
-            || v.attr("hidden")
-                .is_some_and(|h| !h.eq_ignore_ascii_case("until-found"))
-            || style.and_then(|s| style_value(s, "display")).as_deref() == Some("none");
-        if not_rendered && small() {
-            doomed.push(child.id());
-            continue;
-        }
-        let child_hidden = match style.and_then(|s| style_value(s, "visibility")).as_deref() {
-            Some("hidden" | "collapse") => small(),
-            Some("visible") => false,
-            _ => hidden,
-        };
-        collect_hidden(child_el, child_hidden, doomed);
     }
 }
 
@@ -517,6 +520,27 @@ fn is_ad_class(class: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_hidden_handles_deep_nesting_on_a_small_stack() {
+        let depth = 20_000;
+        let page = format!(
+            "{}<span hidden>gone</span>kept{}",
+            "<div>".repeat(depth),
+            "</div>".repeat(depth)
+        );
+        let text = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                let mut doc = Html::parse_document(&page);
+                strip_hidden(&mut doc);
+                doc.root_element().text().collect::<String>()
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(text, "kept");
+    }
 
     #[test]
     fn ad_class_standalone_detected() {

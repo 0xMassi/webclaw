@@ -22,6 +22,7 @@ pub mod quality;
 pub mod reddit;
 pub mod select;
 pub mod structured_data;
+pub mod tables;
 pub mod types;
 pub mod xpath;
 pub mod youtube;
@@ -36,6 +37,7 @@ pub use find::{
 pub use focus::{focus, focus_extraction};
 pub use llm::to_llm_text;
 pub use select::{SelectError, select, select_records};
+pub use tables::{Table, tables};
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,
 };

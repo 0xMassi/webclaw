@@ -50,6 +50,14 @@ It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, as
 
 It freezes 43 list pages into `.work/similar-corpus/`: 23 pages the widening rule was developed on (books, quotes, Hacker News, GitHub trending, Wikipedia lists, shop category pages, news indexes) and 20 held-out pages picked and scored by a separate review (package indexes, docs, forums, job boards, tables, European and Asian news sites), reported apart so the result is not scored only on the pages it was tuned on. A hand-written CSS selector per page picks the ground-truth items. Each tool searches for the second item's text, then asks for every element like the one it found, and again starting from the first ground-truth item. It scores precision and recall against the ground truth, checks that webclaw's suggested selector picks the same elements again, and times the run. Crawl4AI has no equivalent (its schema generator needs an LLM call), so its row says so. Results land in `results/<label>/similar-summary.md`.
 
+### Data tables
+
+```bash
+./benchmarks/tables.sh         # webclaw --tables against Crawl4AI's result.tables and a CSS loop in Scrapling
+```
+
+It freezes 35 public pages into `.work/tables-corpus/`: Wikipedia lists and sports pages, government statistics, sports results, finance tables, docs with option tables, and old sites built from layout tables. It also freezes 19 held-out pages into `.work/tables-held/`, chosen by a reviewer; one rule (the legend row) was fixed after seeing them. Each table on those pages is labelled by hand in `tables-labels.json` and `tables-held-labels.json` as a data table, a layout table, or neither (infoboxes and key/value boxes). The truth for every table is what headless Chrome shows: the frozen page loads with scripts off and stylesheets on, and each visible cell's `innerText` is laid out on a grid by its spans. That truth is saved once in `.work/tables-truth-*.json` and reused; delete those files after re-freezing a page, or the old truth scores the new page. The corpus is also scored against the raw HTML laid out with lxml. The script scores which tables each tool returns and how many cells it gets right. Crawl4AI returns tables from its default scraping pass (`DefaultTableExtraction`). Scrapling has no table API, so its arm is the loop a Scrapling user writes: every `table`, its `tr` rows and their `th, td` text, first row as headers. Results land in `results/<label>/tables-summary.md`.
+
 ### Question-focused extraction
 
 ```bash
@@ -81,6 +89,14 @@ It fetches the url-mode cases twice through each tool's cache, starting empty, a
 ```
 
 It screenshots 10 public pages with each tool, the viewport and the whole page, first with a fresh browser per page and then with one browser kept open (webclaw and Scrapling through their MCP servers, Scrapling inside a browser session). It records the time, the image size and whether the image is blank, and writes `results/<label>/screenshot-summary.md`.
+
+### Blocking resources while rendering
+
+```bash
+./benchmarks/render-block.sh   # webclaw --block against the other tools' resource blocking
+```
+
+It renders 20 script-heavy pages (the `spa` cases, eight JavaScript-built homepages from `facts.json`, Books to Scrape, BBC News and The Verge) with each tool in one browser kept open, 3 rounds, with its blocking off and on: webclaw's `block` list through the MCP `scrape` tool, Scrapling's `disable_resources` (images, fonts, media, stylesheets, beacons, websockets and a few more, by resource type), and Crawl4AI's `text_mode` (images, fonts, media, documents and archives by file extension, plus Chrome flags that turn images and remote fonts off). Every request goes through a local proxy that counts the bytes it carries, leaving out Chrome's own background downloads. It records the time, the bytes, the golden facts and the word count, lists the pages that lost content against the same tool with blocking off, and writes `results/<label>/render-block-summary.md`.
 
 ### MCP over HTTP
 

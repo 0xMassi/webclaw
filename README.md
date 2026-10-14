@@ -144,6 +144,25 @@ If building from source fails because native build tools are missing, install th
 | Arch | `sudo pacman -S pkg-config openssl cmake clang git base-devel` |
 | macOS | `xcode-select --install` |
 
+### Python
+
+The [`python/`](python/) directory builds a Python package that bundles the `webclaw` binary and calls it from Python: `scrape`, `select`, `tables`, `find_text`, `similar`, `crawl`, `map` and `screenshot`, with no API key and no Python dependencies.
+
+```bash
+cd python && uv build --wheel && pip install dist/webclaw_cli-*.whl
+```
+
+```python
+import webclaw_cli as wc
+
+md = wc.scrape("https://example.com", "llm")
+titles = wc.select("https://books.toscrape.com", css="h3 a::attr(title)")
+for page in wc.crawl("https://quotes.toscrape.com", max_pages=10):
+    print(page["url"])
+```
+
+See [python/README.md](python/README.md) for every function and option.
+
 ---
 
 ## Quick Start

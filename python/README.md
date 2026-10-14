@@ -1,0 +1,102 @@
+# webclaw-cli for Python
+
+Extract web pages for LLMs from Python, on your own machine. The wheel ships the `webclaw` binary, and the `webclaw_cli` module runs it and returns Python objects. No API key, no server, no Python dependencies.
+
+For the hosted API, use the [`webclaw`](https://pypi.org/project/webclaw/) package instead. The two install side by side.
+
+## Install
+
+The package is not on PyPI yet. Build the wheel from this directory (needs a Rust toolchain and [uv](https://docs.astral.sh/uv/)):
+
+```bash
+cd python
+uv build --wheel
+pip install dist/webclaw_cli-*.whl
+```
+
+The wheel also puts `webclaw` on the `PATH` of the environment it is installed in, so the command line tool works too.
+
+## Use
+
+```python
+import webclaw_cli as wc
+
+md = wc.scrape("https://example.com")                   # markdown
+text = wc.scrape("https://example.com", "llm")          # compact text for an LLM
+page = wc.scrape("https://example.com", "json")         # dict: metadata, content, links, ...
+answer = wc.scrape("https://docs.python.org/3/library/asyncio.html", "llm", query="how do I cancel a task")
+
+titles = wc.select("https://books.toscrape.com", css="h3 a::attr(title)")
+prices = wc.select("https://books.toscrape.com", xpath="//p[@class='price_color']")
+books = wc.select("https://books.toscrape.com", css="article.product_pod",
+                  fields={"title": "h3 a::attr(title)", "price": ".price_color"})
+
+rows = wc.tables("https://en.wikipedia.org/wiki/List_of_largest_cities")
+hits = wc.find_text("https://books.toscrape.com", "£51.77")        # [{"selector", "text"}]
+like = wc.similar("https://books.toscrape.com", text="£51.77")     # {"selector", "matches"}
+
+for page in wc.crawl("https://quotes.toscrape.com", max_pages=10):
+    print(page["url"], page["extraction"]["metadata"]["word_count"])
+
+urls = wc.map("https://www.rust-lang.org")
+wc.screenshot("https://example.com", "example.png", full_page=True)
+```
+
+Every function that takes a page also takes an HTML string: anything that starts with `<` is parsed as HTML instead of fetched.
+
+```python
+wc.select("<ul><li>a</li><li>b</li></ul>", css="li")    # ["a", "b"]
+```
+
+`crawl` yields each page as it finishes. Breaking out of the loop stops the crawl.
+
+## Options
+
+Every function takes these keyword arguments:
+
+| Option | Meaning |
+|---|---|
+| `proxy` | Proxy URL, `http://user:pass@host:port` |
+| `browser` | Browser to impersonate: `chrome` (default), `chrome-macos`, `firefox`, `safari`, `edge`, `safari-ios`, `random` |
+| `headers` | Extra request headers, a dict |
+| `cookies` | A `Cookie` header string, or a dict |
+| `timeout` | Request timeout in seconds (default 30) |
+| `render` | `auto` (default) renders in a local Chrome only the pages that need JavaScript; `always`, `never` |
+| `cache` | Keep fetched pages on disk and reuse them (in `WEBCLAW_CACHE_DIR` or `~/.cache/webclaw`) |
+
+Rendering and screenshots use Chrome or Chromium already installed on your machine. Nothing is downloaded.
+
+## Errors
+
+When the binary fails, the function raises `webclaw_cli.WebclawError`. Its message is the error the binary printed, and it carries the full `stderr` and the `returncode`.
+
+```python
+try:
+    wc.scrape("https://example.com/missing")
+except wc.WebclawError as e:
+    print(e, e.returncode)
+```
+
+## Advanced
+
+`wc.binary_path()` returns the path of the bundled binary, for flags this module does not wrap:
+
+```python
+import subprocess
+subprocess.run([wc.binary_path(), "https://example.com", "--brand"], check=True)
+```
+
+Each call starts the binary once. To call it from async code, run it in a thread:
+
+```python
+md = await asyncio.to_thread(wc.scrape, "https://example.com")
+```
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -v                       # offline, on HTML strings
+WEBCLAW_REAL_SITES=1 python -m unittest discover -s tests -v  # also against public sites
+```
+
+The public-site tests include rendering and screenshots, so they need Chrome or Chromium.

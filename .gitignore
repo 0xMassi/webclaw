@@ -20,3 +20,5 @@ research-*.json
 
 # Benchmark tool envs, frozen third-party HTML and raw outputs. Never commit the corpus.
 benchmarks/.work/
+
+__pycache__/

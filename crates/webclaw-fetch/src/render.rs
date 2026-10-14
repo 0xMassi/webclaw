@@ -682,7 +682,9 @@ impl RenderPool {
     /// Render `fetched` when `config` asks for it and the page seems to need
     /// a browser, handing the browser the HTTP response so the document is
     /// not requested twice. `http_words` is the word count extracted from it
-    /// over HTTP. A failed render is logged and gives `None`.
+    /// over HTTP. A failed render is logged and gives `None`. Only renders
+    /// that block nothing count toward the per-host verdict, since a blocked
+    /// render can come back with less text than the site really has.
     pub async fn render_if_needed(
         &self,
         fetched: &FetchResult,
@@ -710,7 +712,9 @@ impl RenderPool {
             Ok(rendered) => {
                 let words = webclaw_core::extract(&rendered.html, Some(&rendered.url))
                     .map_or(0, |e| e.metadata.word_count);
-                self.record(&fetched.url, http_words, words);
+                if config.block == Block::default() {
+                    self.record(&fetched.url, http_words, words);
+                }
                 Some(rendered)
             }
             Err(e) => {
@@ -1194,6 +1198,35 @@ mod tests {
         }
         assert!(pool.wants(&spa, 120, false));
         assert!(!pool.wants(&page("https://other.test/a", &thick, 200), 120, false));
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn blocked_renders_leave_the_host_verdict_alone() {
+        let config = super::RenderConfig {
+            pool: Arc::new(super::RenderPool::new(
+                super::BrowserSource::Launch { proxy: None },
+                std::time::Duration::from_secs(20),
+            )),
+            always: false,
+            wait_for: None,
+            block: "images".parse().unwrap(),
+        };
+        let shell = page(
+            "https://example.com/",
+            r#"<html><body><div id="root"></div><script>1</script></body></html>"#,
+            200,
+        );
+        let pool = &config.pool;
+        for _ in 0..3 {
+            assert!(
+                pool.render_if_needed(&shell, 0, &config, &[])
+                    .await
+                    .is_some()
+            );
+        }
+        pool.close().await;
+        assert!(pool.wants(&shell, 0, false));
     }
 
     #[test]

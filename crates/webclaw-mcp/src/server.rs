@@ -329,25 +329,15 @@ impl WebclawMcp {
                 a4,
                 print_background,
             } => {
+                let mut pdf = webclaw_fetch::render::PdfOptions::default();
+                pdf.print_background = print_background;
+                if a4 {
+                    pdf.paper = webclaw_fetch::render::Paper::A4;
+                }
                 let mut data = Capped(Vec::new());
                 let (printed, js_results) = render
                     .pool
-                    .pdf_actions(
-                        url,
-                        wait_for,
-                        &[],
-                        webclaw_fetch::render::PdfOptions {
-                            paper: if a4 {
-                                webclaw_fetch::render::Paper::A4
-                            } else {
-                                webclaw_fetch::render::Paper::Letter
-                            },
-                            print_background,
-                            ..Default::default()
-                        },
-                        &actions,
-                        &mut data,
-                    )
+                    .pdf_actions(url, wait_for, &[], pdf, &actions, &mut data)
                     .await
                     .map_err(|e| format!("PDF failed: {e}"))?;
                 webclaw_fetch::FetchError::check_status(printed.status)

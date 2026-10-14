@@ -100,6 +100,7 @@ impl Screenshot {
 
 /// Paper size of a PDF.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Paper {
     /// US Letter, 8.5x11 inches.
     #[default]
@@ -108,9 +109,12 @@ pub enum Paper {
     A4,
 }
 
-/// How a page is printed to PDF.
+/// How a page is printed to PDF. Start from `PdfOptions::default()` and
+/// set the fields you need.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct PdfOptions {
+    /// Paper size, US Letter by default.
     pub paper: Paper,
     /// Turn the paper sideways.
     pub landscape: bool,
@@ -118,6 +122,19 @@ pub struct PdfOptions {
     pub print_background: bool,
     /// Zoom of the page content, from 0.1 to 2.
     pub scale: f64,
+}
+
+impl PdfOptions {
+    fn check(&self) -> Result<(), FetchError> {
+        if (0.1..=2.0).contains(&self.scale) {
+            Ok(())
+        } else {
+            Err(FetchError::Build(format!(
+                "PDF scale must be between 0.1 and 2, got {}",
+                self.scale
+            )))
+        }
+    }
 }
 
 impl Default for PdfOptions {
@@ -484,12 +501,7 @@ impl Renderer {
         actions: &[Action],
         out: &mut (dyn std::io::Write + Send),
     ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
-        if !(0.1..=2.0).contains(&pdf.scale) {
-            return Err(FetchError::Build(format!(
-                "PDF scale must be between 0.1 and 2, got {}",
-                pdf.scale
-            )));
-        }
+        pdf.check()?;
         let (width, height) = match pdf.paper {
             Paper::Letter => (8.5, 11.0),
             Paper::A4 => (210.0 / 25.4, 297.0 / 25.4),
@@ -966,6 +978,7 @@ impl RenderPool {
         actions: &[Action],
         out: &mut (dyn std::io::Write + Send),
     ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
+        pdf.check()?;
         let _tab = self
             .tabs
             .acquire()
@@ -2054,6 +2067,23 @@ mod tests {
         renderer.close().await;
         let error = printed.expect_err("printing fails").to_string();
         assert!(error.contains("navigated away while printing"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_bad_pdf_scale_fails_before_the_browser_starts() {
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Connect("ws://127.0.0.1:9/never".into()),
+            std::time::Duration::from_secs(5),
+        );
+        let options = super::PdfOptions {
+            scale: 0.0,
+            ..Default::default()
+        };
+        let error = pool
+            .pdf("https://example.com/", None, &[], options, &mut Vec::new())
+            .await
+            .expect_err("the scale is refused");
+        assert!(error.to_string().contains("PDF scale"), "{error}");
     }
 
     fn png_size(png: &[u8]) -> (u32, u32) {

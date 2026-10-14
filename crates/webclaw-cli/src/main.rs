@@ -335,8 +335,8 @@ struct Cli {
     #[arg(long, requires = "screenshot")]
     full_page: bool,
 
-    /// Save the rendered page as a PDF to this file, every page of it, as the
-    /// browser prints it. Needs the `browser` feature
+    /// Save the rendered page as a PDF to this file (- for stdout), every
+    /// page of it, as the browser prints it. Needs the `browser` feature
     #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research"])]
     save_pdf: Option<PathBuf>,
 
@@ -1282,25 +1282,32 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
         .as_ref()
         .ok_or("--save-pdf needs the browser, so it cannot run with --render never")?;
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
-    let mut file =
-        std::fs::File::create(path).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let to_stdout = path == Path::new("-");
+    let mut out: Box<dyn std::io::Write + Send> = if to_stdout {
+        Box::new(std::io::stdout())
+    } else {
+        Box::new(
+            std::fs::File::create(path)
+                .map_err(|e| format!("cannot write {}: {e}", path.display()))?,
+        )
+    };
+    let mut options = PdfOptions::default();
+    options.paper = match cli.paper {
+        PaperArg::Letter => Paper::Letter,
+        PaperArg::A4 => Paper::A4,
+    };
+    options.landscape = cli.landscape;
+    options.print_background = cli.print_background;
+    options.scale = cli.scale;
     let printed = render
         .pool
         .pdf_actions(
             url,
             render.wait_for.as_deref(),
             &headers,
-            PdfOptions {
-                paper: match cli.paper {
-                    PaperArg::Letter => Paper::Letter,
-                    PaperArg::A4 => Paper::A4,
-                },
-                landscape: cli.landscape,
-                print_background: cli.print_background,
-                scale: cli.scale,
-            },
+            options,
             &actions,
-            &mut file,
+            &mut out,
         )
         .await;
     close_browser(&config).await;
@@ -1317,19 +1324,29 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
                 .map(|()| printed)
                 .map_err(|e| e.to_string())
         });
-    let printed = match printed {
+    let flushed = out.flush();
+    drop(out);
+    let printed = match printed.and_then(|printed| {
+        flushed
+            .map(|()| printed)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))
+    }) {
         Ok(printed) => printed,
         Err(e) => {
-            drop(file);
-            let _ = std::fs::remove_file(path);
+            if !to_stdout {
+                let _ = std::fs::remove_file(path);
+            }
             return Err(e);
         }
     };
+    let target = if to_stdout {
+        "stdout".to_string()
+    } else {
+        path.display().to_string()
+    };
     eprintln!(
-        "saved {} ({} bytes) of {}",
-        path.display(),
-        printed.bytes,
-        printed.url
+        "saved {target} ({} bytes) of {}",
+        printed.bytes, printed.url
     );
     Ok(())
 }

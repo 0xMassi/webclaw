@@ -10,6 +10,7 @@ pub mod domain;
 pub mod endpoints;
 pub mod error;
 pub mod extractor;
+pub mod find;
 pub mod focus;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
 pub mod js_eval;
@@ -21,6 +22,7 @@ pub mod quality;
 pub mod reddit;
 pub mod select;
 pub mod structured_data;
+pub mod tables;
 pub mod types;
 pub mod xpath;
 pub mod youtube;
@@ -29,9 +31,13 @@ pub use brand::BrandIdentity;
 pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;
+pub use find::{
+    FindError, FindExample, FoundElement, SimilarSet, TextMatch, find_similar, find_text,
+};
 pub use focus::{PageWords, Question, Relevance, focus, focus_extraction};
 pub use llm::to_llm_text;
 pub use select::{SelectError, select, select_records};
+pub use tables::{Table, tables};
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,
 };

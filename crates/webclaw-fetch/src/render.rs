@@ -25,6 +25,7 @@ use tokio::sync::{RwLock, RwLockReadGuard, Semaphore};
 use tracing::warn;
 use url::Url;
 
+use crate::Block;
 use crate::client::FetchResult;
 use crate::error::FetchError;
 
@@ -39,6 +40,8 @@ pub struct RenderOptions {
     /// `Authorization` or `Accept-Language`. A `Cookie` header is set as
     /// cookies for the page's URL instead.
     pub headers: Vec<(String, String)>,
+    /// Resource types whose requests fail; see [`Block`] for what it misses.
+    pub block: Block,
 }
 
 impl Default for RenderOptions {
@@ -47,6 +50,18 @@ impl Default for RenderOptions {
             wait_for: None,
             timeout: Duration::from_secs(30),
             headers: Vec::new(),
+            block: Block::default(),
+        }
+    }
+}
+
+impl Block {
+    fn blocks(self, kind: &ResourceType) -> bool {
+        match kind {
+            ResourceType::Image => self.images,
+            ResourceType::Font => self.fonts,
+            ResourceType::Media | ResourceType::TextTrack => self.media,
+            _ => false,
         }
     }
 }
@@ -239,6 +254,7 @@ impl Renderer {
 
     /// Render `url` in a 1280x720 viewport and capture it once its content
     /// has settled, under the same rules as [`Renderer::render`].
+    /// `options.block` is ignored: a screenshot loads everything.
     pub async fn screenshot(
         &self,
         url: &str,
@@ -256,7 +272,10 @@ impl Renderer {
             .visit(
                 url,
                 None,
-                options,
+                &RenderOptions {
+                    block: Block::default(),
+                    ..options.clone()
+                },
                 Some(SCREENSHOT_VIEWPORT),
                 async move |page| page.screenshot(params).await,
             )
@@ -375,6 +394,7 @@ impl Renderer {
         let mut main_document =
             prefetched.map(|p| (base64(p.html.as_bytes()), response_headers(p.headers)));
         let origin = target.origin();
+        let block = options.block;
         let guard_page = page.clone();
         let guard = tokio::spawn(async move {
             while let Some(event) = paused.next().await {
@@ -394,10 +414,11 @@ impl Renderer {
                     continue;
                 }
                 let parsed = Url::parse(request_url).ok();
-                let allowed = !request_url.starts_with("http")
-                    || crate::url_security::validate_public_http_url(request_url)
-                        .await
-                        .is_ok();
+                let allowed = !block.blocks(&event.resource_type)
+                    && (!request_url.starts_with("http")
+                        || crate::url_security::validate_public_http_url(request_url)
+                            .await
+                            .is_ok());
                 if !allowed {
                     let _ = guard_page
                         .execute(FailRequestParams::new(id, ErrorReason::BlockedByClient))
@@ -511,6 +532,9 @@ pub struct RenderConfig {
     pub always: bool,
     /// Also wait until an element matching this CSS selector exists.
     pub wait_for: Option<String>,
+    /// Resource types whose requests fail while rendering; see [`Block`].
+    /// Screenshots load everything.
+    pub block: Block,
 }
 
 impl std::fmt::Debug for RenderPool {
@@ -543,6 +567,7 @@ impl RenderPool {
         prefetched: Option<Prefetched<'_>>,
         wait_for: Option<&str>,
         headers: &[(String, String)],
+        block: Block,
     ) -> Result<FetchResult, FetchError> {
         let _tab = self
             .tabs
@@ -551,7 +576,7 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .render(url, prefetched, &self.options(wait_for, headers))
+            .render(url, prefetched, &self.options(wait_for, headers, block))
             .await
     }
 
@@ -570,15 +595,25 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .screenshot(url, &self.options(wait_for, headers), shot)
+            .screenshot(
+                url,
+                &self.options(wait_for, headers, Block::default()),
+                shot,
+            )
             .await
     }
 
-    fn options(&self, wait_for: Option<&str>, headers: &[(String, String)]) -> RenderOptions {
+    fn options(
+        &self,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        block: Block,
+    ) -> RenderOptions {
         RenderOptions {
             wait_for: wait_for.map(str::to_string),
             timeout: self.timeout,
             headers: headers.to_vec(),
+            block,
         }
     }
 
@@ -610,7 +645,9 @@ impl RenderPool {
     /// Render `fetched` when `config` asks for it and the page seems to need
     /// a browser, handing the browser the HTTP response so the document is
     /// not requested twice. `http_words` is the word count extracted from it
-    /// over HTTP. A failed render is logged and gives `None`.
+    /// over HTTP. A failed render is logged and gives `None`. Only renders
+    /// that block nothing count toward the per-host verdict, since a blocked
+    /// render can come back with less text than the site really has.
     pub async fn render_if_needed(
         &self,
         fetched: &FetchResult,
@@ -631,13 +668,16 @@ impl RenderPool {
                 Some(prefetched),
                 config.wait_for.as_deref(),
                 headers,
+                config.block,
             )
             .await;
         match rendered {
             Ok(rendered) => {
                 let words = webclaw_core::extract(&rendered.html, Some(&rendered.url))
                     .map_or(0, |e| e.metadata.word_count);
-                self.record(&fetched.url, http_words, words);
+                if config.block == Block::default() {
+                    self.record(&fetched.url, http_words, words);
+                }
                 Some(rendered)
             }
             Err(e) => {
@@ -945,6 +985,106 @@ mod tests {
     }
 
     #[test]
+    fn block_lists_parse_into_resource_types() {
+        use chromiumoxide::cdp::browser_protocol::network::ResourceType;
+        let block: super::Block = " Images, fonts,media ".parse().unwrap();
+        assert!(block.blocks(&ResourceType::Image));
+        assert!(block.blocks(&ResourceType::Font));
+        assert!(block.blocks(&ResourceType::Media));
+        assert!(block.blocks(&ResourceType::TextTrack));
+        assert!(!block.blocks(&ResourceType::Stylesheet));
+        for kind in [
+            ResourceType::Document,
+            ResourceType::Script,
+            ResourceType::Xhr,
+            ResourceType::Fetch,
+        ] {
+            assert!(!block.blocks(&kind));
+        }
+        assert!("stylesheets".parse::<super::Block>().is_err());
+        assert_eq!("none".parse::<super::Block>(), Ok(super::Block::default()));
+        assert_eq!("".parse::<super::Block>(), Ok(super::Block::default()));
+        assert!("scripts".parse::<super::Block>().is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn blocked_resources_never_reach_the_network() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let log = log.clone();
+                tokio::spawn(async move {
+                    let mut buffer = [0; 4096];
+                    let n = socket.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    if let Some(target) = request.split_whitespace().nth(1) {
+                        log.lock().unwrap().push(target.to_string());
+                    }
+                    let _ = socket
+                        .write_all(b"HTTP/1.1 404 Not Found\r\nCache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+        let html = r#"<html><head><link rel="stylesheet" href="/style.css"><style>@font-face { font-family: F; src: url(/font.woff2); } p { font-family: F; }</style></head><body><p id="msg">rendered</p><img src="/pic.png"><video src="/clip.mp4" preload="auto"></video><script>document.getElementById("msg").textContent = "scripts ran";</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        let mut results = Vec::new();
+        for block in ["images,fonts,media", "none"] {
+            let rendered = renderer
+                .render(
+                    "http://example.com/page",
+                    Some(Prefetched {
+                        html,
+                        headers: &headers,
+                    }),
+                    &RenderOptions {
+                        timeout: std::time::Duration::from_secs(20),
+                        block: block.parse().unwrap(),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            results.push((rendered, std::mem::take(&mut *seen.lock().unwrap())));
+        }
+        renderer.close().await;
+        let paths = ["/font.woff2", "/pic.png", "/clip.mp4"];
+        let reached = |log: &[String], path: &str| log.iter().any(|t| t.ends_with(path));
+        assert!(reached(&results[0].1, "/style.css"), "{:?}", results[0].1);
+        let (blocked, blocked_log) = &results[0];
+        assert!(
+            blocked
+                .as_ref()
+                .expect("blocked render")
+                .html
+                .contains("scripts ran")
+        );
+        for path in paths {
+            assert!(
+                !reached(blocked_log, path),
+                "{path} loaded: {blocked_log:?}"
+            );
+        }
+        let (open, open_log) = &results[1];
+        assert!(
+            open.as_ref()
+                .expect("open render")
+                .html
+                .contains("scripts ran")
+        );
+        for path in paths {
+            assert!(reached(open_log, path), "{path} not loaded: {open_log:?}");
+        }
+    }
+
+    #[test]
     fn the_text_must_grow_past_the_http_page_before_it_counts_as_settled() {
         let menu = format!(
             "<html><body><nav>{}</nav><div id=\"root\"></div></body></html>",
@@ -1021,6 +1161,35 @@ mod tests {
         }
         assert!(pool.wants(&spa, 120, false));
         assert!(!pool.wants(&page("https://other.test/a", &thick, 200), 120, false));
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn blocked_renders_leave_the_host_verdict_alone() {
+        let config = super::RenderConfig {
+            pool: Arc::new(super::RenderPool::new(
+                super::BrowserSource::Launch { proxy: None },
+                std::time::Duration::from_secs(20),
+            )),
+            always: false,
+            wait_for: None,
+            block: "images".parse().unwrap(),
+        };
+        let shell = page(
+            "https://example.com/",
+            r#"<html><body><div id="root"></div><script>1</script></body></html>"#,
+            200,
+        );
+        let pool = &config.pool;
+        for _ in 0..3 {
+            assert!(
+                pool.render_if_needed(&shell, 0, &config, &[])
+                    .await
+                    .is_some()
+            );
+        }
+        pool.close().await;
+        assert!(pool.wants(&shell, 0, false));
     }
 
     #[test]

@@ -212,6 +212,12 @@ struct Cli {
     #[arg(long)]
     wait_for: Option<String>,
 
+    /// When rendering a page for its content, skip these resources: a comma
+    /// list of images, fonts and media, or none. Screenshots
+    /// load everything
+    #[arg(long, value_name = "TYPES", conflicts_with = "screenshot")]
+    block: Option<webclaw_fetch::Block>,
+
     /// Extract from local HTML file instead of fetching
     #[arg(long)]
     file: Option<String>,
@@ -244,15 +250,48 @@ struct Cli {
     #[arg(long, value_name = "EXPRESSION", group = "pick")]
     xpath: Option<String>,
 
-    /// With --select or --xpath, print one JSON object per match instead:
-    /// NAME=SELECTOR run inside each match (repeatable), e.g. `--field
-    /// price=.price_color`, or with --xpath `--field "price=.//p[@class='price_color']"`
+    /// Print the page's data tables as JSON: caption, headers and rows of
+    /// cell text. Layout tables are skipped
+    #[arg(
+        long,
+        group = "pick",
+        conflicts_with_all = ["similar", "fields", "exact", "case_sensitive", "crawl", "watch", "map"]
+    )]
+    tables: bool,
+
+    /// Print the deepest elements whose text contains TEXT, any case, as a
+    /// JSON array of {"selector", "text"}, each with a CSS path to the element
+    #[arg(long, value_name = "TEXT", groups = ["pick", "find"])]
+    find_text: Option<String>,
+
+    /// Like --find-text with a regular expression, e.g. "^£\d+\.\d\d$"
+    #[arg(long, value_name = "REGEX", groups = ["pick", "find"])]
+    find_regex: Option<String>,
+
+    /// With --find-text, match the whole text instead of a part of it
+    #[arg(long, requires = "find_text", conflicts_with_all = ["select", "xpath", "find_regex"])]
+    exact: bool,
+
+    /// With --find-text or --find-regex, match letter case
+    #[arg(long, requires = "find")]
+    case_sensitive: bool,
+
+    /// Use the first element --select, --xpath, --find-text or --find-regex
+    /// picks as an example and print every element like it, with one CSS
+    /// selector that picks them all: {"selector", "matches"}
+    #[arg(long, requires = "pick")]
+    similar: bool,
+
+    /// With --select, --xpath or --similar, print one JSON object per match
+    /// instead: NAME=SELECTOR run inside each match (repeatable), e.g. `--field
+    /// price=.price_color`, or with --xpath `--field "price=.//p[@class='price_color']"`.
+    /// With --similar the fields are CSS and the output is {"selector", "records"}
     #[arg(long = "field", value_name = "NAME=SELECTOR", requires = "pick")]
     fields: Vec<String>,
 
     /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
     /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["select", "xpath", "crawl", "watch", "map"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map"])]
     screenshot: Option<PathBuf>,
 
     /// With --screenshot, capture the whole scrollable page
@@ -679,6 +718,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
             pool: Arc::new(render_pool(cli, &config)),
             always: cli.render == RenderMode::Always,
             wait_for: cli.wait_for.clone(),
+            block: cli.block.unwrap_or_default(),
         });
     }
     config
@@ -1039,7 +1079,13 @@ async fn render_page(config: &FetchConfig, url: &str) -> Result<FetchResult, Str
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
     render
         .pool
-        .render(url, None, render.wait_for.as_deref(), &headers)
+        .render(
+            url,
+            None,
+            render.wait_for.as_deref(),
+            &headers,
+            render.block,
+        )
         .await
         .map_err(|e| format!("render error: {e}"))
 }
@@ -1255,17 +1301,7 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
         .map_err(|e| format!("fetch error: {e}"))
 }
 
-async fn run_select(cli: &Cli, selector: &str, xpath: bool) -> Result<(), String> {
-    let fields = cli
-        .fields
-        .iter()
-        .map(|field| {
-            field
-                .split_once('=')
-                .map(|(name, css)| (name.trim().to_string(), css.trim().to_string()))
-                .ok_or_else(|| format!("--field needs NAME=SELECTOR, got `{field}`"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+async fn fetch_page(cli: &Cli) -> Result<FetchResult, String> {
     let page = if cli.stdin || cli.file.is_some() {
         fetch_html(cli).await?
     } else {
@@ -1291,23 +1327,81 @@ async fn run_select(cli: &Cli, selector: &str, xpath: bool) -> Result<(), String
         page?
     };
     webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+    Ok(page)
+}
+
+async fn run_tables(cli: &Cli) -> Result<(), String> {
+    let page = fetch_page(cli).await?;
+    let json = serde_json::to_string_pretty(&webclaw_core::tables(&page.html));
+    println!("{}", json.map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+async fn run_select(cli: &Cli) -> Result<(), String> {
+    let text = match (&cli.find_text, &cli.find_regex) {
+        (Some(text), _) => Some(webclaw_core::TextMatch::text(
+            text,
+            cli.exact,
+            cli.case_sensitive,
+        )),
+        (None, Some(regex)) => Some(webclaw_core::TextMatch::regex(regex, cli.case_sensitive)),
+        (None, None) => None,
+    }
+    .transpose()
+    .map_err(|e| e.to_string())?;
+    if text.is_some() && !cli.similar && !cli.fields.is_empty() {
+        return Err("--field works with --select, --xpath or --similar".into());
+    }
+    let fields = cli
+        .fields
+        .iter()
+        .map(|field| {
+            field
+                .split_once('=')
+                .map(|(name, css)| (name.trim().to_string(), css.trim().to_string()))
+                .ok_or_else(|| format!("--field needs NAME=SELECTOR, got `{field}`"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let page = fetch_page(cli).await?;
     let url = (!page.url.is_empty()).then_some(page.url.as_str());
     let html = page.html.as_str();
-    let json = match (xpath, fields.is_empty()) {
-        (false, true) => serde_json::to_string_pretty(
-            &webclaw_core::select(html, url, selector).map_err(|e| e.to_string())?,
+    let json = match (&cli.select, &cli.xpath, &text) {
+        _ if cli.similar => {
+            let example = match (&cli.select, &cli.xpath, &text) {
+                (Some(css), _, _) => webclaw_core::FindExample::Css(css),
+                (_, Some(xpath), _) => webclaw_core::FindExample::XPath(xpath),
+                (_, _, Some(text)) => webclaw_core::FindExample::Text(text),
+                _ => return Err("--similar needs an example".into()),
+            };
+            let similar = webclaw_core::find_similar(html, example)
+                .map_err(|e| e.to_string())?
+                .ok_or("nothing on the page matches the example")?;
+            if fields.is_empty() {
+                serde_json::to_string_pretty(&similar)
+            } else {
+                let records =
+                    webclaw_core::select_records(html, url, &similar.selector, &fields)
+                        .map_err(|e| format!("with --similar, --field takes CSS selectors: {e}"))?;
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"selector": similar.selector, "records": records}),
+                )
+            }
+        }
+        (_, _, Some(text)) => serde_json::to_string_pretty(&webclaw_core::find_text(html, text)),
+        (Some(css), _, _) if fields.is_empty() => serde_json::to_string_pretty(
+            &webclaw_core::select(html, url, css).map_err(|e| e.to_string())?,
         ),
-        (false, false) => serde_json::to_string_pretty(
-            &webclaw_core::select_records(html, url, selector, &fields)
+        (Some(css), _, _) => serde_json::to_string_pretty(
+            &webclaw_core::select_records(html, url, css, &fields).map_err(|e| e.to_string())?,
+        ),
+        (_, Some(xpath), _) if fields.is_empty() => serde_json::to_string_pretty(
+            &webclaw_core::select_xpath(html, url, xpath).map_err(|e| e.to_string())?,
+        ),
+        (_, Some(xpath), _) => serde_json::to_string_pretty(
+            &webclaw_core::select_xpath_records(html, url, xpath, &fields)
                 .map_err(|e| e.to_string())?,
         ),
-        (true, true) => serde_json::to_string_pretty(
-            &webclaw_core::select_xpath(html, url, selector).map_err(|e| e.to_string())?,
-        ),
-        (true, false) => serde_json::to_string_pretty(
-            &webclaw_core::select_xpath_records(html, url, selector, &fields)
-                .map_err(|e| e.to_string())?,
-        ),
+        (None, None, None) => return Err("nothing to pick".into()),
     };
     println!("{}", json.map_err(|e| e.to_string())?);
     Ok(())
@@ -3153,16 +3247,28 @@ async fn main() {
         return;
     }
 
-    let pick = match (&cli.select, &cli.xpath) {
-        (Some(css), _) => Some((css.clone(), false)),
-        (None, Some(xpath)) => Some((xpath.clone(), true)),
-        (None, None) => None,
-    };
-    if let Some((selector, xpath)) = pick {
-        let selected = if entries.len() > 1 {
-            Err("--select and --xpath take one URL".to_string())
+    if cli.tables {
+        let found = if entries.len() > 1 {
+            Err("--tables takes one URL".to_string())
         } else {
-            run_select(&cli, &selector, xpath).await
+            run_tables(&cli).await
+        };
+        if let Err(e) = found {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    if cli.select.is_some()
+        || cli.xpath.is_some()
+        || cli.find_text.is_some()
+        || cli.find_regex.is_some()
+    {
+        let selected = if entries.len() > 1 {
+            Err("--select, --xpath, --find-text and --find-regex take one URL".to_string())
+        } else {
+            run_select(&cli).await
         };
         if let Err(e) = selected {
             eprintln!("error: {e}");
@@ -3305,6 +3411,31 @@ mod tests {
     use super::*;
 
     use webclaw_core::Content;
+
+    #[test]
+    fn one_picker_at_a_time_and_tables_take_no_pick_options() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        assert!(parse(&["--tables"]).is_ok());
+        assert!(parse(&["--find-text", "a", "--exact", "--similar"]).is_ok());
+        assert!(parse(&["--select", "a", "--similar", "--field", "x=b"]).is_ok());
+        for extra in [
+            &["--tables", "--select", "a"][..],
+            &["--tables", "--xpath", "//a"],
+            &["--tables", "--find-text", "a"],
+            &["--tables", "--find-regex", "a"],
+            &["--tables", "--similar"],
+            &["--tables", "--field", "x=b"],
+            &["--tables", "--exact"],
+            &["--tables", "--case-sensitive"],
+            &["--select", "a", "--find-text", "b"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?}");
+        }
+    }
 
     #[test]
     fn cloud_format_preserves_extraction_for_diff_and_llm_modes() {

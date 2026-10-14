@@ -79,6 +79,7 @@ fn render_from_env(
         pool: Arc::new(RenderPool::new(source, LOCAL_FETCH_TIMEOUT)),
         always: mode == "always",
         wait_for: None,
+        block: webclaw_fetch::Block::default(),
     })
 }
 
@@ -87,10 +88,12 @@ fn apply_render(
     config: &mut webclaw_fetch::FetchConfig,
     mode: Option<&str>,
     wait_for: Option<String>,
+    block: Option<&str>,
 ) -> Result<(), String> {
     if !matches!(mode, None | Some("auto" | "always" | "never")) {
         return Err("render must be \"auto\", \"always\" or \"never\"".into());
     }
+    let block = block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
     if mode == Some("never") {
         config.render = None;
         return Ok(());
@@ -107,6 +110,9 @@ fn apply_render(
     if wait_for.is_some() {
         render.wait_for = wait_for;
     }
+    if let Some(block) = block {
+        render.block = block;
+    }
     Ok(())
 }
 
@@ -115,7 +121,9 @@ fn apply_render(
     _config: &mut webclaw_fetch::FetchConfig,
     mode: Option<&str>,
     wait_for: Option<String>,
+    block: Option<&str>,
 ) -> Result<(), String> {
+    block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
     match (mode, wait_for) {
         (None | Some("auto" | "never"), None) => Ok(()),
         _ => Err(
@@ -311,8 +319,10 @@ impl WebclawMcp {
             .as_ref()
             .filter(|c| !c.is_empty())
             .map(|c| c.join("; "));
-        let shared =
-            cookie_header.is_none() && params.render.is_none() && params.wait_for.is_none();
+        let shared = cookie_header.is_none()
+            && params.render.is_none()
+            && params.wait_for.is_none()
+            && params.block.is_none();
 
         let custom_client;
         let cached_firefox;
@@ -337,6 +347,7 @@ impl WebclawMcp {
                     &mut config,
                     params.render.as_deref(),
                     params.wait_for.clone(),
+                    params.block.as_deref(),
                 )?;
                 custom_client = webclaw_fetch::FetchClient::new(config)
                     .map_err(|e| format!("Failed to build client: {e}"))?;
@@ -411,10 +422,11 @@ impl WebclawMcp {
 
         let format = params.format.as_deref().unwrap_or("markdown");
 
+        let mut fetch = self.fetch_config.clone();
+        apply_render(&mut fetch, None, None, params.block.as_deref())?;
         let config = webclaw_fetch::CrawlConfig {
-            fetch: self.fetch_config.clone(),
+            fetch,
             max_depth: params.depth.unwrap_or(2) as usize,
-            // 0 = no cap; omitted keeps the modest default.
             max_pages: match params.max_pages {
                 Some(0) => None,
                 Some(n) => Some(n),
@@ -466,15 +478,21 @@ impl WebclawMcp {
         Ok(output)
     }
 
-    /// Pick values out of a web page with a CSS selector or an XPath 1.0 expression and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending (CSS), or "@attr" (XPath). With `fields`, return one JSON object per match, each field a selector run inside that match.
+    /// Pick values out of a web page with a CSS selector or an XPath 1.0 expression and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending (CSS), or "@attr" (XPath). With `fields`, return one JSON object per match, each field a selector run inside that match. With `tables`, return the page's data tables as headers and rows. With `text` or `regex`, find the elements holding that text instead. With `similar`, take the first element picked as an example and return every element like it, with a CSS selector that picks them all.
     /// Pages whose content needs JavaScript are rendered first when this server has browser support.
     #[tool]
-    async fn select(&self, Parameters(params): Parameters<SelectParams>) -> Result<String, String> {
-        let (query, xpath) = match (params.selector, params.xpath) {
-            (Some(css), None) => (css, false),
-            (None, Some(xpath)) => (xpath, true),
-            _ => return Err("give exactly one of `selector` and `xpath`".into()),
-        };
+    async fn select(
+        &self,
+        Parameters(mut params): Parameters<SelectParams>,
+    ) -> Result<String, String> {
+        let text = check_select(&params)?;
+        let similar = params.similar.unwrap_or(false);
+        let fields: Vec<(String, String)> = params
+            .fields
+            .take()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
         validate_url(&params.url).await?;
         let fetched = tokio::time::timeout(
             LOCAL_FETCH_TIMEOUT,
@@ -488,25 +506,22 @@ impl WebclawMcp {
             .extract_page(fetched, &webclaw_core::ExtractionOptions::default())
             .await;
         webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
-        let fields: Vec<(String, String)> = params.fields.unwrap_or_default().into_iter().collect();
-        let (html, url) = (page.html.as_str(), Some(page.url.as_str()));
-        let json = match (xpath, fields.is_empty()) {
-            (false, true) => serde_json::to_string_pretty(
-                &webclaw_core::select(html, url, &query).map_err(|e| e.to_string())?,
-            ),
-            (false, false) => serde_json::to_string_pretty(
-                &webclaw_core::select_records(html, url, &query, &fields)
-                    .map_err(|e| e.to_string())?,
-            ),
-            (true, true) => serde_json::to_string_pretty(
-                &webclaw_core::select_xpath(html, url, &query).map_err(|e| e.to_string())?,
-            ),
-            (true, false) => serde_json::to_string_pretty(
-                &webclaw_core::select_xpath_records(html, url, &query, &fields)
-                    .map_err(|e| e.to_string())?,
-            ),
-        };
-        json.map_err(|e| e.to_string())
+        tokio::task::spawn_blocking(move || {
+            if params.tables.unwrap_or(false) {
+                return serde_json::to_string_pretty(&webclaw_core::tables(&page.html))
+                    .map_err(|e| e.to_string());
+            }
+            pick(
+                &params,
+                text.as_ref(),
+                similar,
+                &fields,
+                &page.html,
+                &page.url,
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL.
@@ -1140,9 +1155,110 @@ fn save_research(dir: &std::path::Path, slug: &str, data: &serde_json::Value) ->
     )
 }
 
+fn check_select(params: &SelectParams) -> Result<Option<webclaw_core::TextMatch>, String> {
+    let tables = params.tables.unwrap_or(false);
+    let given = [
+        params.selector.is_some(),
+        params.xpath.is_some(),
+        tables,
+        params.text.is_some(),
+        params.regex.is_some(),
+    ];
+    if given.iter().filter(|g| **g).count() != 1 {
+        return Err("give exactly one of `selector`, `xpath`, `tables`, `text` and `regex`".into());
+    }
+    if tables && params.similar.unwrap_or(false) {
+        return Err(
+            "`similar` works with `selector`, `xpath`, `text` or `regex`, not `tables`".into(),
+        );
+    }
+    if tables && params.fields.as_ref().is_some_and(|f| !f.is_empty()) {
+        return Err("`fields` works with `selector`, `xpath` or `similar`, not `tables`".into());
+    }
+    if params.exact.is_some() && params.text.is_none() {
+        return Err("`exact` works with `text`".into());
+    }
+    if params.case_sensitive.is_some() && params.text.is_none() && params.regex.is_none() {
+        return Err("`case_sensitive` works with `text` or `regex`".into());
+    }
+    let has_fields = params.fields.as_ref().is_some_and(|f| !f.is_empty());
+    if (params.text.is_some() || params.regex.is_some())
+        && !params.similar.unwrap_or(false)
+        && has_fields
+    {
+        return Err("`fields` works with `selector`, `xpath` or `similar`".into());
+    }
+    let case_sensitive = params.case_sensitive.unwrap_or(false);
+    match (&params.text, &params.regex) {
+        (Some(text), _) => {
+            webclaw_core::TextMatch::text(text, params.exact.unwrap_or(false), case_sensitive)
+                .map(Some)
+        }
+        (None, Some(regex)) => webclaw_core::TextMatch::regex(regex, case_sensitive).map(Some),
+        (None, None) => Ok(None),
+    }
+    .map_err(|e| e.to_string())
+}
+
+fn pick(
+    params: &SelectParams,
+    text: Option<&webclaw_core::TextMatch>,
+    similar: bool,
+    fields: &[(String, String)],
+    html: &str,
+    url: &str,
+) -> Result<String, String> {
+    let url = Some(url);
+    let json = match (&params.selector, &params.xpath, text) {
+        _ if similar => {
+            let example = match (&params.selector, &params.xpath, text) {
+                (Some(css), _, _) => webclaw_core::FindExample::Css(css),
+                (_, Some(xpath), _) => webclaw_core::FindExample::XPath(xpath),
+                (_, _, Some(text)) => webclaw_core::FindExample::Text(text),
+                _ => return Err("`similar` needs an example".into()),
+            };
+            let similar = webclaw_core::find_similar(html, example)
+                .map_err(|e| e.to_string())?
+                .ok_or("nothing on the page matches the example")?;
+            if fields.is_empty() {
+                serde_json::to_string_pretty(&similar)
+            } else {
+                let records = webclaw_core::select_records(html, url, &similar.selector, fields)
+                    .map_err(|e| format!("with `similar`, fields are CSS selectors: {e}"))?;
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"selector": similar.selector, "records": records}),
+                )
+            }
+        }
+        (_, _, Some(text)) => serde_json::to_string_pretty(&webclaw_core::find_text(html, text)),
+        (Some(css), _, _) if fields.is_empty() => serde_json::to_string_pretty(
+            &webclaw_core::select(html, url, css).map_err(|e| e.to_string())?,
+        ),
+        (Some(css), _, _) => serde_json::to_string_pretty(
+            &webclaw_core::select_records(html, url, css, fields).map_err(|e| e.to_string())?,
+        ),
+        (_, Some(xpath), _) if fields.is_empty() => serde_json::to_string_pretty(
+            &webclaw_core::select_xpath(html, url, xpath).map_err(|e| e.to_string())?,
+        ),
+        (_, Some(xpath), _) => serde_json::to_string_pretty(
+            &webclaw_core::select_xpath_records(html, url, xpath, fields)
+                .map_err(|e| e.to_string())?,
+        ),
+        (None, None, None) => return Err("nothing to pick".into()),
+    };
+    json.map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::slugify;
+    use super::{check_select, slugify};
+
+    #[test]
+    fn an_unknown_block_type_is_refused_with_or_without_a_browser() {
+        let mut config = webclaw_fetch::FetchConfig::default();
+        assert!(super::apply_render(&mut config, None, None, Some("bogus")).is_err());
+        assert!(super::apply_render(&mut config, None, None, Some("images,fonts")).is_ok());
+    }
 
     #[test]
     fn every_browser_name_picks_its_profile() {
@@ -1215,5 +1331,59 @@ mod tests {
     fn slugify_caps_long_ascii_at_60_chars() {
         let s = slugify(&"word ".repeat(40));
         assert!(s.len() <= 60);
+    }
+
+    #[test]
+    fn select_options_are_checked_before_anything_runs() {
+        let check = |args: serde_json::Value| {
+            check_select(&serde_json::from_value(args).unwrap()).map(|text| text.is_some())
+        };
+        let url = "https://example.com/";
+        let err =
+            check(serde_json::json!({"url": url, "selector": "a", "regex": "("})).unwrap_err();
+        assert!(err.contains("exactly one"), "{err}");
+        assert!(check(serde_json::json!({"url": url, "regex": "x", "exact": true})).is_err());
+        assert!(check(serde_json::json!({"url": url, "selector": "a", "exact": true})).is_err());
+        assert!(
+            check(serde_json::json!({"url": url, "selector": "a", "case_sensitive": true}))
+                .is_err()
+        );
+        assert!(check(serde_json::json!({"url": url, "text": "a", "fields": {"x": "b"}})).is_err());
+        assert_eq!(
+            check(serde_json::json!({"url": url, "text": "a", "exact": true})),
+            Ok(true)
+        );
+        assert_eq!(
+            check(serde_json::json!({"url": url, "selector": "a", "similar": true})),
+            Ok(false)
+        );
+        assert_eq!(
+            check(serde_json::json!({"url": url, "tables": true})),
+            Ok(false)
+        );
+        assert_eq!(
+            check(serde_json::json!({"url": url, "selector": "a", "tables": false})),
+            Ok(false)
+        );
+        for (extra, word) in [
+            (serde_json::json!({"selector": "a"}), "exactly one"),
+            (serde_json::json!({"xpath": "//a"}), "exactly one"),
+            (serde_json::json!({"text": "a"}), "exactly one"),
+            (serde_json::json!({"regex": "a"}), "exactly one"),
+            (serde_json::json!({"similar": true}), "similar"),
+            (serde_json::json!({"fields": {"x": "b"}}), "fields"),
+            (serde_json::json!({"exact": true}), "exact"),
+            (
+                serde_json::json!({"case_sensitive": true}),
+                "case_sensitive",
+            ),
+        ] {
+            let mut args = serde_json::json!({"url": url, "tables": true});
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let err = check(args).unwrap_err();
+            assert!(err.contains(word), "{extra} -> {err}");
+        }
     }
 }

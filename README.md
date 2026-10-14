@@ -192,6 +192,46 @@ webclaw https://books.toscrape.com --xpath "//article[@class='product_pod']" \
 
 `--xpath` takes an XPath 1.0 expression instead, over the same parsed page: elements and text nodes give their text, attributes their value, and `count()` or `string()` style expressions one value. With `--xpath`, each `--field` is an expression evaluated from the match, so it usually starts with `.`. The MCP `select` tool takes `xpath` in place of `selector`.
 
+### Data tables as JSON
+
+```bash
+webclaw "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies" --tables
+```
+
+`--tables` prints the page's data tables as a JSON array, each with its `caption` (when it has one), `headers` and `rows` of cell text. A cell that spans several rows or columns repeats its text in each one, so every row has one value per column. Stacked header rows are joined per column with ` / `, as in `Population / % of world`. The MCP `select` tool takes `tables: true` in place of a selector.
+
+Header rows are the rows of `<thead>` and the leading rows made only of `<th>`; a leading row that is one cell across the whole table becomes the caption. These tables are skipped as page layout:
+
+- tables marked `role="presentation"` or `role="none"`;
+- tables with fewer than two columns of text;
+- tables without a header row that have a single body row, wrap another table, hold only links, or hold paragraphs, lists or other blocks in a row of more than one cell.
+
+Text hidden with `hidden`, an inline `display:none` or `<template>` is left out. Text hidden by a stylesheet is kept, because pages are not styled. A cell keeps its first 64 KB of text, and a very large table is cut short with `"truncated": true`. Once the tables on a page reach 64 MB, the tables after that are left out.
+
+### Find elements by text, or everything like one example
+
+```bash
+webclaw https://books.toscrape.com --find-text "tipping the"
+webclaw https://books.toscrape.com --find-regex '^£5\d\.\d\d$'
+webclaw https://books.toscrape.com --find-text "Tipping the Velvet" --similar
+```
+
+`--find-text` prints the elements in the page body whose visible text contains the text, any case, as `{"selector", "text"}` objects. Each match is the deepest element holding the text, so text split by inline tags still matches, and its `selector` is the element's path from the nearest ancestor with a unique id, or from the root. That path picks the element alone, except on pages nested more than 64 levels deep with no such id, where it keeps only the last 64 steps and can pick more. `--exact` matches the whole text, `--case-sensitive` matches letter case, and `--find-regex` takes a regular expression instead.
+
+`--similar` takes the first element that `--find-text`, `--find-regex`, `--select` or `--xpath` picks as an example and returns every element like it on the page, such as the other items of a list, grid or table, with one CSS selector that picks them all. When the example selector ends in `::attr(NAME)` or `::text`, or the XPath picks a text or attribute node, the element holding it is the example:
+
+```json
+{
+  "selector": "article.product_pod > h3 > a",
+  "matches": [
+    { "selector": "html > body > ... > li:nth-of-type(1) > article > h3 > a", "text": "A Light in the ..." },
+    ...
+  ]
+}
+```
+
+Reuse the selector with `--select`, or add `--field` to get records straight away; with `--similar` the fields are CSS and the output is `{"selector", "records"}`. Pick the item itself as the example (for instance `--select "article.product_pod" --similar`) when the fields live inside it. The MCP `select` tool takes `text` or `regex` (with `exact` and `case_sensitive`) and `similar` the same way. One call takes one picker: `--select`, `--xpath`, `--tables`, `--find-text` or `--find-regex` (in MCP: `selector`, `xpath`, `tables`, `text` or `regex`), and `--similar` and `--field` do not apply to tables.
+
 ### Keep only what answers a question
 
 ```bash
@@ -220,6 +260,8 @@ webclaw https://example.com --cdp-url ws://localhost:9222/devtools/browser/<id> 
 ```
 
 `auto` renders when the page loads scripts and the HTTP response has almost no text, or little text next to an empty app root or a "please enable JavaScript" notice, and it keeps the rendered result only when it has more content. The browser never reaches private or loopback addresses.
+
+`--block images,fonts,media` skips those resources while a page renders for its content. Stylesheets always load, since many apps fetch CSS on demand and break without it. Scripts and the data they fetch still load, so most pages keep all their text and download about 40% less. A page that shows some text only after a font or an image has loaded (through `document.fonts.load()`, `FontFace.load()`, an image's `onload` or `decode()`) loses that text when you block it. We found no such page among the real sites we tested, but compare with and without `--block` on yours. Rendering is not much faster, since webclaw already stops waiting once the text settles, so blocking stays off unless you ask. Screenshots always load everything. The MCP `scrape` and `crawl` tools take the same list as `block`.
 
 `--screenshot page.png` saves the rendered page's 1280x720 viewport, `--full-page` the whole page, and a `.jpg` name gives a JPEG. The MCP `screenshot` tool returns the same image to the agent.
 
@@ -353,7 +395,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | Tool | What it does | Local |
 | --- | --- | :-: |
 | `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
-| `select` | Pick values or records from a page with CSS selectors or XPath, as JSON | Yes |
+| `select` | Pick values or records from a page with CSS selectors or XPath, its data tables, elements found by text, or every element like an example, as JSON | Yes |
 | `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages, most relevant first with a `query` | Yes |
 | `map` | Discover URLs without extracting every page | Yes |

@@ -16,6 +16,7 @@ use sxd_xpath::nodeset::Node;
 use sxd_xpath::{Context, Factory, XPath};
 use url::Url;
 
+use crate::find::FindError;
 use crate::select::SelectError;
 
 /// Every value `expression` picks from `html`, in document order.
@@ -75,6 +76,46 @@ pub fn select_xpath_records(
                 .collect()
         })
         .collect()
+}
+
+pub(crate) fn first_element(html: &str, expression: &str) -> Result<Option<usize>, FindError> {
+    let compiled = compile(expression)?;
+    let package = tree(html);
+    let document = package.as_document();
+    let sxd_xpath::Value::Nodeset(nodes) = compiled
+        .evaluate(&Context::new(), document.root())
+        .map_err(|_| SelectError(expression.into()))?
+    else {
+        return Err(FindError::NotNodes(crate::find::short(expression)));
+    };
+    let Some(target) = nodes
+        .document_order()
+        .into_iter()
+        .find_map(|node| node.element().or_else(|| node.parent()?.element()))
+    else {
+        return Ok(None);
+    };
+    let mut pending: Vec<Element> = document
+        .root()
+        .children()
+        .into_iter()
+        .filter_map(|child| child.element())
+        .collect();
+    let mut index = 0;
+    while let Some(element) = pending.pop() {
+        if element == target {
+            return Ok(Some(index));
+        }
+        index += 1;
+        pending.extend(
+            element
+                .children()
+                .into_iter()
+                .rev()
+                .filter_map(|child| child.element()),
+        );
+    }
+    Ok(None)
 }
 
 fn compile(expression: &str) -> Result<XPath, SelectError> {

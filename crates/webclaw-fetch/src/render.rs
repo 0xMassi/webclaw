@@ -39,7 +39,7 @@ pub struct RenderOptions {
     /// `Authorization` or `Accept-Language`. A `Cookie` header is set as
     /// cookies for the page's URL instead.
     pub headers: Vec<(String, String)>,
-    /// Subresources the page never loads.
+    /// Resource types whose requests fail; see [`Block`] for what it misses.
     pub block: Block,
 }
 
@@ -58,6 +58,11 @@ impl Default for RenderOptions {
 /// XHR and the document itself always load. Parse it from a comma list of
 /// `images`, `fonts` and `media`, or `none`. Stylesheets always load: many
 /// apps fetch CSS on demand and fail without it.
+///
+/// It fails the requests of the page and its same-site frames that Chrome
+/// types as one of these kinds. Some still go out: everything inside a
+/// cross-site iframe, an image loaded through `<object>`, `<link
+/// rel=prefetch>` hints and the favicon.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Block {
     /// Images, including `srcset` candidates and CSS backgrounds.
@@ -567,7 +572,8 @@ pub struct RenderConfig {
     pub always: bool,
     /// Also wait until an element matching this CSS selector exists.
     pub wait_for: Option<String>,
-    /// Subresources rendered pages skip. Screenshots load everything.
+    /// Resource types whose requests fail while rendering; see [`Block`].
+    /// Screenshots load everything.
     pub block: Block,
 }
 

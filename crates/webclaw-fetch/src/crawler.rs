@@ -106,8 +106,8 @@ pub struct CrawlConfig {
     /// and by how well the page linking to them answers it; ties go to the
     /// shallower link. Each page gets a [`PageResult::relevance`] and keeps
     /// only the parts that answer the question, as with
-    /// [`webclaw_core::focus_extraction`]. A query without letters or digits
-    /// counts as none.
+    /// [`webclaw_core::focus_extraction`]. The first 32 distinct words of the
+    /// question count, and a query without letters or digits counts as none.
     pub query: Option<String>,
 }
 
@@ -205,6 +205,22 @@ pub struct Crawler {
     /// Root domain of the seed URL for subdomain matching (e.g. "example.com").
     seed_root_domain: String,
     robots: std::sync::Mutex<HashMap<String, Arc<RobotsRules>>>,
+    ask: Option<Arc<Ask>>,
+}
+
+struct Ask {
+    question: webclaw_core::Question,
+    query: String,
+}
+
+impl Ask {
+    fn new(query: Option<&str>) -> Option<Arc<Self>> {
+        let query = query?;
+        Some(Arc::new(Self {
+            question: webclaw_core::Question::new(query)?,
+            query: query.to_string(),
+        }))
+    }
 }
 
 /// Frontier ceiling used when [`CrawlConfig::max_pages`] is `None`.
@@ -226,10 +242,7 @@ impl Crawler {
 
     /// Build a new crawler from a seed URL and config.
     /// Constructs the underlying `FetchClient` from `config.fetch`.
-    pub fn new(seed_url: &str, mut config: CrawlConfig) -> Result<Self, FetchError> {
-        config.query = config
-            .query
-            .filter(|q| q.chars().any(char::is_alphanumeric));
+    pub fn new(seed_url: &str, config: CrawlConfig) -> Result<Self, FetchError> {
         let seed = Url::parse(seed_url).map_err(|_| FetchError::InvalidUrl(seed_url.into()))?;
         let seed_origin = origin_key(&seed);
         let seed_root_domain = root_domain(&seed);
@@ -261,6 +274,7 @@ impl Crawler {
             client,
             page_client,
             follow_redirects: config.fetch.follow_redirects,
+            ask: Ask::new(config.query.as_deref()),
             config,
             seed_origin,
             seed_root_domain,
@@ -389,9 +403,10 @@ impl Crawler {
     pub async fn crawl(&self, start_url: &str, resume_state: Option<CrawlState>) -> CrawlResult {
         let client = Arc::clone(&self.page_client);
         let follow_redirects = self.follow_redirects;
+        let with_context = self.ask.is_some();
         self.run(start_url, resume_state, move |url| {
             let client = Arc::clone(&client);
-            async move { fetch_page(&client, &url, follow_redirects).await }
+            async move { fetch_page(&client, &url, follow_redirects, with_context).await }
         })
         .await
     }
@@ -436,6 +451,7 @@ impl Crawler {
                     extraction,
                     links,
                     redirect: None,
+                    words: None,
                 }
             }
         })
@@ -540,10 +556,9 @@ impl Crawler {
         let mut in_flight_depths: BTreeMap<usize, usize> = BTreeMap::new();
         let mut in_flight_urls: HashMap<String, (usize, f64)> = HashMap::new();
         let mut rating = self
-            .config
-            .query
-            .as_deref()
-            .map(|q| (webclaw_core::Relevance::new(q), q));
+            .ask
+            .as_ref()
+            .map(|ask| webclaw_core::Relevance::new(&ask.question));
         let mut last_checkpoint = Instant::now();
         let mut dirty = false;
         let mut redirect_hops: HashMap<String, usize> = HashMap::new();
@@ -580,6 +595,7 @@ impl Crawler {
                 let fetch = Arc::clone(&fetch);
                 let cancel_flag = self.config.cancel_flag.clone();
                 let task_url = url.clone();
+                let ask = self.ask.clone();
                 let task = crate::transfer::spawn(async move {
                     let page_start = Instant::now();
                     tokio::time::sleep(wait).await;
@@ -589,7 +605,13 @@ impl Crawler {
                     {
                         Page::failed("crawl cancelled before fetch".into())
                     } else {
-                        fetch(task_url).await
+                        let page = fetch(task_url).await;
+                        match ask {
+                            Some(ask) => tokio::task::spawn_blocking(move || page.read(&ask))
+                                .await
+                                .unwrap_or_else(|e| Page::failed(format!("reading failed: {e}"))),
+                            None => page,
+                        }
                     };
                     (page, page_start.elapsed())
                 });
@@ -663,11 +685,11 @@ impl Crawler {
 
             let mut relevance = None;
             let mut link_scores = Vec::new();
-            if let (Some((rater, query)), Ok(e)) = (&mut rating, &mut extraction) {
-                let (rated, scores) = rater.rate(&e.content.markdown, &page.links);
+            if let (Some(rater), Some(words), true) = (&mut rating, &page.words, extraction.is_ok())
+            {
+                let (rated, scores) = rater.rate(words);
                 relevance = Some(rated);
                 link_scores = scores;
-                webclaw_core::focus_extraction(e, query);
             }
 
             if depth < self.config.max_depth && extraction.is_ok() {
@@ -1005,6 +1027,7 @@ struct Page {
     extraction: Result<webclaw_core::ExtractionResult, String>,
     links: Vec<webclaw_core::Anchor>,
     redirect: Option<String>,
+    words: Option<webclaw_core::PageWords>,
 }
 
 impl Page {
@@ -1013,11 +1036,25 @@ impl Page {
             extraction: Err(error),
             links: Vec::new(),
             redirect: None,
+            words: None,
         }
+    }
+
+    fn read(mut self, ask: &Ask) -> Self {
+        if let Ok(e) = &mut self.extraction {
+            self.words = Some(ask.question.read(&e.content.markdown, &self.links));
+            webclaw_core::focus_extraction(e, &ask.query);
+        }
+        self
     }
 }
 
-async fn fetch_page(client: &FetchClient, url: &str, follow_redirects: bool) -> Page {
+async fn fetch_page(
+    client: &FetchClient,
+    url: &str,
+    follow_redirects: bool,
+    with_context: bool,
+) -> Page {
     let fetched = match client.fetch_smart(url).await {
         Ok(fetched) => fetched,
         Err(e) => return Page::failed(e.to_string()),
@@ -1033,18 +1070,26 @@ async fn fetch_page(client: &FetchClient, url: &str, follow_redirects: bool) -> 
             extraction: Err(format!("redirected ({})", fetched.status)),
             links: Vec::new(),
             redirect: Some(location.to_string()),
+            words: None,
         };
     }
     let (page, extraction) = client.extract_page(fetched, &Default::default()).await;
-    let links = if page.document_bytes.is_none() {
-        webclaw_core::page_anchors(&page.html, &page.url)
-    } else {
-        Vec::new()
+    let links = match (page.document_bytes.is_none(), with_context) {
+        (false, _) => Vec::new(),
+        (true, true) => webclaw_core::page_anchors(&page.html, &page.url),
+        (true, false) => webclaw_core::page_links(&page.html, &page.url)
+            .into_iter()
+            .map(|href| webclaw_core::Anchor {
+                href,
+                ..Default::default()
+            })
+            .collect(),
     };
     Page {
         extraction: extraction.map_err(|e| e.to_string()),
         links,
         redirect: None,
+        words: None,
     }
 }
 
@@ -1408,6 +1453,7 @@ mod tests {
             extraction,
             links: webclaw_core::page_anchors(html, url),
             redirect: None,
+            words: None,
         }
     }
 
@@ -1416,6 +1462,7 @@ mod tests {
             extraction: Err("redirected (301)".into()),
             links: Vec::new(),
             redirect: Some(to.into()),
+            words: None,
         }
     }
 

@@ -7,8 +7,8 @@
 //! Words match on their first six letters, so most inflected forms meet;
 //! Chinese, Japanese and Korean text matches by character pairs.
 //!
-//! [`Relevance`] uses the same words to tell a crawler which links to follow
-//! first for a question.
+//! [`Question`] and [`Relevance`] use the same words to tell a crawler which
+//! links to follow first for a question.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,6 +27,8 @@ const QUESTION_WORDS: &[&str] = &[
 const CONTEXT_WEIGHT: f64 = 0.25;
 const PARENT_WEIGHT: f64 = 0.25;
 const BEST_BLOCKS: usize = 3;
+const MAX_QUESTION_WORDS: usize = 32;
+const MIN_PREFIX: usize = 4;
 
 struct Block<'a> {
     text: &'a str,
@@ -89,7 +91,115 @@ pub fn focus_extraction(result: &mut ExtractionResult, query: &str) {
     result.metadata.word_count = crate::extractor::word_count(&result.content.plain_text);
 }
 
-/// Rates the pages and links of a crawl against a question.
+/// The words of a question, ready to look for in crawled pages; see
+/// [`Relevance`].
+///
+/// Common English question words ("how", "does", "the") are left out unless
+/// nothing else is asked, and only the first 32 distinct words count.
+#[derive(Debug, Clone)]
+pub struct Question {
+    words: Vec<String>,
+    exact: HashMap<String, u32>,
+    starts: HashMap<String, u32>,
+}
+
+/// Where a [`Question`]'s words appear in one fetched page; rate it with
+/// [`Relevance::rate`].
+#[derive(Debug, Clone, Default)]
+pub struct PageWords {
+    blocks: Vec<u32>,
+    sections: Vec<u32>,
+    links: Vec<(u32, u32)>,
+}
+
+impl Question {
+    /// The words of `query`, or `None` when it has none to look for.
+    pub fn new(query: &str) -> Option<Self> {
+        let all = terms(query);
+        let asked: Vec<&String> = all
+            .iter()
+            .filter(|t| !QUESTION_WORDS.contains(&t.as_str()))
+            .collect();
+        let source = if asked.is_empty() {
+            all.iter().collect()
+        } else {
+            asked
+        };
+        let mut words: Vec<String> = Vec::new();
+        for word in source {
+            if words.len() == MAX_QUESTION_WORDS {
+                break;
+            }
+            if !words.contains(word) {
+                words.push(word.clone());
+            }
+        }
+        if words.is_empty() {
+            return None;
+        }
+        let mut exact = HashMap::new();
+        let mut starts: HashMap<String, u32> = HashMap::new();
+        for (i, word) in words.iter().enumerate() {
+            let bit = 1u32 << i;
+            exact.insert(word.clone(), bit);
+            for (end, _) in word.char_indices().skip(MIN_PREFIX) {
+                *starts.entry(word[..end].to_string()).or_default() |= bit;
+            }
+        }
+        Some(Self {
+            words,
+            exact,
+            starts,
+        })
+    }
+
+    /// Finds the question's words in a fetched page's markdown and anchors.
+    pub fn read(&self, markdown: &str, anchors: &[Anchor]) -> PageWords {
+        let blocks = split_blocks(markdown);
+        let own: Vec<u32> = blocks.iter().map(|b| self.mask(b.text)).collect();
+        let sections = (0..blocks.len())
+            .map(|i| {
+                let mut mask = own[i];
+                let mut parent = blocks[i].heading;
+                while let Some(h) = parent {
+                    mask |= own[h];
+                    parent = blocks[h].heading;
+                }
+                mask
+            })
+            .collect();
+        let links = anchors
+            .iter()
+            .map(|a| {
+                let path = url::Url::parse(&a.href)
+                    .map(|u| u.path().to_string())
+                    .unwrap_or_default();
+                (self.mask(&a.text) | self.mask(&path), self.mask(&a.context))
+            })
+            .collect();
+        PageWords {
+            blocks: own,
+            sections,
+            links,
+        }
+    }
+
+    fn mask(&self, text: &str) -> u32 {
+        let mut mask = 0;
+        for word in terms(text) {
+            mask |= self.exact.get(&word).copied().unwrap_or(0);
+            if word.chars().count() >= MIN_PREFIX {
+                mask |= self.starts.get(&word).copied().unwrap_or(0);
+                for (end, _) in word.char_indices().skip(MIN_PREFIX) {
+                    mask |= self.exact.get(&word[..end]).copied().unwrap_or(0);
+                }
+            }
+        }
+        mask
+    }
+}
+
+/// Rates the pages and links of a crawl against a [`Question`].
 ///
 /// A link scores the weighted share of the question's words found in its
 /// text and URL path, plus a quarter of that share for the words around it,
@@ -97,119 +207,63 @@ pub fn focus_extraction(result: &mut ExtractionResult, query: &str) {
 /// the mean share found in its three best blocks, each read with the
 /// headings above it. Words of four letters or more also match longer words
 /// they start, so "sort" finds "sorting". Each word weighs by how rare it is
-/// among the blocks of the pages fetched so far, and common English question
-/// words ("how", "does", "the") are left out unless nothing else is asked.
+/// among the blocks of the pages rated so far.
 #[derive(Debug, Clone)]
 pub struct Relevance {
-    wanted: Vec<String>,
-    pages: Rarity,
-}
-
-#[derive(Debug, Clone, Default)]
-struct Rarity {
-    df: HashMap<String, f64>,
+    df: Vec<f64>,
     docs: f64,
 }
 
-impl Rarity {
-    fn add(&mut self, found: &HashSet<String>) {
-        for term in found {
-            *self.df.entry(term.clone()).or_default() += 1.0;
-        }
-        self.docs += 1.0;
-    }
-
-    fn weight(&self, term: &str) -> f64 {
-        let d = self.df.get(term).copied().unwrap_or(0.0);
-        ((self.docs - d + 0.5) / (d + 0.5) + 1.0).ln()
-    }
-
-    fn share(&self, wanted: &[String], found: &HashSet<String>) -> f64 {
-        let total: f64 = wanted.iter().map(|t| self.weight(t)).sum();
-        if total <= 0.0 {
-            return 0.0;
-        }
-        found.iter().map(|t| self.weight(t)).sum::<f64>() / total
-    }
-}
-
 impl Relevance {
-    /// A rater for `query`.
-    pub fn new(query: &str) -> Self {
-        let all = terms(query);
-        let mut wanted: Vec<String> = all
-            .iter()
-            .filter(|t| !QUESTION_WORDS.contains(&t.as_str()))
-            .cloned()
-            .collect();
-        if wanted.is_empty() {
-            wanted = all;
-        }
-        wanted.sort();
-        wanted.dedup();
+    /// A rater for `question`, with no pages seen yet.
+    pub fn new(question: &Question) -> Self {
         Self {
-            wanted,
-            pages: Rarity::default(),
+            df: vec![0.0; question.words.len()],
+            docs: 0.0,
         }
     }
 
-    /// Rates a fetched page from its markdown and returns that rating, from
-    /// 0 to 1, with one crawl priority per anchor found on it.
-    pub fn rate(&mut self, markdown: &str, anchors: &[Anchor]) -> (f64, Vec<f64>) {
-        let links: Vec<(HashSet<String>, HashSet<String>)> = anchors
-            .iter()
-            .map(|a| {
-                let path = url::Url::parse(&a.href)
-                    .map(|u| u.path().to_string())
-                    .unwrap_or_default();
-                (
-                    self.found(&format!("{} {path}", a.text)),
-                    self.found(&a.context),
-                )
-            })
-            .collect();
-        let blocks = split_blocks(markdown);
-        for block in &blocks {
-            self.pages.add(&self.found(block.text));
-        }
-        let mut shares: Vec<f64> = (0..blocks.len())
-            .map(|i| {
-                let mut words = self.found(blocks[i].text);
-                let mut parent = blocks[i].heading;
-                while let Some(h) = parent {
-                    words.extend(self.found(blocks[h].text));
-                    parent = blocks[h].heading;
-                }
-                self.pages.share(&self.wanted, &words)
-            })
-            .collect();
-        shares.sort_by(|a, b| b.total_cmp(a));
-        let page = shares.iter().take(BEST_BLOCKS).sum::<f64>() / BEST_BLOCKS as f64;
-        let page = if page > 0.0 { page } else { 0.0 };
-        let scores = links
-            .iter()
-            .map(|(own, around)| {
-                self.pages.share(&self.wanted, own)
-                    + CONTEXT_WEIGHT * self.pages.share(&self.wanted, around)
-                    + PARENT_WEIGHT * page
-            })
-            .collect();
-        (page, scores)
-    }
-
-    fn found(&self, text: &str) -> HashSet<String> {
-        let mut found = HashSet::new();
-        for word in terms(text) {
-            for term in &self.wanted {
-                let short = word.chars().count().min(term.chars().count());
-                if *term == word
-                    || (short >= 4 && (term.starts_with(&word) || word.starts_with(term)))
-                {
-                    found.insert(term.clone());
+    /// Rates a fetched page and returns that rating, from 0 to 1, with one
+    /// crawl priority per anchor the page was read with.
+    pub fn rate(&mut self, page: &PageWords) -> (f64, Vec<f64>) {
+        for &mask in &page.blocks {
+            for (i, df) in self.df.iter_mut().enumerate() {
+                if mask & (1 << i) != 0 {
+                    *df += 1.0;
                 }
             }
+            self.docs += 1.0;
         }
-        found
+        let weights: Vec<f64> = self
+            .df
+            .iter()
+            .map(|d| ((self.docs - d + 0.5) / (d + 0.5) + 1.0).ln())
+            .collect();
+        let total: f64 = weights.iter().sum();
+        let share = |mask: u32| -> f64 {
+            if total <= 0.0 {
+                return 0.0;
+            }
+            let found: f64 = weights
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << i) != 0)
+                .map(|(_, w)| w)
+                .sum();
+            found / total
+        };
+        let mut shares: Vec<f64> = page.sections.iter().map(|&m| share(m)).collect();
+        shares.sort_by(|a, b| b.total_cmp(a));
+        let rated = shares.iter().take(BEST_BLOCKS).sum::<f64>() / BEST_BLOCKS as f64;
+        let rated = if rated > 0.0 { rated } else { 0.0 };
+        let scores = page
+            .links
+            .iter()
+            .map(|&(own, around)| {
+                share(own) + CONTEXT_WEIGHT * share(around) + PARENT_WEIGHT * rated
+            })
+            .collect();
+        (rated, scores)
     }
 }
 
@@ -417,6 +471,20 @@ mod tests {
         );
     }
 
+    struct Rater(super::Question, super::Relevance);
+
+    impl Rater {
+        fn new(query: &str) -> Self {
+            let question = super::Question::new(query).unwrap();
+            let relevance = super::Relevance::new(&question);
+            Self(question, relevance)
+        }
+
+        fn rate(&mut self, markdown: &str, anchors: &[crate::Anchor]) -> (f64, Vec<f64>) {
+            self.1.rate(&self.0.read(markdown, anchors))
+        }
+    }
+
     fn anchor(href: &str, text: &str, context: &str) -> crate::Anchor {
         crate::Anchor {
             href: href.into(),
@@ -427,7 +495,7 @@ mod tests {
 
     #[test]
     fn links_rank_by_the_question_words_they_carry() {
-        let mut rel = super::Relevance::new("How do I sort a list by a key?");
+        let mut rel = Rater::new("How do I sort a list by a key?");
         let (_, scores) = rel.rate(
             "# Home",
             &[
@@ -452,7 +520,7 @@ mod tests {
 
     #[test]
     fn the_url_path_counts_like_link_text() {
-        let mut rel = super::Relevance::new("functools lru_cache");
+        let mut rel = Rater::new("functools lru_cache");
         let (_, scores) = rel.rate(
             "# Library",
             &[
@@ -465,7 +533,7 @@ mod tests {
 
     #[test]
     fn words_every_block_shares_count_for_little() {
-        let mut rel = super::Relevance::new("rust crawler");
+        let mut rel = Rater::new("rust crawler");
         let (_, scores) = rel.rate(
             "# Rust\n\nRust is fast.\n\nRust is safe.\n\nRust has crates.",
             &[
@@ -478,7 +546,7 @@ mod tests {
 
     #[test]
     fn a_question_of_only_common_words_keeps_them() {
-        let mut rel = super::Relevance::new("How?");
+        let mut rel = Rater::new("How?");
         let (_, scores) = rel.rate(
             "# Page",
             &[
@@ -491,7 +559,7 @@ mod tests {
 
     #[test]
     fn a_relevant_page_lifts_every_link_on_it() {
-        let mut rel = super::Relevance::new("window functions");
+        let mut rel = Rater::new("window functions");
         let links = [anchor("https://d.test/next.html", "Next", "")];
         let (on_topic, lifted) = rel.rate(
             "# Window Functions\n\nA window function...\n\nWindow functions run over rows.",
@@ -503,8 +571,25 @@ mod tests {
     }
 
     #[test]
+    fn a_long_question_keeps_its_first_32_words() {
+        let long: Vec<String> = (0..2000).map(|k| format!("word{k}x")).collect();
+        let question = super::Question::new(&long.join(" ")).unwrap();
+        assert_eq!(question.words.len(), 32);
+        let page = format!("# Page\n\n{}", long.join(" ").repeat(20));
+        let start = std::time::Instant::now();
+        let words = question.read(&page, &[]);
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(words.blocks[1].count_ones(), 32);
+    }
+
+    #[test]
+    fn a_question_with_no_words_is_no_question() {
+        assert!(super::Question::new("  ?! ").is_none());
+    }
+
+    #[test]
     fn an_empty_page_rates_a_plain_zero() {
-        let mut rel = super::Relevance::new("window functions");
+        let mut rel = Rater::new("window functions");
         let (page, _) = rel.rate("", &[]);
         assert!(page == 0.0 && page.is_sign_positive(), "{page}");
     }

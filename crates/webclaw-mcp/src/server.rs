@@ -135,6 +135,7 @@ async fn validate_url(url: &str) -> Result<(), String> {
 
 /// Timeout for local fetch calls (prevents hanging on tarpitting servers).
 const LOCAL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_CRAWL_QUERY_CHARS: usize = 1000;
 
 /// Maximum poll iterations for research jobs (~10 minutes at 3s intervals).
 const RESEARCH_MAX_POLLS: u32 = 200;
@@ -396,6 +397,16 @@ impl WebclawMcp {
             && max > 500
         {
             return Err("max_pages cannot exceed 500".into());
+        }
+
+        if params
+            .query
+            .as_ref()
+            .is_some_and(|q| q.chars().count() > MAX_CRAWL_QUERY_CHARS)
+        {
+            return Err(format!(
+                "query cannot exceed {MAX_CRAWL_QUERY_CHARS} characters"
+            ));
         }
 
         let format = params.format.as_deref().unwrap_or("markdown");

@@ -111,14 +111,27 @@ pub struct Prefetched<'a> {
 
 /// A Chrome that renders pages so their JavaScript-built content can be extracted.
 ///
-/// Every HTTP request the browser makes, from the page, its frames, its
-/// workers and their redirects, goes through the same public-address check
-/// as webclaw's own HTTP client, so a rendered page cannot reach private or
-/// loopback addresses over HTTP. A launched browser also refuses WebSockets
-/// from a public page to those addresses. WebRTC is not checked. A browser
-/// reached through [`Renderer::connect`] is checked page by page instead,
-/// so its other tabs are left alone, and the frames and workers of a page
-/// it renders are not covered.
+/// In a browser this renderer launches:
+///
+/// - every HTTP request from the page, its frames and its workers, each
+///   redirect included, goes through the same public-address check as
+///   webclaw's own HTTP client, and fails when the host resolves to a
+///   private, loopback, link-local or reserved address;
+/// - Chrome's local network checks refuse a public page's WebSockets to
+///   those addresses, after the TCP connection opens but before anything
+///   is sent. Behind a proxy, WebSockets to anything but loopback go
+///   through the proxy, so they are only as safe as the proxy;
+/// - speculation rules, prefetching and preconnects are off;
+/// - WebRTC sends no UDP, though a TURN server over TCP or TLS can still
+///   open a TCP connection to a local port;
+/// - without a proxy, the render fails when a document of the page was
+///   served from a blocked address, as after DNS rebinding. The request
+///   itself still goes out, and a popup the page opens is not checked.
+///
+/// Service workers are untested. A browser reached through
+/// [`Renderer::connect`] is checked page by page instead, so its other tabs
+/// are left alone; the frames, workers, WebSockets and WebRTC of a page it
+/// renders are not covered there.
 pub struct Renderer {
     browser: Arc<Browser>,
     guard: Option<tokio::task::JoinHandle<()>>,

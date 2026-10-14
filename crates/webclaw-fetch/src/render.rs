@@ -125,6 +125,7 @@ pub struct Renderer {
     events: tokio::task::JoinHandle<()>,
     profile: Option<std::path::PathBuf>,
     proxy_login: Option<(String, String)>,
+    check_documents: bool,
 }
 
 impl Renderer {
@@ -134,6 +135,10 @@ impl Renderer {
     /// the executable; without it the standard install locations are tried,
     /// then the browsers on `PATH`.
     pub async fn launch(proxy: Option<&str>) -> Result<Self, FetchError> {
+        Self::launch_with(proxy, &[]).await
+    }
+
+    async fn launch_with(proxy: Option<&str>, args: &[&str]) -> Result<Self, FetchError> {
         static LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let profile = std::env::temp_dir().join(format!(
             "webclaw-chrome-{}-{}-{}",
@@ -157,6 +162,7 @@ impl Renderer {
             .arg("--disable-background-networking")
             .arg("--disable-component-update")
             .arg("--enable-features=NetworkService,NetworkServiceInProcess,LocalNetworkAccessChecks:LocalNetworkAccessChecksWarn/false,LocalNetworkAccessChecksWebSockets")
+            .args(args.iter().copied())
             .user_data_dir(&profile);
         let installed = std::env::var("WEBCLAW_CHROME").ok().or_else(|| {
             INSTALL_PATHS
@@ -199,7 +205,9 @@ impl Renderer {
                 return Err(browser_error(e));
             }
         };
-        Self::start(browser, handler, Some(profile), proxy_login, true).await
+        let mut renderer = Self::start(browser, handler, Some(profile), proxy_login, true).await?;
+        renderer.check_documents = proxy.is_none();
+        Ok(renderer)
     }
 
     /// Use a browser that is already running with its DevTools endpoint at
@@ -246,6 +254,7 @@ impl Renderer {
             events,
             profile,
             proxy_login,
+            check_documents: false,
         };
         match ready {
             Ok(paused) => {
@@ -393,15 +402,24 @@ impl Renderer {
             .event_listener::<EventResponseReceived>()
             .await
             .map_err(browser_error)?;
-        let document_status = tokio::spawn(async move {
+        let documents = Arc::new(Mutex::new((None, false)));
+        let seen = documents.clone();
+        let check_documents = self.check_documents;
+        let document_watch = tokio::spawn(async move {
             while let Some(event) = responses.next().await {
-                if event.r#type == ResourceType::Document
-                    && (main_frame.is_none() || event.frame_id == main_frame)
-                {
-                    return Some(event.response.status);
+                if event.r#type != ResourceType::Document {
+                    continue;
+                }
+                let Ok(mut seen) = seen.lock() else {
+                    break;
+                };
+                if check_documents && served_from_private(&event.response) {
+                    seen.1 = true;
+                }
+                if seen.0.is_none() && (main_frame.is_none() || event.frame_id == main_frame) {
+                    seen.0 = Some(event.response.status);
                 }
             }
-            None
         });
 
         let mut extra = Vec::new();
@@ -488,14 +506,15 @@ impl Renderer {
         })
         .await;
         guard.abort();
-        let status = if document_status.is_finished() {
-            document_status.await.ok().flatten()
-        } else {
-            document_status.abort();
-            None
-        };
+        document_watch.abort();
+        let (status, private) = documents.lock().map_or((None, false), |seen| *seen);
         let _ = page.close().await;
 
+        if private {
+            return Err(FetchError::InvalidUrl(format!(
+                "rendering {url} loaded a document from a blocked private or internal address"
+            )));
+        }
         let (value, final_url) = outcome
             .map_err(|_| FetchError::Build(format!("rendering {url} timed out")))?
             .map_err(browser_error)?;
@@ -785,6 +804,14 @@ async fn keep_public(
             }
         })
         .await;
+}
+
+fn served_from_private(response: &chromiumoxide::cdp::browser_protocol::network::Response) -> bool {
+    response
+        .remote_ip_address
+        .as_deref()
+        .and_then(|ip| ip.trim_matches(['[', ']']).parse().ok())
+        .is_some_and(crate::url_security::is_blocked_ip)
 }
 
 async fn is_public(url: &str) -> bool {
@@ -1083,6 +1110,46 @@ mod tests {
             !reached.iter().any(|r| r.contains("/render-img")),
             "the render reached loopback: {reached:?}"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_document_that_resolves_to_loopback_fails_the_render() {
+        let (loopback, reached) = loopback_listener().await;
+        let port = loopback.rsplit(':').next().unwrap().to_string();
+        let rules = format!("--host-resolver-rules=MAP example.net 127.0.0.1:{port}");
+        let renderer = Renderer::launch_with(None, &[rules.as_str()])
+            .await
+            .expect("Chrome launches");
+        let html = r#"<html><body><div id="msg">rendered</div><script>location.href = "http://example.net:81/rebound";</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let rendered = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    wait_for: Some("p".into()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        let reached = reached.lock().unwrap().clone();
+        assert!(
+            reached.iter().any(|r| r.contains("/rebound")),
+            "the navigation never happened: {reached:?}"
+        );
+        match rendered {
+            Ok(page) => assert!(
+                !page.html.contains("loopback secret"),
+                "the render returned the loopback page"
+            ),
+            Err(e) => assert!(e.to_string().contains("private"), "{e}"),
+        }
     }
 
     const CROSS_SITE_FRAME: &str = r#"<html><body><p>framed</p><img src="LOOP/frame-img"><img src="NAMED/frame-named"><img src="http://example.org/redirect"><iframe src="LOOP/frame-nested"></iframe><iframe src="http://example.org/nav"></iframe><script>fetch("LOOP/frame-fetch").catch(() => {}); const xhr = new XMLHttpRequest(); xhr.open("GET", "LOOP/frame-xhr"); xhr.send(); new Worker("/worker.js"); new SharedWorker("/shared.js"); new WebSocket("WSLOOP/frame-ws");</script></body></html>"#;

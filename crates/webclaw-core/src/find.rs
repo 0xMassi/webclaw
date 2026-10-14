@@ -120,9 +120,11 @@ impl TextMatch {
 /// in document order.
 #[derive(Debug, Clone, Copy)]
 pub enum Example<'a> {
-    /// A CSS selector.
+    /// A CSS selector; a `::text`, `::html` or `::attr(NAME)` ending is
+    /// ignored.
     Css(&'a str),
-    /// An XPath 1.0 expression; its first element node is the example.
+    /// An XPath 1.0 expression; the element of its first node is the
+    /// example, so `//a/@href` or `//a/text()` pick the `a`.
     XPath(&'a str),
     /// The first element [`find_text`] returns.
     Text(&'a TextMatch),
@@ -148,9 +150,13 @@ pub fn find_text(html: &str, text: &TextMatch) -> Vec<Found> {
 pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, FindError> {
     let document = Html::parse_document(html);
     let example = match example {
-        Example::Css(css) => document
-            .select(&Selector::parse(css).map_err(|_| FindError::Selector(short(css)))?)
-            .next(),
+        Example::Css(css) => {
+            let selector = crate::select::Query::parse(css)
+                .ok()
+                .and_then(|query| query.css)
+                .ok_or_else(|| FindError::Selector(short(css)))?;
+            document.select(&selector).next()
+        }
         Example::XPath(expression) => {
             crate::xpath::first_element(html, expression)?.and_then(|index| {
                 document
@@ -709,6 +715,23 @@ mod tests {
                 crate::select(&page, None, &css).unwrap(),
                 ["yes"],
                 "{class} -> {css}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_example_picked_through_a_value_uses_its_element() {
+        for example in [
+            Example::Css("h3 a::attr(href)"),
+            Example::Css("h3 a::text"),
+            Example::XPath("//h3/a/@href"),
+            Example::XPath("//h3/a/text()"),
+        ] {
+            let similar = find_similar(SHOP, example).unwrap().unwrap();
+            assert_eq!(
+                texts(&similar.matches),
+                ["A Light", "Tipping", "Soumission"],
+                "{example:?}"
             );
         }
     }

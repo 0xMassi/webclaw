@@ -90,7 +90,7 @@ pub(crate) fn first_element(html: &str, expression: &str) -> Result<Option<usize
     let Some(target) = nodes
         .document_order()
         .into_iter()
-        .find_map(|node| node.element())
+        .find_map(|node| node.element().or_else(|| node.parent()?.element()))
     else {
         return Ok(None);
     };

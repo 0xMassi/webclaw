@@ -20,13 +20,13 @@ enum Take {
     Attr(String),
 }
 
-struct Query {
-    css: Option<Selector>,
+pub(crate) struct Query {
+    pub(crate) css: Option<Selector>,
     take: Take,
 }
 
 impl Query {
-    fn parse(query: &str) -> Result<Self, SelectError> {
+    pub(crate) fn parse(query: &str) -> Result<Self, SelectError> {
         let query = query.trim();
         let (css, take) = if let Some(css) = query.strip_suffix("::text") {
             (css, Take::Text)

@@ -106,7 +106,8 @@ pub struct CrawlConfig {
     /// and by how well the page linking to them answers it; ties go to the
     /// shallower link. Each page gets a [`PageResult::relevance`] and keeps
     /// only the parts that answer the question, as with
-    /// [`webclaw_core::focus_extraction`].
+    /// [`webclaw_core::focus_extraction`]. A query without letters or digits
+    /// counts as none.
     pub query: Option<String>,
 }
 
@@ -225,7 +226,10 @@ impl Crawler {
 
     /// Build a new crawler from a seed URL and config.
     /// Constructs the underlying `FetchClient` from `config.fetch`.
-    pub fn new(seed_url: &str, config: CrawlConfig) -> Result<Self, FetchError> {
+    pub fn new(seed_url: &str, mut config: CrawlConfig) -> Result<Self, FetchError> {
+        config.query = config
+            .query
+            .filter(|q| q.chars().any(char::is_alphanumeric));
         let seed = Url::parse(seed_url).map_err(|_| FetchError::InvalidUrl(seed_url.into()))?;
         let seed_origin = origin_key(&seed);
         let seed_root_domain = root_domain(&seed);
@@ -1578,6 +1582,15 @@ mod tests {
         assert!(markdown.contains("ripe bananas"), "{markdown}");
         assert!(!markdown.contains("tin"), "{markdown}");
         assert!(result.pages.iter().all(|p| p.relevance.is_some()));
+    }
+
+    #[tokio::test]
+    async fn a_query_without_words_crawls_breadth_first() {
+        for query in ["", "   ", " ?! "] {
+            let (result, order) = crawl_food(Some(query)).await;
+            assert_eq!(order[..3], ["/", "/apples", "/bread"], "{query:?}");
+            assert!(result.pages.iter().all(|p| p.relevance.is_none()));
+        }
     }
 
     #[test]

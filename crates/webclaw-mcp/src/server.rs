@@ -373,11 +373,12 @@ impl WebclawMcp {
                     webclaw_core::focus_extraction(&mut extraction, query);
                 }
                 if let Some((size, overlap)) = sizes {
-                    return chunks_json(
-                        &[(&params.url, &extraction.content.markdown)],
-                        size,
-                        overlap,
-                    );
+                    let (url, markdown) = (params.url.clone(), extraction.content.markdown);
+                    return tokio::task::spawn_blocking(move || {
+                        chunks_json(&[(&url, &markdown)], size, overlap)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
                 }
                 let output = match format {
                     "llm" => webclaw_core::to_llm_text(&extraction, Some(&params.url)),
@@ -396,8 +397,14 @@ impl WebclawMcp {
                         .get("markdown")
                         .or_else(|| resp.get("content")?.get("markdown"))
                         .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    return chunks_json(&[(&params.url, markdown)], size, overlap);
+                        .unwrap_or("")
+                        .to_string();
+                    let url = params.url.clone();
+                    return tokio::task::spawn_blocking(move || {
+                        chunks_json(&[(&url, &markdown)], size, overlap)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
                 }
                 let content = resp
                     .get(format)
@@ -467,7 +474,9 @@ impl WebclawMcp {
         });
 
         if let Some((size, overlap)) = sizes {
-            return crawl_chunks_json(&result, size, overlap);
+            return tokio::task::spawn_blocking(move || crawl_chunks_json(&result, size, overlap))
+                .await
+                .map_err(|e| e.to_string())?;
         }
 
         let mut output = format!(

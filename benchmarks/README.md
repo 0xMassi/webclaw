@@ -90,6 +90,14 @@ It fetches the non-PDF url-mode cases once per browser identity over HTTP only, 
 
 It fetches the url-mode cases twice through each tool's cache, starting empty, and sends the second run to a proxy that refuses connections, so only cached pages come back. It writes `results/<label>/cache-summary.md` with both run times and how many pages the cache served unchanged.
 
+### Chunking for retrieval
+
+```bash
+./benchmarks/chunking.sh       # webclaw --chunk against Crawl4AI's chunkers and a plain split of Scrapling's markdown
+```
+
+It chunks the 69 pages frozen by `run.sh` at 256 and 512 tokens with each tool. Crawl4AI's `SlidingWindowChunking`, `OverlappingWindowChunking`, `RegexChunking` and its LLM extraction path (`RegexChunking` then `merge_chunks`) run on its own `raw_markdown` and again on webclaw's markdown, so the chunkers are also compared on the same text; their window sizes are words, the token target over Crawl4AI's own 1.3 tokens-per-word rate. Scrapling has no chunker, so its row cuts Scrapling's markdown every 4 characters per target token, the split a user would write. The script counts chunk sizes in cl100k tokens against the target, checks that each golden case fact sits whole inside one chunk, ranks each page's chunks for the 40 questions in `questions.jsonl` with one BM25 scorer shared by every arm and checks the top 1 and top 3, and times each page from the frozen HTML. Results land in `results/<label>/chunking-summary.md`.
+
 ### Screenshots
 
 ```bash

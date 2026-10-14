@@ -106,6 +106,14 @@ It chunks the 69 pages frozen by `run.sh` at 256 and 512 tokens with each tool. 
 
 It screenshots 10 public pages with each tool, the viewport and the whole page, first with a fresh browser per page and then with one browser kept open (webclaw and Scrapling through their MCP servers, Scrapling inside a browser session). It records the time, the image size and whether the image is blank, and writes `results/<label>/screenshot-summary.md`.
 
+### PDFs
+
+```bash
+./benchmarks/pdf.sh            # webclaw --save-pdf and the MCP screenshot tool's pdf format against the other tools
+```
+
+It prints the 10 pages of the screenshot benchmark to PDF with each tool, first with a fresh browser per page and then with one browser kept open (webclaw through its MCP server). It records the time, the file size and the page count, reads each PDF's text back with webclaw's PDF reader, and scores the share of the page's content words, as webclaw reads the rendered page, that the PDF holds. Crawl4AI's `pdf=True` prints with backgrounds and no margins. Scrapling has no PDF export, so it has no arm. It writes `results/<label>/pdf-summary.md`.
+
 ### Blocking resources while rendering
 
 ```bash

@@ -17,6 +17,7 @@ use crate::select::SelectError;
 
 const HIDDEN: [&str; 4] = ["script", "style", "noscript", "template"];
 const MAX_STEPS: usize = 64;
+const MAX_CLASSES: usize = 32;
 
 /// One element a search found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -87,7 +88,7 @@ pub fn find_text(html: &str, text: &TextMatch) -> Vec<Found> {
 }
 
 /// Every element like the example. The search starts from the example's path
-/// from the root (its last 64 steps), each step its tag and classes, and
+/// from the root (its last 64 steps), each step its tag and first 32 classes, and
 /// widens it while every element that adds shares a child tag with the
 /// example (or has no child elements, like it) and sits under a parent
 /// holding no earlier match. It cuts steps from the top as long as one step
@@ -132,6 +133,7 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Sel
                 .classes()
                 .map(ident)
                 .filter(|class| Selector::parse(&format!(".{class}")).is_ok())
+                .take(MAX_CLASSES)
                 .collect();
             (ident(element.value().name()), classes)
         })
@@ -545,5 +547,25 @@ mod tests {
         let similar = find_similar(&page, Example::Text(&text)).unwrap().unwrap();
         assert_eq!(similar.matches.len(), 100_000);
         assert!(start.elapsed().as_secs() < 30, "{:?}", start.elapsed());
+    }
+
+    #[test]
+    fn classes_per_step_are_capped() {
+        let classes = (0..200)
+            .map(|j| format!("c{j}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let page = format!(
+            "<ul>{}</ul>",
+            (0..20)
+                .map(|i| format!("<li class=\"{classes} k{i}\">t{i}</li>"))
+                .collect::<String>()
+        );
+        let text = TextMatch::text("t3", true, false).unwrap();
+        let similar = find_similar(&page, Example::Text(&text)).unwrap().unwrap();
+        assert_eq!(similar.matches.len(), 20);
+        for step in similar.selector.split(" > ") {
+            assert!(step.matches('.').count() <= MAX_CLASSES, "{step}");
+        }
     }
 }

@@ -1344,8 +1344,9 @@ async fn run_select(cli: &Cli) -> Result<(), String> {
             if fields.is_empty() {
                 serde_json::to_string_pretty(&similar)
             } else {
-                let records = webclaw_core::select_records(html, url, &similar.selector, &fields)
-                    .map_err(|e| e.to_string())?;
+                let records =
+                    webclaw_core::select_records(html, url, &similar.selector, &fields)
+                        .map_err(|e| format!("with --similar, --field takes CSS selectors: {e}"))?;
                 serde_json::to_string_pretty(
                     &serde_json::json!({"selector": similar.selector, "records": records}),
                 )

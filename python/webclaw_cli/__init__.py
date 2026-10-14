@@ -7,11 +7,11 @@ except the page fetches themselves.
 
 from __future__ import annotations
 
+import functools
+import importlib.metadata
 import json
 import os
-import shutil
 import subprocess
-import sysconfig
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
@@ -55,22 +55,21 @@ class WebclawError(RuntimeError):
         self.returncode = returncode
 
 
+@functools.lru_cache(maxsize=None)
 def binary_path() -> str:
-    """Path of the `webclaw` binary this package runs."""
-    exe = "webclaw" + (sysconfig.get_config_var("EXE") or "")
-    dirs = [
-        sysconfig.get_path("scripts"),
-        sysconfig.get_path("scripts", sysconfig.get_preferred_scheme("user")),
-        str(Path(__file__).resolve().parents[1] / "bin"),
-    ]
-    for d in dirs:
-        path = os.path.join(d, exe)
-        if os.path.isfile(path):
-            return path
-    found = shutil.which(exe)
-    if found:
-        return found
-    raise FileNotFoundError(f"cannot find the {exe} binary; reinstall the webclaw-cli package")
+    """Path of the `webclaw` binary installed with this package."""
+    exe = "webclaw.exe" if os.name == "nt" else "webclaw"
+    try:
+        files = importlib.metadata.files("webclaw-cli") or []
+    except importlib.metadata.PackageNotFoundError:
+        files = []
+    for file in files:
+        if file.name == exe and Path(file.locate()).is_file():
+            return str(Path(file.locate()).resolve())
+    target = Path(__file__).resolve().parents[1] / "bin" / exe
+    if target.is_file():
+        return str(target)
+    raise FileNotFoundError(f"cannot find the {exe} binary of the webclaw-cli package; reinstall it")
 
 
 def _options(o: Options) -> list[str]:

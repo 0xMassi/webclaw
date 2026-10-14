@@ -1,3 +1,4 @@
+import importlib.metadata
 import os
 import subprocess
 import tempfile
@@ -24,6 +25,15 @@ class Offline(unittest.TestCase):
     def test_binary_runs(self):
         out = subprocess.run([wc.binary_path(), "--version"], capture_output=True, text=True, check=True)
         self.assertTrue(out.stdout.startswith("webclaw "))
+
+    def test_binary_is_the_packaged_one(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"PATH": d}):
+            Path(d, "webclaw").write_text("#!/bin/sh\necho fake\n")
+            Path(d, "webclaw").chmod(0o755)
+            wc.binary_path.cache_clear()
+            path = wc.binary_path()
+        recorded = {str(Path(f.locate()).resolve()) for f in importlib.metadata.files("webclaw-cli") or []}
+        self.assertIn(path, recorded)
 
     def test_scrape_formats(self):
         self.assertIn("# Garden tools", wc.scrape(SHOP))

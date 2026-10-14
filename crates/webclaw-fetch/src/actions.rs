@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chromiumoxide::cdp::browser_protocol::input::InsertTextParams;
 use chromiumoxide::cdp::browser_protocol::network::{
     EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent, RequestId, ResourceType,
 };
@@ -41,7 +42,8 @@ pub enum Action {
         nth: Option<usize>,
         repeat: Option<u32>,
     },
-    /// Focus the element matching `selector` and type `value` into it.
+    /// Focus the element matching `selector` and type `value` into it, as
+    /// an input method would, so any text works.
     Type { selector: String, value: String },
     /// Press a key such as `Enter`, `Tab` or `ArrowDown` in the focused element.
     Press { key: String },
@@ -344,7 +346,9 @@ async fn step(
         Action::Type { selector, value } => {
             let element = find(page, selector).await?.swap_remove(0);
             element.focus().await.map_err(js_error)?;
-            element.type_str(value).await.map_err(js_error)?;
+            page.execute(InsertTextParams::new(value.clone()))
+                .await
+                .map_err(js_error)?;
         }
         Action::Press { key } => {
             page.press_key(key).await.map_err(js_error)?;
@@ -816,6 +820,25 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
             hits.load(Ordering::SeqCst),
             0,
             "an action sent a request to loopback"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn type_enters_text_outside_ascii() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let done = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "type", "selector": "#q", "value": "città 東京 😀"},
+                {"type": "executeJavascript", "code": "document.getElementById('q').value"}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        renderer.close().await;
+        assert_eq!(
+            done.expect("typed").1,
+            vec![serde_json::json!("città 東京 😀")]
         );
     }
 }

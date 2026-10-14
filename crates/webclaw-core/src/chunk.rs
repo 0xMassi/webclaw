@@ -325,11 +325,22 @@ fn split_block(text: &str, budget: usize) -> Vec<(String, &'static str)> {
     {
         let rows = lines[2..].join("\n");
         let room = budget - approx_tokens(head);
-        return pack(&rows, room, 0)
-            .into_iter()
-            .map(|r| (format!("{head}\n{}", &rows[r]), "\n\n"))
-            .collect();
+        let mut pieces = if head == header {
+            Vec::new()
+        } else {
+            cut_text(&header, budget)
+        };
+        pieces.extend(
+            pack(&rows, room, 0)
+                .into_iter()
+                .map(|r| (format!("{head}\n{}", &rows[r]), "\n\n")),
+        );
+        return pieces;
     }
+    cut_text(text, budget)
+}
+
+fn cut_text(text: &str, budget: usize) -> Vec<(String, &'static str)> {
     let mut prev = 0;
     pack(text, budget, 0)
         .into_iter()
@@ -634,9 +645,13 @@ mod tests {
         ] {
             let chunks = chunk(&page, size, 0);
             assert!(chunks.len() > 2);
-            for c in &chunks {
+            for c in chunks.iter().filter(|c| c.text.contains("0.5 |")) {
                 assert!(c.text.starts_with(&head), "{c:?}");
-                assert!(c.tokens <= size, "{c:?}");
+            }
+            assert!(chunks.iter().all(|c| c.tokens <= size), "{chunks:?}");
+            let all: String = chunks.iter().map(|c| c.text.as_str()).collect();
+            for i in 0..8 {
+                assert!(all.contains(&format!("Month_number_{i})")), "{size}");
             }
         }
     }

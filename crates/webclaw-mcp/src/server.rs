@@ -447,16 +447,12 @@ impl WebclawMcp {
     /// Pages whose content needs JavaScript are rendered first when this server has browser support.
     #[tool]
     async fn select(&self, Parameters(params): Parameters<SelectParams>) -> Result<String, String> {
-        let pick = match (
+        let pick = select_query(
             params.selector,
             params.xpath,
             params.tables.unwrap_or(false),
-        ) {
-            (Some(css), None, false) => Some((css, false)),
-            (None, Some(xpath), false) => Some((xpath, true)),
-            (None, None, true) => None,
-            _ => return Err("give exactly one of `selector`, `xpath` and `tables`".into()),
-        };
+            params.fields.as_ref().is_some_and(|f| !f.is_empty()),
+        )?;
         validate_url(&params.url).await?;
         let fetched = tokio::time::timeout(
             LOCAL_FETCH_TIMEOUT,
@@ -1026,6 +1022,21 @@ impl WebclawMcp {
     }
 }
 
+fn select_query(
+    selector: Option<String>,
+    xpath: Option<String>,
+    tables: bool,
+    fields: bool,
+) -> Result<Option<(String, bool)>, String> {
+    match (selector, xpath, tables) {
+        (Some(css), None, false) => Ok(Some((css, false))),
+        (None, Some(xpath), false) => Ok(Some((xpath, true))),
+        (None, None, true) if !fields => Ok(None),
+        (None, None, true) => Err("`fields` works with `selector` or `xpath`, not `tables`".into()),
+        _ => Err("give exactly one of `selector`, `xpath` and `tables`".into()),
+    }
+}
+
 #[tool_handler]
 impl ServerHandler for WebclawMcp {
     fn get_info(&self) -> ServerInfo {
@@ -1148,6 +1159,28 @@ mod tests {
         }
         let err = super::parse_browser(Some("opera")).unwrap_err();
         assert!(err.contains("opera") && err.contains("safari-ios"), "{err}");
+    }
+
+    #[test]
+    fn select_takes_one_query_and_fields_only_with_selectors() {
+        use super::select_query;
+        let css = || Some("h1".to_string());
+        assert_eq!(
+            select_query(css(), None, false, true),
+            Ok(Some(("h1".into(), false)))
+        );
+        assert_eq!(
+            select_query(None, css(), false, false),
+            Ok(Some(("h1".into(), true)))
+        );
+        assert_eq!(select_query(None, None, true, false), Ok(None));
+        assert!(
+            select_query(None, None, true, true)
+                .unwrap_err()
+                .contains("fields")
+        );
+        assert!(select_query(css(), None, true, false).is_err());
+        assert!(select_query(None, None, false, false).is_err());
     }
 
     #[test]

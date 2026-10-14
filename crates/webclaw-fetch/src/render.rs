@@ -162,6 +162,7 @@ impl Renderer {
             .arg("--disable-background-networking")
             .arg("--disable-component-update")
             .arg("--enable-features=NetworkService,NetworkServiceInProcess,LocalNetworkAccessChecks:LocalNetworkAccessChecksWarn/false,LocalNetworkAccessChecksWebSockets")
+            .arg("--webrtc-ip-handling-policy=disable_non_proxied_udp")
             .args(args.iter().copied())
             .user_data_dir(&profile);
         let installed = std::env::var("WEBCLAW_CHROME").ok().or_else(|| {
@@ -1175,6 +1176,52 @@ mod tests {
         let left = running();
         let _ = std::fs::remove_dir_all(&profile);
         assert_eq!(left, 0, "Chrome processes still running after drop");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn webrtc_sends_no_udp_to_loopback() {
+        let udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let port = udp.local_addr().unwrap().port();
+        let packets = Arc::new(AtomicUsize::new(0));
+        let counted = packets.clone();
+        tokio::spawn(async move {
+            let mut buffer = [0; 2048];
+            while udp.recv_from(&mut buffer).await.is_ok() {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let html = format!(
+            r#"<html><body><p id="msg">rendered</p><script>const pc = new RTCPeerConnection({{iceServers: [{{urls: "stun:127.0.0.1:{port}"}}]}}); pc.createDataChannel("x"); pc.createOffer().then(o => pc.setLocalDescription(o)).then(() => {{ document.getElementById("msg").textContent = "offer made"; }}); setTimeout(() => {{ const done = document.createElement("div"); done.id = "done"; document.body.appendChild(done); }}, 3000);</script></body></html>"#
+        );
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let rendered = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: &html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    wait_for: Some("#done".into()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        assert!(
+            rendered
+                .expect("render succeeds")
+                .html
+                .contains("offer made")
+        );
+        assert_eq!(
+            packets.load(Ordering::SeqCst),
+            0,
+            "STUN packets reached loopback"
+        );
     }
 
     const CROSS_SITE_FRAME: &str = r#"<html><body><p>framed</p><img src="LOOP/frame-img"><img src="NAMED/frame-named"><img src="http://example.org/redirect"><iframe src="LOOP/frame-nested"></iframe><iframe src="http://example.org/nav"></iframe><script>fetch("LOOP/frame-fetch").catch(() => {}); const xhr = new XMLHttpRequest(); xhr.open("GET", "LOOP/frame-xhr"); xhr.send(); new Worker("/worker.js"); new SharedWorker("/shared.js"); new WebSocket("WSLOOP/frame-ws");</script></body></html>"#;

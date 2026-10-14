@@ -287,7 +287,17 @@ webclaw https://example.com --render always --wait-for "#app li"
 webclaw https://example.com --cdp-url ws://localhost:9222/devtools/browser/<id>   # use a running browser
 ```
 
-`auto` renders when the page loads scripts and the HTTP response has almost no text, or little text next to an empty app root or a "please enable JavaScript" notice, and it keeps the rendered result only when it has more content. The browser never reaches private or loopback addresses.
+`auto` renders when the page loads scripts and the HTTP response has almost no text, or little text next to an empty app root or a "please enable JavaScript" notice, and it keeps the rendered result only when it has more content.
+
+What a rendered page can reach, in the browser webclaw launches:
+
+- no HTTP request from the page, its frames or its workers, redirects included, reaches a private, loopback or link-local address;
+- WebSockets to those addresses are refused, though the TCP connection opens first. Behind a proxy, WebSockets to anything but loopback go through the proxy, so they are only as safe as the proxy;
+- speculative prefetching and preconnects are off;
+- WebRTC sends no UDP, though a TURN server over TCP can still open a connection to a local port;
+- without a proxy, a render fails when the page's document came from a private address, so DNS rebinding cannot return local content. The request itself still goes out, and popups are not checked.
+
+Behind a proxy, the proxy resolves host names itself and the document check is off, so HTTP too is only as safe as the proxy. Service workers are not tested. A browser you connect with `--cdp-url` is checked page by page and your other tabs are left alone, but the frames, workers, WebSockets, WebRTC and speculative prefetching of the pages webclaw renders there are not covered.
 
 `--block images,fonts,media` skips those resources while a page renders for its content. Stylesheets always load, since many apps fetch CSS on demand and break without it. Scripts and the data they fetch still load, so most pages keep all their text and download about 40% less. A page that shows some text only after a font or an image has loaded (through `document.fonts.load()`, `FontFace.load()`, an image's `onload` or `decode()`) loses that text when you block it. We found no such page among the real sites we tested, but compare with and without `--block` on yours. Rendering is not much faster, since webclaw already stops waiting once the text settles, so blocking stays off unless you ask. Screenshots always load everything. The MCP `scrape` and `crawl` tools take the same list as `block`.
 

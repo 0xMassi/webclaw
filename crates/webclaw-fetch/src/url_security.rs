@@ -119,6 +119,9 @@ fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
         || (s[0] & 0xfe00) == 0xfc00
         || (s[0] & 0xffc0) == 0xfe80
         || (s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0)
+        || (s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0x0001)
+        || (s[0] == 0x2001 && s[1] == 0x0000)
+        || s[0] == 0x2002
         || (s[0] == 0x2001 && s[1] == 0x0db8)
         || embedded_ipv4(ip).is_some_and(is_blocked_ipv4)
 }
@@ -181,8 +184,18 @@ mod tests {
             "fe80::1".parse().unwrap(),
             "64:ff9b::7f00:1".parse().unwrap(),
             "::ffff:127.0.0.1".parse().unwrap(),
+            "2002:7f00:1::".parse().unwrap(),
+            "2002:a00:1::".parse().unwrap(),
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2".parse().unwrap(),
+            "64:ff9b:1::a00:1".parse().unwrap(),
         ] {
             assert!(is_blocked_ip(IpAddr::V6(ip)), "{ip}");
+        }
+        for ip in [
+            "2001:4860:4860::8888".parse::<Ipv6Addr>().unwrap(),
+            "2606:4700:4700::1111".parse().unwrap(),
+        ] {
+            assert!(!is_blocked_ip(IpAddr::V6(ip)), "{ip}");
         }
     }
 

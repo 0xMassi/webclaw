@@ -328,7 +328,7 @@ struct Cli {
 
     /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
     /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research"])]
     screenshot: Option<PathBuf>,
 
     /// With --screenshot, capture the whole scrollable page
@@ -337,7 +337,7 @@ struct Cli {
 
     /// Save the rendered page as a PDF to this file, every page of it, as the
     /// browser prints it. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research"])]
     save_pdf: Option<PathBuf>,
 
     /// With --save-pdf, the paper size
@@ -3933,6 +3933,26 @@ mod tests {
             &["--save-pdf", "a.pdf", "--block", "images"],
         ] {
             assert!(parse(extra).is_err(), "{extra:?}");
+        }
+        assert!(parse(&["--screenshot", "a.png"]).is_ok());
+        for output in ["--screenshot", "--save-pdf"] {
+            for other in [
+                &["-f", "json"][..],
+                &["--summarize"],
+                &["--cloud"],
+                &["--output-dir", "out"],
+                &["--diff-with", "old.json"],
+                &["--brand"],
+                &["--raw-html"],
+                &["--pdf-mode", "fast"],
+                &["--metadata"],
+                &["--query", "price"],
+                &["--extract-prompt", "title"],
+            ] {
+                let mut extra = vec![output, "a.out"];
+                extra.extend_from_slice(other);
+                assert!(parse(&extra).is_err(), "{extra:?}");
+            }
         }
     }
 

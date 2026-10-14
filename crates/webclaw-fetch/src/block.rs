@@ -9,7 +9,22 @@
 /// types as one of these kinds. Some still go out: everything inside a
 /// cross-site iframe, an image loaded through `<object>`, `<link
 /// rel=prefetch>` hints and the favicon.
+///
+/// More kinds may be added, so build one by parsing or from
+/// `Block::default()`:
+///
+/// ```
+/// let block: webclaw_fetch::Block = "images,fonts".parse().unwrap();
+/// assert!(block.images && block.fonts && !block.media);
+/// ```
+///
+/// A struct literal does not compile:
+///
+/// ```compile_fail
+/// let block = webclaw_fetch::Block { images: true, fonts: false, media: false };
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Block {
     /// Images, including `srcset` candidates and CSS backgrounds.
     pub images: bool,

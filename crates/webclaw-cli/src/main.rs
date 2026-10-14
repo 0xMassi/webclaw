@@ -212,6 +212,12 @@ struct Cli {
     #[arg(long)]
     wait_for: Option<String>,
 
+    /// When rendering a page for its content, skip these resources: a comma
+    /// list of images, fonts, media and stylesheets, or none. Screenshots
+    /// load everything
+    #[arg(long, value_name = "TYPES", conflicts_with = "screenshot")]
+    block: Option<String>,
+
     /// Extract from local HTML file instead of fetching
     #[arg(long)]
     file: Option<String>,
@@ -678,6 +684,13 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
             pool: Arc::new(render_pool(cli, &config)),
             always: cli.render == RenderMode::Always,
             wait_for: cli.wait_for.clone(),
+            block: match cli.block.as_deref().unwrap_or_default().parse() {
+                Ok(block) => block,
+                Err(e) => {
+                    eprintln!("error: --block: {e}");
+                    process::exit(1);
+                }
+            },
         });
     }
     config
@@ -1038,7 +1051,13 @@ async fn render_page(config: &FetchConfig, url: &str) -> Result<FetchResult, Str
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
     render
         .pool
-        .render(url, None, render.wait_for.as_deref(), &headers)
+        .render(
+            url,
+            None,
+            render.wait_for.as_deref(),
+            &headers,
+            render.block,
+        )
         .await
         .map_err(|e| format!("render error: {e}"))
 }

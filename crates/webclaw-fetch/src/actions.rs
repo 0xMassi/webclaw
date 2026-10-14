@@ -69,7 +69,8 @@ pub enum Action {
     },
     /// Run JavaScript, an expression or a function body that ends in
     /// `return`, and keep its value, awaited when it is a promise, as JSON.
-    /// The values of all such steps together are capped at 1 MiB.
+    /// The page turns the value into JSON itself, and a value longer than
+    /// what is left of the 1 MiB all such steps share fails the step there.
     ExecuteJavascript { code: String },
 }
 
@@ -129,7 +130,7 @@ const FIND: Duration = Duration::from_secs(10);
 const PATIENCE: Duration = Duration::from_millis(1500);
 const QUIET: Duration = Duration::from_millis(400);
 const SETTLE_LIMIT: Duration = Duration::from_secs(5);
-const MAX_RESULT_BYTES: usize = 1 << 20;
+const MAX_RESULT_CHARS: usize = 1 << 20;
 const LONG_POLL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Default)]
@@ -266,7 +267,7 @@ async fn run_all(
     deadline: Instant,
 ) -> Result<Vec<Value>, FetchError> {
     let mut results = Vec::new();
-    let mut size = 0;
+    let mut used = 0;
     for (i, action) in actions.iter().enumerate() {
         let fail =
             |e: String| FetchError::Build(format!("action {} ({}): {e}", i + 1, action.name()));
@@ -275,15 +276,13 @@ async fn run_all(
         if left.is_zero() {
             return Err(out_of_time());
         }
-        let value = tokio::time::timeout(left, step(page, requests, action, deadline))
+        let room = MAX_RESULT_CHARS.saturating_sub(used);
+        let value = tokio::time::timeout(left, step(page, requests, action, deadline, room))
             .await
             .map_err(|_| out_of_time())?
             .map_err(fail)?;
         if let Some(value) = value {
-            size += value.to_string().len();
-            if size > MAX_RESULT_BYTES {
-                return Err(fail("the script values passed 1 MiB".into()));
-            }
+            used += value.to_string().len();
             results.push(value);
         }
     }
@@ -295,6 +294,7 @@ async fn step(
     requests: &Requests,
     action: &Action,
     deadline: Instant,
+    room: usize,
 ) -> Result<Option<Value>, String> {
     if !matches!(action, Action::Wait { .. }) {
         ready(page).await?;
@@ -410,15 +410,33 @@ async fn step(
                 .map_err(|_| format!("no element matches {selector:?} after {limit:?}"))?;
         }
         Action::ExecuteJavascript { code } => {
-            let value = match page.evaluate_expression(code.as_str()).await {
-                Err(CdpError::JavascriptException(e)) if is_return_outside_function(&e) => {
-                    page.evaluate_expression(format!("(async () => {{\n{code}\n}})()"))
-                        .await
-                }
-                other => other,
-            }
-            .map_err(js_error)?;
-            return Ok(Some(value.value().cloned().unwrap_or(Value::Null)));
+            let expression = format!("(async () => (\n{code}\n))");
+            let parses = page
+                .evaluate_expression(format!("typeof {expression}"))
+                .await
+                .is_ok();
+            let function = if parses {
+                expression
+            } else {
+                format!("(async () => {{\n{code}\n}})")
+            };
+            let capped = format!(
+                "(async () => {{ const value = await {function}(); let text; \
+                 try {{ text = JSON.stringify(value === undefined ? null : value); }} \
+                 catch (e) {{ throw new Error('the value is not JSON: ' + e.message); }} \
+                 if (text === undefined) text = 'null'; \
+                 if (text.length > {room}) throw new Error('the value is ' + text.length + ' characters long, with {room} characters left of the 1 MiB all script values share'); \
+                 return text; }})()"
+            );
+            let text: String = page
+                .evaluate_expression(capped)
+                .await
+                .map_err(js_error)?
+                .into_value()
+                .map_err(|e| e.to_string())?;
+            return serde_json::from_str(&text)
+                .map(Some)
+                .map_err(|e| e.to_string());
         }
     }
     Ok(None)
@@ -564,12 +582,6 @@ fn same_site(url: &str, page_host: &str) -> bool {
                 .map(|h| h == site || h.ends_with(&format!(".{site}")))
         })
         .unwrap_or(false)
-}
-
-fn is_return_outside_function(
-    e: &chromiumoxide::cdp::js_protocol::runtime::ExceptionDetails,
-) -> bool {
-    exception_text(e).contains("Illegal return statement")
 }
 
 fn exception_text(e: &chromiumoxide::cdp::js_protocol::runtime::ExceptionDetails) -> String {
@@ -839,6 +851,26 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         assert_eq!(
             done.expect("typed").1,
             vec![serde_json::json!("città 東京 😀")]
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn script_values_over_the_cap_fail_inside_the_page() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let big = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "executeJavascript", "code": "'x'.repeat(600000)"},
+                {"type": "executeJavascript", "code": "'y'.repeat(600000)"}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        renderer.close().await;
+        let error = big.unwrap_err().to_string();
+        assert!(
+            error.contains("action 2 (executeJavascript)") && error.contains("characters left"),
+            "{error}"
         );
     }
 }

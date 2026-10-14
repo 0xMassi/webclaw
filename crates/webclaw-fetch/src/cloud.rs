@@ -1002,6 +1002,7 @@ mod tests {
             url: &str,
         ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
             Ok(crate::client::FetchResult {
+                script_results: Vec::new(),
                 html: self.0.to_string(),
                 document_bytes: None,
                 status: 200,

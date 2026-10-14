@@ -1,6 +1,8 @@
 //! webclaw-fetch: HTTP client layer with browser TLS fingerprint impersonation.
 //! Uses wreq (BoringSSL) for browser-grade TLS + HTTP/2 fingerprinting.
 //! Automatically detects PDF responses and delegates to webclaw-pdf.
+#[cfg(feature = "browser")]
+mod actions;
 mod block;
 pub mod browser;
 mod cache;

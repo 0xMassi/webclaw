@@ -27,6 +27,7 @@ use tracing::warn;
 use url::Url;
 
 use crate::Block;
+pub use crate::actions::{Action, parse_actions};
 use crate::client::FetchResult;
 use crate::error::FetchError;
 
@@ -43,6 +44,10 @@ pub struct RenderOptions {
     pub headers: Vec<(String, String)>,
     /// Resource types whose requests fail; see [`Block`] for what it misses.
     pub block: Block,
+    /// Steps run in order once the page has loaded, before it is read or
+    /// captured. They get their own time budget, equal to `timeout`, and
+    /// the first failing step fails the render with its number in the error.
+    pub actions: Vec<Action>,
 }
 
 impl Default for RenderOptions {
@@ -52,6 +57,7 @@ impl Default for RenderOptions {
             timeout: Duration::from_secs(30),
             headers: Vec::new(),
             block: Block::default(),
+            actions: Vec::new(),
         }
     }
 }
@@ -85,6 +91,8 @@ pub struct Screenshot {
     pub status: u16,
     /// The page's URL after redirects.
     pub url: String,
+    /// The values of the `eval` actions, in order.
+    pub script_results: Vec<serde_json::Value>,
 }
 
 impl Screenshot {
@@ -100,6 +108,7 @@ struct Visited<T> {
     value: T,
     status: u16,
     url: String,
+    scripts: Vec<serde_json::Value>,
 }
 
 /// A page already fetched over HTTP, handed to the browser so it does not
@@ -286,8 +295,9 @@ impl Renderer {
         }
     }
 
-    /// Render `url` and return the DOM after its scripts ran. The result has
-    /// status 200 and no headers; extract it with [`crate::FetchClient::extract`].
+    /// Render `url` and return the DOM after its scripts and
+    /// `options.actions` ran. The result has status 200 and no headers;
+    /// extract it with [`crate::FetchClient::extract`].
     ///
     /// With `prefetched`, the browser gets that response for the page itself
     /// (body and headers, `Set-Cookie` included) instead of requesting it
@@ -317,6 +327,7 @@ impl Renderer {
             url: visited.url,
             headers: http::HeaderMap::new(),
             elapsed: start.elapsed(),
+            script_results: visited.scripts,
         })
     }
 
@@ -352,6 +363,7 @@ impl Renderer {
             image: visited.value,
             status: visited.status,
             url: visited.url,
+            script_results: visited.scripts,
         })
     }
 
@@ -507,19 +519,41 @@ impl Renderer {
                 let _ = guard_page.execute(resume).await;
             }
         });
-        let outcome = tokio::time::timeout(options.timeout, async {
-            page.goto(url.as_str()).await?;
+        let limit = options.timeout * if options.actions.is_empty() { 1 } else { 2 };
+        let outcome = tokio::time::timeout(limit, async {
+            page.goto(url.as_str()).await.map_err(browser_error)?;
             tokio::select! {
                 _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3) => {}
                 _ = text_settled(&page, settled_words) => {}
             }
             if let Some(selector) = &options.wait_for {
                 page.wait_for_selector(selector.as_str(), Some(options.timeout))
-                    .await?;
+                    .await
+                    .map_err(browser_error)?;
             }
-            let value = read(&page).await?;
-            let final_url = page.url().await?.unwrap_or_else(|| url.clone());
-            Ok::<_, chromiumoxide::error::CdpError>((value, final_url))
+            let scripts = crate::actions::run(&page, &options.actions, options.timeout).await?;
+            let value = read(&page).await.map_err(browser_error)?;
+            let final_url = page
+                .url()
+                .await
+                .map_err(browser_error)?
+                .unwrap_or_else(|| url.clone());
+            if !options.actions.is_empty() {
+                if final_url.starts_with("chrome-error:") {
+                    return Err(FetchError::Build(
+                        "the actions navigated to a page the browser refused or could not load"
+                            .into(),
+                    ));
+                }
+                if final_url.starts_with("http") {
+                    crate::url_security::validate_public_http_url(&final_url)
+                        .await
+                        .map_err(|e| {
+                            FetchError::Build(format!("the actions led to {final_url}: {e}"))
+                        })?;
+                }
+            }
+            Ok::<_, FetchError>((value, final_url, scripts))
         })
         .await;
         guard.abort();
@@ -533,15 +567,15 @@ impl Renderer {
                  a system proxy or a host that resolves differently in the browser can cause this"
             )));
         }
-        let (value, final_url) = outcome
-            .map_err(|_| FetchError::Build(format!("rendering {url} timed out")))?
-            .map_err(browser_error)?;
+        let (value, final_url, scripts) =
+            outcome.map_err(|_| FetchError::Build(format!("rendering {url} timed out")))??;
         Ok(Visited {
             value,
             status: status
                 .and_then(|code| u16::try_from(code).ok())
                 .unwrap_or(200),
             url: final_url,
+            scripts,
         })
     }
 
@@ -651,6 +685,7 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         block: Block,
+        actions: &[Action],
     ) -> Result<FetchResult, FetchError> {
         let _tab = self
             .tabs
@@ -659,7 +694,11 @@ impl RenderPool {
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
         renderer
-            .render(url, prefetched, &self.options(wait_for, headers, block))
+            .render(
+                url,
+                prefetched,
+                &self.options(wait_for, headers, block, actions),
+            )
             .await
     }
 
@@ -670,6 +709,7 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         shot: ScreenshotOptions,
+        actions: &[Action],
     ) -> Result<Screenshot, FetchError> {
         let _tab = self
             .tabs
@@ -680,7 +720,7 @@ impl RenderPool {
         renderer
             .screenshot(
                 url,
-                &self.options(wait_for, headers, Block::default()),
+                &self.options(wait_for, headers, Block::default(), actions),
                 shot,
             )
             .await
@@ -691,12 +731,14 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         block: Block,
+        actions: &[Action],
     ) -> RenderOptions {
         RenderOptions {
             wait_for: wait_for.map(str::to_string),
             timeout: self.timeout,
             headers: headers.to_vec(),
             block,
+            actions: actions.to_vec(),
         }
     }
 
@@ -752,6 +794,7 @@ impl RenderPool {
                 config.wait_for.as_deref(),
                 headers,
                 config.block,
+                &[],
             )
             .await;
         match rendered {
@@ -1619,6 +1662,7 @@ mod tests {
 
     fn page(url: &str, html: &str, status: u16) -> crate::client::FetchResult {
         crate::client::FetchResult {
+            script_results: Vec::new(),
             html: html.into(),
             document_bytes: None,
             status,

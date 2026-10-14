@@ -106,6 +106,9 @@ pub struct FetchResult {
     pub url: String,
     pub headers: http::HeaderMap,
     pub elapsed: Duration,
+    /// The values of the `eval` actions of a browser render, in order.
+    /// Empty for pages fetched over HTTP.
+    pub script_results: Vec<serde_json::Value>,
 }
 
 impl FetchResult {
@@ -980,6 +983,7 @@ fn response_to_result(response: Response, start: Instant) -> Result<FetchResult,
     debug!(status, elapsed_ms = %elapsed.as_millis(), "fetch complete");
 
     Ok(FetchResult {
+        script_results: Vec::new(),
         document_bytes,
         html,
         status,
@@ -1517,6 +1521,7 @@ mod tests {
             headers.insert(http::header::RETRY_AFTER, value.parse().unwrap());
         }
         FetchResult {
+            script_results: Vec::new(),
             html: String::new(),
             document_bytes: None,
             status,
@@ -1679,6 +1684,7 @@ mod tests {
         let ok = BatchResult {
             url: "https://example.com".to_string(),
             result: Ok(FetchResult {
+                script_results: Vec::new(),
                 document_bytes: None,
                 html: "<html></html>".to_string(),
                 status: 200,

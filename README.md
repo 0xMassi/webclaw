@@ -192,6 +192,22 @@ webclaw https://books.toscrape.com --xpath "//article[@class='product_pod']" \
 
 `--xpath` takes an XPath 1.0 expression instead, over the same parsed page: elements and text nodes give their text, attributes their value, and `count()` or `string()` style expressions one value. With `--xpath`, each `--field` is an expression evaluated from the match, so it usually starts with `.`. The MCP `select` tool takes `xpath` in place of `selector`.
 
+### Data tables as JSON
+
+```bash
+webclaw "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies" --tables
+```
+
+`--tables` prints the page's data tables as a JSON array, each with its `caption` (when it has one), `headers` and `rows` of cell text. A cell that spans several rows or columns repeats its text in each one, so every row has one value per column. Stacked header rows are joined per column with ` / `, as in `Population / % of world`. The MCP `select` tool takes `tables: true` in place of a selector.
+
+Header rows are the rows of `<thead>` and the leading rows made only of `<th>`; a leading row that is one cell across the whole table becomes the caption. These tables are skipped as page layout:
+
+- tables marked `role="presentation"` or `role="none"`;
+- tables with fewer than two columns of text;
+- tables without a header row that have a single body row, wrap another table, hold only links, or hold paragraphs, lists or other blocks in a row of more than one cell.
+
+Text hidden with `hidden`, an inline `display:none` or `<template>` is left out. Text hidden by a stylesheet is kept, because pages are not styled. A cell keeps its first 64 KB of text, and a very large table is cut short with `"truncated": true`. Once the tables on a page reach 64 MB, the tables after that are left out.
+
 ### Keep only what answers a question
 
 ```bash
@@ -344,7 +360,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | Tool | What it does | Local |
 | --- | --- | :-: |
 | `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
-| `select` | Pick values or records from a page with CSS selectors or XPath, as JSON | Yes |
+| `select` | Pick values or records from a page with CSS selectors or XPath, or its data tables, as JSON | Yes |
 | `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages | Yes |
 | `map` | Discover URLs without extracting every page | Yes |

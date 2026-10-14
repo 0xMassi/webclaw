@@ -455,15 +455,16 @@ impl WebclawMcp {
         Ok(output)
     }
 
-    /// Pick values out of a web page with a CSS selector or an XPath 1.0 expression and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending (CSS), or "@attr" (XPath). With `fields`, return one JSON object per match, each field a selector run inside that match.
+    /// Pick values out of a web page with a CSS selector or an XPath 1.0 expression and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending (CSS), or "@attr" (XPath). With `fields`, return one JSON object per match, each field a selector run inside that match. With `tables`, return the page's data tables as headers and rows.
     /// Pages whose content needs JavaScript are rendered first when this server has browser support.
     #[tool]
     async fn select(&self, Parameters(params): Parameters<SelectParams>) -> Result<String, String> {
-        let (query, xpath) = match (params.selector, params.xpath) {
-            (Some(css), None) => (css, false),
-            (None, Some(xpath)) => (xpath, true),
-            _ => return Err("give exactly one of `selector` and `xpath`".into()),
-        };
+        let pick = select_query(
+            params.selector,
+            params.xpath,
+            params.tables.unwrap_or(false),
+            params.fields.as_ref().is_some_and(|f| !f.is_empty()),
+        )?;
         validate_url(&params.url).await?;
         let fetched = tokio::time::timeout(
             LOCAL_FETCH_TIMEOUT,
@@ -477,6 +478,10 @@ impl WebclawMcp {
             .extract_page(fetched, &webclaw_core::ExtractionOptions::default())
             .await;
         webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+        let Some((query, xpath)) = pick else {
+            return serde_json::to_string_pretty(&webclaw_core::tables(&page.html))
+                .map_err(|e| e.to_string());
+        };
         let fields: Vec<(String, String)> = params.fields.unwrap_or_default().into_iter().collect();
         let (html, url) = (page.html.as_str(), Some(page.url.as_str()));
         let json = match (xpath, fields.is_empty()) {
@@ -1029,6 +1034,21 @@ impl WebclawMcp {
     }
 }
 
+fn select_query(
+    selector: Option<String>,
+    xpath: Option<String>,
+    tables: bool,
+    fields: bool,
+) -> Result<Option<(String, bool)>, String> {
+    match (selector, xpath, tables) {
+        (Some(css), None, false) => Ok(Some((css, false))),
+        (None, Some(xpath), false) => Ok(Some((xpath, true))),
+        (None, None, true) if !fields => Ok(None),
+        (None, None, true) => Err("`fields` works with `selector` or `xpath`, not `tables`".into()),
+        _ => Err("give exactly one of `selector`, `xpath` and `tables`".into()),
+    }
+}
+
 #[tool_handler]
 impl ServerHandler for WebclawMcp {
     fn get_info(&self) -> ServerInfo {
@@ -1158,6 +1178,28 @@ mod tests {
         }
         let err = super::parse_browser(Some("opera")).unwrap_err();
         assert!(err.contains("opera") && err.contains("safari-ios"), "{err}");
+    }
+
+    #[test]
+    fn select_takes_one_query_and_fields_only_with_selectors() {
+        use super::select_query;
+        let css = || Some("h1".to_string());
+        assert_eq!(
+            select_query(css(), None, false, true),
+            Ok(Some(("h1".into(), false)))
+        );
+        assert_eq!(
+            select_query(None, css(), false, false),
+            Ok(Some(("h1".into(), true)))
+        );
+        assert_eq!(select_query(None, None, true, false), Ok(None));
+        assert!(
+            select_query(None, None, true, true)
+                .unwrap_err()
+                .contains("fields")
+        );
+        assert!(select_query(css(), None, true, false).is_err());
+        assert!(select_query(None, None, false, false).is_err());
     }
 
     #[test]

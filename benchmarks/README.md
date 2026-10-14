@@ -42,6 +42,14 @@ You need [`uv`](https://docs.astral.sh/uv/) and a Rust toolchain. The script ins
 
 It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, asks each tool for one record per book (title, price, rating) through CSS selectors and again through XPath, checks every record against the values in the raw HTML, and times the run. It also repeats the nested-divs test from Scrapling's own benchmark script. Results land in `results/<label>/select-summary.md`.
 
+### Data tables
+
+```bash
+./benchmarks/tables.sh         # webclaw --tables against Crawl4AI's result.tables and a CSS loop in Scrapling
+```
+
+It freezes 35 public pages into `.work/tables-corpus/`: Wikipedia lists and sports pages, government statistics, sports results, finance tables, docs with option tables, and old sites built from layout tables. It also freezes 19 held-out pages into `.work/tables-held/`, chosen by a reviewer; one rule (the legend row) was fixed after seeing them. Each table on those pages is labelled by hand in `tables-labels.json` and `tables-held-labels.json` as a data table, a layout table, or neither (infoboxes and key/value boxes). The truth for every table is what headless Chrome shows: the frozen page loads with scripts off and stylesheets on, and each visible cell's `innerText` is laid out on a grid by its spans. That truth is saved once in `.work/tables-truth-*.json` and reused; delete those files after re-freezing a page, or the old truth scores the new page. The corpus is also scored against the raw HTML laid out with lxml. The script scores which tables each tool returns and how many cells it gets right. Crawl4AI returns tables from its default scraping pass (`DefaultTableExtraction`). Scrapling has no table API, so its arm is the loop a Scrapling user writes: every `table`, its `tr` rows and their `th, td` text, first row as headers. Results land in `results/<label>/tables-summary.md`.
+
 ### Question-focused extraction
 
 ```bash

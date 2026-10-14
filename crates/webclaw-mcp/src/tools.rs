@@ -118,12 +118,15 @@ pub struct ScrapeParams {
 pub struct SelectParams {
     /// URL to read
     pub url: String,
-    /// CSS selector, optionally ending in "::text" (default), "::attr(NAME)" or "::html", e.g. "h3 a::attr(href)". Give this or `xpath`
+    /// CSS selector, optionally ending in "::text" (default), "::attr(NAME)" or "::html", e.g. "h3 a::attr(href)". Give this, `xpath` or `tables`
     pub selector: Option<String>,
     /// XPath 1.0 expression instead of a CSS selector, e.g. "//h3/a/@title". Elements and text give their text, attributes their value
     pub xpath: Option<String>,
     /// Return one object per match instead: field name to a selector run inside that match, e.g. {"title": "h3 a::attr(title)", "price": ".price_color"}, or with `xpath` an expression relative to the match, e.g. {"title": ".//h3/a/@title"}
     pub fields: Option<std::collections::BTreeMap<String, String>>,
+    /// Return the page's data tables instead, each as {"caption", "headers", "rows"} with rows of cell text; layout tables are skipped
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub tables: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

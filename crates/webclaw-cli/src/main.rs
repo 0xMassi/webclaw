@@ -249,6 +249,11 @@ struct Cli {
     #[arg(long, value_name = "EXPRESSION", group = "pick")]
     xpath: Option<String>,
 
+    /// Print the page's data tables as JSON: caption, headers and rows of
+    /// cell text. Layout tables are skipped
+    #[arg(long, conflicts_with_all = ["select", "xpath", "fields", "crawl", "watch", "map"])]
+    tables: bool,
+
     /// With --select or --xpath, print one JSON object per match instead:
     /// NAME=SELECTOR run inside each match (repeatable), e.g. `--field
     /// price=.price_color`, or with --xpath `--field "price=.//p[@class='price_color']"`
@@ -257,7 +262,7 @@ struct Cli {
 
     /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
     /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["select", "xpath", "crawl", "watch", "map"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["select", "xpath", "tables", "crawl", "watch", "map"])]
     screenshot: Option<PathBuf>,
 
     /// With --screenshot, capture the whole scrollable page
@@ -1267,17 +1272,7 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
         .map_err(|e| format!("fetch error: {e}"))
 }
 
-async fn run_select(cli: &Cli, selector: &str, xpath: bool) -> Result<(), String> {
-    let fields = cli
-        .fields
-        .iter()
-        .map(|field| {
-            field
-                .split_once('=')
-                .map(|(name, css)| (name.trim().to_string(), css.trim().to_string()))
-                .ok_or_else(|| format!("--field needs NAME=SELECTOR, got `{field}`"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+async fn fetch_page(cli: &Cli) -> Result<FetchResult, String> {
     let page = if cli.stdin || cli.file.is_some() {
         fetch_html(cli).await?
     } else {
@@ -1303,6 +1298,28 @@ async fn run_select(cli: &Cli, selector: &str, xpath: bool) -> Result<(), String
         page?
     };
     webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+    Ok(page)
+}
+
+async fn run_tables(cli: &Cli) -> Result<(), String> {
+    let page = fetch_page(cli).await?;
+    let json = serde_json::to_string_pretty(&webclaw_core::tables(&page.html));
+    println!("{}", json.map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+async fn run_select(cli: &Cli, selector: &str, xpath: bool) -> Result<(), String> {
+    let fields = cli
+        .fields
+        .iter()
+        .map(|field| {
+            field
+                .split_once('=')
+                .map(|(name, css)| (name.trim().to_string(), css.trim().to_string()))
+                .ok_or_else(|| format!("--field needs NAME=SELECTOR, got `{field}`"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let page = fetch_page(cli).await?;
     let url = (!page.url.is_empty()).then_some(page.url.as_str());
     let html = page.html.as_str();
     let json = match (xpath, fields.is_empty()) {
@@ -3160,6 +3177,19 @@ async fn main() {
             _ => Err("--screenshot takes one URL".to_string()),
         };
         if let Err(e) = shot {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    if cli.tables {
+        let found = if entries.len() > 1 {
+            Err("--tables takes one URL".to_string())
+        } else {
+            run_tables(&cli).await
+        };
+        if let Err(e) = found {
             eprintln!("error: {e}");
             process::exit(1);
         }

@@ -16,6 +16,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
@@ -40,13 +41,19 @@ __all__ = [
 
 
 class Options(TypedDict, total=False):
-    """Fetch options every function accepts as keyword arguments."""
+    """Options every function accepts as keyword arguments.
+
+    `timeout` is the binary's limit in seconds for each request, and a crawl makes
+    many. `time_limit` bounds the whole call on the Python side: when it runs out,
+    the binary and any browser it started are killed and `TimeoutError` is raised.
+    """
 
     proxy: str
     browser: Literal["chrome", "chrome-macos", "firefox", "safari", "edge", "safari-ios", "random"]
     headers: Mapping[str, str]
     cookies: str | Mapping[str, str]
     timeout: int
+    time_limit: float
     render: Literal["auto", "always", "never"]
     cache: bool
 
@@ -157,11 +164,19 @@ def _kill(proc: subprocess.Popen[str]) -> None:
         shutil.rmtree(profile, ignore_errors=True)
 
 
+def _timed_out(limit: float | None) -> TimeoutError:
+    return TimeoutError(f"webclaw did not finish within the time limit of {limit} s")
+
+
 def _run(args: list[str], target: str, options: Options) -> str:
     source, stdin = _target(target)
+    limit = options.get("time_limit")
     with _spawn([binary_path(), *args, *_options(options), *source], stdin is not None, subprocess.PIPE) as proc:
         try:
-            out, err = proc.communicate(stdin)
+            out, err = proc.communicate(stdin, timeout=limit)
+        except subprocess.TimeoutExpired:
+            _kill(proc)
+            raise _timed_out(limit) from None
         except BaseException:
             _kill(proc)
             raise
@@ -314,8 +329,13 @@ def crawl(
     if query:
         args.append(f"--query={query}")
     cmd = [binary_path(), *args, *_options(options), "--", url]
+    limit = options.get("time_limit")
     with tempfile.TemporaryFile() as err, _spawn(cmd, False, err) as proc:
         assert proc.stdout is not None
+        expired = threading.Event()
+        timer = threading.Timer(limit or 0, lambda: (expired.set(), _kill(proc)))
+        if limit is not None:
+            timer.start()
         pages = failed = 0
         try:
             for line in proc.stdout:
@@ -327,7 +347,11 @@ def crawl(
         except BaseException:
             _kill(proc)
             raise
+        finally:
+            timer.cancel()
         proc.wait()
+        if expired.is_set():
+            raise _timed_out(limit)
         err.seek(0)
         stderr = err.read().decode("utf-8", "replace")
         if proc.returncode != 0 and failed == pages:

@@ -138,6 +138,18 @@ class Offline(unittest.TestCase):
                 with self.assertWarnsRegex(wc.WebclawWarning, "^No content extracted from x$"):
                     self.assertEqual(wc.scrape("https://a/"), "1\n")
 
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_time_limit(self):
+        with tempfile.TemporaryDirectory() as d:
+            slow = fake_binary(d, "print(json.dumps({'url': 'https://a/', 'error': None}), flush=True)\ntime.sleep(30)")
+            with mock.patch.object(wc, "binary_path", return_value=slow):
+                start = time.monotonic()
+                with self.assertRaises(TimeoutError):
+                    wc.scrape("https://a/", time_limit=0.5)
+                with self.assertRaises(TimeoutError):
+                    list(wc.crawl("https://a/", time_limit=0.5))
+                self.assertLess(time.monotonic() - start, 5)
+
     def test_bad_arguments(self):
         with self.assertRaises(TypeError):
             wc.scrape(SHOP, proxies="x")
@@ -220,6 +232,14 @@ class RealSites(unittest.TestCase):
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, old)
+        time.sleep(1)
+        self.assertEqual(chrome_left() - before, set())
+
+    @unittest.skipIf(sys.platform == "win32", "uses ps")
+    def test_time_limit_stops_chrome(self):
+        before = chrome_left()
+        with self.assertRaises(TimeoutError):
+            wc.scrape("https://httpbin.org/delay/10", render="always", time_limit=4)
         time.sleep(1)
         self.assertEqual(chrome_left() - before, set())
 

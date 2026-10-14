@@ -60,7 +60,8 @@ Every function takes these keyword arguments:
 | `browser` | Browser to impersonate: `chrome` (default), `chrome-macos`, `firefox`, `safari`, `edge`, `safari-ios`, `random` |
 | `headers` | Extra request headers, a dict |
 | `cookies` | A `Cookie` header string, or a dict |
-| `timeout` | Request timeout in seconds (default 30) |
+| `timeout` | Seconds the binary allows each request (default 30). A crawl makes many requests, so this does not bound the whole call |
+| `time_limit` | Seconds for the whole call. When they run out, the binary and any browser it started are stopped and `TimeoutError` is raised |
 | `render` | `auto` (default) renders in a local Chrome only the pages that need JavaScript; `always`, `never` |
 | `cache` | Keep fetched pages on disk and reuse them (in `WEBCLAW_CACHE_DIR` or `~/.cache/webclaw`) |
 

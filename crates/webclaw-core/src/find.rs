@@ -45,6 +45,10 @@ pub enum FindError {
     /// A CSS selector or XPath expression that does not parse.
     #[error("invalid selector `{0}`")]
     Selector(String),
+    /// Text to find that is empty once whitespace is collapsed, or a regular
+    /// expression that matches empty text; either would match every element.
+    #[error("nothing to find: `{0}` matches every element")]
+    Empty(String),
     /// A regular expression, or text to find, that does not compile.
     #[error("invalid regex `{pattern}`: {reason}")]
     Regex {
@@ -67,9 +71,13 @@ pub struct TextMatch(Regex);
 
 impl TextMatch {
     /// Text that contains `text`, or equals it when `exact`. Whitespace in
-    /// `text` is collapsed like the page text.
+    /// `text` is collapsed like the page text; empty text is an error.
     pub fn text(text: &str, exact: bool, case_sensitive: bool) -> Result<Self, FindError> {
-        let escaped = regex::escape(&collapse(text));
+        let collapsed = collapse(text);
+        if collapsed.is_empty() {
+            return Err(FindError::Empty(short(text)));
+        }
+        let escaped = regex::escape(&collapsed);
         let pattern = if exact {
             format!("^{escaped}$")
         } else {
@@ -78,9 +86,14 @@ impl TextMatch {
         Self::build(&pattern, case_sensitive, text)
     }
 
-    /// Text in which the regular expression `pattern` finds a match.
+    /// Text in which the regular expression `pattern` finds a match. A
+    /// pattern that matches empty text is an error.
     pub fn regex(pattern: &str, case_sensitive: bool) -> Result<Self, FindError> {
-        Self::build(pattern, case_sensitive, pattern)
+        let built = Self::build(pattern, case_sensitive, pattern)?;
+        if built.0.is_match("") {
+            return Err(FindError::Empty(short(pattern)));
+        }
+        Ok(built)
     }
 
     fn build(pattern: &str, case_sensitive: bool, source: &str) -> Result<Self, FindError> {
@@ -663,5 +676,14 @@ mod tests {
         let found = find_text(page, &TextMatch::text("shop page", true, false).unwrap());
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].selector, "html > body > p");
+    }
+
+    #[test]
+    fn empty_text_and_empty_matching_regexes_are_refused() {
+        assert!(TextMatch::text("", false, false).is_err());
+        assert!(TextMatch::text("  \n ", true, false).is_err());
+        assert!(TextMatch::regex("x*", false).is_err());
+        assert!(TextMatch::regex("^", false).is_err());
+        assert!(TextMatch::regex("x+", false).is_ok());
     }
 }

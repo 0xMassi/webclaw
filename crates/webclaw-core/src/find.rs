@@ -38,6 +38,29 @@ pub struct Similar {
     pub matches: Vec<Found>,
 }
 
+/// Why a search could not run. Echoed input is cut to its first 100
+/// characters.
+#[derive(Debug, thiserror::Error)]
+pub enum FindError {
+    /// A CSS selector or XPath expression that does not parse.
+    #[error("invalid selector `{0}`")]
+    Selector(String),
+    /// A regular expression, or text to find, that does not compile.
+    #[error("invalid regex `{pattern}`: {reason}")]
+    Regex {
+        /// The pattern, shortened.
+        pattern: String,
+        /// Why it does not compile.
+        reason: String,
+    },
+}
+
+impl From<SelectError> for FindError {
+    fn from(error: SelectError) -> Self {
+        Self::Selector(short(&error.0))
+    }
+}
+
 /// What an element's text has to match.
 #[derive(Debug, Clone)]
 pub struct TextMatch(Regex);
@@ -45,7 +68,7 @@ pub struct TextMatch(Regex);
 impl TextMatch {
     /// Text that contains `text`, or equals it when `exact`. Whitespace in
     /// `text` is collapsed like the page text.
-    pub fn text(text: &str, exact: bool, case_sensitive: bool) -> Result<Self, SelectError> {
+    pub fn text(text: &str, exact: bool, case_sensitive: bool) -> Result<Self, FindError> {
         let escaped = regex::escape(&collapse(text));
         let pattern = if exact {
             format!("^{escaped}$")
@@ -56,16 +79,27 @@ impl TextMatch {
     }
 
     /// Text in which the regular expression `pattern` finds a match.
-    pub fn regex(pattern: &str, case_sensitive: bool) -> Result<Self, SelectError> {
+    pub fn regex(pattern: &str, case_sensitive: bool) -> Result<Self, FindError> {
         Self::build(pattern, case_sensitive, pattern)
     }
 
-    fn build(pattern: &str, case_sensitive: bool, source: &str) -> Result<Self, SelectError> {
+    fn build(pattern: &str, case_sensitive: bool, source: &str) -> Result<Self, FindError> {
         RegexBuilder::new(pattern)
             .case_insensitive(!case_sensitive)
             .build()
             .map(Self)
-            .map_err(|_| SelectError(source.into()))
+            .map_err(|error| FindError::Regex {
+                pattern: short(source),
+                reason: match error {
+                    regex::Error::Syntax(message) => message
+                        .lines()
+                        .rev()
+                        .find_map(|line| line.strip_prefix("error: "))
+                        .unwrap_or("syntax error")
+                        .to_string(),
+                    other => short(&other.to_string()),
+                },
+            })
     }
 }
 
@@ -98,11 +132,11 @@ pub fn find_text(html: &str, text: &TextMatch) -> Vec<Found> {
 /// that every match carries come back. So a class that only some items carry
 /// goes, while one that tells two parts of an item apart stays. The selector
 /// returned is that shortest tail. `None` when nothing matches the example.
-pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, SelectError> {
+pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, FindError> {
     let document = Html::parse_document(html);
     let example = match example {
         Example::Css(css) => document
-            .select(&Selector::parse(css).map_err(|_| SelectError(css.into()))?)
+            .select(&Selector::parse(css).map_err(|_| FindError::Selector(short(css)))?)
             .next(),
         Example::XPath(expression) => {
             crate::xpath::first_element(html, expression)?.and_then(|index| {
@@ -226,7 +260,7 @@ fn tail(
     steps: &[(String, Vec<String>)],
     from: usize,
     matched: &[ElementRef],
-) -> Result<usize, SelectError> {
+) -> Result<usize, FindError> {
     for start in (from..steps.len()).rev() {
         if !steps[start].1.is_empty() && pick(document, steps, start)? == matched {
             return Ok(start);
@@ -256,9 +290,9 @@ fn pick<'a>(
     document: &'a Html,
     steps: &[(String, Vec<String>)],
     from: usize,
-) -> Result<Vec<ElementRef<'a>>, SelectError> {
+) -> Result<Vec<ElementRef<'a>>, FindError> {
     let css = render(steps, from);
-    let selector = Selector::parse(&css).map_err(|_| SelectError(css.clone()))?;
+    let selector = Selector::parse(&css).map_err(|_| FindError::Selector(short(&css)))?;
     Ok(document.select(&selector).collect())
 }
 
@@ -353,6 +387,13 @@ fn visible_text(element: ElementRef) -> String {
         }
     }
     collapse(&text)
+}
+
+fn short(text: &str) -> String {
+    match text.char_indices().nth(100) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_string(),
+    }
 }
 
 fn collapse(text: &str) -> String {
@@ -567,5 +608,19 @@ mod tests {
         for step in similar.selector.split(" > ") {
             assert!(step.matches('.').count() <= MAX_CLASSES, "{step}");
         }
+    }
+
+    #[test]
+    fn errors_give_the_reason_and_stay_short() {
+        let err = TextMatch::regex("a(b", false).unwrap_err().to_string();
+        assert!(err.contains("unclosed group"), "{err}");
+        let err = TextMatch::regex(&format!("{}(", "a".repeat(400_000)), false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.len() < 400, "{} bytes", err.len());
+        let err = find_similar(SHOP, Example::Css(&format!("{}[", "a".repeat(100_000))))
+            .unwrap_err()
+            .to_string();
+        assert!(err.len() < 400, "{} bytes", err.len());
     }
 }

@@ -443,14 +443,19 @@ impl WebclawMcp {
         Ok(output)
     }
 
-    /// Pick values out of a web page with a CSS selector or an XPath 1.0 expression and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending (CSS), or "@attr" (XPath). With `fields`, return one JSON object per match, each field a selector run inside that match.
+    /// Pick values out of a web page with a CSS selector or an XPath 1.0 expression and return them as a JSON array: text by default, or an attribute or HTML with a "::attr(NAME)" or "::html" ending (CSS), or "@attr" (XPath). With `fields`, return one JSON object per match, each field a selector run inside that match. With `tables`, return the page's data tables as headers and rows.
     /// Pages whose content needs JavaScript are rendered first when this server has browser support.
     #[tool]
     async fn select(&self, Parameters(params): Parameters<SelectParams>) -> Result<String, String> {
-        let (query, xpath) = match (params.selector, params.xpath) {
-            (Some(css), None) => (css, false),
-            (None, Some(xpath)) => (xpath, true),
-            _ => return Err("give exactly one of `selector` and `xpath`".into()),
+        let pick = match (
+            params.selector,
+            params.xpath,
+            params.tables.unwrap_or(false),
+        ) {
+            (Some(css), None, false) => Some((css, false)),
+            (None, Some(xpath), false) => Some((xpath, true)),
+            (None, None, true) => None,
+            _ => return Err("give exactly one of `selector`, `xpath` and `tables`".into()),
         };
         validate_url(&params.url).await?;
         let fetched = tokio::time::timeout(
@@ -465,6 +470,10 @@ impl WebclawMcp {
             .extract_page(fetched, &webclaw_core::ExtractionOptions::default())
             .await;
         webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+        let Some((query, xpath)) = pick else {
+            return serde_json::to_string_pretty(&webclaw_core::tables(&page.html))
+                .map_err(|e| e.to_string());
+        };
         let fields: Vec<(String, String)> = params.fields.unwrap_or_default().into_iter().collect();
         let (html, url) = (page.html.as_str(), Some(page.url.as_str()));
         let json = match (xpath, fields.is_empty()) {

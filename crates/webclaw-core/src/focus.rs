@@ -30,10 +30,10 @@ const BEST_BLOCKS: usize = 3;
 const MAX_QUESTION_WORDS: usize = 32;
 const MIN_PREFIX: usize = 4;
 
-struct Block<'a> {
-    text: &'a str,
-    heading: Option<usize>,
-    level: usize,
+pub(crate) struct Block<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) heading: Option<usize>,
+    pub(crate) level: usize,
 }
 
 /// `markdown` cut down to the blocks most relevant to `query`. Returns the
@@ -267,7 +267,7 @@ impl Relevance {
     }
 }
 
-fn split_blocks(markdown: &str) -> Vec<Block<'_>> {
+pub(crate) fn split_blocks(markdown: &str) -> Vec<Block<'_>> {
     let mut ranges = Vec::new();
     let mut start: Option<usize> = None;
     let mut fence: Option<(char, usize)> = None;
@@ -279,7 +279,8 @@ fn split_blocks(markdown: &str) -> Vec<Block<'_>> {
             .next()
             .filter(|c| matches!(c, '`' | '~'))
             .map(|c| (c, trimmed.chars().take_while(|&x| x == c).count()))
-            .filter(|&(_, len)| len >= 3);
+            .filter(|&(c, len)| len >= 3 && (c == '~' || !trimmed[len..].contains('`')));
+        let was = fence;
         fence = match (fence, marker) {
             (None, Some(open)) => Some(open),
             (Some((c, len)), Some((mark, n)))
@@ -289,7 +290,14 @@ fn split_blocks(markdown: &str) -> Vec<Block<'_>> {
             }
             (open, _) => open,
         };
-        if fence.is_none() && (trimmed.is_empty() || heading_level(trimmed) > 0) {
+        if was.is_none() && fence.is_some() {
+            if let Some(from) = start.take() {
+                ranges.push((from, offset));
+            }
+            start = Some(offset);
+        } else if was.is_some() && fence.is_none() {
+            ranges.push((start.take().unwrap_or(offset), offset + line.len()));
+        } else if fence.is_none() && (trimmed.is_empty() || heading_level(trimmed) > 0) {
             if let Some(from) = start.take() {
                 ranges.push((from, offset));
             }

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "webclaw-cli"
+description = "Extract web pages for LLMs from Python with the local webclaw binary"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "AGPL-3.0" }
+license-files = ["LICENSE"]
+keywords = ["scraping", "crawler", "markdown", "llm"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://webclaw.io"
+Repository = "https://github.com/0xMassi/webclaw"
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "../crates/webclaw-cli/Cargo.toml"
+module-name = "webclaw_cli"
+features = ["browser"]
+strip = true

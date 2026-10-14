@@ -122,6 +122,17 @@ It renders 20 script-heavy pages (the `spa` cases, eight JavaScript-built homepa
 
 It starts each server on loopback with a bearer token, drives it with the official MCP Python client (handshake, then one fetch-and-extract call per page), checks that a client without the token is refused, and writes `results/<label>/mcp-http-summary.md`.
 
+### Python package
+
+```bash
+./benchmarks/python.sh         # the webclaw-cli wheel against Scrapling's Fetcher and Crawl4AI's AsyncWebCrawler
+./benchmarks/python.sh my-run ./path/to/webclaw_cli.whl
+```
+
+It builds the wheel from `python/` (or takes the one you pass) and saves each tool's wheels in a local folder. It installs each tool from that folder with no network and an empty uv cache into a fresh venv, three times, then runs its documented post-install step (`scrapling install`, `crawl4ai-setup`) into a fresh browser directory. It records the download size, the install time, the number of installed packages and the size on disk, with a Scrapling row without its browser download, since its plain `Fetcher` does not need it. webclaw renders with a Chrome already on the machine, which is not counted. Then it calls each tool through its Python API on the static golden pages (`cases.jsonl` without `spa` and `pdf`): a first call in a new Python process (import plus one scrape, on 5 pages), then one process calling every page twice. It scores the golden facts the same way as `run.sh`, samples the peak RSS of the Python process and all its children, lists every failed call with its error, and writes `results/<label>/python-summary.md`.
+
+webclaw raises an error when a page answers with an HTTP error status, and that call counts as failed. In the 2026-10-14 runs, most of webclaw's lower fact recall came from sites that refused webclaw but served Scrapling a real page: hashicorp.com answered webclaw with 429 and ft.com with 403 on some calls, while Scrapling got 200 from both. The rest came from a page that is gone (simonwillison.net, 404 for every tool): webclaw raises, Scrapling returns the 404 page, which still holds two of the case's facts. The economist.com pages answered 403 to every tool. Correction: an earlier version of this section said the failures were error pages whose body Scrapling returned; that was true only of the 404 page.
+
 ## Methodology
 
 See [methodology.md](methodology.md) for each tool's exact call, the url and html modes, how facts are matched, the metrics and the limits of this setup.

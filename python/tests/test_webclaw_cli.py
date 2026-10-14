@@ -99,6 +99,13 @@ class Offline(unittest.TestCase):
         self.assertEqual(cm.exception.returncode, 2)
         self.assertIn("--exact", str(cm.exception))
 
+    def test_html_or_url(self):
+        self.assertEqual(wc.select("  \n<!doctype html><p>a</p>", css="p"), ["a"])
+        self.assertEqual(wc.select("<br/><p>b</p>", css="p"), ["b"])
+        with self.assertRaises(wc.WebclawError) as cm:
+            wc.scrape("<https://example.com>")
+        self.assertIn("url", str(cm.exception).lower())
+
     def test_target_is_never_a_flag(self):
         with self.assertRaises(wc.WebclawError):
             wc.scrape("--version")

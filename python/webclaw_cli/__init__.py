@@ -125,8 +125,11 @@ def _options(o: Options) -> list[str]:
     return args
 
 
+_TAG = re.compile(r"\s*<(?:[A-Za-z][A-Za-z0-9-]*(?:[\s/>]|$)|[!?/])")
+
+
 def _target(target: str) -> tuple[list[str], str | None]:
-    if target.lstrip().startswith("<"):
+    if _TAG.match(target):
         return ["--stdin"], target
     return ["--", target], None
 
@@ -231,7 +234,8 @@ def scrape(
 ) -> str | dict[str, Any]:
     """Extract a page as markdown, text, llm, html, or json (a dict).
 
-    `target` is a URL, or an HTML string when it starts with `<`. `query` keeps
+    `target` is a URL, or an HTML string when it starts with a tag such as `<p>` or
+    `<!doctype html>`. Anything else, `<https://...>` included, is taken as a URL. `query` keeps
     only the parts of the page that answer the question.
     """
     args = [f"--format={format}"]

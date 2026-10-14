@@ -42,7 +42,7 @@ urls = wc.map("https://www.rust-lang.org")
 wc.screenshot("https://example.com", "example.png", full_page=True)
 ```
 
-Every function that takes a page also takes an HTML string: anything that starts with `<` is parsed as HTML instead of fetched.
+Every function that takes a page also takes an HTML string: a string that starts with a tag, such as `<p>` or `<!doctype html>`, is parsed as HTML instead of fetched. Anything else, `<https://...>` included, is taken as a URL.
 
 ```python
 wc.select("<ul><li>a</li><li>b</li></ul>", css="li")    # ["a", "b"]

@@ -241,6 +241,15 @@ webclaw "https://en.wikipedia.org/wiki/Rust_(programming_language)" -f llm \
 
 `--query` (and `query` on the MCP `scrape` tool) scores each paragraph, list, table and code block against the question and keeps the best ones under their headings, so an agent reads the answer instead of the whole page. The page comes back unchanged when no block shares a word with the question.
 
+### Chunks for retrieval
+
+```bash
+webclaw https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html --chunk 256
+webclaw https://quotes.toscrape.com --crawl --depth 1 --chunk 512 --chunk-overlap 50
+```
+
+`--chunk` prints the page as chunks for a search index or a RAG pipeline, one JSON object per line: `url`, `index`, `heading_path` (the headings the chunk sits under, outermost first), `tokens` and the chunk's markdown `text`. Chunks are built from whole paragraphs, lists, tables and code blocks and stay under about the given number of tokens. A block too big for one chunk is cut at line breaks, then at sentence ends: a code block is reopened in each piece and a table repeats its header row. Token counts are estimates made without a tokenizer, usually within 20% of what common LLM tokenizers count. `--chunk-overlap` repeats up to that many tokens from the end of each chunk at the start of the next. With several URLs or `--crawl`, each page is chunked on its own. The MCP `scrape` and `crawl` tools take `chunk` and `chunk_overlap` and return the chunks as a JSON array.
+
 ### Reuse fetched pages
 
 ```bash

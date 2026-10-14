@@ -236,7 +236,11 @@ fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
     if start == body
         && (has_table(table)
             || cells().all(|&cell| links_only(cell))
-            || cells().any(|&cell| has_block(cell)))
+            || rows[start..kept]
+                .iter()
+                .filter(|row| row.cells.len() > 1)
+                .flat_map(|row| &row.cells)
+                .any(|&cell| has_block(cell)))
     {
         return None;
     }
@@ -610,6 +614,15 @@ mod tests {
             <tfoot><tr><td>sum</td><td>9</td></tr></tfoot>
             <tbody><tr><td>x</td><td>4</td></tr><tr><td>y</td><td>5</td></tr></tbody></table>"#);
         assert_eq!(t.rows, strings(&[&["x", "4"], &["y", "5"], &["sum", "9"]]));
+    }
+
+    #[test]
+    fn a_full_width_legend_row_does_not_make_a_grid_layout() {
+        let t = one(r#"<table><tr><td>x</td><td>A</td><td>B</td></tr>
+            <tr><td>A</td><td></td><td>1-0</td></tr><tr><td>B</td><td>0-2</td><td></td></tr>
+            <tr><td colspan="3"><div>Legend: home rows</div></td></tr></table>"#);
+        assert_eq!(t.rows.len(), 4);
+        assert_eq!(t.rows[1], ["A", "", "1-0"]);
     }
 
     #[test]

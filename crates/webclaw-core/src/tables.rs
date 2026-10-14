@@ -244,7 +244,7 @@ fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
             || cells().all(|&cell| links_only(cell))
             || rows[start..kept]
                 .iter()
-                .filter(|row| row.cells.len() > 1)
+                .filter(|row| row.cells.len() > 1 || !has_text(row.cells[0]))
                 .flat_map(|row| &row.cells)
                 .any(|&cell| has_block(cell)))
     {
@@ -352,6 +352,10 @@ fn links_only(cell: ElementRef<'_>) -> bool {
             .any(|a| a.value().as_element().is_some_and(|el| el.name() == "a")),
         _ => true,
     })
+}
+
+fn has_text(cell: ElementRef<'_>) -> bool {
+    cell.text().any(|t| !t.trim().is_empty())
 }
 
 fn has_block(cell: ElementRef<'_>) -> bool {
@@ -648,6 +652,16 @@ mod tests {
             <tr><td><table><tr><td>left</td><td>right</td></tr></table></td><td>1</td></tr>
             <tr><td><select><option>one</option><option>two</option></select></td><td>2</td></tr></table>"#);
         assert_eq!(t.rows, strings(&[&["left right", "1"], &["one two", "2"]]));
+    }
+
+    #[test]
+    fn an_empty_one_cell_form_row_still_marks_layout() {
+        assert!(tables(
+            r#"<table><tr><td>1.</td><td>First result</td></tr>
+            <tr><td></td><td>A snippet</td></tr>
+            <tr><td colspan="2"><form action="/next"><input type="submit" value="Next"></form></td></tr></table>"#,
+        )
+        .is_empty());
     }
 
     #[test]

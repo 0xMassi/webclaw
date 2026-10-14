@@ -110,6 +110,8 @@ Each call starts the binary once. To call it from async code, run it in a thread
 md = await asyncio.to_thread(wc.scrape, "https://example.com")
 ```
 
+The binary runs in its own process group, so Ctrl-C reaches only Python. A call running in a thread, such as through `asyncio.to_thread`, therefore keeps going after Ctrl-C until it finishes; pass `time_limit` to bound it.
+
 ## Tests
 
 ```bash

@@ -108,21 +108,31 @@ struct Budget {
 struct Row<'a> {
     cells: Vec<ElementRef<'a>>,
     in_head: bool,
+    section_end: usize,
 }
 
 fn own_rows(table: ElementRef<'_>) -> Vec<Row<'_>> {
-    let mut rows = Vec::new();
+    let mut sections: Vec<(&str, Vec<ElementRef<'_>>)> = Vec::new();
     for child in table.children().filter_map(ElementRef::wrap) {
-        let name = child.value().name();
-        let trs: Vec<ElementRef<'_>> = match name {
-            "tr" => vec![child],
-            "thead" | "tbody" | "tfoot" => child
-                .children()
-                .filter_map(ElementRef::wrap)
-                .filter(|el| el.value().name() == "tr")
-                .collect(),
-            _ => continue,
-        };
+        match child.value().name() {
+            "tr" => match sections.last_mut() {
+                Some(("tr", trs)) => trs.push(child),
+                _ => sections.push(("tr", vec![child])),
+            },
+            name @ ("thead" | "tbody" | "tfoot") => sections.push((
+                name,
+                child
+                    .children()
+                    .filter_map(ElementRef::wrap)
+                    .filter(|el| el.value().name() == "tr")
+                    .collect(),
+            )),
+            _ => {}
+        }
+    }
+    let mut rows = Vec::new();
+    for (name, trs) in sections {
+        let section_end = rows.len() + trs.len();
         rows.extend(trs.into_iter().map(|tr| {
             Row {
                 cells: tr
@@ -131,17 +141,37 @@ fn own_rows(table: ElementRef<'_>) -> Vec<Row<'_>> {
                     .filter(|el| matches!(el.value().name(), "td" | "th"))
                     .collect(),
                 in_head: name == "thead",
+                section_end,
             }
         }));
     }
     rows
 }
 
-fn span(cell: ElementRef<'_>, name: &str, limit: usize) -> usize {
-    match cell.value().attr(name).map(|v| v.trim().parse::<usize>()) {
-        Some(Ok(0)) => limit,
-        Some(Ok(n)) => n.clamp(1, limit),
-        _ => 1,
+fn number(value: Option<&str>) -> Option<usize> {
+    let value = value?.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let value = value.strip_prefix('+').unwrap_or(value);
+    let digits = value
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(value.len());
+    (digits > 0).then(|| {
+        value[..digits].bytes().fold(0usize, |n, b| {
+            n.saturating_mul(10).saturating_add(usize::from(b - b'0'))
+        })
+    })
+}
+
+fn colspan(cell: ElementRef<'_>) -> usize {
+    number(cell.value().attr("colspan"))
+        .filter(|&n| n > 0)
+        .map_or(1, |n| n.min(MAX_COLSPAN))
+}
+
+fn rowspan(cell: ElementRef<'_>, left: usize) -> usize {
+    match number(cell.value().attr("rowspan")) {
+        Some(0) => left,
+        Some(n) => n.min(MAX_ROWSPAN).min(left),
+        None => 1,
     }
 }
 
@@ -160,8 +190,8 @@ fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
             while grid[r].get(c).is_some_and(|&id| id != EMPTY) {
                 c += 1;
             }
-            let colspan = span(cell, "colspan", MAX_COLSPAN);
-            let rowspan = span(cell, "rowspan", MAX_ROWSPAN.min(rows.len() - r));
+            let colspan = colspan(cell);
+            let rowspan = rowspan(cell, row.section_end - r);
             slots += colspan * rowspan;
             if slots > MAX_SLOTS {
                 truncated = true;
@@ -186,7 +216,7 @@ fn data_table(table: ElementRef<'_>, budget: &mut Budget) -> Option<Table> {
     while start < kept
         && width > 1
         && rows[start].cells.len() == 1
-        && span(rows[start].cells[0], "colspan", MAX_COLSPAN) >= width
+        && colspan(rows[start].cells[0]) >= width
     {
         start += 1;
     }
@@ -543,6 +573,30 @@ mod tests {
         let found = tables(&html);
         assert!(found.last().unwrap().truncated);
         assert!(found.len() < depth);
+    }
+
+    #[test]
+    fn spans_parse_like_a_browser() {
+        let t = one(r#"<table><tr><th>a</th><th>b</th><th>c</th></tr>
+            <tr><td colspan="0">x</td><td>y</td><td>z</td></tr>
+            <tr><td colspan="2px">p</td><td>q</td></tr>
+            <tr><td colspan=" 2.5">r</td><td>s</td></tr></table>"#);
+        assert_eq!(t.headers, ["a", "b", "c"]);
+        assert_eq!(
+            t.rows,
+            strings(&[&["x", "y", "z"], &["p", "p", "q"], &["r", "r", "s"]])
+        );
+    }
+
+    #[test]
+    fn rowspans_stop_at_their_section() {
+        let t = one(
+            r#"<table><thead><tr><th rowspan="0">A</th><th>B</th></tr><tr><th>B2</th></tr></thead>
+            <tbody><tr><td rowspan="3">1</td><td>2</td></tr></tbody>
+            <tbody><tr><td>3</td><td>4</td></tr></tbody></table>"#,
+        );
+        assert_eq!(t.headers, ["A", "B / B2"]);
+        assert_eq!(t.rows, strings(&[&["1", "2"], &["3", "4"]]));
     }
 
     #[test]

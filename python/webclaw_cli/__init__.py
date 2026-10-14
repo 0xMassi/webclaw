@@ -349,7 +349,7 @@ def crawl(
     Each page is a dict with `url`, `depth`, `extraction` (the `scrape(..., "json")`
     shape) and `error`, set when that page failed. It raises `WebclawError` only when
     no page succeeded. `max_pages=0` means no limit. `query` fetches the links most
-    likely to answer it first. `include_patterns` and `exclude_patterns` are globs on
+    likely to answer it first, and gives each page a `relevance` from 0 to 1. `include_patterns` and `exclude_patterns` are globs on
     the URL path, such as "/docs/**". `use_sitemap` also starts from the sitemap.
     Stopping the loop early stops the crawl, and the browser it started.
     """

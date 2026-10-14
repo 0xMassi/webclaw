@@ -230,6 +230,12 @@ class RealSites(unittest.TestCase):
         self.assertEqual(len(pages), 3)
         self.assertTrue(all(p["extraction"]["content"]["markdown"] for p in pages))
 
+    def test_crawl_with_query(self):
+        pages = list(wc.crawl("https://quotes.toscrape.com/", max_pages=5, query="Albert Einstein"))
+        self.assertEqual(len(pages), 5)
+        self.assertTrue(all(0 <= p["relevance"] <= 1 for p in pages))
+        self.assertTrue(any(p["relevance"] > 0 for p in pages))
+
     def test_crawl_stops_with_the_loop(self):
         pages = wc.crawl("https://quotes.toscrape.com/", max_pages=50)
         self.assertEqual(next(pages)["url"], "https://quotes.toscrape.com/")

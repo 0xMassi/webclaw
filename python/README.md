@@ -48,7 +48,12 @@ Every function that takes a page also takes an HTML string: a string that starts
 wc.select("<ul><li>a</li><li>b</li></ul>", css="li")    # ["a", "b"]
 ```
 
-`crawl` yields each page as it finishes. Breaking out of the loop stops the crawl.
+`crawl` yields each page as it finishes. Breaking out of the loop stops the crawl. With `query`, it fetches the links most likely to answer the question first and gives each page a `relevance` from 0 to 1:
+
+```python
+for page in wc.crawl("https://docs.python.org/3/", query="how do I cancel an asyncio task", max_pages=20):
+    print(page["relevance"], page["url"])
+```
 
 ## Options
 

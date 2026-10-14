@@ -243,12 +243,27 @@ pub fn find_similar(html: &str, example: Example) -> Result<Option<Similar>, Fin
 }
 
 fn matching<'a>(document: &'a Html, text: &TextMatch) -> Vec<ElementRef<'a>> {
-    let hits: Vec<ElementRef> = document
-        .root_element()
-        .descendants()
-        .filter_map(ElementRef::wrap)
-        .filter(|e| !HIDDEN.contains(&e.value().name()) && text.0.is_match(&visible_text(*e)))
-        .collect();
+    let mut hits = Vec::new();
+    let mut hidden = 0usize;
+    for edge in document.root_element().traverse() {
+        match edge {
+            Edge::Open(node) => {
+                let Some(element) = ElementRef::wrap(node) else {
+                    continue;
+                };
+                if HIDDEN.contains(&element.value().name()) {
+                    hidden += 1;
+                } else if hidden == 0 && text.0.is_match(&visible_text(element)) {
+                    hits.push(element);
+                }
+            }
+            Edge::Close(node) => {
+                if matches!(node.value(), Node::Element(e) if HIDDEN.contains(&e.name())) {
+                    hidden -= 1;
+                }
+            }
+        }
+    }
     let ids: HashSet<NodeId> = hits.iter().map(|e| e.id()).collect();
     hits.into_iter()
         .filter(|e| !e.children().any(|c| ids.contains(&c.id())))
@@ -332,7 +347,7 @@ fn found_all(elements: Vec<ElementRef>) -> Vec<Found> {
                     sibling_steps(node, &mut steps);
                 }
                 path.push(steps[&node.id()].clone());
-                match node.parent().and_then(ElementRef::wrap) {
+                match node.ancestors().find_map(ElementRef::wrap) {
                     Some(parent) => node = parent,
                     None => break,
                 }
@@ -622,5 +637,16 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.len() < 400, "{} bytes", err.len());
+    }
+
+    #[test]
+    fn template_content_is_not_searched() {
+        let page = "<template><div><p>secret</p></div></template><p>open secret</p>";
+        let found = find_text(page, &TextMatch::text("secret", false, false).unwrap());
+        assert_eq!(texts(&found), ["open secret"]);
+        assert_eq!(
+            crate::select(page, None, &found[0].selector).unwrap(),
+            ["open secret"]
+        );
     }
 }

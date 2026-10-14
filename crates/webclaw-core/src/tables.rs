@@ -26,11 +26,19 @@ pub struct Table {
     pub headers: Vec<String>,
     /// Body rows, each as wide as the table. Empty rows are left out.
     pub rows: Vec<Vec<String>>,
+    /// Set when the table was cut short to keep memory bounded: it holds its
+    /// first rows only, and the tables after it on the page are left out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 const MAX_COLSPAN: usize = 1000;
 const MAX_ROWSPAN: usize = 65534;
 const MAX_SLOTS: usize = 1_000_000;
+const MAX_TABLE_BYTES: usize = 32 << 20;
+const MAX_PAGE_BYTES: usize = 64 << 20;
+const SLOT_BYTES: usize = 32;
+const EMPTY: u32 = u32::MAX;
 const SKIP: &[&str] = &["script", "style", "noscript", "template"];
 const BLOCK: &[&str] = &[
     "address",
@@ -68,10 +76,15 @@ static TABLE: LazyLock<Selector> = LazyLock::new(|| Selector::parse("table").unw
 
 /// Every data table in `html`, in document order. Hidden tables and cells
 /// are left out, the way [`crate::page_links`] leaves out hidden links.
+/// Very large tables are cut short and flagged with [`Table::truncated`].
 pub fn tables(html: &str) -> Vec<Table> {
     let mut doc = Html::parse_document(html);
     noise::strip_hidden(&mut doc);
-    doc.select(&TABLE).filter_map(data_table).collect()
+    let mut budget = MAX_PAGE_BYTES;
+    doc.select(&TABLE)
+        .map_while(|table| (budget > 0).then(|| data_table(table, &mut budget)))
+        .flatten()
+        .collect()
 }
 
 struct Row<'a> {
@@ -114,46 +127,49 @@ fn span(cell: ElementRef<'_>, name: &str, limit: usize) -> usize {
     }
 }
 
-fn data_table(table: ElementRef<'_>) -> Option<Table> {
+fn data_table(table: ElementRef<'_>, budget: &mut usize) -> Option<Table> {
     if matches!(table.value().attr("role"), Some("presentation" | "none")) {
         return None;
     }
     let rows = own_rows(table);
-    let mut grid: Vec<Vec<Option<String>>> = vec![Vec::new(); rows.len()];
+    let mut placed = Vec::new();
+    let mut grid: Vec<Vec<u32>> = vec![Vec::new(); rows.len()];
     let mut slots = 0;
+    let mut truncated = false;
     'fill: for (r, row) in rows.iter().enumerate() {
         let mut c = 0;
         for &cell in &row.cells {
-            while grid[r].get(c).is_some_and(Option::is_some) {
+            while grid[r].get(c).is_some_and(|&id| id != EMPTY) {
                 c += 1;
             }
             let colspan = span(cell, "colspan", MAX_COLSPAN);
             let rowspan = span(cell, "rowspan", MAX_ROWSPAN.min(rows.len() - r));
             slots += colspan * rowspan;
             if slots > MAX_SLOTS {
+                truncated = true;
                 break 'fill;
             }
-            let text = cell_text(cell);
+            let id = placed.len() as u32;
+            placed.push(cell);
             for line in &mut grid[r..r + rowspan] {
                 if line.len() < c + colspan {
-                    line.resize(c + colspan, None);
+                    line.resize(c + colspan, EMPTY);
                 }
-                for slot in &mut line[c..c + colspan] {
-                    *slot = Some(text.clone());
-                }
+                line[c..c + colspan].fill(id);
             }
             c += colspan;
         }
     }
     let width = grid.iter().map(Vec::len).max().unwrap_or(0);
-    let grid: Vec<Vec<String>> = grid
-        .into_iter()
-        .map(|line| {
-            let mut line: Vec<String> = line.into_iter().map(Option::unwrap_or_default).collect();
-            line.resize(width, String::new());
-            line
-        })
-        .collect();
+    let kept = rows.len().min(MAX_SLOTS / width.max(1));
+    truncated |= kept < rows.len();
+    let texts: Vec<String> = placed.iter().map(|&cell| cell_text(cell)).collect();
+    let text = |r: usize, c: usize| {
+        grid[r]
+            .get(c)
+            .and_then(|&id| texts.get(id as usize))
+            .map_or("", String::as_str)
+    };
 
     let mut caption = table
         .children()
@@ -162,36 +178,33 @@ fn data_table(table: ElementRef<'_>) -> Option<Table> {
         .map(cell_text)
         .filter(|t| !t.is_empty());
     let mut start = 0;
-    while start < rows.len()
+    while start < kept
         && width > 1
         && rows[start].cells.len() == 1
         && span(rows[start].cells[0], "colspan", MAX_COLSPAN) >= width
     {
         if caption.is_none() {
-            caption = Some(grid[start][0].clone()).filter(|t| !t.is_empty());
+            caption = Some(text(start, 0).to_string()).filter(|t| !t.is_empty());
         }
         start += 1;
     }
     let mut body = start;
-    while body < rows.len()
+    while body < kept
         && !rows[body].cells.is_empty()
         && (rows[body].in_head || rows[body].cells.iter().all(|c| c.value().name() == "th"))
     {
         body += 1;
     }
-    let head = &grid[start..body];
-    let body_rows: Vec<Vec<String>> = grid[body..]
-        .iter()
-        .filter(|line| line.iter().any(|t| !t.is_empty()))
-        .cloned()
+    let body_rows: Vec<usize> = (body..kept)
+        .filter(|&r| (0..width).any(|c| !text(r, c).is_empty()))
         .collect();
     let text_columns = (0..width)
-        .filter(|&c| body_rows.iter().any(|line| !line[c].is_empty()))
+        .filter(|&c| body_rows.iter().any(|&r| !text(r, c).is_empty()))
         .count();
     if body_rows.is_empty() || text_columns < 2 {
         return None;
     }
-    if head.is_empty()
+    if start == body
         && (body_rows.len() < 2
             || has_table(table)
             || rows[start..]
@@ -205,25 +218,50 @@ fn data_table(table: ElementRef<'_>) -> Option<Table> {
     {
         return None;
     }
-    let headers = if head.is_empty() {
+    let mut left = MAX_TABLE_BYTES.min(*budget);
+    let mut spend = |cells: Vec<String>| {
+        let cost: usize = cells.iter().map(|s| s.len() + SLOT_BYTES).sum();
+        (cost <= left).then(|| {
+            left -= cost;
+            cells
+        })
+    };
+    let headers = if start == body {
         Vec::new()
     } else {
-        (0..width)
+        let names = (0..width)
             .map(|c| {
                 let mut names: Vec<&str> = Vec::new();
-                for line in head {
-                    if !line[c].is_empty() && !names.contains(&line[c].as_str()) {
-                        names.push(&line[c]);
+                for r in start..body {
+                    if !text(r, c).is_empty() && !names.contains(&text(r, c)) {
+                        names.push(text(r, c));
                     }
                 }
                 names.join(" / ")
             })
-            .collect()
+            .collect();
+        spend(names)?
     };
-    Some(Table {
+    let mut out = Vec::new();
+    for &r in &body_rows {
+        match spend((0..width).map(|c| text(r, c).to_string()).collect()) {
+            Some(cells) => out.push(cells),
+            None => {
+                truncated = true;
+                break;
+            }
+        }
+    }
+    *budget = if truncated {
+        0
+    } else {
+        *budget - (MAX_TABLE_BYTES.min(*budget) - left)
+    };
+    (!out.is_empty()).then_some(Table {
         caption,
         headers,
-        rows: body_rows,
+        rows: out,
+        truncated,
     })
 }
 
@@ -397,6 +435,52 @@ mod tests {
         let t = one(&html);
         assert_eq!(t.headers.len(), 1001);
         assert!(t.rows.len() * 1001 <= MAX_SLOTS);
+        assert!(t.truncated);
+    }
+
+    fn bytes(t: &Table) -> usize {
+        t.headers
+            .iter()
+            .chain(t.rows.iter().flatten())
+            .map(|s| s.len() + SLOT_BYTES)
+            .sum()
+    }
+
+    #[test]
+    fn padding_a_wide_row_stays_within_the_slot_cap() {
+        let html = format!(
+            "<table><tr>{}</tr>{}<tr><td>a</td><td>b</td></tr></table>",
+            r#"<th colspan="1000">h</th>"#.repeat(1000),
+            "<tr></tr>".repeat(200)
+        );
+        assert!(tables(&html).is_empty());
+    }
+
+    #[test]
+    fn spanned_text_is_cut_at_the_table_budget() {
+        let html = format!(
+            r#"<table><tr><th>a</th><th>b</th></tr><tr><td colspan="1000" rowspan="600">{}</td><td>b</td></tr>{}</table>"#,
+            "x".repeat(1000),
+            "<tr><td>c</td></tr>".repeat(599)
+        );
+        let t = one(&html);
+        assert!(t.truncated);
+        assert!(bytes(&t) <= MAX_TABLE_BYTES);
+        assert!(!t.rows.is_empty());
+    }
+
+    #[test]
+    fn all_tables_share_one_page_budget() {
+        let one_table = format!(
+            r#"<table><tr><th>a</th><th>b</th></tr><tr><td colspan="1000" rowspan="20">{}</td><td>b</td></tr>{}</table>"#,
+            "x".repeat(1000),
+            "<tr><td>c</td></tr>".repeat(19)
+        );
+        let found = tables(&one_table.repeat(6));
+        assert_eq!(found.len(), 4);
+        assert!(found[..3].iter().all(|t| !t.truncated));
+        assert!(found[3].truncated);
+        assert!(found.iter().map(bytes).sum::<usize>() <= MAX_PAGE_BYTES);
     }
 
     #[test]

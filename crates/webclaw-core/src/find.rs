@@ -52,6 +52,10 @@ pub enum FindError {
     /// expression that matches empty text; either would match every element.
     #[error("nothing to find: `{0}` matches every element")]
     Empty(String),
+    /// An XPath example that gives a number, string or boolean instead of
+    /// nodes.
+    #[error("the example must select an element, text or attribute node: `{0}`")]
+    NotNodes(String),
     /// Text to find, in characters, too long to search for.
     #[error("the text to find is too long ({0} characters)")]
     TooLong(usize),
@@ -511,7 +515,7 @@ fn visible_text(element: ElementRef) -> String {
     collapse(&text)
 }
 
-fn short(text: &str) -> String {
+pub(crate) fn short(text: &str) -> String {
     match text.char_indices().nth(100) {
         Some((end, _)) => format!("{}…", &text[..end]),
         None => text.to_string(),
@@ -913,5 +917,17 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("too long") && !err.contains("regex"), "{err}");
+    }
+
+    #[test]
+    fn an_xpath_example_must_select_nodes() {
+        let err = find_similar(SHOP, FindExample::XPath("count(//li)"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("element, text or attribute"), "{err}");
+        assert_eq!(
+            find_similar(SHOP, FindExample::XPath("//table")).unwrap(),
+            None
+        );
     }
 }

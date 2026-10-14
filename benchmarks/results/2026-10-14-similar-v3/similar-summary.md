@@ -1,4 +1,4 @@
-# Find-similar benchmark 2026-10-14-similar-v2
+# Find-similar benchmark 2026-10-14-similar-v3
 
 43 list pages frozen into `.work/similar-corpus/`: the 23 `tuned` pages the widening rule was developed on, and 20 `held-out` pages chosen and scored by a separate review, never used to tune it. Each page has a hand-written CSS selector for its items (titles, names or headlines); the items it picks are the ground truth. The example is the second item's text. `text found` counts pages where the first element the tool's exact, case-insensitive text search returns has that text. `from text` runs find-similar on that element; `from css` runs it on the first item picked by the ground-truth selector. Precision and recall compare the texts of the returned elements (the example included) with the ground truth, averaged over pages, a page with no result counting as 0; `exact` counts pages with both at 1. `reusable selector` counts pages where the selector the tool suggests picks the same elements again. Seconds are wall time for the `from text` runs; webclaw runs its CLI once per page, and `of which start` is the time the same number of `webclaw --version` runs takes.
 
@@ -6,15 +6,15 @@
 
 | arm | text found | from text P | from text R | from text exact | from css P | from css R | from css exact | reusable selector | seconds | of which start |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| webclaw | 23/23 | 0.991 | 0.958 | 20/23 | 0.991 | 1.000 | 21/23 | 23/23 | 0.24 | 0.10 |
-| scrapling | 18/23 | 0.713 | 0.641 | 9/23 | 0.899 | 0.886 | 13/23 | 0/23 | 0.14 | - |
+| webclaw | 23/23 | 0.991 | 0.958 | 20/23 | 0.991 | 1.000 | 21/23 | 23/23 | 0.25 | 0.12 |
+| scrapling | 18/23 | 0.713 | 0.641 | 9/23 | 0.899 | 0.886 | 13/23 | 0/23 | 0.15 | - |
 | crawl4ai | no equivalent (its schema generator needs an LLM call) | - | - | - | - | - | - | - | - | - |
 
 ## held-out pages
 
 | arm | text found | from text P | from text R | from text exact | from css P | from css R | from css exact | reusable selector | seconds | of which start |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| webclaw | 20/20 | 0.914 | 0.922 | 13/20 | 0.968 | 0.957 | 15/20 | 20/20 | 0.25 | 0.09 |
+| webclaw | 20/20 | 0.914 | 0.922 | 13/20 | 0.968 | 0.957 | 15/20 | 20/20 | 0.26 | 0.10 |
 | scrapling | 18/20 | 0.793 | 0.852 | 11/20 | 0.952 | 0.877 | 14/20 | 0/20 | 0.14 | - |
 | crawl4ai | no equivalent (its schema generator needs an LLM call) | - | - | - | - | - | - | - | - | - |
 
@@ -22,8 +22,8 @@
 
 | arm | text found | from text P | from text R | from text exact | from css P | from css R | from css exact | reusable selector | seconds | of which start |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| webclaw | 43/43 | 0.955 | 0.941 | 33/43 | 0.980 | 0.980 | 36/43 | 43/43 | 0.49 | 0.19 |
-| scrapling | 36/43 | 0.750 | 0.739 | 20/43 | 0.924 | 0.882 | 27/43 | 0/43 | 0.28 | - |
+| webclaw | 43/43 | 0.955 | 0.941 | 33/43 | 0.980 | 0.980 | 36/43 | 43/43 | 0.51 | 0.22 |
+| scrapling | 36/43 | 0.750 | 0.739 | 20/43 | 0.924 | 0.882 | 27/43 | 0/43 | 0.29 | - |
 | crawl4ai | no equivalent (its schema generator needs an LLM call) | - | - | - | - | - | - | - | - | - |
 
 ## Per page

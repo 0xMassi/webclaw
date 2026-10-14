@@ -124,6 +124,16 @@ It runs nine pages that need interaction, each in a fresh headless browser, 2 ro
 
 On 2026-10-15 ([results/actions-2026-10-15/actions-summary.md](results/actions-2026-10-15/actions-summary.md)) webclaw got every item in 18 of 18 runs (median 8.1 s), Scrapling in 16 (12.0 s) and Crawl4AI in 16 (11.7 s); rendering with no actions got none. Scrapling and Crawl4AI both kept NPR's first 24 stories in both rounds. NPR shows its button only once its scripts have run and covers it with a cookie banner; in a separate review run Crawl4AI's waiting loop reached 48 to 72 stories, so its result there varies from run to run. With its documented `scroll_delay=1.0`, Crawl4AI's `scan_full_page` gets all 117 items of the webscraper.io scroll shop (12 to 15 with the default 0.2 s), and it is slower on every scroll page for it.
 
+### Cloudflare challenges
+
+```bash
+./benchmarks/cloudflare.sh     # webclaw --solve against Scrapling's solve_cloudflare and Crawl4AI's stealth modes
+```
+
+It loads 17 pages from `cloudflare-cases.json`, each in a fresh browser with 60 s: demo pages for each kind of Cloudflare challenge (the two ScrapingCourse challenges, and four embedded Turnstile widgets) and ten real sites that answer a plain HTTP client with a managed or non-interactive challenge (bscscan, basescan, the GitLab sign-in, Glassdoor, Crunchbase, Cardmarket, bizjournals, PriceCharting, BBB, Capterra). webclaw runs over HTTP, with `--render always`, and with `--solve` (with `--render always` and an `executeJavascript` step that reads the token on the widget pages). Scrapling runs its `StealthyFetcher` with `solve_cloudflare=True`. Crawl4AI runs headless with `enable_stealth`, its `UndetectedAdapter`, and `magic`, `simulate_user` and `override_navigator`; it has no challenge solver. A challenge page counts as solved when the output holds a text marker from the real page, checked to be absent from the challenge, and a widget when the page holds a token. It also checks whether the cookies the browser got let webclaw's plain HTTP client load the page right after, and writes `results/<label>/cloudflare-summary.md`.
+
+On 2026-10-15 ([results/cloudflare-2026-10-15/cloudflare-summary.md](results/cloudflare-2026-10-15/cloudflare-summary.md)) webclaw `--solve` got 17 of 17 pages (median 4.1 s), Scrapling 15 (3.8 s) and Crawl4AI 1; webclaw over HTTP or rendering without `--solve` got none ([before](results/cloudflare-2026-10-14-before/cloudflare-summary.md)). webclaw is slower on the two ScrapingCourse pages (about 10 s against 5 s): after the challenge clears it waits for the page to settle, as every render does, and on those pages that wait seems to run long. Scrapling missed the seleniumbase and peet.ws managed widgets. Cookie reuse is where webclaw is behind: after one solve in a run, webclaw's HTTP client got 6 of 13 sites with the cookies and the browser's User-Agent; Scrapling's cookies, handed to a separate webclaw run, got 10 of 13. Two of the sites that refused them, Crunchbase and BBB, refused them from a fresh webclaw process too, so this is not the HTTP client's own cookie jar getting in the way. Where the cookies are refused, webclaw solves the page again.
+
 ### MCP over HTTP
 
 ```bash

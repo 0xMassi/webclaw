@@ -8,7 +8,7 @@
   {"url": "https://www.bscscan.com/", "kind": "non-interactive", "marker": "BNB Smart Chain"},
   {"url": "https://basescan.org/", "kind": "non-interactive", "marker": "Blockchain Explorer"},
   {"url": "https://gitlab.com/users/sign_in", "kind": "managed", "marker": "Remember me"},
-  {"url": "https://www.glassdoor.com/Reviews/index.htm", "kind": "managed", "marker": "Accenture"},
+  {"url": "https://www.glassdoor.com/Reviews/index.htm", "kind": "managed", "marker": ["Accenture", "250 milioni", "250 million"]},
   {"url": "https://www.crunchbase.com/organization/openai", "kind": "managed", "marker": "OpenAI"},
   {"url": "https://www.cardmarket.com/en/Magic", "kind": "managed", "marker": "Magic: The Gathering"},
   {"url": "https://www.bizjournals.com/", "kind": "managed", "marker": "The Business Journals"},

@@ -15,7 +15,8 @@ KINDS = ["non-interactive", "managed", "interactive", "embedded"]
 def solved(case, text, token=None):
     if case["marker"] == "token":
         return len(token or "") >= 20 or bool(TOKEN.search(text))
-    return case["marker"] in text and "<title>Just a moment...</title>" not in text
+    markers = case["marker"] if isinstance(case["marker"], list) else [case["marker"]]
+    return any(m in text for m in markers) and "<title>Just a moment...</title>" not in text
 
 
 def reuse_in_webclaw(case):
@@ -93,7 +94,7 @@ def main(label):
              "the second of two URLs of the page in one run (`--concurrency 1`); for Scrapling, a separate webclaw "
              "run handed its cookies and User-Agent, with the `chrome-macos` profile when that User-Agent is "
              "macOS. `reuse, own UA` sends Scrapling's cookies with webclaw's own User-Agent instead. webclaw "
-             "`--solve` loads embedded widgets with `--render always` and reads the token with an `eval` action.",
+             "`--solve` loads embedded widgets with `--render always` and reads the token with an `executeJavascript` step.",
              "",
              "| tool | " + " | ".join(f"{k} ({counts[k]})" for k in KINDS) + " | all | ms (median) | reuse | reuse, own UA |",
              "|---|" + "---:|" * (len(KINDS) + 4)]

@@ -4,8 +4,8 @@ usage: cloudflare_arms.py <arm> <outdir> <cases.json>
 Prints one JSON line per page: {"url", "file", "ms", "error", "cookies", "ua", "token"}. Every page runs in its
 own process with a fresh browser, as one command per page does, and is cut off after LIMIT seconds. `file` holds
 what the tool returned. `cookies` and `ua` are the browser's cookies and the User-Agent it sent, so a later plain
-HTTP request can try to reuse them. `token` is the Turnstile token webclaw read from the page with an `eval`
-action, for embedded widgets; the other tools return the whole page, which holds it.
+HTTP request can try to reuse them. `token` is the Turnstile token webclaw read from the page with an
+`executeJavascript` step, for embedded widgets; the other tools return the whole page, which holds it.
 """
 import asyncio, json, os, signal, subprocess, sys, time
 from pathlib import Path
@@ -21,13 +21,13 @@ def webclaw(url, extra):
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
         raise RuntimeError(r.stderr.strip()[-200:] or f"exit {r.returncode}")
-    token = next((json.loads(l[len("eval 1: "):]) for l in r.stderr.splitlines() if l.startswith("eval 1: ")), None)
-    return r.stdout, {}, None, token
+    results = json.loads(r.stdout).get("js_results") or [None]
+    return r.stdout, {}, None, results[0]
 
 
 def webclaw_solve(url, kind):
     if kind == "embedded":
-        actions = json.dumps([{"type": "eval", "script": TOKEN}])
+        actions = json.dumps([{"type": "executeJavascript", "code": TOKEN}])
         return webclaw(url, ["--solve", "--render", "always", "--actions", actions])
     return webclaw(url, ["--solve"])
 

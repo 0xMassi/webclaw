@@ -26,7 +26,6 @@ __all__ = [
     "binary_path",
     "crawl",
     "find_text",
-    "map",
     "scrape",
     "screenshot",
     "select",

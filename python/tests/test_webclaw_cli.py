@@ -87,6 +87,12 @@ class Offline(unittest.TestCase):
                                  "--cookie=a=1; b=2", "--timeout=5", "--render=never", "--cache"])
         self.assertEqual(wc._options({"cookies": "c=3"}), ["--cookie=c=3"])
 
+    def test_star_import_keeps_builtin_map(self):
+        names = {}
+        exec("from webclaw_cli import *", names)
+        self.assertNotIn("map", names)
+        self.assertIn("crawl", names)
+
     def test_bad_arguments(self):
         with self.assertRaises(TypeError):
             wc.scrape(SHOP, proxies="x")

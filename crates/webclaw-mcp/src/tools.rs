@@ -244,6 +244,9 @@ pub struct CrawlParams {
     pub block: Option<String>,
     /// A question, up to 1000 characters: follow the links most likely to answer it first, keep only the parts of each page that answer it, and list pages best match first
     pub query: Option<String>,
+    /// With `query`, stop once a page rated at least 0.8 has been found and the next 8 pages rated no higher, instead of always crawling up to max_pages
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub stop_when_answered: Option<bool>,
     /// Return chunks for retrieval instead: one JSON object with the crawl counts (total, ok, errors, skipped_by_robots), the failed pages with their error, and the chunks of every page, each under about this many tokens with its page url, index, heading_path, tokens and markdown text
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub chunk: Option<usize>,

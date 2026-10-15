@@ -836,6 +836,10 @@ impl WebclawMcp {
                 "query cannot exceed {MAX_CRAWL_QUERY_CHARS} characters"
             ));
         }
+        let stop_when_answered = params.stop_when_answered.unwrap_or(false);
+        if stop_when_answered && params.query.is_none() {
+            return Err("stop_when_answered needs a query".into());
+        }
 
         let format = params.format.as_deref().unwrap_or("markdown");
         let cite_links = citations(params.citations, format, sizes.is_some(), "crawl")?;
@@ -860,6 +864,7 @@ impl WebclawMcp {
             use_sitemap: params.use_sitemap.unwrap_or(false),
             respect_robots: !params.ignore_robots.unwrap_or(false),
             query: params.query.clone(),
+            stop_when_answered,
             ..Default::default()
         };
 

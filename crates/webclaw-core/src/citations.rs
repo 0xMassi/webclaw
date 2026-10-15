@@ -127,6 +127,7 @@ impl Refs {
         let code = code_spans(b);
         let pair = pairs(b, &code);
         let mut out = String::with_capacity(s.len());
+        let mut after = After::Text;
         let (mut i, mut copied) = (0, 0);
         while i < b.len() {
             match b[i] {
@@ -141,20 +142,30 @@ impl Refs {
                         continue;
                     };
                     let image = i > 0 && b[i - 1] == b'!';
-                    out.push_str(&s[copied..if image { i - 1 } else { i }]);
+                    let before = &s[copied..if image { i - 1 } else { i }];
+                    if !before.is_empty() {
+                        after.push(&mut out, before, false);
+                        after = After::Text;
+                    }
                     let text = &s[i + 1..close];
                     let text = if nested {
                         text.to_string()
                     } else {
                         self.rewrite(text, true)
                     };
-                    let cited = self.cite(text, url, image);
+                    let (cited, marked) = self.cite(text, url, image);
                     let line_start = !nested && out.trim_start_matches([' ', '\t']).is_empty();
                     let cited = if line_start { block_safe(cited) } else { cited };
-                    out.push_str(&cited);
-                    let next = b.get(end + 1);
-                    if cited.ends_with(']') && next == Some(&b'(')
-                        || line_start && cited.starts_with("[^") && next == Some(&b':')
+                    after.push(&mut out, &cited, marked);
+                    after = match (cited.ends_with(']'), marked) {
+                        (true, true) => After::Mark,
+                        (true, false) => After::Bracket,
+                        _ => After::Text,
+                    };
+                    if line_start
+                        && marked
+                        && cited.starts_with("[^")
+                        && b.get(end + 1) == Some(&b':')
                     {
                         out.push('\\');
                     }
@@ -164,23 +175,24 @@ impl Refs {
                 _ => i += 1,
             }
         }
-        out.push_str(&s[copied..]);
+        after.push(&mut out, &s[copied..], false);
         out
     }
 
-    fn cite(&mut self, text: String, url: &str, image: bool) -> String {
+    fn cite(&mut self, text: String, url: &str, image: bool) -> (String, bool) {
         if url.is_empty() || self.same_page(url) || starts_with_ignore_case(url, "javascript:") {
-            return text;
+            return (text, false);
         }
         let n = *self.numbers.entry(url.to_string()).or_insert_with(|| {
             self.urls.push(url.to_string());
             self.base + self.urls.len()
         });
-        if image {
+        let cited = if image {
             format!("![{text}][^{n}]")
         } else {
             format!("{text}[^{n}]")
-        }
+        };
+        (cited, true)
     }
 
     fn same_page(&self, url: &str) -> bool {
@@ -195,6 +207,30 @@ impl Refs {
         }
         target.set_fragment(None);
         &target == page
+    }
+}
+
+#[derive(Clone, Copy)]
+enum After {
+    Text,
+    Bracket,
+    Mark,
+}
+
+impl After {
+    fn push(self, out: &mut String, piece: &str, marked: bool) {
+        let escape = match self {
+            After::Text => false,
+            After::Bracket => piece.starts_with('('),
+            After::Mark => {
+                piece.starts_with('(')
+                    || piece.starts_with('[') && !(marked && piece.starts_with("[^"))
+            }
+        };
+        if escape {
+            out.push('\\');
+        }
+        out.push_str(piece);
     }
 }
 
@@ -282,7 +318,8 @@ fn destination(dest: &str) -> Option<&str> {
 }
 
 fn block_safe(s: String) -> String {
-    let b = s.as_bytes();
+    let lead = s.len() - s.trim_start_matches([' ', '\t']).len();
+    let b = &s.as_bytes()[lead..];
     let spaced = |i: usize| matches!(b.get(i), None | Some(b' ' | b'\t'));
     let hashes = b.iter().take_while(|&&c| c == b'#').count();
     let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
@@ -299,7 +336,7 @@ fn block_safe(s: String) -> String {
     } else {
         return s;
     };
-    format!("{}\\{}", &s[..at], &s[at..])
+    format!("{}\\{}", &s[..lead + at], &s[lead + at..])
 }
 
 fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
@@ -412,6 +449,24 @@ mod tests {
         assert_eq!(
             to_citations(md, None),
             "Page note[^1] and [^x] [^18446744073709551615] and link[^2].\n\n[^1]: The page own footnote.\n\n```\n[^9]\n```\n\n## Links\n\n[^2]: https://l.com"
+        );
+    }
+
+    #[test]
+    fn bracket_after_a_mark_is_escaped() {
+        let md = "[x](https://x.com)[305] and [y](https://y.com)[[1]](#c), [z](https://z.com)[w](https://w.com) [](https://e.com)[](https://f.com)";
+        assert_eq!(
+            to_citations(md, None),
+            "x[^1]\\[305] and y[^2]\\[1], z[^3]w[^4] [^5][^6]\n\n## Links\n\n[^1]: https://x.com\n[^2]: https://y.com\n[^3]: https://z.com\n[^4]: https://w.com\n[^5]: https://e.com\n[^6]: https://f.com"
+        );
+    }
+
+    #[test]
+    fn indented_line_start_text_makes_no_heading() {
+        let md = "[ ## Title](https://t.com)\n [  > q](https://q.com)";
+        assert_eq!(
+            to_citations(md, None),
+            " \\## Title[^1]\n   \\> q[^2]\n\n## Links\n\n[^1]: https://t.com\n[^2]: https://q.com"
         );
     }
 

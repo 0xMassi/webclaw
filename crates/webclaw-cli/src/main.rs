@@ -538,6 +538,12 @@ struct Cli {
     #[arg(long)]
     ignore_robots: bool,
 
+    /// With --crawl --query, stop once a page rated at least 0.8 has been
+    /// found and the next 8 pages rated no higher, instead of always crawling
+    /// up to --max-pages
+    #[arg(long, requires_all = ["crawl", "query"])]
+    stop_when_answered: bool,
+
     /// Seed crawl frontier from sitemap discovery (robots.txt + /sitemap.xml)
     #[arg(long)]
     sitemap: bool,
@@ -2491,6 +2497,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         checkpoint: state_path.clone(),
         on_page,
         query: cli.query.clone(),
+        stop_when_answered: cli.stop_when_answered,
     };
 
     let resume_state = state_path

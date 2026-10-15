@@ -201,7 +201,7 @@
    "www.python.org/success-stories/category/government",
    "www.python.org/success-stories/category/scientific",
    "www.python.org/success-stories/category/software-development",
-   "www.python.org/success-stories/deliver-clean-and-safe-code-for-your-python-applications"
+   "www.python.org/success-stories/saving-the-world-with-open-data-and-python"
   ]
  },
  "go.dev": {
@@ -341,5 +341,12 @@
    "go.dev/wiki/Learn",
    "go.dev/wiki/NonEnglish"
   ]
+ },
+ "www.columbia.edu": {
+  "links": 0,
+  "redirecting": 0,
+  "moved": {},
+  "expected": [],
+  "skipped": "site refused: HTTP Error 403: Forbidden"
  }
 }

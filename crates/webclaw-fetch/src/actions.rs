@@ -75,8 +75,9 @@ pub enum Action {
         timeout: Option<u64>,
     },
     /// Run JavaScript, an expression, statements whose last one gives the
-    /// value, or a function body that ends in `return`, and keep that value,
-    /// awaited when it is a promise, as JSON.
+    /// value, or a function body with `return`, with `await` allowed
+    /// anywhere, and keep that value, awaited when it is a promise, as JSON.
+    /// Top-level `let` and `const` names may be declared again by a later step.
     /// The page turns the value into JSON itself, and a value longer than
     /// what is left of the 1 MiB all such steps share fails the step there.
     ExecuteJavascript { code: String },
@@ -496,6 +497,7 @@ async fn run_script(page: &Page, code: &str, room: usize) -> Result<Value, Strin
     let as_is = EvaluateParams::builder()
         .expression(code)
         .await_promise(true)
+        .repl_mode(true)
         .return_by_value(false)
         .build()
         .map_err(|e| e.to_string())?;
@@ -518,8 +520,11 @@ async fn run_script(page: &Page, code: &str, room: usize) -> Result<Value, Strin
         return Ok(value);
     };
     let call = CallFunctionOnParams::builder()
-        .function_declaration(format!("function() {{ const value = this; {cap} }}"))
+        .function_declaration(format!(
+            "async function() {{ const value = await this; {cap} }}"
+        ))
         .object_id(id.clone())
+        .await_promise(true)
         .return_by_value(true)
         .build()
         .map_err(|e| e.to_string())?;
@@ -1183,6 +1188,55 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
                 serde_json::json!(3),
                 serde_json::Value::Null
             ]
+        );
+        let error = big.unwrap_err().to_string();
+        assert!(error.contains("characters left"), "{error}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn script_bodies_may_await_before_they_return() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let done = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "executeJavascript", "code": "await new Promise(r => setTimeout(r, 10)); return 3"},
+                {"type": "executeJavascript", "code": "const x = await Promise.resolve(5); return x"},
+                {"type": "executeJavascript", "code": "await 0\nreturn 8"},
+                {"type": "executeJavascript", "code": "return 1"},
+                {"type": "executeJavascript", "code": "await Promise.resolve(2)"},
+                {"type": "executeJavascript", "code": "return await Promise.resolve(4)"},
+                {"type": "executeJavascript", "code": "if (location.href) { return 6 } await 0"},
+                {"type": "executeJavascript", "code": "(async () => { await 0; return 7 })()"},
+                {"type": "executeJavascript", "code": "const f = async () => { await 0; return 9 }; return f()"},
+                {"type": "executeJavascript", "code": "const z = await Promise.resolve(10); z"},
+                {"type": "executeJavascript", "code": "document.title = 'feed'; document.title;"},
+                {"type": "executeJavascript", "code": "x = 1; 1"},
+                {"type": "executeJavascript", "code": "let a = 11; a"},
+                {"type": "executeJavascript", "code": "let a = 12; a"}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        let big = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "executeJavascript", "code": "const big = await Promise.resolve({s: 'x'.repeat(2000000)}); big"}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        renderer.close().await;
+        assert_eq!(
+            done.expect("scripts run").1,
+            [3, 5, 8, 1, 2, 4, 6, 7, 9, 10]
+                .map(serde_json::Value::from)
+                .into_iter()
+                .chain([
+                    serde_json::json!("feed"),
+                    serde_json::json!(1),
+                    serde_json::json!(11),
+                    serde_json::json!(12),
+                ])
+                .collect::<Vec<_>>()
         );
         let error = big.unwrap_err().to_string();
         assert!(error.contains("characters left"), "{error}");

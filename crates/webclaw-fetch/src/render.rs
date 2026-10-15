@@ -137,12 +137,17 @@ impl NetworkCapture {
             .transpose()
             .map_err(|e| format!("invalid capture pattern: {e}"))?;
         let mut types: Vec<String> = types
-            .filter(|t| !t.trim().is_empty())
             .unwrap_or("xhr,fetch")
             .split(',')
             .map(|t| t.trim().to_ascii_lowercase())
             .filter(|t| !t.is_empty())
             .collect();
+        if types.is_empty() {
+            return Err(format!(
+                "no resource types to capture: use all or a comma list of {}",
+                RESOURCE_TYPES.join(", ")
+            ));
+        }
         if let Some(unknown) = types
             .iter()
             .find(|t| *t != "all" && !RESOURCE_TYPES.contains(&t.as_str()))
@@ -2494,6 +2499,12 @@ mod tests {
         let unknown = super::NetworkCapture::new(None, Some("xhr,json"), false).unwrap_err();
         assert!(unknown.contains("\"json\""), "{unknown}");
         assert!(super::NetworkCapture::new(Some("("), None, false).is_err());
+        for empty in [",", " , ", ""] {
+            assert!(
+                super::NetworkCapture::new(None, Some(empty), false).is_err(),
+                "{empty:?} captured something"
+            );
+        }
     }
 
     #[test]

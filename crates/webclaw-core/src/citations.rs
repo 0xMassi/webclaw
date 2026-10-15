@@ -154,7 +154,7 @@ impl Refs {
                         self.rewrite(text, true)
                     };
                     let (cited, marked) = self.cite(text, url, image);
-                    let line_start = !nested && out.trim_start_matches([' ', '\t']).is_empty();
+                    let line_start = !nested && block_prefix(&out);
                     let cited = if line_start { block_safe(cited) } else { cited };
                     after.push(&mut out, &cited, marked);
                     after = match (cited.ends_with(']'), marked) {
@@ -210,7 +210,7 @@ impl Refs {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum After {
     Text,
     Bracket,
@@ -219,16 +219,13 @@ enum After {
 
 impl After {
     fn push(self, out: &mut String, piece: &str, marked: bool) {
-        let escape = match self {
-            After::Text => false,
-            After::Bracket => piece.starts_with('('),
-            After::Mark => {
-                piece.starts_with('(')
-                    || piece.starts_with('[') && !(marked && piece.starts_with("[^"))
-            }
-        };
-        if escape {
+        if piece.starts_with('(') && self != After::Text {
             out.push('\\');
+        } else if piece.starts_with('[')
+            && self == After::Mark
+            && !(marked && piece.starts_with("[^"))
+        {
+            out.push(' ');
         }
         out.push_str(piece);
     }
@@ -315,6 +312,21 @@ fn destination(dest: &str) -> Option<&str> {
                 (b'"', b'"') | (b'\'', b'\'') | (b'(', b')')
             ));
     titled.then_some(url)
+}
+
+fn block_prefix(line: &str) -> bool {
+    let mut rest = line.trim_start_matches([' ', '\t']);
+    while !rest.is_empty() {
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        let marker = match rest.as_bytes()[digits..] {
+            [b'>', ..] if digits == 0 => 1,
+            [b'-' | b'+' | b'*', b' ' | b'\t', ..] if digits == 0 => 1,
+            [b'.' | b')', b' ' | b'\t', ..] if (1..=9).contains(&digits) => digits + 1,
+            _ => return false,
+        };
+        rest = rest[marker..].trim_start_matches([' ', '\t']);
+    }
+    true
 }
 
 fn block_safe(s: String) -> String {
@@ -457,16 +469,16 @@ mod tests {
         let md = "[x](https://x.com)[305] and [y](https://y.com)[[1]](#c), [z](https://z.com)[w](https://w.com) [](https://e.com)[](https://f.com)";
         assert_eq!(
             to_citations(md, None),
-            "x[^1]\\[305] and y[^2]\\[1], z[^3]w[^4] [^5][^6]\n\n## Links\n\n[^1]: https://x.com\n[^2]: https://y.com\n[^3]: https://z.com\n[^4]: https://w.com\n[^5]: https://e.com\n[^6]: https://f.com"
+            "x[^1] [305] and y[^2] [1], z[^3]w[^4] [^5][^6]\n\n## Links\n\n[^1]: https://x.com\n[^2]: https://y.com\n[^3]: https://z.com\n[^4]: https://w.com\n[^5]: https://e.com\n[^6]: https://f.com"
         );
     }
 
     #[test]
     fn indented_line_start_text_makes_no_heading() {
-        let md = "[ ## Title](https://t.com)\n [  > q](https://q.com)";
+        let md = "[ ## Title](https://t.com)\n [  > q](https://q.com)\n- [## In a list](https://l.com)\n> 1. [- quoted item](https://i.com)";
         assert_eq!(
             to_citations(md, None),
-            " \\## Title[^1]\n   \\> q[^2]\n\n## Links\n\n[^1]: https://t.com\n[^2]: https://q.com"
+            " \\## Title[^1]\n   \\> q[^2]\n- \\## In a list[^3]\n> 1. \\- quoted item[^4]\n\n## Links\n\n[^1]: https://t.com\n[^2]: https://q.com\n[^3]: https://l.com\n[^4]: https://i.com"
         );
     }
 

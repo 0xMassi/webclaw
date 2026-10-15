@@ -11,7 +11,7 @@
 //! 2. Optionally, the public Common Crawl URL index ([`common_crawl_urls`]):
 //!    every page of the site that Common Crawl captured in its latest crawl,
 //!    linked or not.
-//! 3. If those are thin (`< min_sitemap_urls`) and the fallback is enabled,
+//! 3. If the sitemaps are thin (`< min_sitemap_urls`) and the fallback is on,
 //!    a *bounded* same-origin crawl harvests every URL it touches: fetched
 //!    pages, the visited set, and the frontier it queued but never fetched.
 //!
@@ -63,8 +63,9 @@ pub struct MapOptions {
     pub max_crawl_pages: usize,
     /// How deep the fallback crawl follows links (1 = links off the seed only).
     pub crawl_depth: usize,
-    /// URL count below which the crawl fallback kicks in. A site whose
-    /// sitemap and index lookups found at least this many skips the crawl.
+    /// Sitemap URL count below which the crawl fallback kicks in. A site
+    /// whose sitemaps list at least this many skips the crawl, whatever the
+    /// index found.
     pub min_sitemap_urls: usize,
     /// Master switch for the crawl fallback. When `false`, behaves exactly like
     /// the old sitemap-only `discover`.
@@ -188,6 +189,7 @@ pub async fn map_site(
         Vec::new()
     };
     let mut seen: HashSet<String> = entries.iter().filter_map(|e| site_key(&e.url)).collect();
+    let crawl = wants_crawl(opts, entries.len());
 
     let listed = entries
         .iter()
@@ -205,7 +207,7 @@ pub async fn map_site(
         index_error = found.error;
     }
 
-    if opts.crawl_fallback && entries.len() < opts.min_sitemap_urls {
+    if crawl {
         crawl_fallback(base_url, opts, &mut entries, &mut seen).await;
     }
 
@@ -270,6 +272,10 @@ async fn crawl_fallback(
     discovered.extend(result.remaining_frontier.into_iter().map(|(url, _)| url));
 
     append_crawled(entries, seen, discovered, &base_origin);
+}
+
+fn wants_crawl(opts: &MapOptions, sitemap_urls: usize) -> bool {
+    opts.crawl_fallback && sitemap_urls < opts.min_sitemap_urls
 }
 
 fn fallback_config(opts: &MapOptions) -> CrawlConfig {
@@ -1143,6 +1149,18 @@ mod tests {
             error.starts_with("invalid include or exclude path pattern \"/**/**/**/**/**\": "),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_thin_sitemap_gets_the_crawl_even_when_the_index_answered() {
+        let opts = MapOptions::default();
+        assert!(wants_crawl(&opts, 7));
+        assert!(!wants_crawl(&opts, 200));
+        let off = MapOptions {
+            crawl_fallback: false,
+            ..MapOptions::default()
+        };
+        assert!(!wants_crawl(&off, 0));
     }
 
     #[test]

@@ -680,8 +680,10 @@ impl Renderer {
     /// [`Renderer::render_actions`], also keeping the network responses
     /// `capture` asks for. Returns the page, the `js_results` and the
     /// responses in the order they arrived. A capturing render waits until
-    /// no request is in flight, up to a third of `options.timeout`, instead
-    /// of stopping once the text settles. Only requests the browser was
+    /// no request is in flight and none has started for 2 seconds, up to a
+    /// third of `options.timeout`, instead of stopping once the text settles.
+    /// Requests from dedicated workers are not seen either. A failed render
+    /// returns only the error. Only requests the browser was
     /// allowed to make get a response. The requests a cross-site frame makes
     /// itself are not seen, since Chrome runs it in its own process.
     pub async fn capture(

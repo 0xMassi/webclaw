@@ -366,6 +366,17 @@ impl FetchClient {
 
     /// Build a new client from config.
     pub fn new(config: FetchConfig) -> Result<Self, FetchError> {
+        #[cfg(feature = "browser")]
+        if config.render.as_ref().is_some_and(|render| render.solve)
+            && !matches!(
+                config.browser,
+                BrowserProfile::Chrome | BrowserProfile::ChromeMacos | BrowserProfile::Edge
+            )
+        {
+            return Err(FetchError::Build(
+                "solving Cloudflare challenges sends Chrome's User-Agent over HTTP, so it needs the chrome, chrome-macos or edge browser profile".into(),
+            ));
+        }
         let variants = collect_variants(&config.browser);
         let pdf_mode = config.pdf_mode.clone();
 
@@ -542,6 +553,24 @@ impl FetchClient {
         for (k, v) in extra {
             req = req.header(*k, *v);
         }
+        #[cfg(feature = "browser")]
+        if let Some(render) = self.render.as_ref().filter(|render| render.solve)
+            && let Some((cookies, agent)) = render.pool.clearance(url)
+        {
+            debug!(url, "sending the clearance from a solved challenge");
+            let own = self
+                .headers
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .chain(extra.iter().copied())
+                .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+                .map(|(_, value)| value);
+            let cookies = own
+                .chain(std::iter::once(cookies.as_str()))
+                .collect::<Vec<_>>()
+                .join("; ");
+            req = req.header("cookie", cookies).header("user-agent", agent);
+        }
         let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
         let resp = req.send().await?;
         let response = Response::from_wreq(resp, attempt).await?;
@@ -704,6 +733,15 @@ impl FetchClient {
         FetchResult,
         Result<webclaw_core::ExtractionResult, FetchError>,
     ) {
+        if let Some(solved) = self.solve_challenge(&fetched).await {
+            return match solved {
+                Ok(page) => {
+                    let extracted = self.extract(&page, options);
+                    (page, extracted)
+                }
+                Err(e) => (fetched, Err(e)),
+            };
+        }
         let extracted = self.extract(&fetched, options);
         let words = match &extracted {
             Ok(result) => result.metadata.word_count,
@@ -720,6 +758,26 @@ impl FetchClient {
         } else {
             (fetched, extracted)
         }
+    }
+
+    /// Get past the Cloudflare challenge that `fetched` is, when
+    /// `FetchConfig::render` solves challenges: `None` when it does not or
+    /// `fetched` is no challenge, and the render's error when the challenge
+    /// stays.
+    pub async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        if fetched.document_bytes.is_some()
+            || !crate::cloud::is_cloudflare_challenge(&fetched.html, &fetched.headers)
+        {
+            return None;
+        }
+        #[cfg(feature = "browser")]
+        if let Some(render) = self.render.as_ref().filter(|render| render.solve) {
+            return Some(render.pool.solve(fetched, render, &self.headers).await);
+        }
+        None
     }
 
     /// Render `fetched` with `FetchConfig::render` when it is set and the
@@ -946,6 +1004,21 @@ impl crate::fetcher::Fetcher for FetchClient {
         http_words: usize,
     ) -> Option<FetchResult> {
         FetchClient::render_if_needed(self, fetched, http_words).await
+    }
+
+    async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        FetchClient::solve_challenge(self, fetched).await
+    }
+
+    fn solves_challenges(&self) -> bool {
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.render {
+            return render.solve;
+        }
+        false
     }
 }
 

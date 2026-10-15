@@ -1283,12 +1283,15 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
         .ok_or("--save-pdf needs the browser, so it cannot run with --render never")?;
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
     let to_stdout = path == Path::new("-");
+    let mut part = path.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
     let mut out: Box<dyn std::io::Write + Send> = if to_stdout {
         Box::new(std::io::stdout())
     } else {
         Box::new(
-            std::fs::File::create(path)
-                .map_err(|e| format!("cannot write {}: {e}", path.display()))?,
+            std::fs::File::create(&part)
+                .map_err(|e| format!("cannot write {}: {e}", part.display()))?,
         )
     };
     let mut options = PdfOptions::default();
@@ -1326,15 +1329,24 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
         });
     let flushed = out.flush();
     drop(out);
-    let printed = match printed.and_then(|printed| {
-        flushed
-            .map(|()| printed)
-            .map_err(|e| format!("cannot write {}: {e}", path.display()))
-    }) {
+    let printed = printed
+        .and_then(|printed| {
+            flushed
+                .map(|()| printed)
+                .map_err(|e| format!("cannot write {}: {e}", part.display()))
+        })
+        .and_then(|printed| {
+            if !to_stdout {
+                std::fs::rename(&part, path)
+                    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            }
+            Ok(printed)
+        });
+    let printed = match printed {
         Ok(printed) => printed,
         Err(e) => {
             if !to_stdout {
-                let _ = std::fs::remove_file(path);
+                let _ = std::fs::remove_file(&part);
             }
             return Err(e);
         }
@@ -3911,6 +3923,31 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
         }
+    }
+
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    async fn a_failed_save_pdf_leaves_an_existing_file_alone() {
+        let dir = std::env::temp_dir().join(format!("webclaw-save-pdf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("page.pdf");
+        std::fs::write(&path, "earlier PDF").unwrap();
+        let cli = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com",
+            "--cdp-url",
+            "ws://127.0.0.1:9/no-browser",
+            "--save-pdf",
+            path.to_str().unwrap(),
+        ])
+        .unwrap();
+        let saved = run_save_pdf(&cli, "https://example.com/", &path).await;
+        let kept = std::fs::read_to_string(&path).unwrap();
+        let leftovers = std::fs::read_dir(&dir).unwrap().count();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(saved.is_err());
+        assert_eq!(kept, "earlier PDF");
+        assert_eq!(leftovers, 1);
     }
 
     #[test]

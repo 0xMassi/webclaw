@@ -406,6 +406,13 @@ impl Crawler {
     /// If `resume_state` is provided, the crawl resumes from the saved state
     /// (pre-populated visited set and frontier) instead of starting fresh.
     pub async fn crawl(&self, start_url: &str, resume_state: Option<CrawlState>) -> CrawlResult {
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.config.fetch.render
+            && render.pool.persistent()
+            && let Err(e) = render.pool.open().await
+        {
+            return failed_crawl(start_url, e.to_string());
+        }
         let client = Arc::clone(&self.page_client);
         let follow_redirects = self.follow_redirects;
         let with_context = self.ask.is_some();
@@ -478,25 +485,7 @@ impl Crawler {
 
         let seed = match Url::parse(start_url) {
             Ok(u) => u,
-            Err(_) => {
-                return CrawlResult {
-                    pages: vec![PageResult {
-                        url: start_url.to_string(),
-                        depth: 0,
-                        extraction: None,
-                        error: Some(format!("invalid URL: {start_url}")),
-                        elapsed: Duration::ZERO,
-                        relevance: None,
-                    }],
-                    total: 1,
-                    ok: 0,
-                    errors: 1,
-                    skipped_by_robots: 0,
-                    elapsed_secs: 0.0,
-                    visited: HashSet::new(),
-                    remaining_frontier: Vec::new(),
-                };
-            }
+            Err(_) => return failed_crawl(start_url, format!("invalid URL: {start_url}")),
         };
 
         let seed_rules = if self.config.respect_robots {
@@ -1068,6 +1057,26 @@ impl Page {
             webclaw_core::focus_extraction(e, &ask.query);
         }
         self
+    }
+}
+
+fn failed_crawl(start_url: &str, error: String) -> CrawlResult {
+    CrawlResult {
+        pages: vec![PageResult {
+            url: start_url.to_string(),
+            depth: 0,
+            extraction: None,
+            error: Some(error),
+            elapsed: Duration::ZERO,
+            relevance: None,
+        }],
+        total: 1,
+        ok: 0,
+        errors: 1,
+        skipped_by_robots: 0,
+        elapsed_secs: 0.0,
+        visited: HashSet::new(),
+        remaining_frontier: Vec::new(),
     }
 }
 
@@ -1859,6 +1868,41 @@ mod tests {
             "{:?}",
             calls.lock().unwrap()
         );
+    }
+
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    async fn a_crawl_on_a_profile_that_cannot_open_fails_once_at_the_start() {
+        let render = crate::render::RenderConfig {
+            pool: Arc::new(crate::render::RenderPool::new(
+                crate::render::BrowserSource::Profile {
+                    proxy: None,
+                    dir: "/nonexistent/webclaw-profile".into(),
+                    solve: false,
+                },
+                Duration::from_secs(1),
+            )),
+            always: false,
+            wait_for: None,
+            block: crate::Block::default(),
+            solve: false,
+        };
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::ZERO,
+                fetch: FetchConfig {
+                    render: Some(render),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result = crawler.crawl("https://example.com/", None).await;
+        assert_eq!((result.total, result.errors), (1, 1));
+        let error = result.pages[0].error.as_deref().unwrap_or_default();
+        assert!(error.contains("/nonexistent/webclaw-profile"), "{error}");
     }
 
     #[tokio::test]

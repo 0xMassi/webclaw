@@ -1606,8 +1606,9 @@ impl RenderPool {
 
     /// With a persistent profile, load `url` in the browser, which sends the
     /// profile's cookies, when `fetched`, its HTTP response, is an HTML page,
-    /// and return the rendered page in its place. Otherwise, or when the
-    /// browser fails, return `fetched`; a failure is logged.
+    /// and return the rendered page in its place. Otherwise return `fetched`.
+    /// A profile that cannot be opened fails, as [`RenderPool::open`] does;
+    /// a page that fails in an opened profile is logged and `fetched` kept.
     ///
     /// Without `follow_redirects`, the browser stops at the page's first
     /// redirect or navigation, which comes back as a 302 with its target in
@@ -1620,7 +1621,7 @@ impl RenderPool {
         config: &RenderConfig,
         headers: &[(String, String)],
         follow_redirects: bool,
-    ) -> FetchResult {
+    ) -> Result<FetchResult, FetchError> {
         let html = fetched.document_bytes.is_none()
             && fetched
                 .headers
@@ -1628,8 +1629,9 @@ impl RenderPool {
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| v.contains("html"));
         if !self.persistent() || !html {
-            return fetched;
+            return Ok(fetched);
         }
+        self.open().await?;
         let rendered = if follow_redirects {
             self.render(
                 url,
@@ -1643,7 +1645,7 @@ impl RenderPool {
         } else {
             self.render_unfollowed(url, config, headers).await
         };
-        match rendered {
+        Ok(match rendered {
             Ok(rendered) => rendered,
             Err(e) => {
                 warn!(
@@ -1652,7 +1654,15 @@ impl RenderPool {
                 );
                 fetched
             }
-        }
+        })
+    }
+
+    /// Start the browser if it has not started, and save the cookies queued
+    /// with [`RenderPool::save_cookies`] in it, so a browser or a profile
+    /// that cannot be opened (in use, refused, unreadable) fails here, before
+    /// any page is fetched.
+    pub async fn open(&self) -> Result<(), FetchError> {
+        self.renderer().await.map(|_| ())
     }
 
     async fn render_unfollowed(
@@ -2248,6 +2258,35 @@ mod tests {
         let stayed = stayed.expect("render succeeds");
         assert_eq!(stayed.status, 200);
         assert!(stayed.html.contains("stayed"), "{}", stayed.html);
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_page_that_fails_in_an_open_profile_keeps_its_http_page() {
+        let profile = tempfile::tempdir().unwrap();
+        let config = super::RenderConfig {
+            pool: Arc::new(super::RenderPool::new(
+                super::BrowserSource::Profile {
+                    proxy: None,
+                    dir: profile.path().into(),
+                    solve: false,
+                },
+                std::time::Duration::from_secs(3),
+            )),
+            always: false,
+            wait_for: Some("#never-there".into()),
+            block: crate::Block::default(),
+            solve: false,
+        };
+        let mut http = page("https://example.com/", "<p>from http</p>", 200);
+        http.headers
+            .insert("content-type", "text/html".parse().unwrap());
+        let kept = config
+            .pool
+            .load_in_profile("https://example.com/", http, &config, &[], true)
+            .await;
+        config.pool.close().await;
+        assert_eq!(kept.expect("the page falls back").html, "<p>from http</p>");
     }
 
     #[tokio::test]
@@ -3477,7 +3516,8 @@ mod tests {
             .insert("content-type", "application/json".parse().unwrap());
         let kept = profile
             .load_in_profile("https://example.com/api", json, &config, &[], true)
-            .await;
+            .await
+            .expect("no browser is needed");
         assert_eq!(kept.html, "{}");
         let mut html = page("https://example.com/", "<script></script>", 200);
         html.headers
@@ -3486,12 +3526,15 @@ mod tests {
         assert!(pool().wants(&html, 0, true) && !profile.wants(&html, 0, true));
         let kept = pool()
             .load_in_profile("https://example.com/", html.clone(), &config, &[], true)
-            .await;
+            .await
+            .expect("no browser is needed");
         assert_eq!(kept.html, "<script></script>");
-        let kept = profile
+        let failed = profile
             .load_in_profile("https://example.com/", html, &config, &[], true)
-            .await;
-        assert_eq!(kept.html, "<script></script>");
+            .await
+            .expect_err("a profile that cannot be opened fails the page")
+            .to_string();
+        assert!(failed.contains("/nonexistent/webclaw-profile"), "{failed}");
     }
 
     #[test]

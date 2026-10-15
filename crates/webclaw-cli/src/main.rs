@@ -805,7 +805,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
     #[cfg(feature = "browser")]
     if cli.render != RenderMode::Never {
         config.render = Some(webclaw_fetch::render::RenderConfig {
-            pool: Arc::new(render_pool(cli, &config)),
+            pool: render_pool(cli, &config),
             always: cli.render == RenderMode::Always,
             wait_for: cli.wait_for.clone(),
             block: cli.block.unwrap_or_default(),
@@ -816,21 +816,27 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
 }
 
 #[cfg(feature = "browser")]
-fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::RenderPool {
+fn render_pool(cli: &Cli, config: &FetchConfig) -> Arc<webclaw_fetch::render::RenderPool> {
     use webclaw_fetch::render::{BrowserSource, RenderPool};
-    let source = match &cli.cdp_url {
-        Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
-        None => {
-            BrowserSource::launch_for(config, cli.solve).with_profile(cli.browser_profile.clone())
+    static PROFILE_POOL: std::sync::OnceLock<Arc<RenderPool>> = std::sync::OnceLock::new();
+    let build = || {
+        let source = match &cli.cdp_url {
+            Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
+            None => BrowserSource::launch_for(config, cli.solve)
+                .with_profile(cli.browser_profile.clone()),
+        };
+        let pool = RenderPool::new(source, std::time::Duration::from_secs(cli.timeout));
+        if let Some(cookie) = config.headers.get("Cookie") {
+            for (url, _) in collect_urls(cli).unwrap_or_default() {
+                pool.save_cookies(&url, cookie);
+            }
         }
+        Arc::new(pool)
     };
-    let pool = RenderPool::new(source, std::time::Duration::from_secs(cli.timeout));
-    if let Some(cookie) = config.headers.get("Cookie") {
-        for (url, _) in collect_urls(cli).unwrap_or_default() {
-            pool.save_cookies(&url, cookie);
-        }
+    match cli.browser_profile {
+        Some(_) => PROFILE_POOL.get_or_init(build).clone(),
+        None => build(),
     }
-    pool
 }
 
 fn cache_dir() -> PathBuf {
@@ -3450,6 +3456,14 @@ async fn main() {
     #[cfg(all(unix, feature = "browser"))]
     if cli.browser_profile.is_some() {
         webclaw_fetch::render::close_profiles_on_terminate();
+    }
+    #[cfg(feature = "browser")]
+    if cli.browser_profile.is_some()
+        && let Some(render) = build_fetch_config(&cli).render
+        && let Err(e) = render.pool.open().await
+    {
+        eprintln!("error: {e}");
+        process::exit(1);
     }
     if cli.solve && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
         eprintln!(

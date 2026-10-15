@@ -601,10 +601,10 @@ impl FetchClient {
         let fetched = self.fetch_over_http(url, extra).await?;
         #[cfg(feature = "browser")]
         if let Some(render) = &self.render {
-            return Ok(render
+            return render
                 .pool
                 .load_in_profile(url, fetched, render, &self.headers, self.follow_redirects)
-                .await);
+                .await;
         }
         Ok(fetched)
     }

@@ -554,6 +554,9 @@ impl WebclawMcp {
             params.cookies.as_ref().filter(|c| !c.is_empty()),
         ) {
             render.pool.save_cookies(&params.url, &cookies.join("; "));
+            if render.pool.persistent() {
+                render.pool.open().await.map_err(|e| e.to_string())?;
+            }
         }
         if params.actions.as_ref().is_some_and(|a| !a.is_empty()) {
             return self.act_and_scrape(&params, sizes).await;
@@ -691,6 +694,12 @@ impl WebclawMcp {
 
         let mut fetch = self.fetch_config.clone();
         apply_render(&mut fetch, None, None, params.block.as_deref(), None)?;
+        #[cfg(feature = "browser")]
+        if let Some(render) = &fetch.render
+            && render.pool.persistent()
+        {
+            render.pool.open().await.map_err(|e| e.to_string())?;
+        }
         let config = webclaw_fetch::CrawlConfig {
             fetch,
             max_depth: params.depth.unwrap_or(2) as usize,

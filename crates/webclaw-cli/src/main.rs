@@ -278,7 +278,8 @@ struct Cli {
 
     /// Keep only the parts of the page that answer this question, under their
     /// headings. With --crawl, also follow the links most likely to answer it
-    /// first and list pages best match first
+    /// first and list pages best match first. With --map, list URLs best match
+    /// first by the words in their paths
     #[arg(long, value_name = "QUESTION", conflicts_with = "watch")]
     query: Option<String>,
 
@@ -492,15 +493,15 @@ struct Cli {
     #[arg(long, default_value = "100")]
     delay: u64,
 
-    /// Only crawl URLs matching this path prefix
+    /// Only crawl, or list with --map, URLs matching this path prefix
     #[arg(long)]
     path_prefix: Option<String>,
 
-    /// Glob patterns for crawl URL paths to include (comma-separated, e.g. "/api/*,/guides/**")
+    /// Glob patterns for crawl and --map URL paths to include (comma-separated, e.g. "/api/*,/guides/**")
     #[arg(long)]
     include_paths: Option<String>,
 
-    /// Glob patterns for crawl URL paths to exclude (comma-separated, e.g. "/changelog/*,/blog/*")
+    /// Glob patterns for crawl and --map URL paths to exclude (comma-separated, e.g. "/changelog/*,/blog/*")
     #[arg(long)]
     exclude_paths: Option<String>,
 
@@ -531,6 +532,17 @@ struct Cli {
     /// Cap the number of URLs --map returns (default: uncapped)
     #[arg(long)]
     map_limit: Option<usize>,
+
+    /// Where --map looks for URLs, comma-separated: sitemap (the default, with
+    /// the crawl fallback) and cc, the public Common Crawl index of the pages
+    /// it captured on the site. E.g. sitemap,cc
+    #[arg(long, value_name = "LIST", requires = "map")]
+    map_source: Option<String>,
+
+    /// With --map-source cc, also keep Common Crawl captures that were not
+    /// HTML pages answering 200 (redirects, errors, PDFs, images)
+    #[arg(long, requires = "map_source")]
+    map_all_captures: bool,
 
     // -- LLM options --
     /// Extract structured JSON using LLM (pass a JSON schema string or @file)
@@ -2226,6 +2238,11 @@ fn print_batch_output(results: &[BatchExtractResult], format: &OutputFormat, sho
     }
 }
 
+fn path_globs(list: Option<&str>) -> Vec<String> {
+    list.map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_default()
+}
+
 fn print_map_output(entries: &[SitemapEntry], format: &OutputFormat) {
     match format {
         OutputFormat::Jsonl => {
@@ -2289,16 +2306,8 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         return Err("--crawl cannot be used with --file or --stdin".into());
     }
 
-    let include_patterns: Vec<String> = cli
-        .include_paths
-        .as_deref()
-        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
-        .unwrap_or_default();
-    let exclude_patterns: Vec<String> = cli
-        .exclude_paths
-        .as_deref()
-        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
-        .unwrap_or_default();
+    let include_patterns = path_globs(cli.include_paths.as_deref());
+    let exclude_patterns = path_globs(cli.exclude_paths.as_deref());
 
     let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(4096);
     let stream_jsonl = (matches!(cli.format, OutputFormat::Jsonl)
@@ -2573,22 +2582,44 @@ async fn run_map(cli: &Cli) -> Result<(), String> {
         .map(|u| normalize_url(u))?;
     let url = url.as_str();
 
-    let client =
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
-
-    // Layered discovery: sitemaps first, bounded crawl fallback when thin.
-    let mut opts = webclaw_fetch::MapOptions::default();
+    let mut opts = webclaw_fetch::MapOptions {
+        crawl_fallback: !cli.no_map_crawl,
+        max_urls: cli.map_limit,
+        html_only: !cli.map_all_captures,
+        path_prefix: cli.path_prefix.clone(),
+        include_patterns: path_globs(cli.include_paths.as_deref()),
+        exclude_patterns: path_globs(cli.exclude_paths.as_deref()),
+        query: cli.query.clone(),
+        ..Default::default()
+    };
     if let Some(pages) = cli.map_pages {
         opts.max_crawl_pages = pages;
     }
-    if cli.no_map_crawl {
-        opts.crawl_fallback = false;
-    }
-    if let Some(limit) = cli.map_limit {
-        opts.max_urls = Some(limit);
+    if let Some(list) = &cli.map_source {
+        opts.set_sources(list)?;
     }
 
-    let entries = webclaw_fetch::discover_urls(&client, url, &opts).await;
+    let mut config = build_fetch_config(cli);
+    if opts.common_crawl {
+        config.total_timeout = Some(std::time::Duration::from_secs(
+            cli.timeout.saturating_mul(2),
+        ));
+    }
+    let client = FetchClient::new(config).map_err(|e| format!("client error: {e}"))?;
+
+    let site = webclaw_fetch::map_site(&client, url, &opts)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(e) = &site.index_error {
+        let why = format!(
+            "the Common Crawl index could not be read ({e}); it is often busy, try again later or raise --timeout"
+        );
+        if !opts.sitemap {
+            return Err(why);
+        }
+        eprintln!("warning: {why}");
+    }
+    let entries = site.entries;
 
     if entries.is_empty() {
         eprintln!("no URLs found for {url}");

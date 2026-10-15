@@ -13,7 +13,7 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     FulfillRequestParams, HeaderEntry,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
-    ErrorReason, EventResponseReceived, ResourceType, SetCookieParams,
+    CookieParam, ErrorReason, EventResponseReceived, ResourceType, SetCookieParams,
 };
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::cdp::browser_protocol::target::{
@@ -40,7 +40,8 @@ pub struct RenderOptions {
     pub timeout: Duration,
     /// Headers added to the page's requests to its own origin, such as
     /// `Authorization` or `Accept-Language`. A `Cookie` header is set as
-    /// cookies for the page's URL instead.
+    /// cookies for the page's URL instead, except on a persistent profile,
+    /// where it is ignored.
     pub headers: Vec<(String, String)>,
     /// Resource types whose requests fail; see [`Block`] for what it misses.
     pub block: Block,
@@ -182,9 +183,11 @@ impl Renderer {
 
     /// Launch a local headless Chrome on the profile in `dir`, so cookies,
     /// session cookies included, local storage and IndexedDB carry over to
-    /// later launches. Every render shares the profile's cookies, and the
-    /// cookies of a `Cookie` header are saved in it. One browser can use a
-    /// profile at a time: a second launch on it fails while the first runs.
+    /// later launches. Every render shares the profile's cookies. A `Cookie`
+    /// header in [`RenderOptions::headers`] is neither sent nor stored there;
+    /// put cookies in the profile with [`Renderer::save_cookies`]. One
+    /// browser can use a profile at a time: a second launch on it fails
+    /// while the first runs.
     ///
     /// `dir` is created when missing, readable by its owner only on Unix,
     /// and marked as made by webclaw. A directory that is neither empty nor
@@ -601,6 +604,9 @@ impl Renderer {
         let mut extra = Vec::new();
         for (name, value) in &options.headers {
             if name.eq_ignore_ascii_case("cookie") {
+                if self.persistent {
+                    continue;
+                }
                 for pair in value.split(';') {
                     if let Some((cookie, cookie_value)) = pair.trim().split_once('=') {
                         let mut set = SetCookieParams::new(cookie.trim(), cookie_value.trim());
@@ -754,6 +760,26 @@ impl Renderer {
         })
     }
 
+    /// Store the cookies of `cookie`, a `Cookie` header value such as
+    /// `"a=1; b=2"`, in the browser for `url`. On a profile from
+    /// [`Renderer::launch_with_profile`] they are kept for later launches.
+    pub async fn save_cookies(&self, url: &str, cookie: &str) -> Result<(), FetchError> {
+        let cookies = cookie
+            .split(';')
+            .filter_map(|pair| {
+                let (name, value) = pair.trim().split_once('=')?;
+                let mut param = CookieParam::new(name.trim(), value.trim());
+                param.url = Some(url.to_string());
+                Some(param)
+            })
+            .collect();
+        self.browser
+            .set_cookies(cookies)
+            .await
+            .map(|_| ())
+            .map_err(browser_error)
+    }
+
     /// Shut down a browser this renderer launched and wait for it to exit,
     /// which also writes a persistent profile's cookies and storage to disk.
     /// A browser reached through [`Renderer::connect`] keeps running.
@@ -868,6 +894,7 @@ pub struct RenderPool {
     browser: RwLock<Option<Result<Renderer, String>>>,
     tabs: Semaphore,
     hosts: Mutex<HashMap<String, HostRenders>>,
+    cookies: Mutex<Vec<(String, String)>>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -910,6 +937,7 @@ impl RenderPool {
             browser: RwLock::new(None),
             tabs: Semaphore::new(MAX_TABS),
             hosts: Mutex::new(HashMap::new()),
+            cookies: Mutex::new(Vec::new()),
         }
     }
 
@@ -1034,7 +1062,7 @@ impl RenderPool {
                 *slot = Some(started.map_err(|e| e.to_string()));
             }
         }
-        RwLockReadGuard::try_map(self.browser.read().await, |slot| {
+        let renderer = RwLockReadGuard::try_map(self.browser.read().await, |slot| {
             slot.as_ref().and_then(|started| started.as_ref().ok())
         })
         .map_err(|slot| {
@@ -1042,7 +1070,18 @@ impl RenderPool {
                 Some(Err(e)) => e.clone(),
                 _ => "browser closed".into(),
             })
-        })
+        })?;
+        let pending = self
+            .cookies
+            .lock()
+            .map(|mut pending| std::mem::take(&mut *pending))
+            .unwrap_or_default();
+        for (url, cookie) in pending {
+            if let Err(e) = renderer.save_cookies(&url, &cookie).await {
+                warn!(url, "cookies not saved in the browser profile: {e}");
+            }
+        }
+        Ok(renderer)
     }
 
     /// Render `fetched` when `config` asks for it and the page seems to need
@@ -1116,6 +1155,17 @@ impl RenderPool {
         let seen = hosts.entry(host).or_default();
         seen.renders += 1;
         seen.helped += u32::from(rendered_words >= (2 * http_words).max(http_words + 50));
+    }
+
+    /// On a persistent profile, save the cookies of `cookie`, a `Cookie`
+    /// header value, in the profile for `url` before the next render; see
+    /// [`Renderer::save_cookies`]. Other pools ignore it.
+    pub fn save_cookies(&self, url: &str, cookie: &str) {
+        if self.persistent()
+            && let Ok(mut pending) = self.cookies.lock()
+        {
+            pending.push((url.to_string(), cookie.to_string()));
+        }
     }
 
     /// Whether this pool launches Chrome on a persistent profile.
@@ -1540,6 +1590,10 @@ mod tests {
         let first = Renderer::launch_with_profile(None, profile.path())
             .await
             .expect("Chrome launches");
+        first
+            .save_cookies("https://example.com/", "imported=2")
+            .await
+            .expect("cookies are saved");
         let wrote = first
             .render(
                 "https://example.com/",
@@ -1549,7 +1603,7 @@ mod tests {
                 }),
                 &RenderOptions {
                     timeout: std::time::Duration::from_secs(20),
-                    headers: vec![("Cookie".into(), "imported=2".into())],
+                    headers: vec![("Cookie".into(), "header=3".into())],
                     ..Default::default()
                 },
             )
@@ -1574,6 +1628,7 @@ mod tests {
         let read = read.expect("second render succeeds").html;
         assert!(read.contains("served=1"), "{read}");
         assert!(read.contains("imported=2"), "{read}");
+        assert!(!read.contains("header=3"), "{read}");
         assert!(read.contains("|local|indexed"), "{read}");
 
         let fresh = Renderer::launch(None).await.expect("Chrome launches");
@@ -1590,6 +1645,41 @@ mod tests {
         fresh.close().await;
         let unrelated = unrelated.expect("fresh render succeeds").html;
         assert!(unrelated.contains(">|null|none<"), "{unrelated}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_profile_pool_saves_cookies_only_for_the_url_given() {
+        let profile = tempfile::tempdir().unwrap();
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Profile {
+                proxy: None,
+                dir: profile.path().into(),
+            },
+            std::time::Duration::from_secs(20),
+        );
+        pool.save_cookies("https://example.com/", "given=4");
+        let reader = r#"<html><body><p id="c"></p><script>document.getElementById("c").textContent = "cookies:" + document.cookie + ":end";</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let mut seen = Vec::new();
+        for url in ["https://example.com/", "https://example.org/"] {
+            let page = pool
+                .render(
+                    url,
+                    Some(Prefetched {
+                        html: reader,
+                        headers: &headers,
+                    }),
+                    None,
+                    &[],
+                    crate::Block::default(),
+                )
+                .await;
+            seen.push(page.expect("render succeeds").html);
+        }
+        pool.close().await;
+        assert!(seen[0].contains("cookies:given=4:end"), "{}", seen[0]);
+        assert!(seen[1].contains("cookies::end"), "{}", seen[1]);
     }
 
     #[tokio::test]

@@ -777,7 +777,13 @@ fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Render
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
         None => BrowserSource::launch_for(config).with_profile(cli.browser_profile.clone()),
     };
-    RenderPool::new(source, std::time::Duration::from_secs(cli.timeout))
+    let pool = RenderPool::new(source, std::time::Duration::from_secs(cli.timeout));
+    if let Some(cookie) = config.headers.get("Cookie") {
+        for (url, _) in collect_urls(cli).unwrap_or_default() {
+            pool.save_cookies(&url, cookie);
+        }
+    }
+    pool
 }
 
 fn cache_dir() -> PathBuf {

@@ -437,6 +437,13 @@ impl WebclawMcp {
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
         let browser = parse_browser(params.browser.as_deref())?;
+        #[cfg(feature = "browser")]
+        if let (Some(render), Some(cookies)) = (
+            &self.fetch_config.render,
+            params.cookies.as_ref().filter(|c| !c.is_empty()),
+        ) {
+            render.pool.save_cookies(&params.url, &cookies.join("; "));
+        }
         if params.actions.as_ref().is_some_and(|a| !a.is_empty()) {
             return self.act_and_scrape(&params, sizes).await;
         }

@@ -16,11 +16,9 @@ SHIPPED = (8, 0.8)
 
 
 def crawls(label):
-    sets = [s for s in qc.SETS if s in os.environ.get("QC_SETS", ",".join(qc.SETS)).split(",")]
-    questions = [{**json.loads(l), "set": s} for s in sets for l in open(qc.ROOT / qc.SETS[s])]
     out = []
-    for i, q in enumerate(questions):
-        path = qc.WORK / "query-crawl-out" / label / f"webclaw-query-{q['set']}-{q['site']}-{i}.json"
+    for q in qc.load_questions()[1]:
+        path = qc.WORK / "query-crawl-out" / label / f"webclaw-query-{q['set']}-{q['site']}-{q['n']}.json"
         pages = json.loads(path.read_text())["pages"][:qc.BUDGET]
         want = {qc.norm(u) for u in q["answer"]}
         hit = next((n + 1 for n, p in enumerate(pages) if qc.norm(p["url"]) in want), None)

@@ -2,10 +2,11 @@
 
 usage: query_crawl.py <label>              crawl, then score
        query_crawl.py <label> --rescore    score the saved outputs again
-Each question names the page(s) that answer it. The questions come in three sets, scored apart: `tuned`
+Each question names the page(s) that answer it. The questions come in four sets, scored apart: `tuned`
 (../query-crawl.jsonl, the set the scoring weights were chosen on), `held-out` (../query-crawl-held.jsonl, four
-other documentation sites, written by a reviewer after the weights were fixed) and `intl` (../query-crawl-intl.jsonl,
-questions in Japanese, French, Spanish and Chinese on the translated Python docs). Every arm crawls from the site's
+other documentation sites, written by a reviewer after the weights were fixed), `intl` (../query-crawl-intl.jsonl,
+questions in Japanese, French, Spanish and Chinese on the translated Python docs) and `fresh`
+(../query-crawl-fresh.jsonl, four more sites, written by a reviewer after the stop rule was fixed). Every arm crawls from the site's
 seed with the same page budget, depth, concurrency and path prefix, robots.txt obeyed. Breadth-first arms ignore
 the question, so they crawl each site once. QC_ARMS=a,b and QC_SETS=a,b run a subset; QC_CACHE=1 lets webclaw
 reuse its cache.
@@ -30,8 +31,13 @@ SITES = {
     "py-fr": ("https://docs.python.org/fr/3/", "/fr/3/"),
     "py-es": ("https://docs.python.org/es/3/", "/es/3/"),
     "py-zh": ("https://docs.python.org/zh-cn/3/", "/zh-cn/3/"),
+    "nginx.org": ("https://nginx.org/en/docs/", "/en/docs/"),
+    "nodejs.org": ("https://nodejs.org/api/", "/api/"),
+    "doc.rust-lang.org": ("https://doc.rust-lang.org/std/", "/std/"),
+    "git-scm.com": ("https://git-scm.com/docs", "/docs"),
 }
-SETS = {"tuned": "query-crawl.jsonl", "held-out": "query-crawl-held.jsonl", "intl": "query-crawl-intl.jsonl"}
+SETS = {"tuned": "query-crawl.jsonl", "held-out": "query-crawl-held.jsonl", "intl": "query-crawl-intl.jsonl",
+        "fresh": "query-crawl-fresh.jsonl"}
 ARMS = {"webclaw-bfs": ("base", False), "webclaw-query": ("base", True), "webclaw-query-stop": ("base", True),
         "scrapling-bfs": ("scrapling", False), "crawl4ai-bfs": ("crawl4ai", False),
         "crawl4ai-best-first": ("crawl4ai", True), "crawl4ai-adaptive": ("crawl4ai", True),
@@ -80,9 +86,13 @@ def score(q, arm, crawl):
             "top": any(u in want for u in ranked), "seconds": crawl["seconds"], "previews": crawl["previews"]}
 
 
-def main(label, rescore):
+def load_questions():
     sets = [s for s in SETS if s in os.environ.get("QC_SETS", ",".join(SETS)).split(",")]
-    questions = [{**json.loads(l), "set": s} for s in sets for l in open(ROOT / SETS[s])]
+    return sets, [{**json.loads(l), "set": s, "n": n} for s in sets for n, l in enumerate(open(ROOT / SETS[s]))]
+
+
+def main(label, rescore):
+    sets, questions = load_questions()
     arms = [a for a in ARMS if a in os.environ.get("QC_ARMS", ",".join(ARMS)).split(",")]
     res, out_dir = ROOT / "results" / label, WORK / "query-crawl-out" / label
     res.mkdir(parents=True, exist_ok=True)
@@ -92,8 +102,8 @@ def main(label, rescore):
     rows = []
     for arm in arms:
         guided = ARMS[arm][1]
-        for i, q in enumerate(questions):
-            key = f"{arm}-{q['set']}-{q['site']}-{i if guided else 'all'}"
+        for q in questions:
+            key = f"{arm}-{q['set']}-{q['site']}-{q['n'] if guided else 'all'}"
             out = out_dir / f"{key}.json"
             if not rescore and (guided or not any(r["arm"] == arm and r["site"] == q["site"] and r["set"] == q["set"]
                                                    for r in rows)):
@@ -135,7 +145,8 @@ def write_summary(label, rows, arms, sets):
              f"questions whose answer page is in the first {TOP} pages of the tool's own ranking (breadth-first arms: "
              f"crawl order). `median seconds to answer` covers found answers only.", "",
              "Question sets: `tuned` is the set the scoring weights were chosen on, `held-out` was written after "
-             "they were fixed, on four other sites, and `intl` asks in Japanese, French, Spanish and Chinese."]
+             "they were fixed, on four other sites, `intl` asks in Japanese, French, Spanish and Chinese, and `fresh` was "
+             "written on four more sites after the stop rule of `--stop-when-answered` was fixed."]
     for name in sets:
         set_rows = [r for r in rows if r["set"] == name]
         lines += ["", f"## {name}: all sites", ""] + table(set_rows, arms)

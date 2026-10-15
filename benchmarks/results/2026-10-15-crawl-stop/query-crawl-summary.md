@@ -2,7 +2,7 @@
 
 Each question names the page that answers it. Every arm crawls from the site's start page with a budget of 50 pages, depth 5, concurrency 4, the same path prefix, robots.txt obeyed. `answer by page N` counts questions whose answer page was among the first N pages the tool fetched. `median pages to answer` counts a miss as 51. `answer in output top 3` counts questions whose answer page is in the first 3 pages of the tool's own ranking (breadth-first arms: crawl order). `median seconds to answer` covers found answers only.
 
-Question sets: `tuned` is the set the scoring weights were chosen on, `held-out` was written after they were fixed, on four other sites, and `intl` asks in Japanese, French, Spanish and Chinese.
+Question sets: `tuned` is the set the scoring weights were chosen on, `held-out` was written after they were fixed, on four other sites, `intl` asks in Japanese, French, Spanish and Chinese, and `fresh` was written on four more sites after the stop rule of `--stop-when-answered` was fixed.
 
 ## tuned: all sites
 
@@ -139,6 +139,51 @@ Question sets: `tuned` is the set the scoring weights were chosen on, `held-out`
 | crawl4ai-adaptive | 3 | 0 | 0 | 0 | 51+ | 0 | nan | 1.0 | 7 |
 | crawl4ai-adaptive-docs | 3 | 0 | 0 | 0 | 51+ | 0 | nan | 1.3 | 11 |
 
-crawl4ai-adaptive also requested the `<head>` of up to 180 linked pages per question (median) to preview them, on top of the pages above.
+## fresh: all sites
 
-crawl4ai-adaptive-docs also requested the `<head>` of up to 250 linked pages per question (median) to preview them, on top of the pages above.
+| arm | questions | answer by page 10 | by 25 | by 50 | median pages to answer | answer in output top 3 | median seconds to answer | median seconds per crawl | pages fetched |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| webclaw-query | 48 | 22 | 36 | 40 | 11 | 27 | 0.2 | 0.6 | 50 |
+| webclaw-query-stop | 48 | 24 | 38 | 40 | 10 | 27 | 0.1 | 0.4 | 44 |
+| crawl4ai-adaptive | 48 | 4 | 6 | 6 | 51+ | 3 | 0.7 | 0.9 | 13 |
+| crawl4ai-adaptive-docs | 48 | 5 | 8 | 8 | 51+ | 6 | 0.6 | 0.7 | 14 |
+
+### fresh: nginx.org
+
+| arm | questions | answer by page 10 | by 25 | by 50 | median pages to answer | answer in output top 3 | median seconds to answer | median seconds per crawl | pages fetched |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| webclaw-query | 12 | 8 | 11 | 12 | 6 | 7 | 0.2 | 0.3 | 50 |
+| webclaw-query-stop | 12 | 9 | 12 | 12 | 6 | 7 | 0.1 | 0.2 | 41 |
+| crawl4ai-adaptive | 12 | 1 | 1 | 1 | 51+ | 1 | 0.6 | 0.9 | 13 |
+| crawl4ai-adaptive-docs | 12 | 1 | 1 | 1 | 51+ | 1 | 0.6 | 0.6 | 6 |
+
+### fresh: nodejs.org
+
+| arm | questions | answer by page 10 | by 25 | by 50 | median pages to answer | answer in output top 3 | median seconds to answer | median seconds per crawl | pages fetched |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| webclaw-query | 12 | 5 | 11 | 12 | 11 | 10 | 0.3 | 0.6 | 50 |
+| webclaw-query-stop | 12 | 6 | 11 | 12 | 10 | 10 | 0.2 | 0.5 | 42 |
+| crawl4ai-adaptive | 12 | 3 | 5 | 5 | 51+ | 2 | 0.8 | 27.2 | 27 |
+| crawl4ai-adaptive-docs | 12 | 3 | 6 | 6 | 38 | 5 | 1.2 | 26.6 | 38 |
+
+### fresh: doc.rust-lang.org
+
+| arm | questions | answer by page 10 | by 25 | by 50 | median pages to answer | answer in output top 3 | median seconds to answer | median seconds per crawl | pages fetched |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| webclaw-query | 12 | 6 | 10 | 11 | 10 | 7 | 0.2 | 0.9 | 50 |
+| webclaw-query-stop | 12 | 7 | 10 | 11 | 8 | 7 | 0.1 | 0.4 | 47 |
+| crawl4ai-adaptive | 12 | 0 | 0 | 0 | 51+ | 0 | nan | 0.8 | 6 |
+| crawl4ai-adaptive-docs | 12 | 1 | 1 | 1 | 51+ | 0 | 0.6 | 0.7 | 6 |
+
+### fresh: git-scm.com
+
+| arm | questions | answer by page 10 | by 25 | by 50 | median pages to answer | answer in output top 3 | median seconds to answer | median seconds per crawl | pages fetched |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| webclaw-query | 12 | 3 | 4 | 5 | 51+ | 3 | 0.2 | 0.7 | 50 |
+| webclaw-query-stop | 12 | 2 | 5 | 5 | 51+ | 3 | 0.1 | 0.4 | 48 |
+| crawl4ai-adaptive | 12 | 0 | 0 | 0 | 51+ | 0 | nan | 0.9 | 7 |
+| crawl4ai-adaptive-docs | 12 | 0 | 0 | 0 | 51+ | 0 | nan | 0.8 | 6 |
+
+crawl4ai-adaptive also requested the `<head>` of up to 197 linked pages per question (median) to preview them, on top of the pages above.
+
+crawl4ai-adaptive-docs also requested the `<head>` of up to 270 linked pages per question (median) to preview them, on top of the pages above.

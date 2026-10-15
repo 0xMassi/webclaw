@@ -12,10 +12,13 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
     FulfillRequestParams, HeaderEntry,
 };
+use chromiumoxide::cdp::browser_protocol::io::{CloseParams, ReadParams};
 use chromiumoxide::cdp::browser_protocol::network::{
     ErrorReason, EventResponseReceived, GetCookiesParams, ResourceType, SetCookieParams,
 };
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::browser_protocol::page::{
+    CaptureScreenshotFormat, PrintToPdfParams, PrintToPdfTransferMode,
+};
 use chromiumoxide::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams,
 };
@@ -108,6 +111,68 @@ impl Screenshot {
     pub fn base64(&self) -> String {
         base64(&self.image)
     }
+}
+
+/// Paper size of a PDF.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Paper {
+    /// US Letter, 8.5x11 inches.
+    #[default]
+    Letter,
+    /// A4, 210x297 mm.
+    A4,
+}
+
+/// How a page is printed to PDF. Start from `PdfOptions::default()` and
+/// set the fields you need.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct PdfOptions {
+    /// Paper size, US Letter by default.
+    pub paper: Paper,
+    /// Turn the paper sideways.
+    pub landscape: bool,
+    /// Print background colors and images, which browsers leave out by default.
+    pub print_background: bool,
+    /// Zoom of the page content, from 0.1 to 2.
+    pub scale: f64,
+}
+
+impl PdfOptions {
+    fn check(&self) -> Result<(), FetchError> {
+        if (0.1..=2.0).contains(&self.scale) {
+            Ok(())
+        } else {
+            Err(FetchError::Build(format!(
+                "PDF scale must be between 0.1 and 2, got {}",
+                self.scale
+            )))
+        }
+    }
+}
+
+impl Default for PdfOptions {
+    fn default() -> Self {
+        Self {
+            paper: Paper::default(),
+            landscape: false,
+            print_background: false,
+            scale: 1.0,
+        }
+    }
+}
+
+/// A rendered page printed to PDF. The file itself went to the writer the
+/// print was given.
+#[derive(Debug, Clone)]
+pub struct Pdf {
+    /// Size of the PDF in bytes.
+    pub bytes: u64,
+    /// HTTP status of the page's document.
+    pub status: u16,
+    /// The page's URL after redirects.
+    pub url: String,
 }
 
 const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
@@ -505,6 +570,84 @@ impl Renderer {
         Ok((shot, visited.scripts))
     }
 
+    /// Render `url` like [`Renderer::screenshot`] and print it to PDF with
+    /// the page's print styles, every page of it, into `out`. Chrome hands
+    /// the file over in chunks, so a writer that fails, say past a size
+    /// limit, stops the copy there and fails the print.
+    pub async fn pdf(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        pdf: PdfOptions,
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<Pdf, FetchError> {
+        Ok(self.pdf_actions(url, options, pdf, &[], out).await?.0)
+    }
+
+    /// [`Renderer::pdf`] after `actions`, as [`Renderer::render_actions`] runs them.
+    pub async fn pdf_actions(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        pdf: PdfOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
+        self.print(url, None, options, pdf, actions, out).await
+    }
+
+    async fn print(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+        pdf: PdfOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
+        pdf.check()?;
+        let (width, height) = match pdf.paper {
+            Paper::Letter => (8.5, 11.0),
+            Paper::A4 => (210.0 / 25.4, 297.0 / 25.4),
+        };
+        let params = PrintToPdfParams::builder()
+            .paper_width(width)
+            .paper_height(height)
+            .landscape(pdf.landscape)
+            .print_background(pdf.print_background)
+            .scale(pdf.scale)
+            .transfer_mode(PrintToPdfTransferMode::ReturnAsStream)
+            .generate_tagged_pdf(false)
+            .build();
+        let visited = self
+            .visit(
+                url,
+                prefetched,
+                &RenderOptions {
+                    block: Block::default(),
+                    ..options.clone()
+                },
+                actions,
+                Some(SCREENSHOT_VIEWPORT),
+                async move |page| Ok(copy_pdf(page, params, out).await),
+            )
+            .await
+            .map_err(|e| match e {
+                FetchError::Build(message) if message.ends_with(" timed out") => {
+                    FetchError::Build(format!(
+                        "{message}: the render timeout covers loading the page, its actions and printing it"
+                    ))
+                }
+                e => e,
+            })?;
+        let printed = Pdf {
+            bytes: visited.value.map_err(FetchError::Build)?,
+            status: visited.status,
+            url: visited.url,
+        };
+        Ok((printed, visited.scripts))
+    }
+
     async fn visit<T>(
         &self,
         url: &str,
@@ -703,7 +846,6 @@ impl Renderer {
                     .map_err(browser_error)?;
             }
             let scripts = crate::actions::run(&page, actions, options.timeout).await?;
-            let value = read(&page).await.map_err(browser_error)?;
             let final_url = page
                 .url()
                 .await
@@ -727,6 +869,7 @@ impl Renderer {
             if options.solve && !private {
                 self.keep_clearance(&page, &final_url).await;
             }
+            let value = read(&page).await.map_err(browser_error)?;
             Ok::<_, FetchError>((value, final_url, scripts))
         })
         .await;
@@ -875,7 +1018,7 @@ pub struct RenderConfig {
     /// Also wait until an element matching this CSS selector exists.
     pub wait_for: Option<String>,
     /// Resource types whose requests fail while rendering; see [`Block`].
-    /// Screenshots load everything.
+    /// Screenshots and PDFs load everything.
     pub block: Block,
     /// Render a page that comes back as a Cloudflare challenge and get past
     /// it; see [`RenderOptions::solve`]. Later requests to that site over
@@ -996,6 +1139,49 @@ impl RenderPool {
                 &self.options(wait_for, headers, Block::default()),
                 shot,
                 actions,
+            )
+            .await
+    }
+
+    /// Print `url` to PDF; see [`Renderer::pdf`].
+    pub async fn pdf(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        pdf: PdfOptions,
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<Pdf, FetchError> {
+        Ok(self
+            .pdf_actions(url, wait_for, headers, pdf, &[], out)
+            .await?
+            .0)
+    }
+
+    /// Print `url` to PDF after `actions`; see [`Renderer::pdf_actions`].
+    pub async fn pdf_actions(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        pdf: PdfOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
+        pdf.check()?;
+        let _tab = self
+            .tabs
+            .acquire()
+            .await
+            .map_err(|_| FetchError::Build("browser closed".into()))?;
+        let renderer = self.renderer().await?;
+        renderer
+            .pdf_actions(
+                url,
+                &self.options(wait_for, headers, Block::default()),
+                pdf,
+                actions,
+                out,
             )
             .await
     }
@@ -1312,7 +1498,8 @@ fn percent_decode(text: &str) -> String {
         .map_or_else(|| text.to_string(), |(_, v)| v.into_owned())
 }
 
-fn base64(bytes: &[u8]) -> String {
+/// `bytes` in standard base64, as MCP image and resource content carries them.
+pub fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -1327,6 +1514,49 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+async fn copy_pdf(
+    page: &chromiumoxide::Page,
+    params: PrintToPdfParams,
+    out: &mut (dyn std::io::Write + Send),
+) -> Result<u64, String> {
+    let printed = page.execute(params).await.map_err(|e| match e {
+        chromiumoxide::error::CdpError::Chrome(e) if e.message.contains("Printing failed") => {
+            "Chrome could not print the page: it navigated away while printing, or it is too large to print".to_string()
+        }
+        e => e.to_string(),
+    })?;
+    let handle = printed
+        .result
+        .stream
+        .ok_or("Chrome printed the PDF without a stream")?;
+    let mut bytes = 0;
+    let copied = loop {
+        let mut read = ReadParams::new(handle.clone());
+        read.size = Some(1 << 20);
+        let chunk = match page.execute(read).await {
+            Ok(chunk) => chunk.result,
+            Err(e) => break Err(e.to_string()),
+        };
+        let data = if chunk.base64_encoded == Some(true) {
+            match chromiumoxide::utils::base64::decode(&chunk.data) {
+                Ok(data) => data,
+                Err(e) => break Err(e.to_string()),
+            }
+        } else {
+            chunk.data.into_bytes()
+        };
+        if let Err(e) = out.write_all(&data) {
+            break Err(format!("writing the PDF failed: {e}"));
+        }
+        bytes += data.len() as u64;
+        if chunk.eof {
+            break Ok(bytes);
+        }
+    };
+    let _ = page.execute(CloseParams::new(handle)).await;
+    copied
 }
 
 fn browser_error(e: impl std::fmt::Display) -> FetchError {
@@ -1940,6 +2170,176 @@ mod tests {
         assert_eq!(width, 1280);
         assert!(height > 1000, "full page is only {height}px tall");
         assert_eq!(&jpeg.expect("jpeg screenshot").image[..3], b"\xff\xd8\xff");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_rendered_page_prints_to_a_pdf_with_its_text() {
+        let html = r#"<html><body><h1>Quarterly harvest report</h1><p id="late"></p><button id="more" onclick="document.getElementById('extra').textContent = 'Turnips added by a click'">more</button><p id="extra"></p><h2 style="break-before: page">Second sheet</h2><script>document.getElementById("late").textContent = "Pumpkins grown by script";</script></body></html>"#;
+        let actions = super::parse_actions(
+            r##"[{"type": "click", "selector": "#more"}, {"type": "executeJavascript", "code": "document.title = 'harvest'"}]"##,
+        )
+        .unwrap();
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        };
+        let print = async |out: &mut (dyn std::io::Write + Send)| {
+            renderer
+                .print(
+                    "https://example.com/",
+                    Some(Prefetched {
+                        html,
+                        headers: &headers,
+                    }),
+                    &options,
+                    super::PdfOptions {
+                        paper: super::Paper::A4,
+                        print_background: true,
+                        ..Default::default()
+                    },
+                    &actions,
+                    out,
+                )
+                .await
+        };
+        let mut data = Vec::new();
+        let printed = print(&mut data).await;
+        let mut full = std::io::Cursor::new([0u8; 100]);
+        let refused = print(&mut full).await;
+        let slow = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(1),
+                    wait_for: Some("#never".into()),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        let bad_scale = renderer
+            .pdf(
+                "https://example.com/",
+                &options,
+                super::PdfOptions {
+                    scale: 3.0,
+                    ..Default::default()
+                },
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let (printed, js_results) = printed.expect("PDF prints");
+        assert_eq!(js_results, [serde_json::json!("harvest")]);
+        assert_eq!(printed.bytes, data.len() as u64);
+        assert_eq!(&data[..5], b"%PDF-");
+        let refused = refused.expect_err("a full writer stops the print");
+        assert!(
+            refused.to_string().contains("writing the PDF failed"),
+            "{refused}"
+        );
+        let read = webclaw_pdf::extract_pdf(&data, webclaw_pdf::PdfMode::Auto)
+            .expect("webclaw-pdf reads the PDF");
+        assert_eq!(read.page_count, 2);
+        for text in [
+            "Quarterly harvest report",
+            "Pumpkins grown by script",
+            "Turnips added by a click",
+            "Second sheet",
+        ] {
+            assert!(
+                read.text.contains(text),
+                "{text} missing from {}",
+                read.text
+            );
+        }
+        assert!(bad_scale.is_err());
+        let slow = slow.expect_err("a page that never settles times out");
+        assert!(
+            slow.to_string()
+                .contains("the render timeout covers loading the page"),
+            "{slow}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_pdf_reports_the_url_it_printed_not_where_the_page_went_after() {
+        let html = r#"<html><body><p>printed here</p><script>addEventListener("afterprint", () => history.pushState(null, "", "/after"))</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let printed = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let (printed, _) = printed.expect("PDF prints");
+        assert_eq!(printed.url, "https://example.com/");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_page_that_navigates_while_printing_fails_in_plain_words() {
+        let html = r#"<html><body><p>leaving</p><script>addEventListener("beforeprint", () => { location.href = "https://example.com/elsewhere"; })</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let printed = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let error = printed.expect_err("printing fails").to_string();
+        assert!(error.contains("navigated away while printing"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_bad_pdf_scale_fails_before_the_browser_starts() {
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Connect("ws://127.0.0.1:9/never".into()),
+            std::time::Duration::from_secs(5),
+        );
+        let options = super::PdfOptions {
+            scale: 0.0,
+            ..Default::default()
+        };
+        let error = pool
+            .pdf("https://example.com/", None, &[], options, &mut Vec::new())
+            .await
+            .expect_err("the scale is refused");
+        assert!(error.to_string().contains("PDF scale"), "{error}");
     }
 
     fn png_size(png: &[u8]) -> (u32, u32) {

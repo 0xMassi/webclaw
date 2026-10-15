@@ -192,11 +192,16 @@ pub struct SelectParams {
 pub struct ScreenshotParams {
     /// URL to capture
     pub url: String,
-    /// Capture the whole scrollable page instead of the 1280x720 viewport (default: false)
+    /// For images, capture the whole scrollable page instead of the 1280x720 viewport (default: false). A PDF always holds the whole page
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub full_page: Option<bool>,
-    /// Image format: "png" (default) or "jpeg", which is smaller
+    /// "png" (default) or "jpeg", which is smaller, for an image, or "pdf" to print the whole page to a PDF instead
     pub format: Option<String>,
+    /// With format "pdf": "letter" (default) or "a4"
+    pub paper: Option<String>,
+    /// With format "pdf": keep background colors and images, which browsers leave out when printing (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub print_background: Option<bool>,
     /// Also wait until an element matching this CSS selector exists before capturing
     pub wait_for: Option<String>,
     /// Steps to run in the local browser once the page has loaded, before it is captured. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error

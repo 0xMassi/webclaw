@@ -579,6 +579,12 @@ pub async fn smart_fetch(
                 fetch_result = solved;
                 rendered_already = true;
             }
+            Some(Ok(page)) if cloud.is_none() => {
+                return Err(format!(
+                    "solving the Cloudflare challenge on {url} did not reach the page: it ended on HTTP {}",
+                    page.status
+                ));
+            }
             Some(Err(e)) if cloud.is_none() => {
                 return Err(format!(
                     "could not get past the Cloudflare challenge on {url}: {e}"
@@ -1165,6 +1171,51 @@ mod tests {
         );
         assert!(run(false, SIGNUP).await.is_err());
         assert!(run(true, SIGNUP_BEHIND_DATADOME).await.is_err());
+    }
+
+    struct StuckChallenge;
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for StuckChallenge {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            let mut page = StaticPage(
+                "<html><body><script>window._cf_chl_opt = {cType: 'managed'};</script></body></html>",
+            )
+            .fetch(url)
+            .await?;
+            page.status = 403;
+            Ok(page)
+        }
+
+        async fn solve_challenge(
+            &self,
+            fetched: &crate::client::FetchResult,
+        ) -> Option<Result<crate::client::FetchResult, crate::error::FetchError>> {
+            Some(Ok(fetched.clone()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_solve_that_ends_on_an_error_page_says_so() {
+        let error = smart_fetch(
+            &StuckChallenge,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .err()
+        .expect("the page is never reached");
+        assert!(
+            error.contains("did not reach the page") && error.contains("403"),
+            "{error}"
+        );
     }
 
     #[tokio::test]

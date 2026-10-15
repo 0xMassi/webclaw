@@ -219,13 +219,13 @@ struct Cli {
     /// with the clearance cookie it got. A Turnstile checkbox in any page
     /// that gets rendered is clicked too. Needs a build with the `browser`
     /// feature
-    #[arg(long, conflicts_with = "screenshot")]
+    #[arg(long, conflicts_with_all = ["screenshot", "save_pdf"])]
     solve: bool,
 
     /// When rendering a page for its content, skip these resources: a comma
-    /// list of images, fonts and media, or none. Screenshots
+    /// list of images, fonts and media, or none. Screenshots and PDFs
     /// load everything
-    #[arg(long, value_name = "TYPES", conflicts_with = "screenshot")]
+    #[arg(long, value_name = "TYPES", conflicts_with_all = ["screenshot", "save_pdf"])]
     block: Option<webclaw_fetch::Block>,
 
     /// Steps to run in the local browser once the page has loaded, before it
@@ -279,7 +279,7 @@ struct Cli {
     /// each chunk stays under about this many tokens. Works with several URLs
     /// and --crawl (chunks per page)
     #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(1..),
-          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "output_dir", "metadata", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
+          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "save_pdf", "output_dir", "metadata", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
     chunk: Option<u32>,
 
     /// With --chunk, start each chunk with up to this many tokens from the end
@@ -338,12 +338,40 @@ struct Cli {
 
     /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
     /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
     screenshot: Option<PathBuf>,
 
     /// With --screenshot, capture the whole scrollable page
     #[arg(long, requires = "screenshot")]
     full_page: bool,
+
+    /// Save the rendered page as a PDF to this file (- for stdout), every
+    /// page of it, as the browser prints it. Needs the `browser` feature
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
+    save_pdf: Option<PathBuf>,
+
+    /// With --save-pdf, the paper size
+    #[arg(long, value_enum, default_value_t = PaperArg::Letter, requires = "save_pdf")]
+    paper: PaperArg,
+
+    /// With --save-pdf, turn the paper sideways
+    #[arg(long, requires = "save_pdf")]
+    landscape: bool,
+
+    /// With --save-pdf, keep background colors and images, which browsers
+    /// leave out when printing
+    #[arg(long, requires = "save_pdf")]
+    print_background: bool,
+
+    /// With --save-pdf, zoom the page content, from 0.1 to 2
+    #[arg(
+        long,
+        value_name = "FACTOR",
+        default_value_t = 1.0,
+        value_parser = pdf_scale,
+        requires = "save_pdf"
+    )]
+    scale: f64,
 
     /// CSS selectors to include (comma-separated, e.g. "article,.content")
     #[arg(long)]
@@ -619,6 +647,12 @@ enum RenderMode {
     Never,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum PaperArg {
+    Letter,
+    A4,
+}
+
 #[derive(Clone, ValueEnum)]
 enum Browser {
     Chrome,
@@ -798,6 +832,13 @@ async fn close_browser(config: &FetchConfig) {
         render.pool.close().await;
     }
     let _ = config;
+}
+
+fn pdf_scale(text: &str) -> Result<f64, String> {
+    text.parse()
+        .ok()
+        .filter(|scale| (0.1..=2.0).contains(scale))
+        .ok_or_else(|| format!("{text} is not a number from 0.1 to 2"))
 }
 
 /// Parse a JSON cookie file (Chrome extension format) into a Cookie header string.
@@ -1240,6 +1281,102 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
 
 #[cfg(not(feature = "browser"))]
 async fn run_screenshot(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
+}
+
+#[cfg(feature = "browser")]
+async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
+    use webclaw_fetch::render::{Paper, PdfOptions};
+    let actions = page_actions(cli)?;
+    let config = build_fetch_config(cli);
+    let render = config
+        .render
+        .as_ref()
+        .ok_or("--save-pdf needs the browser, so it cannot run with --render never")?;
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let to_stdout = path == Path::new("-");
+    let mut part = path.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    let mut out: Box<dyn std::io::Write + Send> = if to_stdout {
+        Box::new(std::io::stdout())
+    } else {
+        Box::new(
+            std::fs::File::create(&part)
+                .map_err(|e| format!("cannot write {}: {e}", part.display()))?,
+        )
+    };
+    let mut options = PdfOptions::default();
+    options.paper = match cli.paper {
+        PaperArg::Letter => Paper::Letter,
+        PaperArg::A4 => Paper::A4,
+    };
+    options.landscape = cli.landscape;
+    options.print_background = cli.print_background;
+    options.scale = cli.scale;
+    let printed = render
+        .pool
+        .pdf_actions(
+            url,
+            render.wait_for.as_deref(),
+            &headers,
+            options,
+            &actions,
+            &mut out,
+        )
+        .await;
+    close_browser(&config).await;
+    let printed = printed
+        .map_err(|e| match e.to_string() {
+            e if e.contains("the render timeout covers") => {
+                format!("PDF error: {e}; raise it with --timeout")
+            }
+            e => format!("PDF error: {e}"),
+        })
+        .and_then(|(printed, js_results)| {
+            print_script_results(&js_results);
+            webclaw_fetch::FetchError::check_status(printed.status)
+                .map(|()| printed)
+                .map_err(|e| e.to_string())
+        });
+    let flushed = out.flush();
+    drop(out);
+    let printed = printed
+        .and_then(|printed| {
+            flushed
+                .map(|()| printed)
+                .map_err(|e| format!("cannot write {}: {e}", part.display()))
+        })
+        .and_then(|printed| {
+            if !to_stdout {
+                std::fs::rename(&part, path)
+                    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            }
+            Ok(printed)
+        });
+    let printed = match printed {
+        Ok(printed) => printed,
+        Err(e) => {
+            if !to_stdout {
+                let _ = std::fs::remove_file(&part);
+            }
+            return Err(e);
+        }
+    };
+    let target = if to_stdout {
+        "stdout".to_string()
+    } else {
+        path.display().to_string()
+    };
+    eprintln!(
+        "saved {target} ({} bytes) of {}",
+        printed.bytes, printed.url
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "browser"))]
+async fn run_save_pdf(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), String> {
     Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
@@ -3478,6 +3615,18 @@ async fn main() {
         return;
     }
 
+    if let Some(ref path) = cli.save_pdf {
+        let printed = match (entries.len(), cli.urls.first()) {
+            (1, Some(url)) => run_save_pdf(&cli, &normalize_url(url), path).await,
+            _ => Err("--save-pdf takes one URL".to_string()),
+        };
+        if let Err(e) = printed {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
     if cli.tables {
         let found = if entries.len() > 1 {
             Err("--tables takes one URL".to_string())
@@ -3791,6 +3940,96 @@ mod tests {
             ],
         ] {
             assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    async fn a_failed_save_pdf_leaves_an_existing_file_alone() {
+        let dir = std::env::temp_dir().join(format!("webclaw-save-pdf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("page.pdf");
+        std::fs::write(&path, "earlier PDF").unwrap();
+        let cli = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com",
+            "--cdp-url",
+            "ws://127.0.0.1:9/no-browser",
+            "--save-pdf",
+            path.to_str().unwrap(),
+        ])
+        .unwrap();
+        let saved = run_save_pdf(&cli, "https://example.com/", &path).await;
+        let kept = std::fs::read_to_string(&path).unwrap();
+        let leftovers = std::fs::read_dir(&dir).unwrap().count();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(saved.is_err());
+        assert_eq!(kept, "earlier PDF");
+        assert_eq!(leftovers, 1);
+    }
+
+    #[test]
+    fn pdf_flags_need_save_pdf_and_refuse_other_outputs() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        let cli = parse(&[
+            "--save-pdf",
+            "page.pdf",
+            "--paper",
+            "a4",
+            "--landscape",
+            "--print-background",
+            "--scale",
+            "0.8",
+            "--wait-for",
+            "main",
+        ])
+        .unwrap();
+        assert!(matches!(cli.paper, PaperArg::A4));
+        assert_eq!(cli.scale, 0.8);
+        for extra in [
+            &["--landscape"][..],
+            &["--paper", "a4"],
+            &["--print-background"],
+            &["--scale", "2"],
+            &["--save-pdf", "a.pdf", "--paper", "a3"],
+            &["--save-pdf", "a.pdf", "--scale", "3"],
+            &["--save-pdf", "a.pdf", "--scale", "0"],
+            &["--save-pdf", "a.pdf", "--screenshot", "a.png"],
+            &["--save-pdf", "a.pdf", "--select", "a"],
+            &["--save-pdf", "a.pdf", "--crawl"],
+            &["--save-pdf", "a.pdf", "--chunk", "64"],
+            &["--save-pdf", "a.pdf", "--block", "images"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?}");
+        }
+        assert!(parse(&["--screenshot", "a.png"]).is_ok());
+        for output in ["--screenshot", "--save-pdf"] {
+            for other in [
+                &["-f", "json"][..],
+                &["--summarize"],
+                &["--cloud"],
+                &["--output-dir", "out"],
+                &["--diff-with", "old.json"],
+                &["--brand"],
+                &["--raw-html"],
+                &["--pdf-mode", "fast"],
+                &["--metadata"],
+                &["--query", "price"],
+                &["--extract-prompt", "title"],
+                &["--include", "main"],
+                &["--exclude", "nav"],
+                &["--only-main-content"],
+                &["--stdin"],
+                &["--file", "page.html"],
+            ] {
+                let mut extra = vec![output, "a.out"];
+                extra.extend_from_slice(other);
+                assert!(parse(&extra).is_err(), "{extra:?}");
+            }
         }
     }
 

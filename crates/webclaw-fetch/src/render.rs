@@ -257,18 +257,7 @@ impl Renderer {
         let config = config.build().map_err(browser_error)?;
         let (browser, handler) = match Browser::launch(config).await {
             Ok(launched) => launched,
-            Err(_) if persistent && profile_locked(&profile) => {
-                return Err(FetchError::Build(format!(
-                    "the browser profile {} is in use by another browser, and a profile takes one browser at a time",
-                    profile.display()
-                )));
-            }
-            Err(e) => {
-                if !persistent {
-                    let _ = std::fs::remove_dir_all(&profile);
-                }
-                return Err(browser_error(e));
-            }
+            Err(e) => return Err(launch_error(&profile, persistent, e.to_string())),
         };
         let mut renderer = Self::start(
             browser,
@@ -1250,10 +1239,20 @@ fn without_prediction(existing: Option<&[u8]>) -> Result<Vec<u8>, String> {
     serde_json::to_vec(&preferences).map_err(|e| e.to_string())
 }
 
-fn profile_locked(dir: &std::path::Path) -> bool {
-    ["SingletonLock", "lockfile"]
-        .iter()
-        .any(|name| std::fs::symlink_metadata(dir.join(name)).is_ok())
+fn launch_error(profile: &std::path::Path, persistent: bool, error: String) -> FetchError {
+    if !persistent {
+        let _ = std::fs::remove_dir_all(profile);
+    }
+    if !persistent || !error.contains("ProcessSingleton") {
+        return browser_error(error);
+    }
+    let owner = std::fs::read_link(profile.join("SingletonLock"))
+        .map(|owner| format!(" (its lock names {})", owner.display()))
+        .unwrap_or_default();
+    FetchError::Build(format!(
+        "the browser profile {} is in use by another browser{owner}, and a profile takes one browser at a time",
+        profile.display()
+    ))
 }
 
 #[cfg(test)]
@@ -1419,6 +1418,8 @@ mod tests {
             error.to_string().contains("in use by another browser"),
             "{error}"
         );
+        #[cfg(unix)]
+        assert!(error.to_string().contains("its lock names"), "{error}");
         let again = Renderer::launch_with_profile(None, profile.path())
             .await
             .expect("the profile is free once the first browser closed");
@@ -1455,6 +1456,23 @@ mod tests {
             std::fs::read(default.join("Preferences")).unwrap(),
             b"{broken"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn only_chromes_own_refusal_reads_as_a_profile_in_use() {
+        let profile = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink("otherhost-4242", profile.path().join("SingletonLock")).unwrap();
+        let other = super::launch_error(profile.path(), true, "no executable found".into());
+        assert!(!other.to_string().contains("in use"), "{other}");
+        let refused = super::launch_error(
+            profile.path(),
+            true,
+            "Failed to create a ProcessSingleton for your profile directory".into(),
+        )
+        .to_string();
+        assert!(refused.contains("in use by another browser"), "{refused}");
+        assert!(refused.contains("otherhost-4242"), "{refused}");
     }
 
     #[test]

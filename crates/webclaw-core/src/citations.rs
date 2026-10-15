@@ -71,8 +71,22 @@ type Fence = (u8, usize);
 fn split_code(markdown: &str) -> (Vec<(&str, bool)>, Option<Fence>) {
     let mut lines = Vec::new();
     let mut fence: Option<Fence> = None;
+    let (mut item, mut blank_before) = (None, false);
     for line in markdown.split_inclusive('\n') {
-        let prose = match (fence, fence_of(line)) {
+        if fence.is_none() {
+            let (col, rest) = indent_of(line);
+            if rest.trim().is_empty() {
+                blank_before = true;
+            } else {
+                if let Some(content) = list_item(col, rest) {
+                    item = Some(content);
+                } else if blank_before && item.is_some_and(|c| col < c) {
+                    item = None;
+                }
+                blank_before = false;
+            }
+        }
+        let prose = match (fence, fence_of(line, item.unwrap_or(0) + 3)) {
             (Some((c, n)), Some((fc, fnn, info)))
                 if fc == c && fnn >= n && info.trim().is_empty() =>
             {
@@ -104,9 +118,35 @@ fn highest_footnote(line: &str) -> usize {
         .unwrap_or(0)
 }
 
-fn fence_of(line: &str) -> Option<(u8, usize, &str)> {
-    let rest = line.trim_start_matches(' ');
-    if line.len() - rest.len() > 3 {
+fn indent_of(line: &str) -> (usize, &str) {
+    let mut col = 0;
+    let mut end = 0;
+    for b in line.bytes() {
+        match b {
+            b' ' => col += 1,
+            b'\t' => col += 4 - col % 4,
+            _ => break,
+        }
+        end += 1;
+    }
+    (col, &line[end..])
+}
+
+fn list_item(col: usize, rest: &str) -> Option<usize> {
+    let b = rest.as_bytes();
+    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
+    let marker = match b[digits..] {
+        [b'-' | b'+' | b'*', b' ' | b'\t', ..] if digits == 0 => 1,
+        [b'.' | b')', b' ' | b'\t', ..] if (1..=9).contains(&digits) => digits + 1,
+        _ => return None,
+    };
+    let gap = indent_of(&rest[marker..]).0;
+    Some(col + marker + if (1..=4).contains(&gap) { gap } else { 1 })
+}
+
+fn fence_of(line: &str, max_indent: usize) -> Option<(u8, usize, &str)> {
+    let (col, rest) = indent_of(line);
+    if col > max_indent {
         return None;
     }
     let c = *rest.as_bytes().first()?;
@@ -425,6 +465,15 @@ mod tests {
         assert_eq!(
             to_citations(md, None),
             "````\n```\n[in](https://in.com)\n```\n[in2](https://in2.com)\n````\n  ~~~\n[t](https://t.com)\n  ~~~~\n```inline``` and a[^1]\n\n## Links\n\n[^1]: https://a.com"
+        );
+    }
+
+    #[test]
+    fn fences_inside_list_items_stay_code() {
+        let md = "- item\n\n    ```\n    [x](https://x.com)\n    ```\n1. step\n\n\t~~~\n\t[t](https://t.com)\n\t~~~\n\nend\n\n    ```\n[y](https://y.com)";
+        assert_eq!(
+            to_citations(md, None),
+            "- item\n\n    ```\n    [x](https://x.com)\n    ```\n1. step\n\n\t~~~\n\t[t](https://t.com)\n\t~~~\n\nend\n\n    ```\ny[^1]\n\n## Links\n\n[^1]: https://y.com"
         );
     }
 

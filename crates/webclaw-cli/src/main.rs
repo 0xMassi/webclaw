@@ -816,7 +816,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
             }
             Err(e) => {
                 eprintln!("error: failed to parse cookie file: {e}");
-                process::exit(1);
+                exit(1);
             }
         }
     }
@@ -3527,8 +3527,22 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
     ))
 }
 
+fn exit(code: i32) -> ! {
+    #[cfg(feature = "browser")]
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| runtime.block_on(webclaw_fetch::render::close_profiles()));
+    }
+    process::exit(code)
+}
+
 #[tokio::main]
 async fn main() {
+    run().await;
+    #[cfg(feature = "browser")]
+    webclaw_fetch::render::close_profiles().await;
+}
+
+async fn run() {
     dotenvy::dotenv().ok();
 
     let mut cli = Cli::parse();
@@ -3537,7 +3551,7 @@ async fn main() {
         eprintln!(
             "error: --browser-profile needs the browser: a build with the `browser` feature, and --render auto or always"
         );
-        process::exit(1);
+        exit(1);
     }
     #[cfg(all(unix, feature = "browser"))]
     if cli.browser_profile.is_some() {
@@ -3549,13 +3563,13 @@ async fn main() {
         && let Err(e) = render.pool.open().await
     {
         eprintln!("error: {e}");
-        process::exit(1);
+        exit(1);
     }
     if cli.solve && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
         eprintln!(
             "error: --solve needs the browser: a build with `--features browser`, and no --render never"
         );
-        process::exit(1);
+        exit(1);
     }
 
     // Subcommand path. Handled before the flag dispatch so a subcommand
@@ -3571,7 +3585,7 @@ async fn main() {
                 };
                 if let Err(e) = bench::run(&args).await {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
                 return;
             }
@@ -3584,7 +3598,7 @@ async fn main() {
                         Ok(s) => println!("{s}"),
                         Err(e) => {
                             eprintln!("error: failed to serialise catalog: {e}");
-                            process::exit(1);
+                            exit(1);
                         }
                     }
                 } else {
@@ -3622,7 +3636,7 @@ async fn main() {
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("error: failed to build fetch client: {e}");
-                        process::exit(1);
+                        exit(1);
                     }
                 };
                 if let Some(cloud) = webclaw_fetch::cloud::CloudClient::from_env() {
@@ -3639,7 +3653,7 @@ async fn main() {
                             Ok(s) => println!("{s}"),
                             Err(e) => {
                                 eprintln!("error: JSON encode failed: {e}");
-                                process::exit(1);
+                                exit(1);
                             }
                         }
                     }
@@ -3647,7 +3661,7 @@ async fn main() {
                         // UrlMismatch / UnknownVertical / Fetch all get
                         // Display impls with actionable messages.
                         eprintln!("error: {e}");
-                        process::exit(1);
+                        exit(1);
                     }
                 }
                 return;
@@ -3667,7 +3681,7 @@ async fn main() {
                         eprintln!(
                             "error: search requires a Serper.dev API key: pass --serper-key or set SERPER_API_KEY (get one free at serper.dev)"
                         );
-                        process::exit(1);
+                        exit(1);
                     }
                 };
                 if let Err(e) = run_search(
@@ -3682,7 +3696,7 @@ async fn main() {
                 .await
                 {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
                 return;
             }
@@ -3693,7 +3707,7 @@ async fn main() {
     if cli.map {
         if let Err(e) = run_map(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3707,25 +3721,25 @@ async fn main() {
         Ok(u) => u,
         Err(e) => {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
     };
     backfill_single_file_url(&mut cli.urls, &entries);
     if let Err(e) = check_chunk_format(&cli) {
         eprintln!("error: {e}");
-        process::exit(1);
+        exit(1);
     }
 
     if cli.actions.is_some() || cli.scroll.is_some() {
         if entries.len() != 1 {
             eprintln!("error: {}", one_url_error(&cli));
-            process::exit(1);
+            exit(1);
         }
         if cli.render == RenderMode::Never {
             eprintln!(
                 "error: --actions and --scroll run in the browser, so they cannot run with --render never"
             );
-            process::exit(1);
+            exit(1);
         }
         cli.render = RenderMode::Always;
     }
@@ -3737,7 +3751,7 @@ async fn main() {
         };
         if let Err(e) = shot {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3752,7 +3766,7 @@ async fn main() {
         };
         if let Err(e) = captured {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3764,7 +3778,7 @@ async fn main() {
         };
         if let Err(e) = printed {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3777,7 +3791,7 @@ async fn main() {
         };
         if let Err(e) = found {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3794,7 +3808,7 @@ async fn main() {
         };
         if let Err(e) = selected {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3803,7 +3817,7 @@ async fn main() {
     if cli.crawl {
         if let Err(e) = run_crawl(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3813,7 +3827,7 @@ async fn main() {
         let watch_urls: Vec<String> = entries.iter().map(|(url, _)| url.clone()).collect();
         if let Err(e) = run_watch(&cli, &watch_urls).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3822,7 +3836,7 @@ async fn main() {
     if let Some(ref snapshot_path) = cli.diff_with {
         if let Err(e) = run_diff(&cli, snapshot_path).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3831,7 +3845,7 @@ async fn main() {
     if cli.brand {
         if let Err(e) = run_brand(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3840,7 +3854,7 @@ async fn main() {
     if let Some(ref query) = cli.research {
         if let Err(e) = run_research(&cli, query).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3851,25 +3865,25 @@ async fn main() {
         if entries.len() > 1 {
             if let Err(e) = run_batch_llm(&cli, &entries).await {
                 eprintln!("error: {e}");
-                process::exit(1);
+                exit(1);
             }
         } else if let Err(e) = run_llm(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
     if cli.query.is_some() && entries.len() > 1 {
         eprintln!("error: --query works on one page at a time");
-        process::exit(1);
+        exit(1);
     }
 
     // Multi-URL batch mode
     if entries.len() > 1 {
         if let Err(e) = run_batch(&cli, &entries).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3886,12 +3900,12 @@ async fn main() {
                 println!("{}", r.html);
                 if let Err(e) = webclaw_fetch::FetchError::check_status(r.status) {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
             }
             Err(e) => {
                 eprintln!("error: {e}");
-                process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -3914,7 +3928,7 @@ async fn main() {
                 let content = format_output(&result, &cli.format, cli.metadata);
                 if let Err(e) = write_to_file(dir, &filename, &content) {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
             } else if let Some(sizes) = chunk_sizes(&cli) {
                 let chunks = chunk_page(
@@ -3962,7 +3976,7 @@ async fn main() {
         }
         Err(e) => {
             eprintln!("{e}");
-            process::exit(1);
+            exit(1);
         }
     }
 }

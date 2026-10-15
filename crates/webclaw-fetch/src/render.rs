@@ -1594,15 +1594,22 @@ pub fn close_profiles_on_terminate() {
     };
     tokio::spawn(async move {
         terminate.recv().await;
-        let open = OPEN_PROFILES
-            .lock()
-            .map(|mut open| std::mem::take(&mut *open))
-            .unwrap_or_default();
-        for (browser, dir) in open {
-            shut_down(browser, &dir).await;
-        }
+        close_profiles().await;
         std::process::exit(143);
     });
+}
+
+/// Shut down every browser this process launched on a persistent profile
+/// and wait up to five seconds for each to release its profile, so a
+/// process that is about to exit leaves no Chrome holding a profile locked.
+pub async fn close_profiles() {
+    let open = OPEN_PROFILES
+        .lock()
+        .map(|mut open| std::mem::take(&mut *open))
+        .unwrap_or_default();
+    for (browser, dir) in open {
+        shut_down(browser, &dir).await;
+    }
 }
 
 async fn shut_down(browser: std::sync::Weak<Browser>, dir: &std::path::Path) {

@@ -6,14 +6,14 @@ use url::Url;
 /// Rewrite the inline links and images of `markdown` as numbered citations.
 ///
 /// `[text](url)` becomes `text[^1]` and `![alt](src)` becomes `![alt][^2]`,
-/// markdown footnote marks. A `## References` list at the end maps each
+/// markdown footnote marks. A `## Links` list at the end maps each
 /// number to its URL, one `[^1]: url` footnote per line. Numbers follow the
 /// order of first appearance, and a URL that comes back anywhere keeps its
 /// first number. They start after the highest numeric footnote the page
 /// already has, so its own `[^1]` keeps its meaning. Links to a spot on the
 /// same page (`#section`, or `page_url` with a fragment) and `javascript:`
 /// links keep their text and lose the URL. Fenced code blocks and inline
-/// code are never rewritten. With nothing to cite, no References list is
+/// code are never rewritten. With nothing to cite, no list is
 /// added.
 pub fn to_citations(markdown: &str, page_url: Option<&str>) -> String {
     to_citations_after(markdown, page_url, 0).0
@@ -59,7 +59,7 @@ pub fn to_citations_after(markdown: &str, page_url: Option<&str>, after: usize) 
         out.push('\n');
         out.push_str(&(c as char).to_string().repeat(n));
     }
-    out.push_str("\n\n## References\n");
+    out.push_str("\n\n## Links\n");
     for (i, url) in refs.urls.iter().enumerate() {
         out.push_str(&format!("\n[^{}]: {url}", base + i + 1));
     }
@@ -316,14 +316,14 @@ mod tests {
         let (first, last) = to_citations_after("[a](https://a.com)", None, 0);
         assert_eq!(
             (first.as_str(), last),
-            ("a[^1]\n\n## References\n\n[^1]: https://a.com", 1)
+            ("a[^1]\n\n## Links\n\n[^1]: https://a.com", 1)
         );
         let (second, last) =
             to_citations_after("x[^4] [b](https://b.com) [a](https://a.com)", None, last);
         assert_eq!(
             (second.as_str(), last),
             (
-                "x[^4] b[^5] a[^6]\n\n## References\n\n[^5]: https://b.com\n[^6]: https://a.com",
+                "x[^4] b[^5] a[^6]\n\n## Links\n\n[^5]: https://b.com\n[^6]: https://a.com",
                 6
             )
         );
@@ -338,7 +338,7 @@ mod tests {
         let md = "See [Rust](https://rust-lang.org) and [docs](https://doc.rust-lang.org).\n\nAgain [the site](https://rust-lang.org).";
         assert_eq!(
             to_citations(md, None),
-            "See Rust[^1] and docs[^2].\n\nAgain the site[^1].\n\n## References\n\n[^1]: https://rust-lang.org\n[^2]: https://doc.rust-lang.org"
+            "See Rust[^1] and docs[^2].\n\nAgain the site[^1].\n\n## Links\n\n[^1]: https://rust-lang.org\n[^2]: https://doc.rust-lang.org"
         );
     }
 
@@ -348,7 +348,7 @@ mod tests {
             "![Logo](https://a.com/l.png)\n\n[![Shot](https://a.com/s.png)](https://a.com/page)";
         assert_eq!(
             to_citations(md, None),
-            "![Logo][^1]\n\n![Shot][^2][^3]\n\n## References\n\n[^1]: https://a.com/l.png\n[^2]: https://a.com/s.png\n[^3]: https://a.com/page"
+            "![Logo][^1]\n\n![Shot][^2][^3]\n\n## Links\n\n[^1]: https://a.com/l.png\n[^2]: https://a.com/s.png\n[^3]: https://a.com/page"
         );
     }
 
@@ -357,7 +357,7 @@ mod tests {
         let md = "Jump to [Intro](#intro), note [[1]](https://w.org/wiki/X#cite-1), [run](JavaScript:void(0)), [other](https://w.org/wiki/Y#top).";
         assert_eq!(
             to_citations(md, Some("https://w.org/wiki/X")),
-            "Jump to Intro, note [1], run, other[^1].\n\n## References\n\n[^1]: https://w.org/wiki/Y#top"
+            "Jump to Intro, note [1], run, other[^1].\n\n## Links\n\n[^1]: https://w.org/wiki/Y#top"
         );
     }
 
@@ -366,7 +366,7 @@ mod tests {
         let md = "Use `[a](b)` here.\n\n```md\n[x](https://x.com)\n```\n\n~~~\n```\n[y](https://y.com)\n~~~\n\n[z](https://z.com)";
         assert_eq!(
             to_citations(md, None),
-            "Use `[a](b)` here.\n\n```md\n[x](https://x.com)\n```\n\n~~~\n```\n[y](https://y.com)\n~~~\n\nz[^1]\n\n## References\n\n[^1]: https://z.com"
+            "Use `[a](b)` here.\n\n```md\n[x](https://x.com)\n```\n\n~~~\n```\n[y](https://y.com)\n~~~\n\nz[^1]\n\n## Links\n\n[^1]: https://z.com"
         );
     }
 
@@ -375,7 +375,7 @@ mod tests {
         let md = "````\n```\n[in](https://in.com)\n```\n[in2](https://in2.com)\n````\n  ~~~\n[t](https://t.com)\n  ~~~~\n```inline``` and [a](https://a.com)";
         assert_eq!(
             to_citations(md, None),
-            "````\n```\n[in](https://in.com)\n```\n[in2](https://in2.com)\n````\n  ~~~\n[t](https://t.com)\n  ~~~~\n```inline``` and a[^1]\n\n## References\n\n[^1]: https://a.com"
+            "````\n```\n[in](https://in.com)\n```\n[in2](https://in2.com)\n````\n  ~~~\n[t](https://t.com)\n  ~~~~\n```inline``` and a[^1]\n\n## Links\n\n[^1]: https://a.com"
         );
     }
 
@@ -384,7 +384,7 @@ mod tests {
         let md = "[a](https://a.com)\n\n~~~~\n[b](https://b.com)\n~~~";
         assert_eq!(
             to_citations(md, None),
-            "a[^1]\n\n~~~~\n[b](https://b.com)\n~~~\n~~~~\n\n## References\n\n[^1]: https://a.com"
+            "a[^1]\n\n~~~~\n[b](https://b.com)\n~~~\n~~~~\n\n## Links\n\n[^1]: https://a.com"
         );
     }
 
@@ -393,7 +393,7 @@ mod tests {
         let md = "[docs](https://d.com)(PDF), ![i](https://i.com/i.png)(x), [[1]](#n)(y)";
         assert_eq!(
             to_citations(md, None),
-            "docs[^1]\\(PDF), ![i][^2]\\(x), [1]\\(y)\n\n## References\n\n[^1]: https://d.com\n[^2]: https://i.com/i.png"
+            "docs[^1]\\(PDF), ![i][^2]\\(x), [1]\\(y)\n\n## Links\n\n[^1]: https://d.com\n[^2]: https://i.com/i.png"
         );
     }
 
@@ -402,7 +402,7 @@ mod tests {
         let md = "[](https://e.com): starts\n[## Title](https://t.com)\n  [> q](https://q.com)\n[1. One](https://o.com)\n[- item](https://i.com)\nmid [## x](https://x.com) [2024 results](https://r.com)";
         assert_eq!(
             to_citations(md, None),
-            "[^1]\\: starts\n\\## Title[^2]\n  \\> q[^3]\n1\\. One[^4]\n\\- item[^5]\nmid ## x[^6] 2024 results[^7]\n\n## References\n\n[^1]: https://e.com\n[^2]: https://t.com\n[^3]: https://q.com\n[^4]: https://o.com\n[^5]: https://i.com\n[^6]: https://x.com\n[^7]: https://r.com"
+            "[^1]\\: starts\n\\## Title[^2]\n  \\> q[^3]\n1\\. One[^4]\n\\- item[^5]\nmid ## x[^6] 2024 results[^7]\n\n## Links\n\n[^1]: https://e.com\n[^2]: https://t.com\n[^3]: https://q.com\n[^4]: https://o.com\n[^5]: https://i.com\n[^6]: https://x.com\n[^7]: https://r.com"
         );
     }
 
@@ -411,7 +411,7 @@ mod tests {
         let md = "Page note[^1] and [^x] [^18446744073709551615] and [link](https://l.com).\n\n[^1]: The page own footnote.\n\n```\n[^9]\n```";
         assert_eq!(
             to_citations(md, None),
-            "Page note[^1] and [^x] [^18446744073709551615] and link[^2].\n\n[^1]: The page own footnote.\n\n```\n[^9]\n```\n\n## References\n\n[^2]: https://l.com"
+            "Page note[^1] and [^x] [^18446744073709551615] and link[^2].\n\n[^1]: The page own footnote.\n\n```\n[^9]\n```\n\n## Links\n\n[^2]: https://l.com"
         );
     }
 
@@ -420,7 +420,7 @@ mod tests {
         let md = "| [Rust](https://en.wikipedia.org/wiki/Rust_(language)) | [b](<https://b.com/x> \"Title\") |\n\n[not a link] (x) \\[esc](https://e.com) [open(https://o.com)";
         assert_eq!(
             to_citations(md, None),
-            "| Rust[^1] | b[^2] |\n\n[not a link] (x) \\[esc](https://e.com) [open(https://o.com)\n\n## References\n\n[^1]: https://en.wikipedia.org/wiki/Rust_(language)\n[^2]: https://b.com/x"
+            "| Rust[^1] | b[^2] |\n\n[not a link] (x) \\[esc](https://e.com) [open(https://o.com)\n\n## Links\n\n[^1]: https://en.wikipedia.org/wiki/Rust_(language)\n[^2]: https://b.com/x"
         );
     }
 
@@ -446,7 +446,7 @@ mod tests {
         let md = "Text ([a](https://a.com and more) here) [b](https://b.com)";
         assert_eq!(
             to_citations(md, None),
-            "Text ([a](https://a.com and more) here) b[^1]\n\n## References\n\n[^1]: https://b.com"
+            "Text ([a](https://a.com and more) here) b[^1]\n\n## Links\n\n[^1]: https://b.com"
         );
     }
 

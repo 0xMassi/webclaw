@@ -23,12 +23,12 @@ ROUNDS = {"html": 3, "url": 1}
 LINK = re.compile(r'!?\[((?:[^\[\]]|\[(?:[^\[\]]|\[[^\]]*\])*\])*)\]\(((?:[^()\s]|\([^()]*\))*)(?:\s+"([^"]*)")?\)')
 FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.M | re.S)
 INLINE_CODE = re.compile(r"`[^`\n]*`")
-STYLE = {"webclaw": (re.compile(r"^\[\^(\d+)\]: (\S+)(.*)$", re.M), re.compile(r"\[\^(\d+)\]"), "{}[^{}]"),
-         "crawl4ai": (re.compile(r"^⟨(\d+)⟩ (\S+)(.*)$", re.M), re.compile(r"⟨(\d+)⟩"), "{}⟨{}⟩")}
+STYLE = {"webclaw": (re.compile(r"^\[\^(\d+)\]: (\S+)(.*)$", re.M), re.compile(r"\[\^(\d+)\]"), "{}[^{}]", "## Links\n"),
+         "crawl4ai": (re.compile(r"^⟨(\d+)⟩ (\S+)(.*)$", re.M), re.compile(r"⟨(\d+)⟩"), "{}⟨{}⟩", "## References\n")}
 
 
 def split_refs(arm, cited):
-    head, sep, refs = cited.rpartition("## References\n")
+    head, sep, refs = cited.rpartition(STYLE[arm][3])
     if not sep:
         return cited, []
     entries = []
@@ -53,7 +53,7 @@ def links(plain):
 
 def score(arm, plain, cited):
     body, entries = split_refs(arm, cited)
-    _, mark, cite = STYLE[arm]
+    _, mark, cite, _ = STYLE[arm]
     numbers = dict((u, n) for n, u in reversed(entries))
     found = links(plain)
     page_links = [(t, u) for image, t, u in found if not image]

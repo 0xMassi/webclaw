@@ -1011,7 +1011,7 @@ mod tests {
         for text in [&resp["markdown"], &resp["content"]["markdown"]] {
             assert_eq!(
                 text.as_str().unwrap(),
-                "See docs[^1].\n\n## References\n\n[^1]: https://d.com"
+                "See docs[^1].\n\n## Links\n\n[^1]: https://d.com"
             );
         }
         assert_eq!(resp["url"], "https://x");

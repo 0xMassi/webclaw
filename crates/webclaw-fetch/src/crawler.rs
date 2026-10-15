@@ -403,10 +403,11 @@ impl Crawler {
     /// Crawl starting from `start_url`, returning results for every page visited.
     ///
     /// A worker pool keeps up to `config.concurrency` fetches in flight and
-    /// starts the next URL from a FIFO frontier as soon as one finishes, so the
-    /// crawl stays roughly breadth-first without waiting for the slowest page
-    /// of each depth. With `config.query` the next URL is the best scored one
-    /// instead. Links come from the whole fetched page. With
+    /// starts the next URL from a FIFO frontier as soon as one finishes and its
+    /// host's [`CrawlConfig::delay`] has passed, so the crawl stays roughly
+    /// breadth-first without waiting for the slowest page of each depth. A URL
+    /// whose host must still wait gives way to the next URL on a host that is
+    /// free. With `config.query` the next URL is the best scored one instead. Links come from the whole fetched page. With
     /// `respect_robots`, redirects are not followed blindly: each `Location`
     /// goes back through the scope and robots.txt checks like any link.
     ///
@@ -998,7 +999,6 @@ impl Crawler {
     }
 }
 
-/// Canonical origin string for comparing same-origin: "scheme://host[:port]".
 const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
 // ponytail: a crawl waiting for a host checks its cancel flag this often; wake it through a Notify if 100 ms is too slow.
 const CANCEL_POLL: Duration = Duration::from_millis(100);
@@ -1202,6 +1202,7 @@ async fn fetch_page(
     }
 }
 
+/// Canonical origin string for comparing same-origin: "scheme://host[:port]".
 pub(crate) fn origin_key(url: &Url) -> String {
     let port_suffix = match url.port() {
         Some(p) => format!(":{p}"),

@@ -1,9 +1,10 @@
 """URL discovery: webclaw --map with and without the Common Crawl index against the other tools' URL seeders.
 
 usage: url_seeding.py <label>
-Each arm lists one site's URLs once. Its output is kept in .work/url-seeding-out/<site>/<arm>.json and reused on
-later runs, so a rerun only rescores and never queries the index again; delete that directory (or one file) to
-measure again. A seeded sample of each arm's URLs is fetched once to check it answers 200 with HTML; those checks
+Each arm lists one site's URLs once. Its output is kept in .work/url-seeding-out/<label>/<site>/<arm>.json and
+reused by a rerun with the same label, which then only rescores and never queries the index again; a new label (or
+deleting that directory) measures again, so numbers from an older build never carry over. The arms without the index
+run first; then every index arm of both tools runs in one stretch, site by site, alternating which tool goes first. A seeded sample of each arm's URLs is fetched once to check it answers 200 with HTML; those checks
 are kept in .work/url-seeding-out/live.json. Runs in the Scrapling venv for curl_cffi, which some sites (Hacker News)
 need before they answer a script at all.
 """
@@ -50,7 +51,7 @@ QUERIES = [
 ]
 SAMPLE = 20
 REFUSED = {0, 403, 419, 429, 503}
-ARM_TIMEOUT = 900
+ARM_TIMEOUT = 300
 
 
 def key(url):
@@ -92,19 +93,24 @@ def run_other(arm, site, path):
     return json.loads(path.read_text()) if path.exists() else {"urls": [], "seconds": 0, "error": "no output"}
 
 
-def discover():
+def discover(run):
     found = {}
-    for site in SITES:
-        (OUT / site).mkdir(parents=True, exist_ok=True)
-        for arm in [*WEBCLAW, *OTHERS]:
-            path = OUT / site / f"{arm}.json"
-            if not path.exists():
-                print(f"{site} {arm} ...", file=sys.stderr, flush=True)
-                result = run_webclaw(arm, site) if arm in WEBCLAW else run_other(arm, site, path)
-                path.write_text(json.dumps(result))
-                if arm in INDEX_ARMS:
-                    time.sleep(5)
-            found[site, arm] = json.loads(path.read_text())
+    plain = [a for a in [*WEBCLAW, *OTHERS] if a not in INDEX_ARMS]
+    index = [("webclaw-cc", "crawl4ai-cc"), ("webclaw-sitemap+cc", "crawl4ai-sitemap+cc")]
+    order = [(site, arm) for site in SITES for arm in plain]
+    for i, site in enumerate(SITES):
+        for pair in index:
+            order += [(site, arm) for arm in (pair if i % 2 == 0 else pair[::-1])]
+    for site, arm in order:
+        path = run / site / f"{arm}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            print(f"{site} {arm} ...", file=sys.stderr, flush=True)
+            result = run_webclaw(arm, site) if arm in WEBCLAW else run_other(arm, site, path)
+            path.write_text(json.dumps(result))
+            if arm in INDEX_ARMS:
+                time.sleep(5)
+        found[site, arm] = json.loads(path.read_text())
     return found
 
 
@@ -156,23 +162,23 @@ def in_scope(url, site):
     return bool(host) and bare(host) == bare(site)
 
 
-def queries():
+def queries(run, found):
     rows = []
-    env = {**os.environ, "WEBCLAW_CACHE_DIR": str(OUT / "query-cache")}
     for site, question, target in QUERIES:
-        path = OUT / site / "query.json"
+        path = run / site / "query.json"
         if not path.exists():
-            ranks = {}
-            for name, extra in (("plain", []), ("query", ["--query", question])):
-                cmd = [os.environ["WEBCLAW_BIN"], f"https://{site}/", "--map", "-f", "json", "--cache",
-                       "--map-source", "sitemap,cc", *extra]
-                try:
-                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=ARM_TIMEOUT, env=env)
-                except subprocess.TimeoutExpired:
-                    r = subprocess.CompletedProcess(cmd, 1, "", "")
-                keys = [key(e["url"]) for e in json.loads(r.stdout)] if r.stdout.strip().startswith("[") else []
-                ranks[name] = keys.index(target) + 1 if target in keys else None
-                ranks[f"{name}_urls"] = len(keys)
+            plain = [key(u) for u in found[site, "webclaw-sitemap+cc"]["urls"]]
+            ranks = {"plain": plain.index(target) + 1 if target in plain else None, "plain_urls": len(plain)}
+            cmd = [os.environ["WEBCLAW_BIN"], f"https://{site}/", "--map", "-f", "json",
+                   "--map-source", "sitemap,cc", "--query", question]
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=ARM_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                r = subprocess.CompletedProcess(cmd, 1, "", "")
+            keys = [key(e["url"]) for e in json.loads(r.stdout)] if r.stdout.strip().startswith("[") else []
+            ranks["query"] = keys.index(target) + 1 if target in keys else None
+            ranks["query_urls"] = len(keys)
+            time.sleep(5)
             path.write_text(json.dumps(ranks))
         rows.append({"site": site, "question": question, "target": target, **json.loads(path.read_text())})
     return rows
@@ -221,7 +227,8 @@ def summary(label, rows, query_rows):
              "`with a query string` counts in-scope URLs with a `?` part, which in the index are often the same page "
              "with a tracking or search parameter. "
              "Times are wall clock for one cold run; the Common Crawl index is a shared public service and its "
-             "answer times vary from run to run.", "",
+             "answer times vary from run to run, so the index arms of both tools run in one stretch, site by site, "
+             f"alternating which tool goes first. An arm that gives no answer in {ARM_TIMEOUT} s is stopped.", "",
              "Totals over all sites:", "",
              "| arm | URLs | dups | in scope | with a query string | live (sampled) | est. live | of union (median) | seconds (median) | errors |",
              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
@@ -251,21 +258,23 @@ def summary(label, rows, query_rows):
     errors = [r for r in rows if r["error"]]
     if errors:
         lines += ["", "Errors:", ""] + [f"- {r['site']} {r['arm']}: {r['error']}" for r in errors]
-    lines += ["", "Rank of the page that answers a question in `webclaw --map --map-source sitemap,cc`, without and "
-              "with `--query` (Crawl4AI ranks by a query only after fetching the `<head>` of every URL, so it has "
-              "no row here):", "",
-              "| site | question | target | URLs | rank without | rank with --query |", "|---|---|---|---:|---:|---:|"]
+    lines += ["", "Rank of the page that answers a question in `webclaw --map --map-source sitemap,cc`, without "
+              "`--query` (the arm above) and with it (a second run, so the index may answer differently; Crawl4AI "
+              "ranks by a query only after fetching the `<head>` of every URL, so it has no row here):", "",
+              "| site | question | target | URLs without | rank without | URLs with | rank with --query |",
+              "|---|---|---|---:|---:|---:|---:|"]
     for q in query_rows:
-        lines.append(f"| {q['site']} | {q['question']} | {q['target']} | {q.get('query_urls', 0):,} | "
-                     f"{q.get('plain') or 'absent'} | {q.get('query') or 'absent'} |")
+        lines.append(f"| {q['site']} | {q['question']} | {q['target']} | {q.get('plain_urls', 0):,} | "
+                     f"{q.get('plain') or 'absent'} | {q.get('query_urls', 0):,} | {q.get('query') or 'absent'} |")
     return "\n".join(lines) + "\n"
 
 
 def main(label):
     res = ROOT / "results" / label
     res.mkdir(parents=True, exist_ok=True)
-    found = discover()
-    query_rows = queries()
+    run = OUT / label
+    found = discover(run)
+    query_rows = queries(run, found)
     samples, cache = verify(found)
     rows = score(found, samples, cache)
     (res / "url-seeding-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows + query_rows))

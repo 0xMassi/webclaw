@@ -1,9 +1,13 @@
-import json, os, shutil, statistics, subprocess, sys, tempfile, time
+import json, os, shutil, statistics, subprocess, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
 ARMS = {"webclaw": "venv-base", "scrapling": "venv-scrapling", "crawl4ai": "venv-crawl4ai"}
+KEEPERS = {"scrapling-restore": "venv-scrapling", "scrapling-cookies": "venv-scrapling",
+           "crawl4ai-state": "venv-crawl4ai"}
+CRAWL_URL = "https://books.toscrape.com/"
+CRAWL_PAGES = 50
 RUNS = int(os.environ.get("PROFILE_RUNS", "5"))
 TIMED_URL = "https://quotes.toscrape.com/js/"
 STORAGE_URL = "https://example.com/"
@@ -40,13 +44,9 @@ GET_STORAGE = [{"type": "executeJavascript", "code": (
 
 
 def page(arm, profile, url, steps=None, hold=0, background=False):
-    steps_file = "-"
-    if steps:
-        fd, steps_file = tempfile.mkstemp(suffix=".json", dir=WORK)
-        os.write(fd, json.dumps(steps).encode())
-        os.close(fd)
-    cmd = [str(WORK / ARMS[arm] / "bin/python"), str(ROOT / "scripts/browser_profile_arms.py"), arm,
-           str(profile) if profile else "-", url, steps_file] + ([str(hold)] if hold else [])
+    cmd = [str(WORK / {**ARMS, **KEEPERS}[arm] / "bin/python"), str(ROOT / "scripts/browser_profile_arms.py"),
+           arm, str(profile) if profile else "-", url, json.dumps(steps) if steps else "-"]
+    cmd += [str(hold)] if hold else []
     if background:
         return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     t0 = time.perf_counter()
@@ -124,6 +124,26 @@ def timing(arm, rows):
     print(json.dumps(row), flush=True)
 
 
+def crawl(rows):
+    times = {"none": [], "fresh": [], "warm": []}
+    warm = fresh("webclaw", "crawl-warm")
+    pages = {}
+    for i in range(3):
+        for kind in times:
+            cmd = [os.environ["WEBCLAW_BIN"], CRAWL_URL, "--crawl", "--depth", "2", "--max-pages", str(CRAWL_PAGES),
+                   "-f", "jsonl"]
+            if kind != "none":
+                cmd += ["--browser-profile", str(fresh("webclaw", f"crawl-{i}") if kind == "fresh" else warm)]
+            t0 = time.perf_counter()
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+            times[kind].append(1000 * (time.perf_counter() - t0))
+            pages[kind] = sum(1 for line in r.stdout.splitlines() if line.startswith("{"))
+    row = {"test": "crawl", "arm": "webclaw", "pages": pages,
+           **{f"{k}_ms": round(statistics.median(v)) for k, v in times.items()}}
+    rows.append(row)
+    print(json.dumps(row), flush=True)
+
+
 def fresh_path(arm):
     return WORK / "profile-out" / arm / "fresh-0"
 
@@ -136,7 +156,9 @@ def lock(arm, rows):
     out, err = holder.communicate(timeout=300)
     first = parse(out, err)
     row = {"test": "lock", "arm": arm, "first_ok": not first["error"],
-           "second": "refused" if second["error"] else "ran on the profile in use",
+           "second": "refused" if second["error"] else
+                     "browser refused, HTTP page kept" if "in use by another browser" in second.get("log", "") else
+                     "ran on the profile in use",
            "message": " ".join((second["error"] or "").replace(str(profile), "DIR").split())[:240],
            "second_ms": round(second["ms"] or 0)}
     rows.append(row)
@@ -156,6 +178,10 @@ def main(label):
         storage(arm, rows)
         timing(arm, rows)
         lock(arm, rows)
+    for arm in KEEPERS:
+        logins(arm, rows)
+        storage(arm, rows)
+    crawl(rows)
     (res / "profile-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     by = lambda test: [r for r in rows if r["test"] == test]
     lines = [f"# Browser profile {label}", "",
@@ -173,6 +199,12 @@ def main(label):
               f"{RUNS + 1} renders |", "| --- | --- | --- | --- | --- | --- |"]
     lines += [f"| {r['arm']} | {r['none_ms']} ms | {r['fresh_ms']} ms | {r['warm_ms']} ms | {r['fresh_mb']} MB | "
               f"{r['warm_mb']} MB |" for r in by("timing")]
+    for r in by("crawl"):
+        lines += ["", f"Median wall time of `webclaw {CRAWL_URL} --crawl --depth 2 --max-pages {CRAWL_PAGES}`, 3 runs: "
+                  "with a profile every page loads in the browser.", "",
+                  "| no profile | new profile | warm profile | pages |", "| --- | --- | --- | --- |",
+                  f"| {r['none_ms']} ms | {r['fresh_ms']} ms | {r['warm_ms']} ms | "
+                  f"{r['pages']['none']} / {r['pages']['fresh']} / {r['pages']['warm']} |"]
     lines += ["", "A second process on a profile while the first still has it open.", "",
               "| tool | second process | message |", "| --- | --- | --- |"]
     lines += [f"| {r['arm']} | {r['second']} | {r['message'].replace('|', '/')} |" for r in by("lock")]

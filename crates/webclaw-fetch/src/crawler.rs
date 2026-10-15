@@ -1917,7 +1917,6 @@ mod tests {
                 crate::render::BrowserSource::Profile {
                     proxy: None,
                     dir: "/nonexistent/webclaw-profile".into(),
-                    solve: false,
                 },
                 Duration::from_secs(1),
             )),

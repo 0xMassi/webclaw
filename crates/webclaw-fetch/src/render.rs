@@ -204,6 +204,10 @@ impl NetworkCapture {
             && self.pattern.as_ref().is_none_or(|p| p.is_match(url))
     }
 
+    fn keeps(&self, event: &EventResponseReceived) -> bool {
+        self.wants(&event.r#type, &event.response.url) && private_address(&event.response).is_none()
+    }
+
     async fn collect(
         &self,
         page: &chromiumoxide::Page,
@@ -217,7 +221,7 @@ impl NetworkCapture {
             }
             let mut kept = Vec::new();
             while let Some(Some(event)) = received.next().now_or_never() {
-                if kept.len() < MAX_RESPONSES && self.wants(&event.r#type, &event.response.url) {
+                if kept.len() < MAX_RESPONSES && self.keeps(&event) {
                     kept.push(event);
                 }
             }
@@ -2528,6 +2532,40 @@ mod tests {
             .unwrap()
             .headers(&sent);
         assert_eq!(all.len(), 6);
+    }
+
+    #[test]
+    fn responses_from_private_addresses_are_not_kept() {
+        let response = |ip: &str| {
+            serde_json::from_value::<
+                chromiumoxide::cdp::browser_protocol::network::EventResponseReceived,
+            >(serde_json::json!({
+                "requestId": "1",
+                "loaderId": "1",
+                "timestamp": 1.0,
+                "type": "XHR",
+                "hasExtraInfo": false,
+                "response": {
+                    "url": "https://a.example/api",
+                    "status": 200,
+                    "statusText": "",
+                    "headers": {},
+                    "mimeType": "application/json",
+                    "charset": "",
+                    "connectionReused": false,
+                    "connectionId": 1.0,
+                    "remoteIPAddress": ip,
+                    "encodedDataLength": 10.0,
+                    "securityState": "secure"
+                }
+            }))
+            .unwrap()
+        };
+        let capture = super::NetworkCapture::new(None, None, false).unwrap();
+        assert!(capture.keeps(&response("93.184.215.14")));
+        assert!(!capture.keeps(&response("127.0.0.1")));
+        assert!(!capture.keeps(&response("[::1]")));
+        assert!(!capture.keeps(&response("10.1.2.3")));
     }
 
     #[test]

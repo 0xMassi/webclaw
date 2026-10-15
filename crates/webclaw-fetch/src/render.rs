@@ -2303,17 +2303,27 @@ async fn chrome_agent(executable: &std::path::Path) -> Option<String> {
     if !cfg!(any(target_os = "macos", target_os = "linux")) {
         return None;
     }
-    let mut command = tokio::process::Command::new(executable);
-    command
+    use tokio::io::AsyncReadExt;
+    let mut child = tokio::process::Command::new(executable)
         .arg("--version")
         .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .kill_on_drop(true);
-    let output = tokio::time::timeout(Duration::from_secs(10), command.output())
-        .await
-        .ok()?
+        .kill_on_drop(true)
+        .spawn()
         .ok()?;
-    agent_for_version(&String::from_utf8_lossy(&output.stdout))
+    let mut stdout = child.stdout.take()?;
+    let mut printed = Vec::new();
+    let finished = tokio::time::timeout(Duration::from_secs(2), async {
+        stdout.read_to_end(&mut printed).await?;
+        child.wait().await
+    })
+    .await;
+    if !matches!(finished, Ok(Ok(_))) {
+        let _ = child.kill().await;
+        return None;
+    }
+    agent_for_version(&String::from_utf8_lossy(&printed))
 }
 
 fn agent_for_version(version: &str) -> Option<String> {
@@ -4829,6 +4839,30 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[tokio::test]
+    async fn a_version_that_hangs_costs_two_seconds_and_leaves_no_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid = dir.path().join("pid");
+        let hanging = wrapper(
+            dir.path(),
+            "chrome",
+            &format!("echo $$ > {}; exec sleep 30", pid.display()),
+        );
+        let started = std::time::Instant::now();
+        assert_eq!(super::chrome_agent(&hanging).await, None);
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_secs(3), "{took:?}");
+        let pid = std::fs::read_to_string(&pid).unwrap();
+        let alive = std::process::Command::new("kill")
+            .args(["-0", pid.trim()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(!alive, "the --version process {} still runs", pid.trim());
     }
 
     #[test]

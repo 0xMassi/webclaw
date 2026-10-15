@@ -31,6 +31,8 @@ def webclaw():
            "--concurrency", str(CONCURRENCY), "--delay", "0", "--path-prefix", PREFIX, "-f", "jsonl"]
     if QUESTION:
         cmd += ["--query", QUESTION]
+    if ARM == "webclaw-query-stop":
+        cmd += ["--stop-when-answered"]
     if os.environ.get("QC_CACHE"):
         cmd += ["--cache"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
@@ -99,8 +101,8 @@ async def crawl4ai_deep(best_first):
     return pages, [p["url"] for p in ranked], 0
 
 
-async def crawl4ai_adaptive():
-    from crawl4ai import AdaptiveConfig, AdaptiveCrawler, AsyncWebCrawler
+async def crawl4ai_adaptive(docs):
+    from crawl4ai import AdaptiveConfig, AdaptiveCrawler, AsyncWebCrawler, CacheMode
     from crawl4ai.async_configs import CrawlerRunConfig, LinkPreviewConfig
 
     previews = 0
@@ -113,7 +115,8 @@ async def crawl4ai_adaptive():
                                                   include_patterns=[f"*{HOST}{PREFIX}*"], query=query,
                                                   concurrency=5, timeout=self.config.link_preview_timeout,
                                                   max_links=50, verbose=False),
-            score_links=True, check_robots_txt=True)
+            score_links=True, check_robots_txt=True,
+            cache_mode=CacheMode.ENABLED if os.environ.get("QC_CACHE") else CacheMode.BYPASS)
         try:
             result = await self.crawler.arun(url=url, config=cfg)
             if hasattr(result, "_results") and result._results:
@@ -129,7 +132,8 @@ async def crawl4ai_adaptive():
             return None
 
     AdaptiveCrawler._crawl_with_preview = scoped_preview
-    config = AdaptiveConfig(max_pages=BUDGET, max_depth=BUDGET, strategy="statistical")
+    tuned = dict(confidence_threshold=0.8, top_k_links=5, min_gain_threshold=0.05) if docs else {}
+    config = AdaptiveConfig(max_pages=BUDGET, max_depth=BUDGET, strategy="statistical", **tuned)
     async with AsyncWebCrawler() as crawler:
         adaptive = AdaptiveCrawler(crawler, config)
         await adaptive.digest(start_url=SEED, query=QUESTION)
@@ -140,10 +144,12 @@ async def crawl4ai_adaptive():
 ARMS = {
     "webclaw-bfs": webclaw,
     "webclaw-query": webclaw,
+    "webclaw-query-stop": webclaw,
     "scrapling-bfs": scrapling,
     "crawl4ai-bfs": lambda: asyncio.run(crawl4ai_deep(False)),
     "crawl4ai-best-first": lambda: asyncio.run(crawl4ai_deep(True)),
-    "crawl4ai-adaptive": lambda: asyncio.run(crawl4ai_adaptive()),
+    "crawl4ai-adaptive": lambda: asyncio.run(crawl4ai_adaptive(False)),
+    "crawl4ai-adaptive-docs": lambda: asyncio.run(crawl4ai_adaptive(True)),
 }
 pages, ranked, previews = ARMS[ARM]()
 json.dump({"pages": pages, "ranked": ranked, "previews": previews, "seconds": time.time() - START}, open(OUT, "w"))

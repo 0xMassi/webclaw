@@ -860,6 +860,7 @@ impl WebclawMcp {
             use_sitemap: params.use_sitemap.unwrap_or(false),
             respect_robots: !params.ignore_robots.unwrap_or(false),
             query: params.query.clone(),
+            stop_when_answered: params.stop_when_answered.unwrap_or(false),
             ..Default::default()
         };
 

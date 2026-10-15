@@ -77,7 +77,9 @@ pub enum Action {
     /// Run JavaScript, an expression, statements whose last one gives the
     /// value, or a function body with `return`, with `await` allowed
     /// anywhere, and keep that value, awaited when it is a promise, as JSON.
-    /// Top-level `let` and `const` names may be declared again by a later step.
+    /// A later step may repeat the same top-level `let`, `const` or `class`
+    /// declaration, but not switch its kind or reuse a name the page's own
+    /// scripts declare.
     /// The page turns the value into JSON itself, and a value longer than
     /// what is left of the 1 MiB all such steps share fails the step there.
     ExecuteJavascript { code: String },

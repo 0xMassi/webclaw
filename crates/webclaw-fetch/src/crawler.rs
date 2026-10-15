@@ -125,8 +125,8 @@ pub struct CrawlConfig {
     /// With a [`query`](Self::query), stop starting new pages once a page
     /// rated at least 0.8 has been fetched and the 8 pages fetched after it
     /// rated no higher. Pages already in flight still finish, and
-    /// [`max_pages`](Self::max_pages) still caps the crawl. Without a query
-    /// it does nothing.
+    /// [`max_pages`](Self::max_pages) still caps the crawl. [`Crawler::new`]
+    /// refuses it without a query that has a letter or digit.
     pub stop_when_answered: bool,
 }
 
@@ -280,6 +280,13 @@ impl Crawler {
             validate_glob(pat)?;
         }
 
+        let ask = Ask::new(config.query.as_deref());
+        if config.stop_when_answered && ask.is_none() {
+            return Err(FetchError::Build(
+                "stopping when answered needs a question with a letter or digit".into(),
+            ));
+        }
+
         let client = Arc::new(FetchClient::new(config.fetch.clone())?);
         let page_client = if config.respect_robots && config.fetch.follow_redirects {
             Arc::new(FetchClient::new(FetchConfig {
@@ -294,7 +301,7 @@ impl Crawler {
             client,
             page_client,
             follow_redirects: config.fetch.follow_redirects,
-            ask: Ask::new(config.query.as_deref()),
+            ask,
             config,
             seed_origin,
             seed_scheme: seed.scheme().to_string(),
@@ -1811,6 +1818,23 @@ mod tests {
             .await
     }
 
+    #[test]
+    fn stop_when_answered_is_refused_without_a_question() {
+        let config = |query: Option<&str>| CrawlConfig {
+            query: query.map(String::from),
+            stop_when_answered: true,
+            ..Default::default()
+        };
+        for query in [None, Some(""), Some("  ?! ")] {
+            let err = Crawler::new("https://example.com/", config(query)).err();
+            assert!(
+                matches!(err, Some(FetchError::Build(ref m)) if m.contains("question")),
+                "{query:?}"
+            );
+        }
+        assert!(Crawler::new("https://example.com/", config(Some("banana"))).is_ok());
+    }
+
     #[tokio::test]
     async fn stop_when_answered_ends_a_query_crawl_eight_pages_after_its_best_page() {
         let full = crawl_library(Some("banana bread recipe"), false).await;
@@ -1819,7 +1843,6 @@ mod tests {
         let urls: Vec<&str> = stopped.pages.iter().map(|p| p.url.as_str()).collect();
         assert_eq!(urls[1], "https://example.com/banana", "{urls:?}");
         assert_eq!(stopped.total, 10, "{urls:?}");
-        assert_eq!(crawl_library(None, true).await.total, 32);
     }
 
     #[tokio::test]

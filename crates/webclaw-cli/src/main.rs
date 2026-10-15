@@ -399,8 +399,9 @@ struct Cli {
     /// this WARC file, the web archive format (ISO 28500), gzipped record by
     /// record when FILE ends in .gz. Works with one URL, several, and
     /// --crawl. Records are written as they arrive, so a stopped crawl keeps
-    /// what it fetched. Pages a browser renders are not in it: use
-    /// --save-mhtml for those
+    /// what it fetched, and a FILE that exists is added to, each run starting
+    /// with its own warcinfo record. Pages a browser renders are not in it:
+    /// use --save-mhtml for those
     #[arg(long, value_name = "FILE", conflicts_with_all = ["cache", "cloud", "stdin", "file", "screenshot", "save_pdf", "save_mhtml", "capture_network"])]
     warc: Option<PathBuf>,
 
@@ -912,6 +913,21 @@ fn check_warc(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
+fn open_warc(path: &Path) -> io::Result<webclaw_fetch::warc::Writer<io::BufWriter<std::fs::File>>> {
+    let gzip = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("gz"));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    webclaw_fetch::warc::Writer::new(
+        io::BufWriter::new(file),
+        gzip,
+        concat!("webclaw/", env!("CARGO_PKG_VERSION")),
+    )
+}
+
 fn warc_archive(path: &Path) -> webclaw_fetch::warc::Archive {
     static ARCHIVE: std::sync::OnceLock<webclaw_fetch::warc::Archive> = std::sync::OnceLock::new();
     ARCHIVE
@@ -920,18 +936,7 @@ fn warc_archive(path: &Path) -> webclaw_fetch::warc::Archive {
                 eprintln!("error: cannot write {}: {e}", path.display());
                 exit(1);
             };
-            let gzip = path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("gz"));
-            let writer = std::fs::File::create(path)
-                .and_then(|file| {
-                    webclaw_fetch::warc::Writer::new(
-                        io::BufWriter::new(file),
-                        gzip,
-                        concat!("webclaw/", env!("CARGO_PKG_VERSION")),
-                    )
-                })
-                .unwrap_or_else(|e| fail(e));
+            let writer = open_warc(path).unwrap_or_else(|e| fail(e));
             // ponytail: one lock, written on the fetching task; a writer thread if a wide crawl waits on it
             let writer = std::sync::Mutex::new(writer);
             let path = path.to_path_buf();
@@ -4206,6 +4211,21 @@ mod tests {
         assert!(saved.is_err());
         assert_eq!(kept, "earlier PDF");
         assert_eq!(leftovers, 1);
+    }
+
+    #[test]
+    fn a_new_run_appends_to_an_existing_warc_with_its_own_warcinfo() {
+        let dir = std::env::temp_dir().join(format!("webclaw-warc-append-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("site.warc");
+        drop(open_warc(&path).unwrap());
+        let earlier = std::fs::read(&path).unwrap();
+        drop(open_warc(&path).unwrap());
+        let file = std::fs::read(&path).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(file.starts_with(&earlier));
+        let text = String::from_utf8_lossy(&file);
+        assert_eq!(text.matches("WARC-Type: warcinfo").count(), 2);
     }
 
     #[test]

@@ -328,7 +328,7 @@ struct Cli {
 
     /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
     /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
     screenshot: Option<PathBuf>,
 
     /// With --screenshot, capture the whole scrollable page
@@ -337,7 +337,7 @@ struct Cli {
 
     /// Save the rendered page as a PDF to this file (- for stdout), every
     /// page of it, as the browser prints it. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
     save_pdf: Option<PathBuf>,
 
     /// With --save-pdf, the paper size
@@ -4002,6 +4002,11 @@ mod tests {
                 &["--metadata"],
                 &["--query", "price"],
                 &["--extract-prompt", "title"],
+                &["--include", "main"],
+                &["--exclude", "nav"],
+                &["--only-main-content"],
+                &["--stdin"],
+                &["--file", "page.html"],
             ] {
                 let mut extra = vec![output, "a.out"];
                 extra.extend_from_slice(other);

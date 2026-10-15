@@ -169,11 +169,18 @@ fn citations(on: Option<bool>, format: &str, chunk: bool) -> Result<bool, String
     Ok(on)
 }
 
-fn cite(extraction: &mut webclaw_core::ExtractionResult) {
-    extraction.content.markdown = webclaw_core::to_citations(
-        &extraction.content.markdown,
-        extraction.metadata.url.as_deref(),
-    );
+async fn cited<T>(mut extraction: T) -> Result<T, String>
+where
+    T: std::borrow::BorrowMut<webclaw_core::ExtractionResult> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let page = extraction.borrow_mut();
+        page.content.markdown =
+            webclaw_core::to_citations(&page.content.markdown, page.metadata.url.as_deref());
+        extraction
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 fn format_page(extraction: webclaw_core::ExtractionResult, format: &str, url: &str) -> String {
@@ -517,7 +524,7 @@ impl WebclawMcp {
             webclaw_core::focus_extraction(&mut extraction, query);
         }
         if params.citations == Some(true) {
-            cite(&mut extraction);
+            extraction = cited(extraction).await?;
         }
         if let Some((size, overlap)) = sizes {
             let (url, markdown) = (params.url.clone(), extraction.content.markdown);
@@ -711,7 +718,7 @@ impl WebclawMcp {
                     webclaw_core::focus_extraction(&mut extraction, query);
                 }
                 if cite_links {
-                    cite(&mut extraction);
+                    extraction = cited(extraction).await?;
                 }
                 if let Some((size, overlap)) = sizes {
                     let (url, markdown) = (params.url.clone(), extraction.content.markdown);
@@ -750,7 +757,12 @@ impl WebclawMcp {
                 if content.is_empty() {
                     Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
                 } else if cite_links && format == "markdown" {
-                    Ok(webclaw_core::to_citations(content, Some(&params.url)))
+                    let (content, url) = (content.to_string(), params.url.clone());
+                    tokio::task::spawn_blocking(move || {
+                        webclaw_core::to_citations(&content, Some(&url))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())
                 } else {
                     Ok(content.to_string())
                 }
@@ -822,12 +834,31 @@ impl WebclawMcp {
                 .map_err(|e| e.to_string())?;
         }
 
+        if cite_links {
+            result = tokio::task::spawn_blocking(move || {
+                let mut last = 0;
+                for page in &mut result.pages {
+                    if let Some(extraction) = page.extraction.as_mut() {
+                        let (markdown, high) = webclaw_core::to_citations_after(
+                            &extraction.content.markdown,
+                            Some(&page.url),
+                            last,
+                        );
+                        extraction.content.markdown = markdown;
+                        last = high;
+                    }
+                }
+                result
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+
         let mut output = format!(
             "Crawled {} pages ({} ok, {} errors, {} disallowed by robots.txt) in {:.1}s\n\n",
             result.total, result.ok, result.errors, result.skipped_by_robots, result.elapsed_secs
         );
 
-        let mut last_citation = 0;
         for page in &result.pages {
             match page.relevance {
                 Some(r) => output.push_str(&format!(
@@ -840,15 +871,6 @@ impl WebclawMcp {
                 let content = match format {
                     "llm" => webclaw_core::to_llm_text(extraction, Some(&page.url)),
                     "text" => extraction.content.plain_text.clone(),
-                    _ if cite_links => {
-                        let (markdown, high) = webclaw_core::to_citations_after(
-                            &extraction.content.markdown,
-                            Some(&page.url),
-                            last_citation,
-                        );
-                        last_citation = high;
-                        markdown
-                    }
                     _ => extraction.content.markdown.clone(),
                 };
                 output.push_str(&content);

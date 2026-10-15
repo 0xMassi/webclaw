@@ -1,0 +1,83 @@
+[
+ {"name": "hn", "url": "https://news.ycombinator.com/", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "top story title", "old": "a.storylink", "new": "span.titleline > a"},
+  {"field": "top story points", "old": "span.score", "new": "span.score"},
+  {"field": "top story site", "old": "span.sitestr", "new": "span.sitestr"}]},
+ {"name": "wiki-python", "url": "https://en.wikipedia.org/wiki/Python_(programming_language)", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "title", "old": "h1#firstHeading", "new": "h1#firstHeading"},
+  {"field": "license", "old": "table.infobox tr:nth-child(10) > td", "new": "table.infobox tr:nth-child(11) > td"},
+  {"field": "first toc entry", "old": "#toc li a", "new": "#vector-toc li:nth-child(2) > a"}]},
+ {"name": "wiki-berlin", "url": "https://en.wikipedia.org/wiki/Berlin", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "mayor", "old": "table.infobox tr:nth-child(11) > td", "new": "table.infobox tr:nth-child(14) > td"},
+  {"field": "elevation", "old": "table.infobox tr:nth-child(15) > td", "new": "table.infobox tr:nth-child(20) > td"},
+  {"field": "population", "old": "table.infobox tr:nth-child(17) > td", "new": "table.infobox tr:nth-child(22) > td"}]},
+ {"name": "gh-rust", "url": "https://github.com/rust-lang/rust", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "description", "old": "span[itemprop=about]", "new": "p.f4.my-3", "also": ["p.f4.mb-3"]},
+  {"field": "stars", "old": "a.social-count.js-social-count", "new": "#repo-stars-counter-star"},
+  {"field": "repo name", "old": "strong[itemprop=name] a", "new": "strong[itemprop=name] a"}]},
+ {"name": "gh-torvalds", "url": "https://github.com/torvalds", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "full name", "old": "span.p-name.vcard-fullname", "new": "span.p-name.vcard-fullname"},
+  {"field": "followers", "old": "a[href*=followers] span.Counter", "new": "a[href*=followers] span.text-bold"},
+  {"field": "location", "old": "li[itemprop=homeLocation] span", "new": "li[itemprop=homeLocation] span"}]},
+ {"name": "pypi-requests", "url": "https://pypi.org/project/requests/", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "name and version", "old": "h1.package-header__name", "new": "h1.package-header__name"},
+  {"field": "summary", "old": "p.package-description__summary", "new": "p.package-description__summary"},
+  {"field": "release date", "old": "p.package-header__date time", "new": "p.package-header__date time"}]},
+ {"name": "py-json", "url": "https://docs.python.org/3/library/json.html", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "title", "old": "h1", "new": "h1"},
+  {"field": "json.dumps signature", "old": "dl.function:nth-of-type(2) > dt", "new": "dl.function:nth-of-type(2) > dt"}]},
+ {"name": "so-sorted", "url": "https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array", "old": "20190601", "new": "20230601", "targets": [
+  {"field": "question title", "old": "#question-header h1 a", "new": "#question-header h1 a"},
+  {"field": "question votes", "old": ".question .js-vote-count", "new": ".question .js-vote-count"},
+  {"field": "asker", "old": ".question .post-signature.owner .user-details a", "new": ".question .post-signature.owner .user-details a"}]},
+ {"name": "imdb-shawshank", "url": "https://www.imdb.com/title/tt0111161/", "old": "20190601", "new": "20251220221500", "targets": [
+  {"field": "title", "old": ".title_wrapper h1", "new": "h1"},
+  {"field": "rating", "old": "span[itemprop=ratingValue]", "new": "[data-testid=hero-rating-bar__aggregate-rating__score] span", "also": ["span.ipc-rating-star--rating"]},
+  {"field": "year", "old": "#titleYear a", "new": "h1 + ul a"},
+  {"field": "director", "old": ".credit_summary_item a", "new": "[data-testid=title-pc-principal-credit] a"}]},
+ {"name": "goodreads-hobbit", "url": "https://www.goodreads.com/book/show/5907.The_Hobbit", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "title", "old": "#bookTitle", "new": "h1[data-testid=bookTitle]"},
+  {"field": "author", "old": ".authorName span", "new": ".ContributorLink__name"},
+  {"field": "rating", "old": "span[itemprop=ratingValue]", "new": ".RatingStatistics__rating"}]},
+ {"name": "arxiv-attention", "url": "https://arxiv.org/abs/1706.03762", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "title", "old": "h1.title", "new": "h1.title"},
+  {"field": "first author", "old": "div.authors a", "new": "div.authors a"},
+  {"field": "subjects", "old": "td.tablecell.subjects", "new": "td.tablecell.subjects"}]},
+ {"name": "mdn-div", "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/div", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "title", "old": "h1", "new": "h1"},
+  {"field": "summary", "old": "#wikiArticle > p", "new": ".section-content p"},
+  {"field": "content categories", "old": ".properties td", "new": ".properties td"}]},
+ {"name": "steam-portal2", "url": "https://store.steampowered.com/app/620/Portal_2/", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "name", "old": ".apphub_AppName", "new": ".apphub_AppName"},
+  {"field": "price", "old": ".game_purchase_price", "new": ".discount_final_price"},
+  {"field": "release date", "old": ".release_date .date", "new": ".release_date .date"}]},
+ {"name": "adafruit-pi4", "url": "https://www.adafruit.com/product/4296", "old": "20190801", "new": "20250601", "targets": [
+  {"field": "name", "old": "h1", "new": "h1"},
+  {"field": "price", "old": "#prod-price", "new": "#prod-price"},
+  {"field": "product id", "old": ".product_id", "new": ".product_id"}]},
+ {"name": "rustdoc-vec", "url": "https://doc.rust-lang.org/std/vec/struct.Vec.html", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "title", "old": "h1.fqn .in-band", "new": "h1"},
+  {"field": "Vec::new signature", "old": "h4#method\\.new > code", "new": "section#method\\.new h4"},
+  {"field": "summary", "old": ".docblock p", "new": ".docblock p"}]},
+ {"name": "npm-react", "url": "https://www.npmjs.com/package/react", "old": "20190601", "new": "20240601", "targets": [
+  {"field": "name", "old": "span.dAyWc", "new": "h1 span"},
+  {"field": "version", "old": "span._3JF9p", "new": "#top span.f5"}]},
+ {"name": "librs-serde", "url": "https://lib.rs/crates/serde", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "description", "old": "header p.desc", "new": "header p.desc"},
+  {"field": "latest version", "old": "#versions th", "new": "#versions th"}]},
+ {"name": "rt-shawshank", "url": "https://www.rottentomatoes.com/m/shawshank_redemption", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "title", "old": "h1.mop-ratings-wrap__title", "new": "h1"},
+  {"field": "tomatometer", "old": "#tomato_meter_link .mop-ratings-wrap__percentage", "new": "media-scorecard rt-text[slot=criticsScore]"},
+  {"field": "synopsis", "old": "#movieSynopsis", "new": "[data-qa=synopsis-value]"}]},
+ {"name": "w3s-div", "url": "https://www.w3schools.com/tags/tag_div.asp", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "title", "old": "h1", "new": "h1"},
+  {"field": "first section heading", "old": "#main h2", "new": "#main h2"}]},
+ {"name": "python-org", "url": "https://www.python.org/", "old": "20190601", "new": "20250601", "targets": [
+  {"field": "latest release", "old": ".download-widget p a", "new": ".download-widget p a"},
+  {"field": "latest news", "old": ".blog-widget li a", "new": ".blog-widget li a"},
+  {"field": "introduction", "old": ".introduction p", "new": ".introduction p"}]},
+ {"name": "amazon-clrs", "url": "https://www.amazon.com/dp/0262033844", "old": "20190601", "new": "20240707093753", "targets": [
+  {"field": "title", "old": "#productTitle", "new": "#productTitle"},
+  {"field": "first author", "old": ".author a.contributorNameID", "new": "#bylineInfo .author a"},
+  {"field": "review count", "old": "#acrCustomerReviewText", "new": "#acrCustomerReviewText"}]}
+]

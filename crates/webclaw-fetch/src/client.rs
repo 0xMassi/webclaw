@@ -70,6 +70,11 @@ pub struct FetchConfig {
     /// their owner only on Unix. Only the HTTP response is kept: rendering a
     /// cached page in the browser still loads its scripts over the network.
     pub cache: Option<std::path::PathBuf>,
+    /// Hand every HTTP response the client receives, with the request that
+    /// asked for it, to this callback, for example to keep them in a WARC
+    /// file with [`crate::warc::Writer`]. Responses answered from `cache`
+    /// are not passed, nor pages a browser loads.
+    pub archive: Option<crate::warc::Archive>,
     /// Render pages that need JavaScript in a browser after fetching them
     /// over HTTP, keeping whichever extraction has more text. `None` never renders.
     #[cfg(feature = "browser")]
@@ -89,6 +94,7 @@ impl Default for FetchConfig {
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
             pdf_mode: PdfMode::default(),
             cache: None,
+            archive: None,
             #[cfg(feature = "browser")]
             render: None,
         }
@@ -163,6 +169,8 @@ pub struct BatchExtractResult {
 struct Response {
     status: u16,
     url: String,
+    version: http::Version,
+    ip: Option<std::net::IpAddr>,
     headers: http::HeaderMap,
     /// Owned as `Vec<u8>` rather than `Bytes` so `into_text` can hand the
     /// allocation straight to `String` instead of copying it (see `into_text`).
@@ -214,6 +222,8 @@ impl Response {
         }
         let status = resp.status().as_u16();
         let url = resp.uri().to_string();
+        let version = resp.version();
+        let ip = resp.remote_addr().map(|addr| addr.ip());
         let headers = resp.headers().clone();
 
         // wreq 6.0.0-rc.29 dropped `Response::chunk()`. Stream post-decompression
@@ -236,6 +246,8 @@ impl Response {
         Ok(Self {
             status,
             url,
+            version,
+            ip,
             headers,
             body: buf,
         })
@@ -287,6 +299,7 @@ impl Response {
 struct ObservedClient {
     client: wreq::Client,
     proxy: Option<String>,
+    sends: Option<http::HeaderMap>,
 }
 impl std::ops::Deref for ObservedClient {
     type Target = wreq::Client;
@@ -325,6 +338,7 @@ pub struct FetchClient {
     /// Ceiling on one complete `fetch`. See [`FetchConfig::total_timeout`].
     total_timeout: Option<Duration>,
     cache: Option<crate::cache::ResponseCache>,
+    archive: Option<crate::warc::Archive>,
     #[cfg(feature = "browser")]
     render: Option<crate::render::RenderConfig>,
     #[cfg(feature = "browser")]
@@ -397,6 +411,10 @@ impl FetchClient {
                     .map(|client| ObservedClient {
                         client,
                         proxy: config.proxy.as_deref().and_then(crate::transfer::authority),
+                        sends: config
+                            .archive
+                            .as_ref()
+                            .map(|_| crate::tls::request_headers(v, &config.headers)),
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -427,6 +445,10 @@ impl FetchClient {
                     .map(|client| ObservedClient {
                         client,
                         proxy: crate::transfer::authority(proxy),
+                        sends: config
+                            .archive
+                            .as_ref()
+                            .map(|_| crate::tls::request_headers(v, &config.headers)),
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -459,6 +481,7 @@ impl FetchClient {
             cloud: None,
             total_timeout: config.total_timeout,
             cache,
+            archive: config.archive.clone(),
             #[cfg(feature = "browser")]
             render: config.render.clone(),
             #[cfg(feature = "browser")]
@@ -553,10 +576,9 @@ impl FetchClient {
         let start = Instant::now();
         let client = self.pick_client(url);
 
-        let mut req = client.get(url);
-        for (k, v) in extra {
-            req = req.header(*k, *v);
-        }
+        #[allow(unused_mut)]
+        let mut sent: Vec<(&str, String)> =
+            extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
         #[cfg(feature = "browser")]
         if let Some(render) = self.render.as_ref().filter(|render| render.solve)
             && let Some((cookies, agent)) = render.pool.clearance(url)
@@ -573,11 +595,17 @@ impl FetchClient {
                 .chain(std::iter::once(cookies.as_str()))
                 .collect::<Vec<_>>()
                 .join("; ");
-            req = req.header("cookie", cookies).header("user-agent", agent);
+            sent.push(("cookie", cookies));
+            sent.push(("user-agent", agent));
+        }
+        let mut req = client.get(url);
+        for (k, v) in &sent {
+            req = req.header(*k, v.as_str());
         }
         let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
         let resp = req.send().await?;
         let response = Response::from_wreq(resp, attempt).await?;
+        self.archive(client, &sent, &response);
         response_to_result(response, start)
     }
 
@@ -699,6 +727,30 @@ impl FetchClient {
         (wait < ceiling).then_some(wait)
     }
 
+    fn archive(&self, client: &ObservedClient, sent: &[(&str, String)], response: &Response) {
+        let Some(archive) = &self.archive else {
+            return;
+        };
+        let mut request_headers = client.sends.clone().unwrap_or_default();
+        for (name, value) in sent {
+            if let (Ok(name), Ok(value)) = (
+                http::header::HeaderName::from_bytes(name.as_bytes()),
+                http::header::HeaderValue::from_str(value),
+            ) {
+                request_headers.insert(name, value);
+            }
+        }
+        (archive.0)(&crate::warc::Exchange {
+            url: &response.url,
+            request_headers: &request_headers,
+            status: response.status,
+            version: response.version,
+            headers: &response.headers,
+            body: &response.body,
+            ip: response.ip,
+        });
+    }
+
     /// Fetch a URL and return the raw, undecoded response body as bytes.
     ///
     /// Unlike [`fetch`](Self::fetch), this does **not** run the body through
@@ -720,6 +772,7 @@ impl FetchClient {
             let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
             let resp = client.get(url).send().await?;
             let response = Response::from_wreq(resp, attempt).await?;
+            self.archive(client, &[], &response);
             Ok((response.status(), response.into_body()))
         })
         .await
@@ -1355,6 +1408,63 @@ mod tests {
         (proxy, hits)
     }
 
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn an_archive_gets_each_response_decoded_with_the_request_headers() {
+        use std::io::Write as _;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            gz.write_all(b"<p>caf\xe9</p>").unwrap();
+            let body = gz.finish().unwrap();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=latin1\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            socket.write_all(&body).await.unwrap();
+        });
+        type Seen = (String, u16, http::HeaderMap, http::HeaderMap, Vec<u8>);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Seen>::new()));
+        let sink = seen.clone();
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::from([("X-Configured".to_string(), "yes".to_string())]),
+            archive: Some(crate::warc::Archive(Arc::new(move |exchange| {
+                sink.lock().unwrap().push((
+                    exchange.url.to_string(),
+                    exchange.status,
+                    exchange.request_headers.clone(),
+                    exchange.headers.clone(),
+                    exchange.body.to_vec(),
+                ));
+            }))),
+            ..Default::default()
+        })
+        .unwrap();
+        client
+            .fetch_with_headers("http://example.com/archived", &[("X-Request", "also")])
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        let (url, status, sent, headers, body) = &seen[0];
+        assert_eq!(url, "http://example.com/archived");
+        assert_eq!(*status, 200);
+        assert_eq!(body, b"<p>caf\xe9</p>");
+        assert!(headers.get("content-encoding").is_none());
+        assert!(headers.get("content-length").is_none());
+        assert_eq!(headers["content-type"], "text/html; charset=latin1");
+        assert_eq!(sent["x-configured"], "yes");
+        assert_eq!(sent["x-request"], "also");
+        assert!(sent["user-agent"].to_str().unwrap().contains("Chrome/"));
+    }
+
     fn cached_config(proxy: String, dir: &std::path::Path) -> FetchConfig {
         FetchConfig {
             proxy: Some(proxy),
@@ -1483,6 +1593,8 @@ mod tests {
         Response {
             status: 200,
             url: "https://example.com/".to_string(),
+            version: http::Version::HTTP_11,
+            ip: None,
             headers: http::HeaderMap::new(),
             body,
         }

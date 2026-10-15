@@ -489,17 +489,17 @@ fn build_headers(pairs: &[(&str, &str)]) -> http::HeaderMap {
     map
 }
 
-/// Build a wreq Client for a specific browser variant.
-pub fn build_client(
+pub(crate) fn request_headers(
     variant: BrowserVariant,
-    timeout: Duration,
     extra_headers: &std::collections::HashMap<String, String>,
-    proxy: Option<&str>,
-    follow_redirects: bool,
-    max_redirects: u32,
-) -> Result<Client, FetchError> {
-    // SafariIos26 builds its Emulation on top of wreq-util's base instead
-    // of from scratch. See `safari_ios_emulation` for why.
+) -> http::HeaderMap {
+    emulation(variant, extra_headers).headers
+}
+
+fn emulation(
+    variant: BrowserVariant,
+    extra_headers: &std::collections::HashMap<String, String>,
+) -> wreq::Emulation {
     let mut emulation = match variant {
         BrowserVariant::SafariIos26 => safari_ios_emulation(),
         other => {
@@ -519,7 +519,6 @@ pub fn build_client(
         }
     };
 
-    // Append extra headers after profile defaults.
     let hm = &mut emulation.headers;
     for (k, v) in extra_headers {
         if let (Ok(n), Ok(val)) = (
@@ -530,8 +529,20 @@ pub fn build_client(
         }
     }
 
+    emulation
+}
+
+/// Build a wreq Client for a specific browser variant.
+pub fn build_client(
+    variant: BrowserVariant,
+    timeout: Duration,
+    extra_headers: &std::collections::HashMap<String, String>,
+    proxy: Option<&str>,
+    follow_redirects: bool,
+    max_redirects: u32,
+) -> Result<Client, FetchError> {
     let mut builder = Client::builder()
-        .emulation(emulation)
+        .emulation(emulation(variant, extra_headers))
         .redirect(ssrf_safe_redirect_policy(
             follow_redirects,
             max_redirects as usize,

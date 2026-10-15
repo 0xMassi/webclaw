@@ -414,9 +414,9 @@ The capture only sees what the browser was allowed to load: a request the addres
 webclaw https://docs.rust-lang.org --crawl --depth 2 --max-pages 50
 ```
 
-The crawler follows the site's robots.txt: it skips disallowed URLs and honours `Crawl-delay`. Pass `--ignore-robots` to turn that off. While robots.txt is respected, each redirect is checked against robots.txt and the crawl's scope before it is followed, and a redirect to the same page with a slash added or the scheme changed is fetched once instead of dropped. The same path over `http://` and `https://`, with or without a trailing slash, counts as one page, and links to the start URL's host in the other scheme are crawled on the start URL's scheme.
+`--delay` (default 100 ms) is the shortest time between two page requests to the same host, shared by all `--concurrency` workers, so raising the concurrency never starts more than one page request per `--delay` on one site. The first page waits one `--delay` after the robots.txt and sitemap requests. While robots.txt is respected, each redirect hop counts as a request too; with `--ignore-robots`, redirects are followed inside one fetch and their hops are not spaced. `--delay 0` turns the spacing off. The crawler follows the site's robots.txt: it skips disallowed URLs and honours `Crawl-delay`, using it instead of `--delay` when it is longer. Pass `--ignore-robots` to turn that off. While robots.txt is respected, each redirect is checked against robots.txt and the crawl's scope before it is followed, and a redirect to the same page with a slash added or the scheme changed is fetched once instead of dropped. The same path over `http://` and `https://`, with or without a trailing slash, counts as one page, and links to the start URL's host in the other scheme are crawled on the start URL's scheme.
 
-For long crawls, stream pages as JSON lines and checkpoint the crawl so a crash or kill resumes where it stopped:
+For long crawls, stream pages as JSON lines and checkpoint the crawl so a crash or kill resumes where it stopped. The checkpoint does not remember when the site was last requested, so after a quick restart the first request can come sooner than `--delay` after the last one of the previous run:
 
 ```bash
 webclaw https://docs.rust-lang.org --crawl --max-pages 0 -f jsonl --crawl-state crawl.json >> pages.jsonl

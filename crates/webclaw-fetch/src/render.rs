@@ -193,9 +193,9 @@ impl Renderer {
     /// and marked as made by webclaw. A directory that is neither empty nor
     /// marked, such as the profile of a Chrome you browse with, is refused,
     /// as are a symbolic link and, on Unix, a directory other users can
-    /// write to. Tabs left open by an earlier launch are dropped and the
-    /// profile's preferences turn off prefetching. Otherwise as
-    /// [`Renderer::launch`].
+    /// write to. Tabs left open by an earlier launch and the service workers
+    /// sites registered are dropped, and the profile's preferences turn off
+    /// prefetching. Otherwise as [`Renderer::launch`].
     pub async fn launch_with_profile(
         proxy: Option<&str>,
         dir: &std::path::Path,
@@ -1440,6 +1440,7 @@ fn prepare_profile(dir: &std::path::Path, persistent: bool) -> Result<(), String
         .map_err(|e| e.to_string())?;
     if persistent {
         let _ = std::fs::remove_dir_all(default.join("Sessions"));
+        let _ = std::fs::remove_dir_all(default.join("Service Worker"));
     }
     Ok(())
 }
@@ -1812,12 +1813,14 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(default.join("Sessions")).unwrap();
+        std::fs::create_dir_all(default.join("Service Worker")).unwrap();
         super::prepare_profile(&dir, true).unwrap();
         let kept: serde_json::Value =
             serde_json::from_slice(&std::fs::read(default.join("Preferences")).unwrap()).unwrap();
         assert_eq!(kept["homepage"], "https://example.com");
         assert_eq!(kept["net"]["network_prediction_options"], 2);
         assert!(!default.join("Sessions").exists());
+        assert!(!default.join("Service Worker").exists());
         std::fs::write(default.join("Preferences"), b"{broken").unwrap();
         assert!(super::prepare_profile(&dir, true).is_err());
         assert_eq!(

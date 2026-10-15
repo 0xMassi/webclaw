@@ -338,13 +338,15 @@ struct Cli {
     /// Render the page in the local browser and print the responses it
     /// loaded as a JSON array instead of the page: url, method, status,
     /// resource type, MIME type, request headers and the body of text
-    /// responses. PATTERN is a regular expression the URL must match, e.g.
-    /// "/api/". With --actions or --scroll, the steps run first, so the
-    /// responses they trigger are captured too. Needs the `browser` feature
+    /// responses. PATTERN is a regular expression the URL must match, given
+    /// with an equals sign: --capture-network=/api/. With --actions or
+    /// --scroll, the steps run first, so the responses they trigger are
+    /// captured too. Needs the `browser` feature
     #[arg(
         long,
         value_name = "PATTERN",
         num_args = 0..=1,
+        require_equals = true,
         default_missing_value = "",
         conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "brand", "raw_html", "cloud"]
     )]
@@ -3535,7 +3537,10 @@ async fn main() {
     if let Some(ref pattern) = cli.capture_network {
         let captured = match (entries.len(), cli.urls.first()) {
             (1, Some(url)) => run_capture(&cli, &normalize_url(url), pattern).await,
-            _ => Err("--capture-network takes one URL".to_string()),
+            _ => Err(
+                "--capture-network takes one URL; give a pattern as --capture-network=PATTERN"
+                    .to_string(),
+            ),
         };
         if let Err(e) = captured {
             eprintln!("error: {e}");
@@ -4202,5 +4207,17 @@ mod tests {
         assert!(slug.chars().count() <= 50);
         // Round-trips through formatting without panicking.
         let _ = format!("research-{slug}.json");
+    }
+
+    #[test]
+    fn a_capture_pattern_needs_an_equals_sign() {
+        let cli =
+            Cli::try_parse_from(["webclaw", "--capture-network", "https://example.com"]).unwrap();
+        assert_eq!(cli.capture_network.as_deref(), Some(""));
+        assert_eq!(cli.urls, ["https://example.com"]);
+        let cli =
+            Cli::try_parse_from(["webclaw", "--capture-network=/api/", "https://example.com"])
+                .unwrap();
+        assert_eq!(cli.capture_network.as_deref(), Some("/api/"));
     }
 }

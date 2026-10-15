@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 label=${1:-politeness-$(date +%F)}
 bins=${2:-../target/release}
 before=${3:-}
-rounds=${4:-2}
+rounds=${4:-3}
 unset WEBCLAW_API_KEY
 
 command -v uv >/dev/null || { echo "needs uv: https://docs.astral.sh/uv/getting-started/installation/" >&2; exit 1; }

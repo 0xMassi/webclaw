@@ -67,6 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    #[cfg(all(unix, feature = "browser"))]
+    if std::env::var_os("WEBCLAW_BROWSER_PROFILE").is_some_and(|dir| !dir.is_empty()) {
+        webclaw_fetch::render::close_profiles_on_terminate();
+    }
     let mcp = WebclawMcp::new().await;
     let close_browser = mcp.close_browser();
     match http {

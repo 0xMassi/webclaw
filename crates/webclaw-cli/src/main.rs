@@ -3290,6 +3290,10 @@ async fn main() {
         );
         process::exit(1);
     }
+    #[cfg(all(unix, feature = "browser"))]
+    if cli.browser_profile.is_some() {
+        webclaw_fetch::render::close_profiles_on_terminate();
+    }
 
     // Subcommand path. Handled before the flag dispatch so a subcommand
     // can't collide with a flag-based flow. When no subcommand is set

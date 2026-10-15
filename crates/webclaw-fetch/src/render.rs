@@ -269,6 +269,12 @@ impl Renderer {
         )
         .await?;
         renderer.check_documents = proxy.is_none();
+        if persistent && let Some(dir) = &renderer.profile {
+            OPEN_PROFILES
+                .lock()
+                .map(|mut open| open.push((Arc::downgrade(&renderer.browser), dir.clone())))
+                .ok();
+        }
         Ok(renderer)
     }
 
@@ -679,6 +685,9 @@ impl Renderer {
             let _ = guard.await;
         }
         if let Some(profile) = self.profile.take() {
+            if let Ok(mut open) = OPEN_PROFILES.lock() {
+                open.retain(|(browser, _)| browser.as_ptr() != Arc::as_ptr(&self.browser));
+            }
             let _ = self.browser.close().await;
             if let Some(browser) = Arc::get_mut(&mut self.browser) {
                 let _ = browser.wait().await;
@@ -688,6 +697,47 @@ impl Renderer {
             }
         }
         self.events.abort();
+    }
+}
+
+type OpenProfile = (std::sync::Weak<Browser>, std::path::PathBuf);
+
+static OPEN_PROFILES: Mutex<Vec<OpenProfile>> = Mutex::new(Vec::new());
+
+/// On Unix, when the process gets SIGTERM, shut down the browsers it
+/// launched on persistent profiles and exit with status 143, so a stopped
+/// process leaves no Chrome holding its profile locked. Call it once, from
+/// inside a Tokio runtime.
+#[cfg(unix)]
+pub fn close_profiles_on_terminate() {
+    use tokio::signal::unix::{SignalKind, signal};
+    let Ok(mut terminate) = signal(SignalKind::terminate()) else {
+        return;
+    };
+    tokio::spawn(async move {
+        terminate.recv().await;
+        let open = OPEN_PROFILES
+            .lock()
+            .map(|mut open| std::mem::take(&mut *open))
+            .unwrap_or_default();
+        for (browser, dir) in open {
+            shut_down(browser, &dir).await;
+        }
+        std::process::exit(143);
+    });
+}
+
+async fn shut_down(browser: std::sync::Weak<Browser>, dir: &std::path::Path) {
+    let Some(browser) = browser.upgrade() else {
+        return;
+    };
+    let _ = browser.close().await;
+    let lock = dir.join("SingletonLock");
+    for _ in 0..50 {
+        if std::fs::symlink_metadata(&lock).is_err() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -1402,6 +1452,22 @@ mod tests {
         renderer.close().await;
         rendered.expect("render succeeds");
         assert!(!dir.join("Profile 1").exists(), "Chrome opened Profile 1");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn shutting_down_a_profile_browser_frees_its_profile() {
+        let profile = tempfile::tempdir().unwrap();
+        let first = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches");
+        super::shut_down(Arc::downgrade(&first.browser), profile.path()).await;
+        let second = Renderer::launch_with_profile(None, profile.path()).await;
+        drop(first);
+        second
+            .expect("the profile is free once its browser shut down")
+            .close()
+            .await;
     }
 
     #[tokio::test]

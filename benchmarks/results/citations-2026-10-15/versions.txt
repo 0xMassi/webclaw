@@ -1,2 +1,0 @@
-crawl4ai 0.9.4
-tiktoken 0.14.0

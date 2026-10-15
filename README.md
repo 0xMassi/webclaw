@@ -385,7 +385,7 @@ The capture only sees what the browser was allowed to load: a request the addres
 webclaw https://docs.rust-lang.org --crawl --depth 2 --max-pages 50
 ```
 
-The crawler follows the site's robots.txt: it skips disallowed URLs and honours `Crawl-delay`. Pass `--ignore-robots` to turn that off.
+The crawler follows the site's robots.txt: it skips disallowed URLs and honours `Crawl-delay`. Pass `--ignore-robots` to turn that off. Each redirect is checked against robots.txt and the crawl's scope before it is followed. The same path over `http://` and `https://`, with or without a trailing slash, counts as one page, so a link that redirects to its own page with a slash added or the scheme changed is fetched once instead of dropped.
 
 For long crawls, stream pages as JSON lines and checkpoint the crawl so a crash or kill resumes where it stopped:
 

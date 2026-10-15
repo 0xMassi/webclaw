@@ -14,7 +14,7 @@
 /// With a `query`, the frontier is best-first instead: links that match the
 /// question are fetched first.
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -603,14 +603,12 @@ impl Crawler {
                 };
                 let now = Instant::now();
                 let Some((url, depth, score)) =
-                    frontier.pop(deepest_allowed, |url| {
-                        match pace_key(url).and_then(|host| next_start.get(&host)) {
-                            Some(&free) if free > now => {
-                                wake = Some(wake.map_or(free, |w| w.min(free)));
-                                false
-                            }
-                            _ => true,
+                    frontier.pop(deepest_allowed, |host| match next_start.get(host) {
+                        Some(&free) if free > now => {
+                            wake = Some(wake.map_or(free, |w| w.min(free)));
+                            false
                         }
+                        _ => true,
                     })
                 else {
                     break;
@@ -1000,8 +998,6 @@ impl Crawler {
 
 /// Canonical origin string for comparing same-origin: "scheme://host[:port]".
 const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
-// ponytail: the dispatcher looks this far into the frontier for a host that may start now; a host queued deeper behind a paced one waits its turn, keep a queue per host if that matters.
-const PACING_SCAN: usize = 256;
 // ponytail: a crawl waiting for a host checks its cancel flag this often; wake it through a Notify if 100 ms is too slow.
 const CANCEL_POLL: Duration = Duration::from_millis(100);
 // ponytail: a fixed 1s interval rewrites the whole visited set each time; space it out by size if crawls past ~100k pages make it costly.
@@ -1012,6 +1008,7 @@ type FrontierKey = (Reverse<u64>, usize, i64);
 #[derive(Default)]
 struct Frontier {
     queue: BTreeMap<FrontierKey, String>,
+    hosts: HashMap<String, BTreeSet<FrontierKey>>,
     back: i64,
     front: i64,
     evict: bool,
@@ -1027,22 +1024,42 @@ impl Frontier {
         (Reverse(score.to_bits()), depth, seq)
     }
 
+    fn insert(&mut self, key: FrontierKey, url: String) {
+        self.hosts
+            .entry(pace_key(&url).unwrap_or_default())
+            .or_default()
+            .insert(key);
+        self.queue.insert(key, url);
+    }
+
+    fn remove(&mut self, key: &FrontierKey) -> Option<String> {
+        let url = self.queue.remove(key)?;
+        let host = pace_key(&url).unwrap_or_default();
+        if let Some(keys) = self.hosts.get_mut(&host) {
+            keys.remove(key);
+            if keys.is_empty() {
+                self.hosts.remove(&host);
+            }
+        }
+        Some(url)
+    }
+
     fn push_back(&mut self, url: String, depth: usize, score: f64) {
-        self.queue.insert(Self::key(score, depth, self.back), url);
+        self.insert(Self::key(score, depth, self.back), url);
         self.back += 1;
     }
 
     fn push_front(&mut self, url: String, depth: usize, score: f64) {
         self.front -= 1;
-        self.queue.insert(Self::key(score, depth, self.front), url);
+        self.insert(Self::key(score, depth, self.front), url);
     }
 
     fn push_capped(&mut self, url: String, depth: usize, score: f64, cap: usize) -> bool {
         if self.queue.len() >= cap {
             let key = Self::key(score, depth, self.back);
             match self.queue.last_key_value() {
-                Some((last, _)) if self.evict && key < *last => {
-                    self.queue.pop_last();
+                Some((&last, _)) if self.evict && key < last => {
+                    self.remove(&last);
                 }
                 _ => return false,
             }
@@ -1051,19 +1068,23 @@ impl Frontier {
         true
     }
 
+    // ponytail: each pop looks at the head of every queued host; keep the heads in a heap if a crawl queues thousands of hosts at once.
     fn pop(
         &mut self,
         deepest_allowed: usize,
         mut ready: impl FnMut(&str) -> bool,
     ) -> Option<(String, usize, f64)> {
-        let key = *self
-            .queue
+        let key = self
+            .hosts
             .iter()
-            .take(PACING_SCAN)
-            .take_while(|((_, depth, _), _)| *depth <= deepest_allowed)
-            .find(|(_, url)| ready(url))?
-            .0;
-        let url = self.queue.remove(&key)?;
+            .filter_map(|(host, keys)| {
+                keys.first()
+                    .filter(|(_, depth, _)| *depth <= deepest_allowed)
+                    .filter(|_| ready(host))
+            })
+            .min()
+            .copied()?;
+        let url = self.remove(&key)?;
         let (Reverse(score), depth, _) = key;
         Some((url, depth, f64::from_bits(score)))
     }
@@ -2543,7 +2564,7 @@ mod tests {
         for url in ["https://a.test/1", "https://a.test/2", "https://b.test/1"] {
             frontier.push_back(url.into(), 1, 0.0);
         }
-        let first = frontier.pop(usize::MAX, |url| url.starts_with("https://b.test"));
+        let first = frontier.pop(usize::MAX, |host| host == "https://b.test");
         assert_eq!(
             first.map(|(url, ..)| url).as_deref(),
             Some("https://b.test/1")
@@ -2633,6 +2654,99 @@ mod tests {
                 assert!(first < Duration::from_millis(100), "{first:?}");
             }
         }
+    }
+
+    #[test]
+    fn pop_takes_the_best_url_among_free_hosts_in_order_within_each_host() {
+        let mut frontier = Frontier::default();
+        frontier.push_back("https://a.test/good".into(), 1, 0.9);
+        frontier.push_back("https://a.test/fair".into(), 1, 0.5);
+        frontier.push_back("https://b.test/fine".into(), 1, 0.7);
+        let order = |frontier: &mut Frontier, free: &dyn Fn(&str) -> bool| {
+            std::iter::from_fn(|| frontier.pop(usize::MAX, |host| free(host)).map(|(u, ..)| u))
+                .collect::<Vec<_>>()
+        };
+        let mut both = Frontier::default();
+        for (url, (depth, score)) in frontier.snapshot() {
+            both.push_back(url, depth, score);
+        }
+        assert_eq!(
+            order(&mut both, &|_| true),
+            [
+                "https://a.test/good",
+                "https://b.test/fine",
+                "https://a.test/fair"
+            ]
+        );
+        assert_eq!(
+            order(&mut frontier, &|host| host != "https://a.test"),
+            ["https://b.test/fine"]
+        );
+        assert_eq!(frontier.len(), 2);
+        assert_eq!(frontier.hosts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_host_on_a_long_crawl_delay_never_holds_back_another() {
+        let crawler = Crawler::new(
+            "https://a.test/",
+            CrawlConfig {
+                delay: Duration::from_millis(100),
+                concurrency: 4,
+                max_pages: Some(4),
+                allow_external_links: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://a.test",
+            RobotsRules::parse("User-agent: *\nCrawl-delay: 2\n", USER_AGENT_TOKEN),
+        );
+        crawler.preload_robots("https://b.test", RobotsRules::allow_all());
+        let frontier = (0..300)
+            .map(|i| (format!("https://a.test/{i}"), 1))
+            .chain((0..3).map(|i| (format!("https://b.test/{i}"), 1)))
+            .collect();
+        let resume = CrawlState {
+            seed_url: "https://a.test/".into(),
+            visited: vec![],
+            frontier,
+            completed_pages: 0,
+            max_pages: 4,
+            max_depth: 1,
+            scores: HashMap::new(),
+            query: None,
+        };
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let started = Instant::now();
+        let crawl = crawler.crawl_with_fetcher("https://a.test/", Some(resume), move |url| {
+            recorded
+                .lock()
+                .unwrap()
+                .push((url.clone(), started.elapsed()));
+            async move {
+                webclaw_core::extract_with_options(
+                    "<main><h1>Page</h1><p>Some content.</p></main>",
+                    Some(&url),
+                    &Default::default(),
+                )
+                .map_err(|e| e.to_string())
+            }
+        });
+        let result = tokio::time::timeout(Duration::from_secs(6), crawl)
+            .await
+            .expect("host b waited behind host a");
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(result.total, 4, "{calls:?}");
+        let b: Vec<Duration> = calls
+            .iter()
+            .filter(|(url, _)| url.starts_with("https://b.test/"))
+            .map(|(_, at)| *at)
+            .collect();
+        assert_eq!(b.len(), 3, "{calls:?}");
+        assert!(b[0] < Duration::from_millis(150), "{calls:?}");
     }
 
     type Hits = Arc<std::sync::Mutex<Vec<(String, String, Instant)>>>;

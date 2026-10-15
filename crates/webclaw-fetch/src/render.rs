@@ -13,8 +13,8 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     FulfillRequestParams, HeaderEntry,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
-    ErrorReason, EventRequestWillBeSent, EventResponseReceived, GetResponseBodyParams,
-    ResourceType, SetCookieParams,
+    ErrorReason, EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent,
+    EventResponseReceived, GetResponseBodyParams, ResourceType, SetCookieParams,
 };
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::cdp::browser_protocol::target::{
@@ -113,6 +113,7 @@ const RESOURCE_TYPES: &[&str] = &[
     "other",
 ];
 const MAX_RESPONSES: usize = 100;
+const QUIET: Duration = Duration::from_millis(2000);
 const MAX_BODY_BYTES: usize = 1_000_000;
 const MAX_TOTAL_BYTES: usize = 5_000_000;
 
@@ -245,6 +246,35 @@ async fn response_body(
         .ok()?
         .result;
     (!body.base64_encoded).then_some(body.body)
+}
+
+async fn network_quiet(
+    mut sent: impl futures_util::Stream<Item = Arc<EventRequestWillBeSent>> + Unpin,
+    finished: impl futures_util::Stream<Item = Arc<EventLoadingFinished>> + Unpin,
+    failed: impl futures_util::Stream<Item = Arc<EventLoadingFailed>> + Unpin,
+) {
+    let mut done = futures_util::stream::select(
+        finished.map(|event| event.request_id.clone()),
+        failed.map(|event| event.request_id.clone()),
+    );
+    let mut in_flight = std::collections::HashSet::new();
+    let mut ended_first = std::collections::HashSet::new();
+    loop {
+        tokio::select! {
+            Some(event) = sent.next() => {
+                if !ended_first.remove(&event.request_id) {
+                    in_flight.insert(event.request_id.clone());
+                }
+            }
+            Some(id) = done.next() => {
+                if !in_flight.remove(&id) {
+                    ended_first.insert(id);
+                }
+            }
+            _ = tokio::time::sleep(QUIET), if in_flight.is_empty() => return,
+            else => return,
+        }
+    }
 }
 
 fn is_credential(name: &str) -> bool {
@@ -795,6 +825,20 @@ impl Renderer {
             )),
             None => None,
         };
+        let mut quiet = match capture {
+            Some(_) => Some((
+                page.event_listener::<EventRequestWillBeSent>()
+                    .await
+                    .map_err(browser_error)?,
+                page.event_listener::<EventLoadingFinished>()
+                    .await
+                    .map_err(browser_error)?,
+                page.event_listener::<EventLoadingFailed>()
+                    .await
+                    .map_err(browser_error)?,
+            )),
+            None => None,
+        };
         if let Some((username, password)) = &self.proxy_login {
             page.authenticate(Credentials {
                 username: username.clone(),
@@ -857,11 +901,18 @@ impl Renderer {
             .saturating_mul(if actions.is_empty() { 1 } else { 2 });
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
-            let capturing = capture.is_some();
-            tokio::select! {
-                _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3), if !capturing => {}
-                _ = text_settled(&page, settled_words), if !capturing => {}
-                _ = page.wait_for_network_idle_with_timeout(options.timeout / 3), if capturing => {}
+            match quiet.take() {
+                Some((sent, finished, failed)) => {
+                    let _ = tokio::time::timeout(
+                        options.timeout / 3,
+                        network_quiet(sent, finished, failed),
+                    )
+                    .await;
+                }
+                None => tokio::select! {
+                    _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3) => {}
+                    _ = text_settled(&page, settled_words) => {}
+                },
             }
             if let Some(selector) = &options.wait_for {
                 page.wait_for_selector(selector.as_str(), Some(options.timeout))
@@ -2492,5 +2543,50 @@ mod tests {
                 .as_deref()
                 .is_some_and(|b| b.contains("Example Domain"))
         );
+    }
+
+    async fn capture_on_example(html: &str, pattern: &str) -> Vec<super::NetworkResponse> {
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let rendered = renderer
+            .capture(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(30),
+                    ..Default::default()
+                },
+                &[],
+                &super::NetworkCapture::new(Some(pattern), None, false).unwrap(),
+            )
+            .await;
+        renderer.close().await;
+        rendered.expect("render succeeds").network
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_capture_waits_for_a_request_that_follows_a_pause() {
+        let html = r#"<html><body><p>paused</p><script>
+            fetch("/?first=1")
+                .then(() => new Promise(done => setTimeout(done, 800)))
+                .then(() => fetch("/?second=1"));
+            </script></body></html>"#;
+        let network = capture_on_example(html, r"\?(first|second)=").await;
+        let urls: Vec<&str> = network.iter().map(|r| r.url.as_str()).collect();
+        assert!(urls.iter().any(|u| u.ends_with("?second=1")), "{urls:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_capture_waits_for_a_request_started_by_a_timer() {
+        let html = r#"<html><body><p>timer</p><script>
+            setTimeout(() => fetch("/?late=1"), 1500);
+            </script></body></html>"#;
+        let network = capture_on_example(html, r"\?late=").await;
+        assert_eq!(network.len(), 1, "{network:?}");
     }
 }

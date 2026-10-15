@@ -924,10 +924,18 @@ fn open_warc(path: &Path) -> io::Result<webclaw_fetch::warc::Writer<io::BufWrite
     let gzip = path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("gz"));
-    let file = std::fs::OpenOptions::new()
+    let mut file = std::fs::OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(path)?;
+    if !webclaw_fetch::warc::ends_whole(&mut file, gzip)? {
+        return Err(io::Error::other(if gzip {
+            "it ends inside a record, or is not gzipped, so records added to it would be unreadable; a run that stopped while writing can leave it so. Give --warc a new file"
+        } else {
+            "it ends inside a record, or is not a WARC file, so records added to it would be unreadable; a run that stopped while writing can leave it so. Give --warc a new file"
+        }));
+    }
     webclaw_fetch::warc::Writer::new(
         io::BufWriter::new(file),
         gzip,
@@ -4254,6 +4262,29 @@ mod tests {
         assert!(file.starts_with(&earlier));
         let text = String::from_utf8_lossy(&file);
         assert_eq!(text.matches("WARC-Type: warcinfo").count(), 2);
+    }
+
+    #[test]
+    fn a_warc_cut_inside_a_record_is_refused_and_left_alone() {
+        let dir = std::env::temp_dir().join(format!("webclaw-warc-cut-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["site.warc", "site.warc.gz"] {
+            let path = dir.join(name);
+            drop(open_warc(&path).unwrap());
+            let whole = std::fs::read(&path).unwrap();
+            std::fs::write(&path, &whole[..whole.len() - 5]).unwrap();
+            let refused = open_warc(&path).err().map(|e| e.to_string());
+            assert!(
+                refused.as_deref().is_some_and(|e| e.contains("new file")),
+                "{name}: {refused:?}"
+            );
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                whole[..whole.len() - 5],
+                "{name}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

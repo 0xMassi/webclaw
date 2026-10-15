@@ -190,6 +190,72 @@ impl<W: Write> Writer<W> {
     }
 }
 
+/// Whether `file`, a WARC file to append to, ends on a whole record, so
+/// that records written after it stay readable. A file cut inside a record,
+/// by a run that stopped while writing, hides everything appended after the
+/// cut: a gzip reader stops at the broken member, and a plain reader takes
+/// the next records as the rest of the cut one. With `gzip`, the last gzip
+/// member must decode to the end of the file; otherwise each record's
+/// `Content-Length` must lead exactly to the end. An empty file ends whole.
+pub fn ends_whole<R: io::Read + io::Seek>(file: &mut R, gzip: bool) -> io::Result<bool> {
+    use io::{BufRead, Read, SeekFrom};
+    let len = file.seek(SeekFrom::End(0))?;
+    if gzip {
+        // ponytail: looks for the last member in the final 64 MiB, past any record webclaw writes; a full scan if other tools' archives need it
+        file.seek(SeekFrom::Start(len.saturating_sub(64 << 20)))?;
+        let mut tail = Vec::new();
+        file.read_to_end(&mut tail)?;
+        if tail.is_empty() {
+            return Ok(true);
+        }
+        let whole = (0..tail.len()).rev().any(|start| {
+            let member = &tail[start..];
+            if !member.starts_with(&[0x1f, 0x8b, 0x08]) {
+                return false;
+            }
+            let mut gz = flate2::bufread::GzDecoder::new(member);
+            io::copy(&mut gz, &mut io::sink()).is_ok() && gz.into_inner().is_empty()
+        });
+        return Ok(whole);
+    }
+    file.seek(SeekFrom::Start(0))?;
+    let mut reader = io::BufReader::new(file);
+    let mut at = 0u64;
+    while at < len {
+        let mut length = None;
+        loop {
+            let mut line = Vec::new();
+            if reader.read_until(b'\n', &mut line)? == 0 {
+                return Ok(false);
+            }
+            at += line.len() as u64;
+            if line == b"\r\n" {
+                break;
+            }
+            let line = String::from_utf8_lossy(&line);
+            if let Some((name, value)) = line.split_once(':')
+                && name.eq_ignore_ascii_case("content-length")
+            {
+                length = value.trim().parse::<u64>().ok();
+            }
+        }
+        let Some(length) = length else {
+            return Ok(false);
+        };
+        at += length + 4;
+        if at > len {
+            return Ok(false);
+        }
+        reader.seek_relative(length as i64)?;
+        let mut end = [0u8; 4];
+        reader.read_exact(&mut end)?;
+        if &end != b"\r\n\r\n" {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn header_line(out: &mut Vec<u8>, name: &http::HeaderName, value: &http::HeaderValue) {
     out.extend_from_slice(name.as_str().as_bytes());
     out.extend_from_slice(b": ");
@@ -468,6 +534,41 @@ mod tests {
             .collect();
         assert_eq!(ids.len(), 3);
         assert!(field(info, "WARC-Record-ID").starts_with("<urn:uuid:"));
+    }
+
+    #[test]
+    fn a_file_cut_inside_a_record_does_not_end_whole() {
+        let headers = http::HeaderMap::new();
+        for gzip in [false, true] {
+            let mut writer = Writer::new(Vec::new(), gzip, "webclaw test").unwrap();
+            for body in [&b"first page"[..], &[b'x'; 70_000]] {
+                writer
+                    .write(&Exchange {
+                        url: "https://example.com/",
+                        request_headers: &headers,
+                        status: 200,
+                        version: http::Version::HTTP_11,
+                        headers: &headers,
+                        body,
+                        ip: None,
+                    })
+                    .unwrap();
+            }
+            let file = writer.into_inner();
+            let whole = |bytes: &[u8]| ends_whole(&mut io::Cursor::new(bytes), gzip).unwrap();
+            assert!(whole(&file), "gzip {gzip}");
+            assert!(whole(&[]), "gzip {gzip}");
+            for cut in [1, 3, 30, 200, file.len() / 2, file.len() - 300] {
+                assert!(!whole(&file[..file.len() - cut]), "gzip {gzip}, cut {cut}");
+            }
+        }
+        assert!(
+            !ends_whole(
+                &mut io::Cursor::new(b"WARC/1.1\r\nWARC-Type: x\r\n\r\n"),
+                false
+            )
+            .unwrap()
+        );
     }
 
     #[test]

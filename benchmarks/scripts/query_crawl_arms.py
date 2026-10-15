@@ -62,7 +62,7 @@ def scrapling():
         async def parse(self, response):
             pages.append({"url": response.url, "t": time.time() - START})
             yield {"url": response.url}
-            depth = self.depth.get(response.url, 0)
+            depth = self.depth.get(response.request.url, 0)
             if depth >= DEPTH:
                 return
             for href in response.css("a::attr(href)").getall():

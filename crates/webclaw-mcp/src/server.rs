@@ -73,7 +73,7 @@ fn render_from_env(
     }
     let source = match std::env::var("WEBCLAW_CDP_URL") {
         Ok(endpoint) if !endpoint.is_empty() => BrowserSource::Connect(endpoint),
-        _ => BrowserSource::launch_for(config, true).with_profile(
+        _ => BrowserSource::launch_for(config).with_profile(
             std::env::var_os("WEBCLAW_BROWSER_PROFILE")
                 .filter(|dir| !dir.is_empty())
                 .map(Into::into),
@@ -156,6 +156,35 @@ fn parse_actions(
             &serde_json::to_string(actions).map_err(|e| e.to_string())?,
         ),
     }
+}
+
+fn citations(on: Option<bool>, format: &str, chunk: bool, tool: &str) -> Result<bool, String> {
+    let on = on.unwrap_or(false);
+    if on && (chunk || matches!(format, "llm" | "text")) {
+        let takes = match tool {
+            "scrape" => "the markdown or json format, without chunk",
+            "crawl" => "the markdown format, without chunk",
+            _ => "the markdown format",
+        };
+        return Err(format!(
+            "citations rewrites the markdown, so {tool} takes it with {takes}"
+        ));
+    }
+    Ok(on)
+}
+
+async fn cited<T>(mut extraction: T) -> Result<T, String>
+where
+    T: std::borrow::BorrowMut<webclaw_core::ExtractionResult> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let page = extraction.borrow_mut();
+        page.content.markdown =
+            webclaw_core::to_citations(&page.content.markdown, page.metadata.url.as_deref());
+        extraction
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 fn format_page(extraction: webclaw_core::ExtractionResult, format: &str, url: &str) -> String {
@@ -499,6 +528,9 @@ impl WebclawMcp {
         if let Some(ref query) = params.query {
             webclaw_core::focus_extraction(&mut extraction, query);
         }
+        if params.citations == Some(true) {
+            extraction = cited(extraction).await?;
+        }
         if let Some((size, overlap)) = sizes {
             let (url, markdown) = (params.url.clone(), extraction.content.markdown);
             return tokio::task::spawn_blocking(move || {
@@ -605,6 +637,7 @@ impl WebclawMcp {
         validate_url(&params.url).await?;
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
+        let cite_links = citations(params.citations, format, sizes.is_some(), "scrape")?;
         let browser = parse_browser(params.browser.as_deref())?;
         #[cfg(feature = "browser")]
         if let (Some(render), Some(cookies)) = (
@@ -689,6 +722,9 @@ impl WebclawMcp {
                 if let Some(ref query) = params.query {
                     webclaw_core::focus_extraction(&mut extraction, query);
                 }
+                if cite_links {
+                    extraction = cited(extraction).await?;
+                }
                 if let Some((size, overlap)) = sizes {
                     let (url, markdown) = (params.url.clone(), extraction.content.markdown);
                     return tokio::task::spawn_blocking(move || {
@@ -702,6 +738,15 @@ impl WebclawMcp {
             SmartFetchResult::Cloud(mut resp) => {
                 if let Some(ref query) = params.query {
                     webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
+                }
+                if cite_links {
+                    let url = params.url.clone();
+                    resp = tokio::task::spawn_blocking(move || {
+                        webclaw_fetch::cloud::cite_cloud_response(&mut resp, Some(&url));
+                        resp
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
                 }
                 if let Some((size, overlap)) = sizes {
                     let markdown = resp
@@ -724,7 +769,6 @@ impl WebclawMcp {
                     .unwrap_or("");
 
                 if content.is_empty() {
-                    // Return full JSON if no content in the expected format
                     Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
                 } else {
                     Ok(content.to_string())
@@ -756,6 +800,7 @@ impl WebclawMcp {
         }
 
         let format = params.format.as_deref().unwrap_or("markdown");
+        let cite_links = citations(params.citations, format, sizes.is_some(), "crawl")?;
 
         let mut fetch = self.fetch_config.clone();
         apply_render(&mut fetch, None, None, params.block.as_deref(), None)?;
@@ -794,6 +839,26 @@ impl WebclawMcp {
             return tokio::task::spawn_blocking(move || crawl_chunks_json(&result, size, overlap))
                 .await
                 .map_err(|e| e.to_string())?;
+        }
+
+        if cite_links {
+            result = tokio::task::spawn_blocking(move || {
+                let mut last = 0;
+                for page in &mut result.pages {
+                    if let Some(extraction) = page.extraction.as_mut() {
+                        let (markdown, high) = webclaw_core::to_citations_after(
+                            &extraction.content.markdown,
+                            Some(&page.url),
+                            last,
+                        );
+                        extraction.content.markdown = markdown;
+                        last = high;
+                    }
+                }
+                result
+            })
+            .await
+            .map_err(|e| e.to_string())?;
         }
 
         let mut output = format!(
@@ -951,19 +1016,34 @@ impl WebclawMcp {
         if params.urls.len() > 100 {
             return Err("batch is limited to 100 URLs per request".into());
         }
-        // No up-front DNS pre-validation: it aborted the whole batch on a
-        // single unresolvable URL. The fetch layer applies the same SSRF
-        // guard (validate_public_http_url) per URL, so bad entries surface
-        // as individual per-URL errors below instead of failing the batch.
-
         let format = params.format.as_deref().unwrap_or("markdown");
+        let cite_links = citations(params.citations, format, false, "batch")?;
         let concurrency = params.concurrency.unwrap_or(5);
         let url_refs: Vec<&str> = params.urls.iter().map(String::as_str).collect();
 
-        let results = self
+        let mut results = self
             .fetch_client
             .fetch_and_extract_batch(&url_refs, concurrency)
             .await;
+        if cite_links {
+            results = tokio::task::spawn_blocking(move || {
+                let mut last = 0;
+                for r in &mut results {
+                    if let Ok(extraction) = r.result.as_mut() {
+                        let (markdown, high) = webclaw_core::to_citations_after(
+                            &extraction.content.markdown,
+                            Some(&r.url),
+                            last,
+                        );
+                        extraction.content.markdown = markdown;
+                        last = high;
+                    }
+                }
+                results
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
 
         let mut output = format!("Extracted {} URLs:\n\n", results.len());
 
@@ -1688,7 +1768,19 @@ fn pick(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_select, slugify};
+    use super::{check_select, citations, slugify};
+
+    #[test]
+    fn citation_refusals_name_the_formats_each_tool_takes() {
+        let batch = citations(Some(true), "text", false, "batch").unwrap_err();
+        assert!(
+            batch.contains("markdown format") && !batch.contains("json"),
+            "{batch}"
+        );
+        let scrape = citations(Some(true), "llm", false, "scrape").unwrap_err();
+        assert!(scrape.contains("markdown or json format"), "{scrape}");
+        assert_eq!(citations(None, "text", true, "crawl"), Ok(false));
+    }
 
     #[test]
     fn pdf_options_go_with_the_pdf_format_only() {

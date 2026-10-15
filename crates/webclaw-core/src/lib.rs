@@ -1,5 +1,6 @@
 pub mod brand;
 pub mod chunk;
+pub mod citations;
 pub(crate) mod data_island;
 /// webclaw-core: Pure HTML content extraction engine for LLMs.
 ///
@@ -30,6 +31,7 @@ pub mod youtube;
 
 pub use brand::BrandIdentity;
 pub use chunk::{Chunk, chunk};
+pub use citations::{to_citations, to_citations_after};
 pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;

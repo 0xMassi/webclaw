@@ -498,7 +498,7 @@ impl Crawler {
             ..Default::default()
         };
         if let Some(state) = resume_state {
-            visited = state.visited.into_iter().collect();
+            visited = state.visited.iter().map(|k| dedup_key(k)).collect();
             let query = self.ask.as_ref().map(|a| a.query.as_str());
             let scores = if query.is_some() && state.query.as_deref() == query {
                 state.scores
@@ -2069,6 +2069,40 @@ mod tests {
             "{calls:?}"
         );
         assert_eq!((result.ok, result.errors), (2, 0));
+    }
+
+    #[tokio::test]
+    async fn a_resume_from_an_older_state_skips_visited_http_pages() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let state = CrawlState {
+            seed_url: "http://example.com/".into(),
+            visited: vec!["http://example.com/".into(), "http://example.com/a".into()],
+            frontier: vec![("http://example.com/b".into(), 1)],
+            completed_pages: 2,
+            max_pages: 0,
+            max_depth: 2,
+            scores: HashMap::new(),
+            query: None,
+        };
+        Crawler::new(
+            "http://example.com/",
+            CrawlConfig {
+                max_depth: 2,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .run("http://example.com/", Some(state), move |url| {
+            recorded.lock().unwrap().push(url.clone());
+            async move {
+                html_page(&url, "<main><h1>Page</h1><p>Page content for the crawl.</p><a href='/'>Home</a><a href='/a'>A</a></main>")
+            }
+        })
+        .await;
+        assert_eq!(*calls.lock().unwrap(), vec!["http://example.com/b"]);
     }
 
     #[tokio::test]

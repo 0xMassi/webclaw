@@ -723,7 +723,6 @@ impl Renderer {
                     .map_err(browser_error)?;
             }
             let scripts = crate::actions::run(&page, actions, options.timeout).await?;
-            let value = read(&page).await.map_err(browser_error)?;
             let final_url = page
                 .url()
                 .await
@@ -744,6 +743,7 @@ impl Renderer {
                         })?;
                 }
             }
+            let value = read(&page).await.map_err(browser_error)?;
             Ok::<_, FetchError>((value, final_url, scripts))
         })
         .await;
@@ -2040,6 +2040,33 @@ mod tests {
                 .contains("the render timeout covers loading the page"),
             "{slow}"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_pdf_reports_the_url_it_printed_not_where_the_page_went_after() {
+        let html = r#"<html><body><p>printed here</p><script>addEventListener("afterprint", () => history.pushState(null, "", "/after"))</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let printed = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let (printed, _) = printed.expect("PDF prints");
+        assert_eq!(printed.url, "https://example.com/");
     }
 
     #[tokio::test]

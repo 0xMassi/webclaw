@@ -18,7 +18,7 @@
   {"page": "https://pokeapi.co/", "kind": "API docs with a live demo",
    "apis": [{"match": "pokeapi\\.co/api/v2/pokemon/ditto", "field": "abilities", "check": "https://pokeapi.co/api/v2/pokemon/ditto"}]},
   {"page": "https://bundlephobia.com/package/react", "kind": "single-page app",
-   "apis": [{"match": "bundlephobia\\.com/api/size\\?package=react", "field": "gzip", "check": "https://bundlephobia.com/api/size?package=react&record=true"}]},
+   "apis": [{"match": "bundlephobia\\.com/api/size\\?package=react&", "field": "gzip", "check": "https://bundlephobia.com/api/size?package=react&record=true"}]},
   {"page": "https://petstore.swagger.io/", "kind": "API explorer",
    "apis": [{"match": "petstore\\.swagger\\.io/v2/swagger\\.json", "field": "paths", "check": "https://petstore.swagger.io/v2/swagger.json"}]}
 ]

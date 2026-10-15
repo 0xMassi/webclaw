@@ -55,8 +55,12 @@ pub struct CrawlConfig {
     /// back another, and `concurrency` still caps the requests in flight
     /// across all hosts. A robots.txt `Crawl-delay` raises it for its host,
     /// up to 30 seconds. While robots.txt is respected, every redirect hop
-    /// is a request of its own and is spaced too. `Duration::ZERO` means no
-    /// spacing.
+    /// is a request of its own and is spaced too; without it the client
+    /// follows redirects inside one fetch and those hops are not spaced.
+    /// The first page waits one interval after the start host's robots.txt
+    /// and sitemap requests, which are not spaced among themselves, and the
+    /// one robots.txt request to each other host is not spaced.
+    /// `Duration::ZERO` means no spacing.
     pub delay: Duration,
     /// Only follow URLs whose path starts with this prefix (e.g. "/docs/").
     pub path_prefix: Option<String>,
@@ -566,6 +570,11 @@ impl Crawler {
         let mut skipped_by_robots: usize = 0;
         let mut denied: HashSet<String> = HashSet::new();
         let mut next_start: HashMap<String, Instant> = HashMap::new();
+        if (self.config.respect_robots || self.config.use_sitemap)
+            && let Some(host) = pace_key(start_url)
+        {
+            next_start.insert(host, Instant::now() + self.interval(start_url).await);
+        }
         let mut started: usize = resumed_pages;
         let mut in_flight = FuturesUnordered::new();
         let mut in_flight_depths: BTreeMap<usize, usize> = BTreeMap::new();
@@ -2588,6 +2597,44 @@ mod tests {
         assert!(!saved.frontier.is_empty(), "{saved:?}");
     }
 
+    #[tokio::test]
+    async fn the_first_page_waits_one_interval_after_the_setup_requests() {
+        for respect_robots in [true, false] {
+            let crawler = Crawler::new(
+                "https://example.com/",
+                CrawlConfig {
+                    delay: Duration::from_millis(200),
+                    respect_robots,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            crawler.preload_robots("https://example.com", RobotsRules::allow_all());
+            let first = Arc::new(std::sync::Mutex::new(None));
+            let seen = first.clone();
+            let started = Instant::now();
+            crawler
+                .crawl_with_fetcher("https://example.com/", None, move |url| {
+                    seen.lock().unwrap().get_or_insert(started.elapsed());
+                    async move {
+                        webclaw_core::extract_with_options(
+                            "<main><h1>Seed</h1><p>Only page.</p></main>",
+                            Some(&url),
+                            &Default::default(),
+                        )
+                        .map_err(|e| e.to_string())
+                    }
+                })
+                .await;
+            let first = first.lock().unwrap().unwrap();
+            if respect_robots {
+                assert!(first >= Duration::from_millis(190), "{first:?}");
+            } else {
+                assert!(first < Duration::from_millis(100), "{first:?}");
+            }
+        }
+    }
+
     type Hits = Arc<std::sync::Mutex<Vec<(String, String, Instant)>>>;
 
     const SEED_HOST: &str = "example.com";
@@ -2740,6 +2787,17 @@ mod tests {
         let elapsed = started.elapsed();
         assert_eq!(result.ok, 10, "{:?}", result.pages);
         let hits = hits.lock().unwrap().clone();
+        let seed_hit = |path: &str| {
+            hits.iter()
+                .find(|(h, p, _)| h == SEED_HOST && p == path)
+                .map(|(_, _, at)| *at)
+                .unwrap()
+        };
+        let setup_gap = seed_hit("/") - seed_hit("/robots.txt");
+        assert!(
+            setup_gap + Duration::from_millis(30) >= delay,
+            "the first page came {setup_gap:?} after robots.txt"
+        );
         assert!(
             hits.iter()
                 .any(|(h, path, _)| h == SEED_HOST && path == "/moved")

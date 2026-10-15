@@ -9,50 +9,88 @@ use url::Url;
 /// markdown footnote marks. A `## References` list at the end maps each
 /// number to its URL, one `[^1]: url` footnote per line. Numbers follow the
 /// order of first appearance, and a URL that comes back anywhere keeps its
-/// first number. Links to a spot on the same page (`#section`, or `page_url`
-/// with a fragment) and `javascript:` links keep their text and lose the URL.
-/// Fenced code blocks and inline code are never rewritten. With nothing to
-/// cite, no References list is added.
+/// first number. They start after the highest numeric footnote the page
+/// already has, so its own `[^1]` keeps its meaning. Links to a spot on the
+/// same page (`#section`, or `page_url` with a fragment) and `javascript:`
+/// links keep their text and lose the URL. Fenced code blocks and inline
+/// code are never rewritten. With nothing to cite, no References list is
+/// added.
 pub fn to_citations(markdown: &str, page_url: Option<&str>) -> String {
+    let (lines, open_fence) = split_code(markdown);
+    let base = lines
+        .iter()
+        .filter(|(_, prose)| *prose)
+        .map(|(line, _)| highest_footnote(line))
+        .max()
+        .unwrap_or(0);
     let mut refs = Refs {
         page: page_url.and_then(|u| Url::parse(u).ok()).map(|mut u| {
             u.set_fragment(None);
             u
         }),
+        base,
         urls: Vec::new(),
         numbers: HashMap::new(),
     };
     let mut out = String::with_capacity(markdown.len());
-    let mut fence: Option<(u8, usize)> = None;
-    for line in markdown.split_inclusive('\n') {
-        match (fence, fence_of(line)) {
-            (Some((c, n)), Some((fc, fnn, info)))
-                if fc == c && fnn >= n && info.trim().is_empty() =>
-            {
-                fence = None;
-                out.push_str(line);
-            }
-            (Some(_), _) => out.push_str(line),
-            (None, Some((c, n, info))) if c == b'~' || !info.contains('`') => {
-                fence = Some((c, n));
-                out.push_str(line);
-            }
-            (None, _) => out.push_str(&refs.rewrite(line, false)),
+    for (line, prose) in lines {
+        if prose {
+            out.push_str(&refs.rewrite(line, false));
+        } else {
+            out.push_str(line);
         }
     }
     if refs.urls.is_empty() {
         return out;
     }
     out.truncate(out.trim_end().len());
-    if let Some((c, n)) = fence {
+    if let Some((c, n)) = open_fence {
         out.push('\n');
         out.push_str(&(c as char).to_string().repeat(n));
     }
     out.push_str("\n\n## References\n");
     for (i, url) in refs.urls.iter().enumerate() {
-        out.push_str(&format!("\n[^{}]: {url}", i + 1));
+        out.push_str(&format!("\n[^{}]: {url}", base + i + 1));
     }
     out
+}
+
+type Fence = (u8, usize);
+
+fn split_code(markdown: &str) -> (Vec<(&str, bool)>, Option<Fence>) {
+    let mut lines = Vec::new();
+    let mut fence: Option<Fence> = None;
+    for line in markdown.split_inclusive('\n') {
+        let prose = match (fence, fence_of(line)) {
+            (Some((c, n)), Some((fc, fnn, info)))
+                if fc == c && fnn >= n && info.trim().is_empty() =>
+            {
+                fence = None;
+                false
+            }
+            (Some(_), _) => false,
+            (None, Some((c, n, info))) if c == b'~' || !info.contains('`') => {
+                fence = Some((c, n));
+                false
+            }
+            (None, _) => true,
+        };
+        lines.push((line, prose));
+    }
+    (lines, fence)
+}
+
+fn highest_footnote(line: &str) -> usize {
+    line.match_indices("[^")
+        .filter_map(|(i, _)| {
+            let rest = &line[i + 2..];
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            ((1..=9).contains(&digits) && rest.as_bytes().get(digits) == Some(&b']'))
+                .then(|| rest[..digits].parse::<usize>().ok())
+                .flatten()
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn fence_of(line: &str) -> Option<(u8, usize, &str)> {
@@ -67,6 +105,7 @@ fn fence_of(line: &str) -> Option<(u8, usize, &str)> {
 
 struct Refs {
     page: Option<Url>,
+    base: usize,
     urls: Vec<String>,
     numbers: HashMap<String, usize>,
 }
@@ -124,7 +163,7 @@ impl Refs {
         }
         let n = *self.numbers.entry(url.to_string()).or_insert_with(|| {
             self.urls.push(url.to_string());
-            self.urls.len()
+            self.base + self.urls.len()
         });
         if image {
             format!("![{text}][^{n}]")
@@ -331,6 +370,15 @@ mod tests {
         assert_eq!(
             to_citations(md, None),
             "[^1]\\: starts\n\\## Title[^2]\n  \\> q[^3]\n1\\. One[^4]\n\\- item[^5]\nmid ## x[^6] 2024 results[^7]\n\n## References\n\n[^1]: https://e.com\n[^2]: https://t.com\n[^3]: https://q.com\n[^4]: https://o.com\n[^5]: https://i.com\n[^6]: https://x.com\n[^7]: https://r.com"
+        );
+    }
+
+    #[test]
+    fn numbers_start_after_the_page_own_footnotes() {
+        let md = "Page note[^1] and [^x] [^18446744073709551615] and [link](https://l.com).\n\n[^1]: The page own footnote.\n\n```\n[^9]\n```";
+        assert_eq!(
+            to_citations(md, None),
+            "Page note[^1] and [^x] [^18446744073709551615] and link[^2].\n\n[^1]: The page own footnote.\n\n```\n[^9]\n```\n\n## References\n\n[^2]: https://l.com"
         );
     }
 

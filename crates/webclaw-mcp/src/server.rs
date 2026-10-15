@@ -158,13 +158,17 @@ fn parse_actions(
     }
 }
 
-fn citations(on: Option<bool>, format: &str, chunk: bool) -> Result<bool, String> {
+fn citations(on: Option<bool>, format: &str, chunk: bool, tool: &str) -> Result<bool, String> {
     let on = on.unwrap_or(false);
     if on && (chunk || matches!(format, "llm" | "text")) {
-        return Err(
-            "citations rewrites the markdown: use the markdown or json format, without chunk"
-                .into(),
-        );
+        let takes = match tool {
+            "scrape" => "the markdown or json format, without chunk",
+            "crawl" => "the markdown format, without chunk",
+            _ => "the markdown format",
+        };
+        return Err(format!(
+            "citations rewrites the markdown, so {tool} takes it with {takes}"
+        ));
     }
     Ok(on)
 }
@@ -632,7 +636,7 @@ impl WebclawMcp {
         validate_url(&params.url).await?;
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
-        let cite_links = citations(params.citations, format, sizes.is_some())?;
+        let cite_links = citations(params.citations, format, sizes.is_some(), "scrape")?;
         let browser = parse_browser(params.browser.as_deref())?;
         #[cfg(feature = "browser")]
         if let (Some(render), Some(cookies)) = (
@@ -795,7 +799,7 @@ impl WebclawMcp {
         }
 
         let format = params.format.as_deref().unwrap_or("markdown");
-        let cite_links = citations(params.citations, format, sizes.is_some())?;
+        let cite_links = citations(params.citations, format, sizes.is_some(), "crawl")?;
 
         let mut fetch = self.fetch_config.clone();
         apply_render(&mut fetch, None, None, params.block.as_deref(), None)?;
@@ -974,7 +978,7 @@ impl WebclawMcp {
             return Err("batch is limited to 100 URLs per request".into());
         }
         let format = params.format.as_deref().unwrap_or("markdown");
-        let cite_links = citations(params.citations, format, false)?;
+        let cite_links = citations(params.citations, format, false, "batch")?;
         let concurrency = params.concurrency.unwrap_or(5);
         let url_refs: Vec<&str> = params.urls.iter().map(String::as_str).collect();
 
@@ -1725,7 +1729,19 @@ fn pick(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_select, slugify};
+    use super::{check_select, citations, slugify};
+
+    #[test]
+    fn citation_refusals_name_the_formats_each_tool_takes() {
+        let batch = citations(Some(true), "text", false, "batch").unwrap_err();
+        assert!(
+            batch.contains("markdown format") && !batch.contains("json"),
+            "{batch}"
+        );
+        let scrape = citations(Some(true), "llm", false, "scrape").unwrap_err();
+        assert!(scrape.contains("markdown or json format"), "{scrape}");
+        assert_eq!(citations(None, "text", true, "crawl"), Ok(false));
+    }
 
     #[test]
     fn pdf_options_go_with_the_pdf_format_only() {

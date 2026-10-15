@@ -105,6 +105,8 @@ def main(label, rounds):
     rows, truths = [], {}
     for site in SITES:
         gt = truths[site["name"]] = truth(site)
+        if not gt["expected"]:
+            sys.exit(f"no expected pages for {site['name']}; not scoring against an empty ground truth")
         print(json.dumps({"site": site["name"], "links": gt["links"], "redirecting": gt["redirecting"],
                           "expected": len(gt["expected"])}), flush=True)
         for rnd in range(rounds):

@@ -348,7 +348,10 @@ struct Cli {
         num_args = 0..=1,
         require_equals = true,
         default_missing_value = "",
-        conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "brand", "raw_html", "cloud"]
+        conflicts_with_all = [
+            "pick", "crawl", "watch", "map", "screenshot", "brand", "raw_html", "cloud",
+            "format", "query", "chunk", "include", "exclude", "only_main_content", "metadata"
+        ]
     )]
     capture_network: Option<String>,
 
@@ -4219,5 +4222,26 @@ mod tests {
             Cli::try_parse_from(["webclaw", "--capture-network=/api/", "https://example.com"])
                 .unwrap();
         assert_eq!(cli.capture_network.as_deref(), Some("/api/"));
+    }
+
+    #[test]
+    fn a_capture_refuses_page_options_it_would_ignore() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com", "--capture-network"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        assert!(parse(&[]).is_ok());
+        for extra in [
+            &["-f", "markdown"][..],
+            &["--query", "price"],
+            &["--chunk", "200"],
+            &["--include", "main"],
+            &["--exclude", "nav"],
+            &["--only-main-content"],
+            &["--metadata"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?} was accepted");
+        }
     }
 }

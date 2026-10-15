@@ -536,8 +536,8 @@ struct Cli {
     #[arg(long)]
     no_map_crawl: bool,
 
-    /// Cap the number of URLs --map returns (default: uncapped)
-    #[arg(long)]
+    /// Cap the number of URLs --map returns, at least 1 (default: uncapped)
+    #[arg(long, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     map_limit: Option<usize>,
 
     /// Where --map looks for URLs, comma-separated: sitemap (the default, with
@@ -4044,6 +4044,16 @@ mod tests {
     use super::*;
 
     use webclaw_core::Content;
+
+    #[test]
+    fn a_map_limit_of_zero_is_refused() {
+        assert!(
+            Cli::try_parse_from(["webclaw", "--map", "--map-limit", "0", "https://a.com"]).is_err()
+        );
+        let cli =
+            Cli::try_parse_from(["webclaw", "--map", "--map-limit", "1", "https://a.com"]).unwrap();
+        assert_eq!(cli.map_limit, Some(1));
+    }
 
     #[test]
     fn scroll_takes_its_count_only_after_an_equals_sign() {

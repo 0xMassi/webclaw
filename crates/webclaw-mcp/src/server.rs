@@ -966,6 +966,9 @@ impl WebclawMcp {
                 "query cannot exceed {MAX_CRAWL_QUERY_CHARS} characters"
             ));
         }
+        if params.limit == Some(0) {
+            return Err("limit must be at least 1".into());
+        }
         let mut opts = webclaw_fetch::MapOptions {
             crawl_fallback: false,
             max_urls: params.limit,

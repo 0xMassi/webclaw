@@ -152,9 +152,17 @@ pub async fn map_site(
     client: &FetchClient,
     base_url: &str,
     opts: &MapOptions,
-) -> Result<SiteMap, FetchError> {
+) -> Result<SiteMap, String> {
     for pattern in opts.include_patterns.iter().chain(&opts.exclude_patterns) {
-        crawler::validate_glob(pattern)?;
+        if let Err(e) = crawler::validate_glob(pattern) {
+            let reason = match e {
+                FetchError::Build(reason) => reason,
+                other => other.to_string(),
+            };
+            return Err(format!(
+                "invalid include or exclude path pattern \"{pattern}\": {reason}"
+            ));
+        }
     }
     let mut entries = if opts.sitemap {
         sitemap::discover(client, base_url)
@@ -1076,6 +1084,25 @@ mod tests {
         assert_eq!(
             urls.list,
             vec!["https://example.com/a", "https://example.com/b?id=3"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bad_path_pattern_is_named_in_the_error() {
+        let client = FetchClient::new(FetchConfig::default()).unwrap();
+        let opts = MapOptions {
+            sitemap: false,
+            crawl_fallback: false,
+            exclude_patterns: vec!["/**/**/**/**/**".into()],
+            ..MapOptions::default()
+        };
+        let error = map_site(&client, "https://example.com/", &opts)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("invalid include or exclude path pattern \"/**/**/**/**/**\": "),
+            "{error}"
         );
     }
 

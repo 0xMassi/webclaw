@@ -269,6 +269,20 @@ webclaw https://quotes.toscrape.com --crawl --depth 1 --chunk 512 --chunk-overla
 
 `--chunk` prints the page as chunks for a search index or a RAG pipeline, one JSON object per line (one JSON array with `-f json`): `url`, `index`, `heading_path` (the headings in effect where the chunk starts, outermost first), `tokens` and the chunk's markdown `text`. Chunks are built from whole paragraphs, lists, tables and code blocks and stay under about the given number of tokens. A block too big for one chunk is cut at line breaks, then at sentence ends, then between words, and text with no spaces between characters: a code block is reopened in each piece and a table repeats its header row. Token counts are estimates made without a tokenizer. On the benchmark pages (prose, docs, code, tables and nine languages), for nine chunks in ten cl100k counted 0.77 to 1.12 times the estimate and o200k 0.72 to 0.97 times; 4.5% of chunks came out above the size asked for in cl100k tokens, and 0.5% in o200k tokens. `--chunk-overlap` repeats up to that many tokens from the end of each chunk at the start of the next. With several URLs or `--crawl`, each page is chunked on its own. The MCP `scrape` tool takes `chunk` and `chunk_overlap` and returns the chunks as a JSON array; `crawl` takes them too and returns an object with the crawl counts, the pages that failed and the chunks.
 
+### Links as numbered citations
+
+```bash
+webclaw https://en.wikipedia.org/wiki/Web_scraping --citations
+```
+
+`--citations` moves every link and image URL out of the markdown into a numbered list at the end, written as markdown footnotes: `[Data scraping](https://...)` becomes `Data scraping[^1]`, an image becomes `![alt][^2]`, and the page ends with `## Links` and one `[^1]: https://...` per URL. Numbers follow the order in which URLs first appear, a URL used twice keeps its first number, and numbering starts after any numbered footnotes the page already has. With several URLs or `--crawl`, pages printed together keep counting, so a number means one URL in the whole output; with `--output-dir`, `-f json` or `jsonl` each page counts on its own.
+
+Some things stay as they are: code blocks and inline code, reference-style links (`[text][id]`), autolinks (`<https://...>`) and raw HTML links. Links to a spot on the same page (`#section`) and `javascript:` links keep their text and lose the URL. A cited image is no longer an image to a markdown renderer (GitHub shows `![alt]` as text); its URL is in the list. With `-f markdown`, a page's `## Structured Data` block comes after the list.
+
+On the 63 benchmark pages fetched live, the body before the list came out at about half the tokens of the plain markdown, and the whole output, list included, at 10.7% fewer tokens in total. That total comes mostly from link-heavy pages such as Wikipedia articles: the 5 pages that saved most hold 68% of the saving, the median page saved 2.5%, and 18 of 63 pages came out a little longer. Golden facts were the same with and without it. Reach for it to cite sources by a short, stable id or to keep URLs out of the text, not as a general way to cut tokens.
+
+It works with `-f markdown` and with the markdown inside `-f json` and `jsonl`, for one URL, several or `--crawl`. It is refused with `--chunk` and with modes that print no page markdown (`-f text`, `llm` or `html`, `--select`, `--map`, `--brand`, `--diff-with`, `--watch`, the LLM modes and the like). The MCP `scrape`, `crawl` and `batch` tools take `citations: true`, and `webclaw_core::to_citations` (or `to_citations_after`, to keep counting across pages) does the same for any markdown.
+
 ### Reuse fetched pages
 
 ```bash

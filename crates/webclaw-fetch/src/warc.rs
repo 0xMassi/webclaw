@@ -8,11 +8,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One HTTP response and the request that asked for it, as the client
-/// received it: redirects the client followed itself are not included, and
-/// the body is decoded when the server compressed it.
+/// received it, with the body decoded when the server compressed it: the
+/// HTTP client decodes it before webclaw sees it.
 #[derive(Debug, Clone, Copy)]
 pub struct Exchange<'a> {
-    /// The URL that answered, after any redirects the client followed.
+    /// The URL that answered.
     pub url: &'a str,
     /// The headers sent with the request: the browser profile's, the
     /// configured ones and the request's own. Cookies the client stored from
@@ -39,26 +39,39 @@ impl std::fmt::Debug for Archive {
     }
 }
 
-/// Writes a WARC file: a `warcinfo` record, then a `request` and a
-/// `response` record for each [`Exchange`]. With `gzip`, every record is its
-/// own gzip member, as `.warc.gz` files hold them, so a file cut short keeps
-/// every record before the cut readable.
+/// Writes a WARC file: a `warcinfo` record, then a `response` and a
+/// `request` record for each [`Exchange`], each pointing at the `warcinfo`
+/// with `WARC-Warcinfo-ID`. With `gzip`, every record is its own gzip
+/// member, as `.warc.gz` files hold them, so a file cut short keeps every
+/// record before the cut readable.
+///
+/// Responses are stored decoded, which the `warcinfo` record states: a
+/// compressed body is stored decompressed, without its `Content-Encoding`,
+/// `Content-Length` and `Transfer-Encoding` headers, and HTTP/2 responses
+/// get an HTTP/1.1 status line. Payload digests are therefore those of the
+/// decoded body, and do not match a copy of the same resource that another
+/// archiver stored still compressed.
 pub struct Writer<W: Write> {
     out: W,
     gzip: bool,
+    info: String,
 }
 
 impl<W: Write> Writer<W> {
     /// Start a WARC file in `out` with a `warcinfo` record naming `software`.
     pub fn new(out: W, gzip: bool, software: &str) -> io::Result<Self> {
-        let mut writer = Self { out, gzip };
+        let mut writer = Self {
+            out,
+            gzip,
+            info: record_id(),
+        };
         let info = format!(
-            "software: {software}\r\nformat: WARC File Format 1.1\r\nconformsTo: http://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/\r\n"
+            "software: {software}\r\nformat: WARC File Format 1.1\r\nconformsTo: http://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/\r\ndescription: HTTP responses are stored decoded: compressed bodies decompressed, without their Content-Encoding, Content-Length and Transfer-Encoding headers, and HTTP/2 responses with an HTTP/1.1 status line\r\n"
         );
         writer.record(
             &[
                 ("WARC-Type", "warcinfo".into()),
-                ("WARC-Record-ID", record_id()),
+                ("WARC-Record-ID", writer.info.clone()),
                 ("WARC-Date", warc_date(SystemTime::now())),
                 ("Content-Type", "application/warc-fields".into()),
             ],
@@ -116,6 +129,7 @@ impl<W: Write> Writer<W> {
             ("WARC-Record-ID", response_id.clone()),
             ("WARC-Date", date.clone()),
             ("WARC-Target-URI", exchange.url.to_string()),
+            ("WARC-Warcinfo-ID", self.info.clone()),
         ];
         if let Some(ip) = exchange.ip {
             fields.push(("WARC-IP-Address", ip.to_string()));
@@ -133,6 +147,7 @@ impl<W: Write> Writer<W> {
                 ("WARC-Date", date),
                 ("WARC-Target-URI", exchange.url.to_string()),
                 ("WARC-Concurrent-To", response_id),
+                ("WARC-Warcinfo-ID", self.info.clone()),
                 ("Content-Type", "application/http; msgtype=request".into()),
             ],
             &request,
@@ -373,6 +388,18 @@ mod tests {
         let (info, block) = &records[0];
         assert_eq!(field(info, "WARC-Type"), "warcinfo");
         assert!(String::from_utf8_lossy(block).contains("software: webclaw test"));
+        assert!(
+            String::from_utf8_lossy(block)
+                .contains("description: HTTP responses are stored decoded"),
+            "{}",
+            String::from_utf8_lossy(block)
+        );
+        for (fields, _) in &records[1..] {
+            assert_eq!(
+                field(fields, "WARC-Warcinfo-ID"),
+                field(info, "WARC-Record-ID")
+            );
+        }
         let (response, block) = &records[1];
         assert_eq!(field(response, "WARC-Type"), "response");
         assert_eq!(

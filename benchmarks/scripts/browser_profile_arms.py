@@ -7,9 +7,7 @@ steps. `-` as the profile runs without one. With hold-seconds, the browser stays
 that long after the page loaded, so another process can try the same profile meanwhile.
 
 Arms, each with a documented way to keep a login between runs:
-  webclaw            the CLI with --browser-profile, and --actions for the steps; a script body runs
-                     as an async function expression, since --actions takes a body with await and
-                     return only in that form
+  webclaw            the CLI with --browser-profile, and --actions for the steps
   scrapling          DynamicFetcher with user_data_dir, the steps through a Playwright page_action
   scrapling-restore  the same with extra_flags=["--restore-last-session"]
   scrapling-cookies  no profile: the response's cookies are written to a file in the directory and
@@ -43,9 +41,7 @@ def webclaw():
         cmd += ["--browser-profile", PROFILE]
     else:
         cmd += ["--render", "always"]
-    steps = [{**s, "code": f"(async () => {{ {s['code']} }})()"} if s["type"] == "executeJavascript" else s
-             for s in STEPS]
-    steps += [{"type": "wait", "milliseconds": int(HOLD * 1000)}] if HOLD else []
+    steps = STEPS + ([{"type": "wait", "milliseconds": int(HOLD * 1000)}] if HOLD else [])
     if steps:
         cmd += ["--actions", json.dumps(steps)]
     t0 = time.perf_counter()

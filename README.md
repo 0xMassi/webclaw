@@ -404,6 +404,22 @@ Each link is scored by the question's words in its text, its URL path and the pa
 
 The scoring matches words, so it works best on English questions; questions in other languages reach their page later (Japanese, French, Spanish and Chinese questions in the benchmark: 3 of 16 by page 10 and a median of 18 pages, against 33 of 48 and 6 pages for English questions on sites the weights were not tuned on). Only the first 32 distinct words of a question count.
 
+### List a site's URLs
+
+```bash
+webclaw https://docs.python.org/3/ --map
+webclaw https://docs.python.org/3/ --map --map-source sitemap,cc --path-prefix /3/library \
+  --query "cancel an asyncio task" --map-limit 20
+```
+
+`--map` lists a site's URLs without extracting them: one per line, or a JSON array with `-f json`. It reads the sitemaps the site's robots.txt declares (or the usual sitemap paths), and when they hold fewer than 200 URLs it adds the links found by a short crawl (`--map-pages`, `--no-map-crawl` to turn it off).
+
+`--map-source sitemap,cc` also asks the public [Common Crawl](https://commoncrawl.org) index for every page of the site it captured in its latest crawl, which finds pages that no sitemap lists and no crawl reaches in a few pages. `--map-source cc` asks the index alone. Only pages on the site's own host (with or without `www.`) that answered 200 with HTML are kept, each URL once; `--map-all-captures` keeps redirects, errors and other files too. The index is a free shared service: webclaw sends it one request at a time, a second apart, retries a busy answer twice, and reads at most ten pages of results (about 150,000 captures). It often takes 10 to 60 seconds and is sometimes down. Then `--map-source cc` fails with that error, and `sitemap,cc` warns and prints the sitemap URLs.
+
+`--path-prefix`, `--include-paths` and `--exclude-paths` filter the list as they filter a crawl. `--query` lists the URLs best match first by the words in their paths, weighting words that few of the site's paths share. It reads no page, so it only helps when the URL names the topic: "cancel an asyncio task" puts `asyncio-task.html` first among 6,303 docs.python.org URLs. `--map-limit` keeps the first N, after the ranking. The MCP `map` tool takes `source`, `limit` and `query`.
+
+On 10 sites in our benchmark (docs, news, shops and blogs, half of them without a sitemap), `--map-source sitemap,cc` found 36,652 URLs on the sites' own hosts against 16,659 for plain `--map`, and 96% of a sample answered 200 with HTML. The index failed on 1 of the 10 sites that run and on 1 of 10 with `--map-source cc`. See [benchmarks](benchmarks/README.md#url-discovery).
+
 ### Workflow examples
 
 - [HTML to Markdown for RAG](examples/html-to-markdown-rag/)
@@ -510,7 +526,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | `select` | Pick values or records from a page with CSS selectors or XPath, its data tables, elements found by text, or every element like an example, as JSON | Yes |
 | `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG, or print it to PDF | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages, most relevant first with a `query` | Yes |
-| `map` | Discover URLs without extracting every page | Yes |
+| `map` | Discover URLs from sitemaps and the Common Crawl index without extracting every page | Yes |
 | `batch` | Scrape multiple URLs in parallel | Yes |
 | `extract` | Convert page content into structured data | Yes, with local or configured LLM |
 | `summarize` | Summarize a page | Yes, with local or configured LLM |

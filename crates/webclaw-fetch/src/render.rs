@@ -280,7 +280,15 @@ impl NetworkCapture {
             .into_iter()
             .flatten()
             .filter(|(name, _)| self.credentials || !is_credential(name))
-            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string())))
+            .filter_map(|(name, value)| {
+                let value = value.as_str()?;
+                let value = if !self.credentials && name.eq_ignore_ascii_case("referer") {
+                    redact_query(value)
+                } else {
+                    value.to_string()
+                };
+                Some((name.clone(), value))
+            })
             .collect()
     }
 }
@@ -3848,6 +3856,27 @@ mod tests {
         assert!(
             took < std::time::Duration::from_secs(7),
             "the capture took {took:?}"
+        );
+    }
+
+    #[test]
+    fn the_page_url_in_a_referer_is_redacted_too() {
+        let sent = serde_json::json!({
+            "Referer": "https://a.example/page?access_token=PAGE_SECRET&q=1",
+        });
+        let kept = super::NetworkCapture::new(None, None, false)
+            .unwrap()
+            .headers(&sent);
+        assert_eq!(
+            kept["Referer"],
+            "https://a.example/page?access_token=REDACTED&q=1"
+        );
+        let all = super::NetworkCapture::new(None, None, true)
+            .unwrap()
+            .headers(&sent);
+        assert_eq!(
+            all["Referer"],
+            "https://a.example/page?access_token=PAGE_SECRET&q=1"
         );
     }
 }

@@ -132,6 +132,7 @@ fn warn_empty(url: &str, reason: &EmptyReason) {
         EmptyReason::Antibot => eprintln!(
             "\x1b[33mwarning:\x1b[0m Anti-bot protection detected on {url}\n\
              This site requires CAPTCHA solving or browser rendering.\n\
+             For a Cloudflare challenge, try --solve (needs a `browser` build).\n\
              Use the webclaw Cloud API for automatic bypass: https://webclaw.io/pricing"
         ),
         EmptyReason::ConsentWall => eprintln!(
@@ -211,6 +212,15 @@ struct Cli {
     /// When rendering, also wait until an element matching this CSS selector exists
     #[arg(long)]
     wait_for: Option<String>,
+
+    /// Get past Cloudflare challenge pages in a local Chrome: render a page
+    /// that comes back as one, wait for it to clear or click its checkbox,
+    /// and read the page it leads to. Later pages of that site are fetched
+    /// with the clearance cookie it got. A Turnstile checkbox in any page
+    /// that gets rendered is clicked too. Needs a build with the `browser`
+    /// feature
+    #[arg(long, conflicts_with_all = ["screenshot", "save_pdf"])]
+    solve: bool,
 
     /// When rendering a page for its content, skip these resources: a comma
     /// list of images, fonts and media, or none. Screenshots and PDFs
@@ -790,6 +800,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
             always: cli.render == RenderMode::Always,
             wait_for: cli.wait_for.clone(),
             block: cli.block.unwrap_or_default(),
+            solve: cli.solve,
         });
     }
     config
@@ -800,7 +811,7 @@ fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Render
     use webclaw_fetch::render::{BrowserSource, RenderPool};
     let source = match &cli.cdp_url {
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
-        None => BrowserSource::launch_for(config),
+        None => BrowserSource::launch_for(config, cli.solve),
     };
     RenderPool::new(source, std::time::Duration::from_secs(cli.timeout))
 }
@@ -1210,6 +1221,7 @@ async fn render_page(
             render.wait_for.as_deref(),
             &headers,
             render.block,
+            render.solve,
             &actions,
         )
         .await
@@ -3412,6 +3424,12 @@ async fn main() {
 
     let mut cli = Cli::parse();
     init_logging(cli.verbose);
+    if cli.solve && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
+        eprintln!(
+            "error: --solve needs the browser: a build with `--features browser`, and no --render never"
+        );
+        process::exit(1);
+    }
 
     // Subcommand path. Handled before the flag dispatch so a subcommand
     // can't collide with a flag-based flow. When no subcommand is set

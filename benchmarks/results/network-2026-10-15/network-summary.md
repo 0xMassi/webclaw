@@ -4,11 +4,11 @@ Each tool renders 11 pages whose data comes from JSON APIs, with a fresh browser
 
 | tool | pages ok | found | bodies ok | responses | noise | ms (median) | output KB (median) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| webclaw | 10/11 | 9/11 | 9/11 | 101 | 82 | 4670 | 85 |
-| scrapling | 11/11 | 11/11 | 11/11 | 157 | 126 | 2411 | 217 |
-| crawl4ai | 10/11 | 10/11 | 10/11 | 591 | 571 | 2621 | 3184 |
-| webclaw (filtered) | 10/11 | 9/11 | 9/11 | 19 | 0 | 4701 | 6 |
-| scrapling (filtered) | 11/11 | 11/11 | 11/11 | 31 | 0 | 2617 | 17 |
+| webclaw | 11/11 | 11/11 | 11/11 | 122 | 101 | 4155 | 176 |
+| scrapling | 11/11 | 11/11 | 11/11 | 160 | 127 | 2512 | 217 |
+| crawl4ai | 10/11 | 10/11 | 10/11 | 593 | 571 | 2308 | 3184 |
+| webclaw (filtered) | 11/11 | 11/11 | 11/11 | 23 | 0 | 3541 | 6 |
+| scrapling (filtered) | 11/11 | 11/11 | 11/11 | 33 | 0 | 2516 | 17 |
 
 Bodies ok per page (responses captured):
 
@@ -17,13 +17,13 @@ Bodies ok per page (responses captured):
 | https://quotes.toscrape.com/scroll | 1/1 (1) | 1/1 (1) | 1/1 (6) | 1/1 (1) | 1/1 (1) |
 | https://earthquake.usgs.gov/earthquakes/map/ | 1/1 (25) | 1/1 (44) | 1/1 (19) | 1/1 (1) | 1/1 (1) |
 | https://www.swpc.noaa.gov/products/planetary-k-index | 1/1 (4) | 1/1 (4) | 1/1 (89) | 1/1 (1) | 1/1 (1) |
-| https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London | 1/1 (9) | 1/1 (9) | 1/1 (50) | 1/1 (1) | 1/1 (1) |
-| https://www.nasdaq.com/market-activity/stocks/aapl | fail | 1/1 (31) | fail | fail | 1/1 (11) |
+| https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London | 1/1 (9) | 1/1 (9) | 1/1 (51) | 1/1 (1) | 1/1 (1) |
+| https://www.nasdaq.com/market-activity/stocks/aapl | 1/1 (16) | 1/1 (31) | fail | 1/1 (1) | 1/1 (11) |
 | https://www.aljazeera.com/ | 1/1 (12) | 1/1 (12) | 1/1 (64) | 1/1 (1) | 1/1 (1) |
 | https://github.com/rust-lang/cargo | 1/1 (9) | 1/1 (9) | 1/1 (178) | 1/1 (1) | 1/1 (1) |
-| https://gitlab.com/gitlab-org/gitlab | 1/1 (22) | 1/1 (22) | 1/1 (86) | 1/1 (11) | 1/1 (11) |
-| https://pokeapi.co/ | 1/1 (7) | 1/1 (7) | 1/1 (24) | 1/1 (1) | 1/1 (1) |
-| https://bundlephobia.com/package/react | 0/1 (8) | 1/1 (14) | 1/1 (61) | 0/1 (0) | 1/1 (1) |
+| https://gitlab.com/gitlab-org/gitlab | 1/1 (22) | 1/1 (25) | 1/1 (89) | 1/1 (13) | 1/1 (13) |
+| https://pokeapi.co/ | 1/1 (7) | 1/1 (7) | 1/1 (23) | 1/1 (1) | 1/1 (1) |
+| https://bundlephobia.com/package/react | 1/1 (13) | 1/1 (14) | 1/1 (60) | 1/1 (1) | 1/1 (1) |
 | https://petstore.swagger.io/ | 1/1 (4) | 1/1 (4) | 1/1 (14) | 1/1 (1) | 1/1 (1) |
 
 Direct API checks:

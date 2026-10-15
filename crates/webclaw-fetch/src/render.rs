@@ -1993,6 +1993,12 @@ fn claim_profile(dir: &std::path::Path) -> Result<(), String> {
                 .into(),
         );
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string())?;
+    }
     std::fs::write(&marker, b"").map_err(|e| e.to_string())
 }
 
@@ -2426,8 +2432,19 @@ mod tests {
 
         let empty = root.path().join("empty");
         std::fs::create_dir(&empty).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&empty, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         super::prepare_profile(&empty, true).expect("an empty directory");
         assert!(empty.join(super::PROFILE_MARKER).exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&empty).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+        }
 
         let chrome = root.path().join("chrome");
         std::fs::create_dir(&chrome).unwrap();

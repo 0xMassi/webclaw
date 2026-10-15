@@ -74,6 +74,15 @@ It asks the 40 questions in `questions.jsonl` about pages frozen by `run.sh`, an
 
 It asks three sets of questions, scored apart: the 60 in `query-crawl.jsonl` about docs.python.org, the PostgreSQL docs, MDN's HTTP section and quotes.toscrape.com tag pages, which the scoring weights were chosen on; 48 held-out questions in `query-crawl-held.jsonl` about kubernetes.io, the Django docs, sqlite.org and go.dev, written by a reviewer after the weights were fixed; and 16 questions in Japanese, French, Spanish and Chinese in `query-crawl-intl.jsonl` about the translated Python docs. Each question names the page that answers it, and the script first checks that those pages still hold the answer. Every arm crawls from the site's start page with a budget of 50 pages, depth 5, concurrency 4, the same path prefix and robots.txt obeyed, and the script records how many pages it fetched before the answer page, how long that took, and whether the answer page is in the top 3 of the tool's own ranking. The arms are webclaw breadth-first and with `--query`; Scrapling's spider, whose scheduler is a priority queue without any relevance scorer, so it runs breadth-first; and Crawl4AI breadth-first, best-first with its `KeywordRelevanceScorer` (keywords: the question's words of three letters or more, minus common English question words), and its adaptive crawler (statistical strategy, scoped to the same prefix), which stops when its own confidence is high enough and previews the `<head>` of linked pages on top of the pages it crawls. Results land in `results/<label>/query-crawl-summary.md`.
 
+### Crawling through redirects
+
+```bash
+./benchmarks/crawl-redirects.sh                                     # builds webclaw, then crawls each site with every tool
+./benchmarks/crawl-redirects.sh my-run ./target/release ./old-bins 3  # adds an arm for an older webclaw build
+```
+
+It crawls four seeds one level deep, robots.txt obeyed: quotes.toscrape.com over HTTPS, whose author links redirect to HTTP with a trailing slash; quotes.toscrape.com over HTTP, where they only add the slash; www.python.org; and go.dev/doc/, where about a quarter of the links redirect. The expected pages are every same-host link on the seed page, followed to its final URL, that robots.txt allows before and after the redirect. Each tool crawls with the same page cap and concurrency: webclaw `--crawl --depth 1`, Scrapling's spider with `robots_txt_obey`, and Crawl4AI's `BFSDeepCrawlStrategy` with `check_robots_txt`. The script counts how many expected pages each tool returned content for, under the final URL or a link that redirects to it, how many it returned twice under two such spellings, and the time. Results land in `results/<label>/crawl-redirects-summary.md`.
+
 ### Browser profiles
 
 ```bash

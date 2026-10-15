@@ -222,8 +222,9 @@ impl NetworkCapture {
             && self.pattern.as_ref().is_none_or(|p| p.is_match(url))
     }
 
-    fn keeps(&self, event: &EventResponseReceived) -> bool {
-        self.wants(&event.r#type, &event.response.url) && private_address(&event.response).is_none()
+    fn keeps(&self, event: &EventResponseReceived, check_addresses: bool) -> bool {
+        self.wants(&event.r#type, &event.response.url)
+            && !(check_addresses && private_address(&event.response).is_some())
     }
 
     async fn collect(
@@ -231,6 +232,7 @@ impl NetworkCapture {
         page: &chromiumoxide::Page,
         mut sent: impl futures_util::Stream<Item = Arc<EventRequestWillBeSent>> + Unpin,
         mut received: impl futures_util::Stream<Item = Arc<EventResponseReceived>> + Unpin,
+        check_addresses: bool,
     ) -> Vec<NetworkResponse> {
         let (requests, kept) = tokio::task::unconstrained(async {
             let mut requests = HashMap::new();
@@ -239,7 +241,7 @@ impl NetworkCapture {
             }
             let mut kept = Vec::new();
             while let Some(Some(event)) = received.next().now_or_never() {
-                if kept.len() < MAX_RESPONSES && self.keeps(&event) {
+                if kept.len() < MAX_RESPONSES && self.keeps(&event, check_addresses) {
                     kept.push(event);
                 }
             }
@@ -1308,11 +1310,12 @@ impl Renderer {
             None => Ok(()),
         };
         let network = match (capture, traffic, &outcome) {
-            (Some(capture), Some((sent, received)), Ok(Ok(_))) => {
-                tokio::time::timeout(options.timeout, capture.collect(&page, sent, received))
-                    .await
-                    .ok()
-            }
+            (Some(capture), Some((sent, received)), Ok(Ok(_))) => tokio::time::timeout(
+                options.timeout,
+                capture.collect(&page, sent, received, self.check_documents),
+            )
+            .await
+            .ok(),
             _ => Some(Vec::new()),
         };
         let _ = page.close().await;
@@ -3211,10 +3214,11 @@ mod tests {
             .unwrap()
         };
         let capture = super::NetworkCapture::new(None, None, false).unwrap();
-        assert!(capture.keeps(&response("93.184.215.14")));
-        assert!(!capture.keeps(&response("127.0.0.1")));
-        assert!(!capture.keeps(&response("[::1]")));
-        assert!(!capture.keeps(&response("10.1.2.3")));
+        assert!(capture.keeps(&response("93.184.215.14"), true));
+        assert!(!capture.keeps(&response("127.0.0.1"), true));
+        assert!(!capture.keeps(&response("[::1]"), true));
+        assert!(!capture.keeps(&response("10.1.2.3"), true));
+        assert!(capture.keeps(&response("127.0.0.1"), false));
     }
 
     #[test]
@@ -3773,5 +3777,58 @@ mod tests {
         }
         renderer.close().await;
         assert!(failed.is_empty(), "{failed:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_capture_through_a_local_proxy_keeps_its_responses() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_url = format!("http://localhost:{}", proxy.local_addr().unwrap().port());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = proxy.accept().await {
+                tokio::spawn(async move {
+                    let mut buffer = [0; 4096];
+                    let n = socket.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    let (kind, body) = if request.contains("/api ") {
+                        ("application/json", r#"{"ok":true}"#)
+                    } else {
+                        (
+                            "text/html",
+                            r#"<html><body><p>proxied</p><script>fetch("/api");</script></body></html>"#,
+                        )
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let renderer = Renderer::launch(Some(&proxy_url))
+            .await
+            .expect("Chrome launches");
+        let rendered = renderer
+            .capture(
+                "http://example.com/page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                &[],
+                &super::NetworkCapture::new(None, None, false).unwrap(),
+            )
+            .await;
+        renderer.close().await;
+        let network = rendered.expect("render succeeds").network;
+        assert!(
+            network
+                .iter()
+                .any(|r| r.url.ends_with("/api") && r.body.as_deref() == Some(r#"{"ok":true}"#)),
+            "{network:?}"
+        );
     }
 }

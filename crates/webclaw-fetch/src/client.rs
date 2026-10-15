@@ -582,28 +582,30 @@ impl FetchClient {
         let start = Instant::now();
         let client = self.pick_client(url);
 
-        #[allow(unused_mut)]
-        let mut sent: Vec<(&str, String)> =
-            extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        let sent: Vec<(&str, String)> = extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
         #[cfg(feature = "browser")]
-        if let Some(render) = self.render.as_ref().filter(|render| render.solve)
-            && let Some((cookies, agent)) = render.pool.clearance(url)
-        {
-            debug!(url, "sending the clearance from a solved challenge");
-            let own = self
-                .headers
-                .iter()
-                .map(|(name, value)| (name.as_str(), value.as_str()))
-                .chain(extra.iter().copied())
-                .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
-                .map(|(_, value)| value);
-            let cookies = own
-                .chain(std::iter::once(cookies.as_str()))
-                .collect::<Vec<_>>()
-                .join("; ");
-            sent.push(("cookie", cookies));
-            sent.push(("user-agent", agent));
-        }
+        let sent = {
+            let mut sent = sent;
+            if let Some(render) = self.render.as_ref().filter(|render| render.solve)
+                && let Some((cookies, agent)) = render.pool.clearance(url)
+            {
+                debug!(url, "sending the clearance from a solved challenge");
+                let own = self
+                    .headers
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str()))
+                    .chain(extra.iter().copied())
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+                    .map(|(_, value)| value);
+                let cookies = own
+                    .chain(std::iter::once(cookies.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                sent.push(("cookie", cookies));
+                sent.push(("user-agent", agent));
+            }
+            sent
+        };
         let response = self.send(client, url, &sent).await?;
         response_to_result(response, start)
     }

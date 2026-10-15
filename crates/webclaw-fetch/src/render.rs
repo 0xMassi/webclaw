@@ -60,8 +60,7 @@ pub struct RenderOptions {
     /// no token within 10 seconds.
     /// `headers` then go on the page's other requests to its origin but not
     /// on its documents, since rewriting a document request fails the
-    /// challenge. Cloudflare rejects a browser that calls itself
-    /// `HeadlessChrome`, so launch it with [`Renderer::launch_as_chrome`].
+    /// challenge.
     pub solve: bool,
 }
 
@@ -653,46 +652,16 @@ impl Renderer {
     /// `https://` proxy URL, credentials included. `WEBCLAW_CHROME` points at
     /// the executable; without it the standard install locations are tried,
     /// then the browsers on `PATH`.
+    ///
+    /// The browser presents itself as regular Chrome: its User-Agent, in
+    /// every page, frame and worker, is Chrome's own without "Headless", as
+    /// Cloudflare challenges and some sites require. For Google Chrome and
+    /// Chromium on macOS and Linux, its version comes from `--version`
+    /// before the launch; any other browser is launched a second time once
+    /// it has told its User-Agent. `chrome-headless-shell` keeps its own
+    /// User-Agent, since its client hints say `HeadlessChrome` as well.
     pub async fn launch(proxy: Option<&str>) -> Result<Self, FetchError> {
         Self::launch_with(proxy, &[]).await
-    }
-
-    /// [`Renderer::launch`], with the browser calling itself Chrome instead
-    /// of `HeadlessChrome` in its User-Agent, in every page and worker, so
-    /// that it can get past Cloudflare challenges. Chrome tells its version
-    /// only once it runs, so this launches it twice, about half a second more.
-    pub async fn launch_as_chrome(proxy: Option<&str>) -> Result<Self, FetchError> {
-        Self::launch_as_chrome_timed(proxy, None, COMMAND_TIMEOUT).await
-    }
-
-    async fn launch_as_chrome_timed(
-        proxy: Option<&str>,
-        profile: Option<&std::path::Path>,
-        command_timeout: Duration,
-    ) -> Result<Self, FetchError> {
-        let launch = async |args: &[&str]| match profile {
-            Some(dir) => {
-                Self::launch_in(proxy, args, dir.to_path_buf(), true, command_timeout).await
-            }
-            None => Self::launch_timed(proxy, args, command_timeout).await,
-        };
-        let renderer = launch(&[]).await?;
-        if renderer.agent.is_empty() {
-            renderer.close().await;
-            return Err(FetchError::Build(
-                "the browser did not tell its User-Agent, so it cannot present itself as Chrome"
-                    .into(),
-            ));
-        }
-        if !renderer.agent.contains("HeadlessChrome") {
-            return Ok(renderer);
-        }
-        let agent = format!(
-            "--user-agent={}",
-            renderer.agent.replace("HeadlessChrome", "Chrome")
-        );
-        renderer.close().await;
-        launch(&[agent.as_str()]).await
     }
 
     async fn launch_with(proxy: Option<&str>, args: &[&str]) -> Result<Self, FetchError> {
@@ -745,6 +714,84 @@ impl Renderer {
         persistent: bool,
         command_timeout: Duration,
     ) -> Result<Self, FetchError> {
+        Self::launch_from(
+            chrome_executable(),
+            proxy,
+            args,
+            profile,
+            persistent,
+            command_timeout,
+        )
+        .await
+    }
+
+    async fn launch_from(
+        executable: Option<std::path::PathBuf>,
+        proxy: Option<&str>,
+        args: &[&str],
+        profile: std::path::PathBuf,
+        persistent: bool,
+        command_timeout: Duration,
+    ) -> Result<Self, FetchError> {
+        let shell = executable.as_deref().is_some_and(is_headless_shell);
+        let agent = match &executable {
+            Some(path) if !shell => chrome_agent(path).await,
+            _ => None,
+        };
+        let plain: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+        let launch = async |flags: &[String], profile: std::path::PathBuf| {
+            Self::start_chrome(
+                proxy,
+                flags,
+                profile,
+                persistent,
+                command_timeout,
+                executable.as_deref(),
+            )
+            .await
+        };
+        let renderer = match &agent {
+            Some(agent) => {
+                let flags = [plain.clone(), vec![format!("--user-agent={agent}")]].concat();
+                let renderer = launch(&flags, profile.clone()).await?;
+                let product = renderer
+                    .browser
+                    .version()
+                    .await
+                    .map(|version| version.product)
+                    .unwrap_or_default();
+                if chrome_major(&product).is_some() && chrome_major(&product) == chrome_major(agent)
+                {
+                    return Ok(renderer);
+                }
+                renderer.close().await;
+                launch(&plain, profile.clone()).await?
+            }
+            None => launch(&plain, profile.clone()).await?,
+        };
+        if shell || !renderer.agent.contains("HeadlessChrome") {
+            return Ok(renderer);
+        }
+        let flags = [
+            plain,
+            vec![format!(
+                "--user-agent={}",
+                renderer.agent.replace("HeadlessChrome", "Chrome")
+            )],
+        ]
+        .concat();
+        renderer.close().await;
+        launch(&flags, profile).await
+    }
+
+    async fn start_chrome(
+        proxy: Option<&str>,
+        args: &[String],
+        profile: std::path::PathBuf,
+        persistent: bool,
+        command_timeout: Duration,
+        executable: Option<&std::path::Path>,
+    ) -> Result<Self, FetchError> {
         prepare_profile(&profile, persistent).map_err(|e| {
             FetchError::Build(format!("browser profile {}: {e}", profile.display()))
         })?;
@@ -755,16 +802,10 @@ impl Renderer {
             .arg("--disable-component-update")
             .arg("--enable-features=NetworkService,NetworkServiceInProcess,LocalNetworkAccessChecks:LocalNetworkAccessChecksWarn/false,LocalNetworkAccessChecksWebSockets")
             .arg("--webrtc-ip-handling-policy=disable_non_proxied_udp")
-            .args(args.iter().copied())
+            .args(args)
             .request_timeout(command_timeout)
             .user_data_dir(&profile);
-        let installed = std::env::var("WEBCLAW_CHROME").ok().or_else(|| {
-            INSTALL_PATHS
-                .iter()
-                .find(|path| std::path::Path::new(path).exists())
-                .map(|path| path.to_string())
-        });
-        if let Some(path) = installed {
+        if let Some(path) = executable {
             config = config.chrome_executable(path);
         }
         let mut proxy_login = None;
@@ -1629,16 +1670,13 @@ async fn shut_down(browser: std::sync::Weak<Browser>, dir: &std::path::Path) {
 /// Where a [`RenderPool`] gets its browser.
 #[derive(Debug, Clone)]
 pub enum BrowserSource {
-    /// Launch a local headless Chrome; see [`Renderer::launch`]. With
-    /// `solve`, launch it with [`Renderer::launch_as_chrome`], which
-    /// [`RenderOptions::solve`] needs.
-    Launch { proxy: Option<String>, solve: bool },
+    /// Launch a local headless Chrome; see [`Renderer::launch`].
+    Launch { proxy: Option<String> },
     /// [`BrowserSource::Launch`] on the persistent profile in `dir`; see
     /// [`Renderer::launch_with_profile`].
     Profile {
         proxy: Option<String>,
         dir: std::path::PathBuf,
-        solve: bool,
     },
     /// Use a browser already running at this DevTools endpoint; see [`Renderer::connect`].
     Connect(String),
@@ -1646,21 +1684,20 @@ pub enum BrowserSource {
 
 impl BrowserSource {
     /// Launch a local Chrome behind `config.proxy`, or behind one proxy
-    /// picked at random from `config.proxy_pool`, ready to get past
-    /// Cloudflare challenges when `solve` is set.
-    pub fn launch_for(config: &crate::FetchConfig, solve: bool) -> Self {
+    /// picked at random from `config.proxy_pool`.
+    pub fn launch_for(config: &crate::FetchConfig) -> Self {
         let proxy = config
             .proxy
             .clone()
             .or_else(|| config.proxy_pool.choose(&mut rand::thread_rng()).cloned());
-        Self::Launch { proxy, solve }
+        Self::Launch { proxy }
     }
 
     /// The same launch on the persistent profile in `dir`, when there is
     /// one. A browser to connect to is left as it is.
     pub fn with_profile(self, dir: Option<std::path::PathBuf>) -> Self {
         match (self, dir) {
-            (Self::Launch { proxy, solve }, Some(dir)) => Self::Profile { proxy, dir, solve },
+            (Self::Launch { proxy }, Some(dir)) => Self::Profile { proxy, dir },
             (source, _) => source,
         }
     }
@@ -1927,27 +1964,11 @@ impl RenderPool {
                     .saturating_add(COMMAND_TIMEOUT)
                     .min(Duration::from_secs(86_400));
                 let started = match &self.source {
-                    BrowserSource::Launch {
-                        proxy,
-                        solve: false,
-                    } => Renderer::launch_timed(proxy.as_deref(), &[], commands).await,
-                    BrowserSource::Launch { proxy, solve: true } => {
-                        Renderer::launch_as_chrome_timed(proxy.as_deref(), None, commands).await
+                    BrowserSource::Launch { proxy } => {
+                        Renderer::launch_timed(proxy.as_deref(), &[], commands).await
                     }
-                    BrowserSource::Profile {
-                        proxy,
-                        dir,
-                        solve: false,
-                    } => {
+                    BrowserSource::Profile { proxy, dir } => {
                         Renderer::launch_in(proxy.as_deref(), &[], dir.clone(), true, commands)
-                            .await
-                    }
-                    BrowserSource::Profile {
-                        proxy,
-                        dir,
-                        solve: true,
-                    } => {
-                        Renderer::launch_as_chrome_timed(proxy.as_deref(), Some(dir), commands)
                             .await
                     }
                     BrowserSource::Connect(endpoint) => {
@@ -2278,6 +2299,74 @@ const INSTALL_PATHS: &[&str] = &[
     "/usr/bin/chromium-browser",
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
 ];
+
+fn chrome_executable() -> Option<std::path::PathBuf> {
+    std::env::var_os("WEBCLAW_CHROME")
+        .map(Into::into)
+        .or_else(|| {
+            INSTALL_PATHS
+                .iter()
+                .map(std::path::PathBuf::from)
+                .find(|path| path.exists())
+        })
+        .or_else(|| chromiumoxide::detection::default_executable(Default::default()).ok())
+}
+
+fn chrome_major(text: &str) -> Option<&str> {
+    let (_, version) = text.split_once("Chrome/")?;
+    version
+        .split('.')
+        .next()
+        .filter(|major| !major.is_empty() && major.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn is_headless_shell(executable: &std::path::Path) -> bool {
+    executable
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().contains("headless-shell"))
+}
+
+async fn chrome_agent(executable: &std::path::Path) -> Option<String> {
+    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return None;
+    }
+    use tokio::io::AsyncReadExt;
+    let mut child = tokio::process::Command::new(executable)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let mut printed = Vec::new();
+    let finished = tokio::time::timeout(Duration::from_secs(2), async {
+        stdout.read_to_end(&mut printed).await?;
+        child.wait().await
+    })
+    .await;
+    if !matches!(finished, Ok(Ok(_))) {
+        let _ = child.kill().await;
+        return None;
+    }
+    agent_for_version(&String::from_utf8_lossy(&printed))
+}
+
+fn agent_for_version(version: &str) -> Option<String> {
+    let number = ["Google Chrome for Testing ", "Google Chrome ", "Chromium "]
+        .iter()
+        .find_map(|name| version.trim_start().strip_prefix(name))?;
+    let major: u32 = number.split('.').next()?.parse().ok()?;
+    let platform = if cfg!(target_os = "macos") {
+        "Macintosh; Intel Mac OS X 10_15_7"
+    } else {
+        "X11; Linux x86_64"
+    };
+    Some(format!(
+        "Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+    ))
+}
 
 fn settle_floor(http_html: Option<&str>) -> usize {
     http_html.map_or(0, webclaw_core::quality::visible_word_count) + 50
@@ -2665,7 +2754,6 @@ mod tests {
             super::BrowserSource::Profile {
                 proxy: None,
                 dir: profile.path().into(),
-                solve: false,
             },
             std::time::Duration::from_secs(20),
         );
@@ -2702,7 +2790,6 @@ mod tests {
             super::BrowserSource::Profile {
                 proxy: None,
                 dir: profile.path().into(),
-                solve: false,
             },
             std::time::Duration::from_secs(20),
         );
@@ -2815,7 +2902,6 @@ mod tests {
                 super::BrowserSource::Profile {
                     proxy: None,
                     dir: profile.path().into(),
-                    solve: false,
                 },
                 std::time::Duration::from_secs(3),
             )),
@@ -2843,7 +2929,6 @@ mod tests {
             super::BrowserSource::Profile {
                 proxy: None,
                 dir: profile.path().into(),
-                solve: false,
             },
             std::time::Duration::from_secs(20),
         );
@@ -3899,10 +3984,7 @@ mod tests {
 
     fn pool() -> super::RenderPool {
         super::RenderPool::new(
-            super::BrowserSource::Launch {
-                proxy: None,
-                solve: false,
-            },
+            super::BrowserSource::Launch { proxy: None },
             std::time::Duration::from_secs(1),
         )
     }
@@ -3945,10 +4027,7 @@ mod tests {
     async fn blocked_renders_leave_the_host_verdict_alone() {
         let config = super::RenderConfig {
             pool: Arc::new(super::RenderPool::new(
-                super::BrowserSource::Launch {
-                    proxy: None,
-                    solve: false,
-                },
+                super::BrowserSource::Launch { proxy: None },
                 std::time::Duration::from_secs(20),
             )),
             always: false,
@@ -4062,12 +4141,12 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            super::BrowserSource::launch_for(&config, true),
-            super::BrowserSource::Launch { proxy: Some(p), solve: true } if p == "http://pool.example:8080"
+            super::BrowserSource::launch_for(&config),
+            super::BrowserSource::Launch { proxy: Some(p) } if p == "http://pool.example:8080"
         ));
         assert!(matches!(
-            super::BrowserSource::launch_for(&config, true).with_profile(Some("/p".into())),
-            super::BrowserSource::Profile { proxy: Some(p), dir, solve: true } if p == "http://pool.example:8080" && dir == std::path::Path::new("/p")
+            super::BrowserSource::launch_for(&config).with_profile(Some("/p".into())),
+            super::BrowserSource::Profile { proxy: Some(p), dir } if p == "http://pool.example:8080" && dir == std::path::Path::new("/p")
         ));
         assert!(matches!(
             super::BrowserSource::Connect("ws://x".into()).with_profile(Some("/p".into())),
@@ -4081,7 +4160,6 @@ mod tests {
             super::BrowserSource::Profile {
                 proxy: None,
                 dir: "/nonexistent/webclaw-profile".into(),
-                solve: false,
             },
             std::time::Duration::from_secs(1),
         );
@@ -4123,7 +4201,6 @@ mod tests {
         let pool = super::RenderPool::new(
             super::BrowserSource::Launch {
                 proxy: Some("not a proxy url".into()),
-                solve: false,
             },
             std::time::Duration::from_secs(1),
         );
@@ -4584,7 +4661,7 @@ mod tests {
     #[ignore = "launches Chrome and needs public DNS"]
     async fn a_render_clicks_through_a_challenge_and_keeps_its_cookies() {
         let proxy = challenge_proxy().await;
-        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+        let renderer = Renderer::launch(Some(&proxy))
             .await
             .expect("Chrome launches");
         assert!(
@@ -4632,7 +4709,7 @@ mod tests {
     #[ignore = "launches Chrome and needs public DNS"]
     async fn a_callers_own_cookies_never_reach_the_shared_clearance() {
         let proxy = challenge_proxy().await;
-        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+        let renderer = Renderer::launch(Some(&proxy))
             .await
             .expect("Chrome launches");
         let solved = renderer
@@ -4658,7 +4735,7 @@ mod tests {
     #[ignore = "launches Chrome and needs public DNS"]
     async fn a_widget_that_never_gives_a_token_costs_one_wait_per_render() {
         let proxy = challenge_proxy().await;
-        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+        let renderer = Renderer::launch(Some(&proxy))
             .await
             .expect("Chrome launches");
         let widget = r#"<html><body><p>Sign up for the newsletter.</p><div class="cf-turnstile"><iframe src="http://example.net:8080/cdn-cgi/challenge-platform/fixture" width="300" height="65" style="border: 0"></iframe></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body></html>"#;
@@ -4696,10 +4773,7 @@ mod tests {
             proxy: Some(proxy.clone()),
             render: Some(super::RenderConfig {
                 pool: Arc::new(super::RenderPool::new(
-                    super::BrowserSource::Launch {
-                        proxy: Some(proxy),
-                        solve: true,
-                    },
+                    super::BrowserSource::Launch { proxy: Some(proxy) },
                     std::time::Duration::from_secs(8),
                 )),
                 always: false,
@@ -4729,7 +4803,7 @@ mod tests {
     #[ignore = "launches Chrome and needs public DNS"]
     async fn a_challenge_that_never_clears_fails_the_render_in_time() {
         let proxy = challenge_proxy().await;
-        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+        let renderer = Renderer::launch(Some(&proxy))
             .await
             .expect("Chrome launches");
         let started = std::time::Instant::now();
@@ -4755,12 +4829,268 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(8));
     }
 
+    #[test]
+    fn the_user_agent_comes_from_the_version_chrome_prints() {
+        use super::agent_for_version;
+        for printed in [
+            "Google Chrome 155.0.8059.79 \n",
+            "Chromium 155.0.8059.79 snap",
+            "Google Chrome for Testing 155.0.8059.79",
+        ] {
+            let agent = agent_for_version(printed).expect(printed);
+            assert!(
+                agent.starts_with("Mozilla/5.0 (")
+                    && agent.ends_with(
+                        ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+                    ),
+                "{agent}"
+            );
+        }
+        assert_eq!(agent_for_version("Microsoft Edge 155.0.3405.80"), None);
+        assert_eq!(agent_for_version("Google Chrome"), None);
+        assert_eq!(agent_for_version(""), None);
+    }
+
+    #[cfg(unix)]
+    fn wrapper(dir: &std::path::Path, name: &str, on_version: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let real = super::chrome_executable().unwrap_or_default();
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = --version ]; then {on_version}; exit 0; fi\nexec \"{}\" \"$@\"\n",
+                real.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[tokio::test]
+    async fn a_version_that_hangs_costs_two_seconds_and_leaves_no_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid = dir.path().join("pid");
+        let hanging = wrapper(
+            dir.path(),
+            "chrome",
+            &format!("echo $$ > {}; exec sleep 30", pid.display()),
+        );
+        let started = std::time::Instant::now();
+        assert_eq!(super::chrome_agent(&hanging).await, None);
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_secs(3), "{took:?}");
+        let pid = std::fs::read_to_string(&pid).unwrap();
+        let alive = std::process::Command::new("kill")
+            .args(["-0", pid.trim()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(!alive, "the --version process {} still runs", pid.trim());
+    }
+
+    #[test]
+    fn the_major_version_is_read_from_a_product_or_a_user_agent() {
+        use super::chrome_major;
+        assert_eq!(chrome_major("Chrome/155.0.8059.79"), Some("155"));
+        assert_eq!(chrome_major("HeadlessChrome/155.0.8059.79"), Some("155"));
+        assert_eq!(
+            chrome_major(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            Some("120")
+        );
+        assert_eq!(chrome_major(""), None);
+        assert_eq!(chrome_major("Chrome/"), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_version_that_lies_is_replaced_by_the_one_chrome_runs() {
+        let real = super::chrome_executable().expect("Chrome is installed");
+        let own = super::chrome_agent(&real)
+            .await
+            .expect("Chrome prints its version");
+        let dir = tempfile::tempdir().unwrap();
+        let liar = wrapper(dir.path(), "chrome", "echo Google Chrome 120.0.6099.71");
+        let profile = tempfile::tempdir().unwrap();
+        let renderer = Renderer::launch_from(
+            Some(liar),
+            None,
+            &[],
+            profile.path().to_path_buf(),
+            false,
+            std::time::Duration::from_secs(30),
+        )
+        .await
+        .expect("Chrome launches");
+        let agent = renderer.agent.clone();
+        renderer.close().await;
+        assert_eq!(agent, own);
+    }
+
+    #[test]
+    fn a_headless_shell_is_told_apart_by_its_file_name() {
+        use super::is_headless_shell;
+        use std::path::Path;
+        assert!(is_headless_shell(Path::new(
+            "/opt/chrome-headless-shell-linux64/chrome-headless-shell"
+        )));
+        assert!(!is_headless_shell(Path::new("/usr/bin/google-chrome")));
+        assert!(!is_headless_shell(Path::new(
+            "/opt/headless-shell-builds/chrome"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_headless_shell_keeps_its_own_user_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = wrapper(
+            dir.path(),
+            "chrome-headless-shell",
+            "echo Google Chrome for Testing 155.0.8059.79",
+        );
+        let profile = tempfile::tempdir().unwrap();
+        let renderer = Renderer::launch_from(
+            Some(shell),
+            None,
+            &[],
+            profile.path().to_path_buf(),
+            false,
+            std::time::Duration::from_secs(30),
+        )
+        .await
+        .expect("Chrome launches");
+        let agent = renderer.agent.clone();
+        renderer.close().await;
+        assert!(agent.contains("HeadlessChrome/"), "{agent}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn the_user_agent_built_before_launch_is_chromes_own_without_headless() {
+        let executable = super::chrome_executable().expect("Chrome is installed");
+        let built = super::chrome_agent(&executable).await;
+        let profile = tempfile::tempdir().unwrap();
+        let plain = Renderer::start_chrome(
+            None,
+            &[],
+            profile.path().to_path_buf(),
+            false,
+            std::time::Duration::from_secs(30),
+            Some(&executable),
+        )
+        .await
+        .expect("Chrome launches");
+        let own = plain.agent.clone();
+        plain.close().await;
+        assert!(own.contains("HeadlessChrome/"), "{own}");
+        assert_eq!(built, Some(own.replace("HeadlessChrome", "Chrome")));
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn pages_frames_and_workers_present_themselves_as_chrome() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        const PAGE: &str = r#"<html><body><p id="page"></p><iframe src="http://example.org:8080/frame"></iframe><script>
+            document.getElementById("page").textContent = "page " + navigator.userAgent;
+            let seen = 0;
+            const done = (line) => { const p = document.createElement("p"); p.textContent = line; document.body.append(p); if (++seen === 2) { const d = document.createElement("p"); d.id = "done"; document.body.append(d); } };
+            addEventListener("message", (e) => done("frame " + e.data));
+            new Worker("/worker.js").onmessage = (e) => done("worker " + e.data);
+        </script></body></html>"#;
+        const FRAME: &str = r#"<html><body><script>fetch("/from-frame").then(() => parent.postMessage(navigator.userAgent, "*"));</script></body></html>"#;
+        const WORKER: &str =
+            r#"fetch("/from-worker").then(() => postMessage(navigator.userAgent));"#;
+        let agents = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = agents.clone();
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_url = format!("http://localhost:{}", proxy.local_addr().unwrap().port());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = proxy.accept().await {
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut buffer = [0; 8192];
+                    let n = socket.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    let target = request.split_whitespace().nth(1).unwrap_or_default();
+                    let agent = request
+                        .lines()
+                        .find_map(|l| l.strip_prefix("User-Agent: "))
+                        .unwrap_or_default();
+                    seen.lock()
+                        .unwrap()
+                        .push((target.to_string(), agent.to_string()));
+                    let (kind, body) = if target.ends_with("/page") {
+                        ("text/html", PAGE)
+                    } else if target.ends_with("/frame") {
+                        ("text/html", FRAME)
+                    } else if target.ends_with("/worker.js") {
+                        ("text/javascript", WORKER)
+                    } else {
+                        ("text/plain", "ok")
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let renderer = Renderer::launch(Some(&proxy_url))
+            .await
+            .expect("Chrome launches");
+        let rendered = renderer
+            .render(
+                "http://example.com:8080/page",
+                None,
+                &RenderOptions {
+                    wait_for: Some("#done".into()),
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        let html = rendered.expect("render succeeds").html;
+        for line in ["page ", "frame ", "worker "] {
+            let start = html.find(&format!(">{line}Mozilla/")).expect(line);
+            let agent = &html[start..html[start..].find('<').unwrap() + start];
+            assert!(
+                agent.contains(" Chrome/") && !agent.contains("Headless"),
+                "{agent}"
+            );
+        }
+        let agents = agents.lock().unwrap().clone();
+        for path in [
+            "/page",
+            "/frame",
+            "/worker.js",
+            "/from-frame",
+            "/from-worker",
+        ] {
+            let (_, agent) = agents
+                .iter()
+                .find(|(target, _)| target.ends_with(path))
+                .unwrap_or_else(|| panic!("no request for {path}: {agents:?}"));
+            assert!(
+                agent.contains(" Chrome/") && !agent.contains("Headless"),
+                "{path}: {agent}"
+            );
+        }
+    }
+
     #[tokio::test]
     #[ignore = "launches Chrome and needs network access"]
     async fn real_cloudflare_challenges_get_solved() {
-        let renderer = Renderer::launch_as_chrome(None)
-            .await
-            .expect("Chrome launches");
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
         let mut failed = Vec::new();
         for (url, marker) in [
             (

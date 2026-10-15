@@ -73,7 +73,7 @@ fn render_from_env(
     }
     let source = match std::env::var("WEBCLAW_CDP_URL") {
         Ok(endpoint) if !endpoint.is_empty() => BrowserSource::Connect(endpoint),
-        _ => BrowserSource::launch_for(config, true).with_profile(
+        _ => BrowserSource::launch_for(config).with_profile(
             std::env::var_os("WEBCLAW_BROWSER_PROFILE")
                 .filter(|dir| !dir.is_empty())
                 .map(Into::into),

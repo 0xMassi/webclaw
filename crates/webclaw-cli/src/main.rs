@@ -872,8 +872,7 @@ fn browser_source(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Bro
     use webclaw_fetch::render::BrowserSource;
     match &cli.cdp_url {
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
-        None => BrowserSource::launch_for(config, cli.solve || cli.capture_network.is_some())
-            .with_profile(cli.browser_profile.clone()),
+        None => BrowserSource::launch_for(config).with_profile(cli.browser_profile.clone()),
     }
 }
 
@@ -4564,22 +4563,5 @@ mod tests {
         ] {
             assert!(parse(extra).is_err(), "{extra:?} was accepted");
         }
-    }
-
-    #[cfg(feature = "browser")]
-    #[test]
-    fn a_capture_launches_chrome_as_a_regular_browser() {
-        let source = |args: &[&str]| {
-            let cli = Cli::try_parse_from(args).unwrap();
-            browser_source(&cli, &build_fetch_config(&cli))
-        };
-        assert!(matches!(
-            source(&["webclaw", "https://example.com", "--capture-network"]),
-            webclaw_fetch::render::BrowserSource::Launch { solve: true, .. }
-        ));
-        assert!(matches!(
-            source(&["webclaw", "https://example.com", "--render", "always"]),
-            webclaw_fetch::render::BrowserSource::Launch { solve: false, .. }
-        ));
     }
 }

@@ -73,6 +73,15 @@ def score(arm, plain, cited):
             "fences": len(plain_fences)}
 
 
+def angle_marks(cited):
+    head, sep, refs = cited.rpartition("\n\n" + STYLE["webclaw"][3])
+    if not sep:
+        return cited
+    head = re.sub(r"!\[([^\]]*)\]\[\^(\d+)\]", r"![\1⟨\2⟩]", head)
+    head = re.sub(r"\[\^(\d+)\]", r"⟨\1⟩", head)
+    return head + sep + re.sub(r"^\[\^(\d+)\]: ", r"⟨\1⟩ ", refs, flags=re.M)
+
+
 def pct(a, b):
     return f"{100 * a / b:.1f}" if b else "-"
 
@@ -98,8 +107,9 @@ def main(label):
              f"{len(cases)} pages frozen by `run.sh`. html mode reads them from disk without a page URL, 3 rounds; "
              "url mode fetches each live page once per output. Tokens: cl100k. Seconds: median per page. "
              "Scrapling has no citation output (its markdown comes from markdownify with links inline), so it has no row.", "",
-             "| mode | arm | pages | median tokens plain | median tokens cited | total tokens plain | total tokens cited | saved % | median body tokens | fact recall plain % | fact recall cited % |",
-             "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+             "Saved % is over the total of all pages; the median page saving and the top 5 pages' share of the total saving show how even it is.", "",
+             "| mode | arm | pages | median tokens plain | median tokens cited | total tokens plain | total tokens cited | saved % | median page saved % | pages longer | top 5 pages' share of saving % | median body tokens | fact recall plain % | fact recall cited % |",
+             "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for mode in ROUNDS:
         for arm in ARMS:
             ok = [r for r in rows if r["arm"] == arm and r["mode"] == mode and not r["error"]]
@@ -107,9 +117,21 @@ def main(label):
                 continue
             s = lambda k: sum(r[k] for r in ok)
             med = lambda k: int(statistics.median(r[k] for r in ok))
+            saved = sorted((r["tokens_plain"] - r["tokens_cited"] for r in ok), reverse=True)
+            page_pct = statistics.median(100 * (r["tokens_plain"] - r["tokens_cited"]) / r["tokens_plain"] for r in ok)
+            longer = sum(r["tokens_cited"] > r["tokens_plain"] for r in ok)
             lines.append(f"| {mode} | {arm} | {len(ok)} | {med('tokens_plain'):,} | {med('tokens_cited'):,} | {s('tokens_plain'):,} | "
-                         f"{s('tokens_cited'):,} | {pct(s('tokens_plain') - s('tokens_cited'), s('tokens_plain'))} | {med('tokens_body'):,} | "
+                         f"{s('tokens_cited'):,} | {pct(s('tokens_plain') - s('tokens_cited'), s('tokens_plain'))} | {page_pct:.1f} | {longer} | "
+                         f"{pct(sum(saved[:5]), sum(saved)) if sum(saved) > 0 else '-'} | {med('tokens_body'):,} | "
                          f"{pct(s('hits_plain'), s('facts'))} | {pct(s('hits_cited'), s('facts'))} |")
+    lines += ["", "Mark style: the same webclaw citation output, its footnote marks `[^1]` swapped for the other tool's `⟨1⟩` "
+              "(body and list, same heading), counted again:", "",
+              "| mode | pages | total tokens plain | footnote marks | saved % | angle marks | saved % |", "|---|---:|---:|---:|---:|---:|---:|"]
+    for mode in ROUNDS:
+        ok = [r for r in rows if r["arm"] == "webclaw" and r["mode"] == mode and not r["error"]]
+        if ok:
+            p, f, a = (sum(r[k] for r in ok) for k in ("tokens_plain", "tokens_cited", "tokens_angle"))
+            lines.append(f"| {mode} | {len(ok)} | {p:,} | {f:,} | {pct(p - f, p)} | {a:,} | {pct(p - a, p)} |")
     lines += ["", "html mode:", "", "| arm | links | URL in references % | text then right number % | same-page anchors dropped | images | images cited % | "
               "numbered 1..N, one per URL, by first appearance | citation marks inside code blocks | p50 s plain | p50 s cited | p50 ms citation step |",
               "|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|"]
@@ -138,6 +160,7 @@ def scored(arm, mode, row, case, tokens):
     return {"arm": arm, "mode": mode, "id": row["id"], "error": None,
             "tokens_plain": tokens(row["plain"]), "tokens_cited": tokens(row["cited"]),
             "tokens_body": tokens(body), "facts": len(case["facts"]),
+            "tokens_angle": tokens(angle_marks(row["cited"])) if arm == "webclaw" else None,
             "hits_plain": hits(row["plain"], case["facts"]), "hits_cited": hits(row["cited"], case["facts"]),
             "seconds_plain": row["seconds_plain"], "seconds_cited": row["seconds_cited"],
             "seconds_step": row.get("seconds_step"), **score(arm, row["plain"], row["cited"])}

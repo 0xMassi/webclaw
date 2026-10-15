@@ -23,7 +23,7 @@ def webclaw(case):
         r = subprocess.run([os.environ["WEBCLAW_BIN"], *src, "-f", "markdown", *extra],
                            capture_output=True, text=True, timeout=60)
         if r.returncode:
-            raise RuntimeError(r.stderr.strip()[-300:])
+            raise RuntimeError((r.stderr.strip().splitlines() or [""])[-1][-300:])
         return r.stdout
 
     plain, cited, tp, tc = None, None, [], []

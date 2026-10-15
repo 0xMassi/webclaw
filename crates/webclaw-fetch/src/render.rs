@@ -2695,7 +2695,7 @@ mod tests {
     #[ignore = "launches Chrome and needs network access"]
     async fn a_capture_keeps_responses_up_to_its_limit_and_none_that_were_blocked() {
         let html = r#"<html><body><p id="msg">rendered</p><img src="/blocked.png"><script>
-            fetch("/?keyed=1", {headers: {"Authorization": "Bearer secret", "X-Api-Key": "k", "X-Custom": "v"}})
+            fetch("/?keyed=1&access_token=S1", {headers: {"Authorization": "Bearer secret", "X-Api-Key": "k", "X-Custom": "v"}})
                 .then(() => Promise.allSettled([...Array(140).keys()].map(i => fetch("/?n=" + i))))
                 .then(() => {
                     const done = document.createElement("div"); done.id = "done"; document.body.appendChild(done);
@@ -2726,7 +2726,7 @@ mod tests {
         assert!(network.iter().all(|r| r.resource_type == "fetch"));
         let keyed = network
             .iter()
-            .find(|r| r.url.ends_with("?keyed=1"))
+            .find(|r| r.url.ends_with("?keyed=1&access_token=REDACTED"))
             .expect("the keyed request was captured");
         assert_eq!(
             keyed.request_headers.get("X-Custom").map(String::as_str),

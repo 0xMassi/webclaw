@@ -315,24 +315,26 @@ async fn network_quiet(
         failed.map(|event| event.request_id.clone()),
     );
     let mut in_flight = std::collections::HashSet::new();
-    let mut ended_first = std::collections::HashSet::new();
+    let quiet = tokio::time::sleep(QUIET);
+    tokio::pin!(quiet);
     loop {
         tokio::select! {
+            biased;
             Some(event) = sent.next() => {
                 let kept = event
                     .r#type
                     .as_ref()
                     .is_some_and(|kind| capture.wants(kind, &event.request.url));
-                if kept && !ended_first.remove(&event.request_id) {
-                    in_flight.insert(event.request_id.clone());
+                if kept && in_flight.insert(event.request_id.clone()) {
+                    quiet.as_mut().reset(tokio::time::Instant::now() + QUIET);
                 }
             }
             Some(id) = done.next() => {
-                if !in_flight.remove(&id) {
-                    ended_first.insert(id);
+                if in_flight.remove(&id) {
+                    quiet.as_mut().reset(tokio::time::Instant::now() + QUIET);
                 }
             }
-            _ = tokio::time::sleep(QUIET), if in_flight.is_empty() => return,
+            _ = &mut quiet, if in_flight.is_empty() => return,
             else => return,
         }
     }
@@ -3829,6 +3831,23 @@ mod tests {
                 .iter()
                 .any(|r| r.url.ends_with("/api") && r.body.as_deref() == Some(r#"{"ok":true}"#)),
             "{network:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn requests_a_capture_drops_do_not_hold_it_open() {
+        let html = r#"<html><body><p>beacons</p><script>
+            fetch("/?data=1");
+            setInterval(() => { new Image().src = "/beacon.gif?" + Date.now(); }, 700);
+            </script></body></html>"#;
+        let start = std::time::Instant::now();
+        let network = capture_on_example(html, r"\?data=").await;
+        let took = start.elapsed();
+        assert_eq!(network.len(), 1, "{network:?}");
+        assert!(
+            took < std::time::Duration::from_secs(7),
+            "the capture took {took:?}"
         );
     }
 }

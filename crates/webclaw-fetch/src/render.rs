@@ -658,7 +658,8 @@ impl Renderer {
     /// Cloudflare challenges and some sites require. For Google Chrome and
     /// Chromium on macOS and Linux, its version comes from `--version`
     /// before the launch; any other browser is launched a second time once
-    /// it has told its User-Agent.
+    /// it has told its User-Agent. `chrome-headless-shell` keeps its own
+    /// User-Agent, since its client hints say `HeadlessChrome` as well.
     pub async fn launch(proxy: Option<&str>) -> Result<Self, FetchError> {
         Self::launch_with(proxy, &[]).await
     }
@@ -713,10 +714,29 @@ impl Renderer {
         persistent: bool,
         command_timeout: Duration,
     ) -> Result<Self, FetchError> {
-        let executable = chrome_executable();
+        Self::launch_from(
+            chrome_executable(),
+            proxy,
+            args,
+            profile,
+            persistent,
+            command_timeout,
+        )
+        .await
+    }
+
+    async fn launch_from(
+        executable: Option<std::path::PathBuf>,
+        proxy: Option<&str>,
+        args: &[&str],
+        profile: std::path::PathBuf,
+        persistent: bool,
+        command_timeout: Duration,
+    ) -> Result<Self, FetchError> {
+        let shell = executable.as_deref().is_some_and(is_headless_shell);
         let agent = match &executable {
-            Some(path) => chrome_agent(path).await,
-            None => None,
+            Some(path) if !shell => chrome_agent(path).await,
+            _ => None,
         };
         let mut flags: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
         if let Some(agent) = &agent {
@@ -734,7 +754,7 @@ impl Renderer {
             .await
         };
         let renderer = launch(&flags, profile.clone()).await?;
-        if agent.is_some() || !renderer.agent.contains("HeadlessChrome") {
+        if shell || agent.is_some() || !renderer.agent.contains("HeadlessChrome") {
             return Ok(renderer);
         }
         flags.push(format!(
@@ -2271,6 +2291,12 @@ fn chrome_executable() -> Option<std::path::PathBuf> {
                 .find(|path| path.exists())
         })
         .or_else(|| chromiumoxide::detection::default_executable(Default::default()).ok())
+}
+
+fn is_headless_shell(executable: &std::path::Path) -> bool {
+    executable
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().contains("headless-shell"))
 }
 
 async fn chrome_agent(executable: &std::path::Path) -> Option<String> {
@@ -4786,6 +4812,62 @@ mod tests {
         assert_eq!(agent_for_version("Microsoft Edge 155.0.3405.80"), None);
         assert_eq!(agent_for_version("Google Chrome"), None);
         assert_eq!(agent_for_version(""), None);
+    }
+
+    #[cfg(unix)]
+    fn wrapper(dir: &std::path::Path, name: &str, on_version: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let real = super::chrome_executable().unwrap_or_default();
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = --version ]; then {on_version}; exit 0; fi\nexec \"{}\" \"$@\"\n",
+                real.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_headless_shell_is_told_apart_by_its_file_name() {
+        use super::is_headless_shell;
+        use std::path::Path;
+        assert!(is_headless_shell(Path::new(
+            "/opt/chrome-headless-shell-linux64/chrome-headless-shell"
+        )));
+        assert!(!is_headless_shell(Path::new("/usr/bin/google-chrome")));
+        assert!(!is_headless_shell(Path::new(
+            "/opt/headless-shell-builds/chrome"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_headless_shell_keeps_its_own_user_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = wrapper(
+            dir.path(),
+            "chrome-headless-shell",
+            "echo Google Chrome for Testing 155.0.8059.79",
+        );
+        let profile = tempfile::tempdir().unwrap();
+        let renderer = Renderer::launch_from(
+            Some(shell),
+            None,
+            &[],
+            profile.path().to_path_buf(),
+            false,
+            std::time::Duration::from_secs(30),
+        )
+        .await
+        .expect("Chrome launches");
+        let agent = renderer.agent.clone();
+        renderer.close().await;
+        assert!(agent.contains("HeadlessChrome/"), "{agent}");
     }
 
     #[tokio::test]

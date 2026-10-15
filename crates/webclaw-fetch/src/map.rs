@@ -161,9 +161,14 @@ pub async fn map_site(
     };
     let mut seen: HashSet<String> = entries.iter().filter_map(|e| site_key(&e.url)).collect();
 
+    let listed = entries
+        .iter()
+        .filter(|e| Url::parse(&e.url).is_ok_and(|u| wanted(&u, opts)))
+        .count();
+    let cap = room(opts, listed);
     let mut index_error = None;
-    if opts.common_crawl {
-        let found = common_crawl_urls(client, base_url, opts).await;
+    if opts.common_crawl && cap != Some(0) {
+        let found = index_urls(client, base_url, opts, &seen, cap).await;
         for url in found.urls {
             if site_key(&url).is_some_and(|key| seen.insert(key)) {
                 entries.push(bare_entry(url));
@@ -279,6 +284,16 @@ pub async fn common_crawl_urls(
     base_url: &str,
     opts: &MapOptions,
 ) -> IndexLookup {
+    index_urls(client, base_url, opts, &HashSet::new(), room(opts, 0)).await
+}
+
+async fn index_urls(
+    client: &FetchClient,
+    base_url: &str,
+    opts: &MapOptions,
+    known: &HashSet<String>,
+    cap: Option<usize>,
+) -> IndexLookup {
     let Some(host) = Url::parse(base_url).ok().as_ref().and_then(bare_host) else {
         return IndexLookup {
             urls: Vec::new(),
@@ -312,7 +327,7 @@ pub async fn common_crawl_urls(
                 index_get(client, &url).await
             }
         },
-        IndexUrls::new(host, opts),
+        IndexUrls::new(host, opts, known, cap),
         started,
         budget,
     )
@@ -392,6 +407,13 @@ where
     }
 }
 
+fn room(opts: &MapOptions, listed: usize) -> Option<usize> {
+    match opts.query {
+        Some(_) => None,
+        None => opts.max_urls.map(|cap| cap.saturating_sub(listed)),
+    }
+}
+
 fn out_of_time(budget: Duration) -> String {
     format!("the index did not finish within {budget:?}")
 }
@@ -407,22 +429,31 @@ fn describe(error: FetchError) -> String {
 struct IndexUrls<'a> {
     host: String,
     opts: &'a MapOptions,
+    known: &'a HashSet<String>,
+    cap: Option<usize>,
     list: Vec<String>,
     at: HashMap<String, usize>,
 }
 
 impl<'a> IndexUrls<'a> {
-    fn new(host: String, opts: &'a MapOptions) -> Self {
+    fn new(
+        host: String,
+        opts: &'a MapOptions,
+        known: &'a HashSet<String>,
+        cap: Option<usize>,
+    ) -> Self {
         Self {
             host,
             opts,
+            known,
+            cap,
             list: Vec::new(),
             at: HashMap::new(),
         }
     }
 
     fn full(&self) -> bool {
-        self.opts.query.is_none() && self.opts.max_urls.is_some_and(|cap| self.list.len() >= cap)
+        self.cap.is_some_and(|cap| self.list.len() >= cap)
     }
 
     fn add_lines(&mut self, body: &str) {
@@ -454,6 +485,9 @@ impl<'a> IndexUrls<'a> {
         let Some(key) = site_key(url.as_str()) else {
             return;
         };
+        if self.known.contains(&key) {
+            return;
+        }
         match self.at.get(&key) {
             Some(&i) => {
                 if url.scheme() == "https" && self.list[i].starts_with("http:") {
@@ -740,6 +774,12 @@ mod tests {
         assert!(MapOptions::default().set_sources(" , ").is_err());
     }
 
+    static NO_URLS: std::sync::LazyLock<HashSet<String>> = std::sync::LazyLock::new(HashSet::new);
+
+    fn fresh(opts: &MapOptions) -> IndexUrls<'_> {
+        IndexUrls::new("example.com".into(), opts, &NO_URLS, room(opts, 0))
+    }
+
     fn index_lines(urls: &[&str]) -> String {
         urls.iter()
             .map(|u| {
@@ -751,7 +791,7 @@ mod tests {
     #[test]
     fn index_urls_stay_on_the_host_and_appear_once() {
         let opts = MapOptions::default();
-        let mut urls = IndexUrls::new("example.com".into(), &opts);
+        let mut urls = fresh(&opts);
         urls.add_lines(&index_lines(&[
             "http://example.com/a/",
             "https://www.example.com/a",
@@ -777,7 +817,7 @@ mod tests {
             max_urls: Some(2),
             ..MapOptions::default()
         };
-        let mut urls = IndexUrls::new("example.com".into(), &opts);
+        let mut urls = fresh(&opts);
         urls.add_lines(&index_lines(&[
             "https://example.com/blog/x",
             "https://example.com/docs/old/y",
@@ -799,7 +839,7 @@ mod tests {
             query: Some("install".into()),
             ..MapOptions::default()
         };
-        let mut urls = IndexUrls::new("example.com".into(), &opts);
+        let mut urls = fresh(&opts);
         urls.add_lines(&index_lines(&[
             "https://example.com/a",
             "https://example.com/install",
@@ -836,7 +876,7 @@ mod tests {
                     _ => Some(index_lines(&["https://example.com/c"])),
                 })
             },
-            IndexUrls::new("example.com".into(), &opts),
+            fresh(&opts),
             tokio::time::Instant::now(),
             Duration::from_secs(60),
         )
@@ -859,7 +899,7 @@ mod tests {
                     _ => Err(FetchError::UpstreamStatus(504)),
                 }
             },
-            IndexUrls::new("example.com".into(), &opts),
+            fresh(&opts),
             tokio::time::Instant::now(),
             Duration::from_secs(60),
         )
@@ -879,7 +919,7 @@ mod tests {
                 }
                 Ok(Some(index_lines(&["https://example.com/a"])))
             },
-            IndexUrls::new("example.com".into(), &opts),
+            fresh(&opts),
             tokio::time::Instant::now(),
             Duration::from_millis(200),
         )
@@ -889,6 +929,38 @@ mod tests {
             found.error.as_deref(),
             Some("the index did not finish within 200ms")
         );
+    }
+
+    #[test]
+    fn sitemap_urls_do_not_use_up_the_index_cap() {
+        let opts = MapOptions {
+            max_urls: Some(3),
+            ..MapOptions::default()
+        };
+        let known: HashSet<String> = site_key("https://example.com/a").into_iter().collect();
+        let mut urls = IndexUrls::new("example.com".into(), &opts, &known, room(&opts, 2));
+        urls.add_lines(&index_lines(&[
+            "https://example.com/a",
+            "https://example.com/b",
+        ]));
+        assert_eq!(urls.list, vec!["https://example.com/b"]);
+        assert!(urls.full());
+    }
+
+    #[test]
+    fn a_full_sitemap_leaves_no_room_for_the_index_unless_a_query_ranks() {
+        let capped = MapOptions {
+            max_urls: Some(2),
+            ..MapOptions::default()
+        };
+        assert_eq!(room(&capped, 2), Some(0));
+        assert_eq!(room(&capped, 1), Some(1));
+        let ranked = MapOptions {
+            query: Some("install".into()),
+            ..capped
+        };
+        assert_eq!(room(&ranked, 5), None);
+        assert_eq!(room(&MapOptions::default(), 5), None);
     }
 
     #[test]

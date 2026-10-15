@@ -12,10 +12,14 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
     FulfillRequestParams, HeaderEntry,
 };
+use chromiumoxide::cdp::browser_protocol::io::{CloseParams, ReadParams};
 use chromiumoxide::cdp::browser_protocol::network::{
-    CookieParam, ErrorReason, EventResponseReceived, ResourceType, SetCookieParams,
+    CookieParam, ErrorReason, EventResponseReceived, GetCookiesParams, ResourceType,
+    SetCookieParams,
 };
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::browser_protocol::page::{
+    CaptureScreenshotFormat, PrintToPdfParams, PrintToPdfTransferMode,
+};
 use chromiumoxide::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams,
 };
@@ -25,6 +29,8 @@ use rand::seq::SliceRandom;
 use tokio::sync::{RwLock, RwLockReadGuard, Semaphore};
 use tracing::warn;
 use url::Url;
+
+mod solve;
 
 use crate::Block;
 pub use crate::actions::{Action, Direction, parse_actions};
@@ -45,6 +51,18 @@ pub struct RenderOptions {
     pub headers: Vec<(String, String)>,
     /// Resource types whose requests fail; see [`Block`] for what it misses.
     pub block: Block,
+    /// Get past a Cloudflare challenge page: wait for one that clears on its
+    /// own, click the checkbox of one that asks for it, then read the page it
+    /// leads to. The render fails when the challenge is still shown after
+    /// three quarters of `timeout`, leaving the rest for the page it leads
+    /// to. A Turnstile widget embedded in any page rendered this way is
+    /// clicked as well, and the page is read as it is when the widget shows
+    /// no token within 10 seconds.
+    /// `headers` then go on the page's other requests to its origin but not
+    /// on its documents, since rewriting a document request fails the
+    /// challenge. Cloudflare rejects a browser that calls itself
+    /// `HeadlessChrome`, so launch it with [`Renderer::launch_as_chrome`].
+    pub solve: bool,
 }
 
 impl Default for RenderOptions {
@@ -54,6 +72,7 @@ impl Default for RenderOptions {
             timeout: Duration::from_secs(30),
             headers: Vec::new(),
             block: Block::default(),
+            solve: false,
         }
     }
 }
@@ -94,6 +113,68 @@ impl Screenshot {
     pub fn base64(&self) -> String {
         base64(&self.image)
     }
+}
+
+/// Paper size of a PDF.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Paper {
+    /// US Letter, 8.5x11 inches.
+    #[default]
+    Letter,
+    /// A4, 210x297 mm.
+    A4,
+}
+
+/// How a page is printed to PDF. Start from `PdfOptions::default()` and
+/// set the fields you need.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct PdfOptions {
+    /// Paper size, US Letter by default.
+    pub paper: Paper,
+    /// Turn the paper sideways.
+    pub landscape: bool,
+    /// Print background colors and images, which browsers leave out by default.
+    pub print_background: bool,
+    /// Zoom of the page content, from 0.1 to 2.
+    pub scale: f64,
+}
+
+impl PdfOptions {
+    fn check(&self) -> Result<(), FetchError> {
+        if (0.1..=2.0).contains(&self.scale) {
+            Ok(())
+        } else {
+            Err(FetchError::Build(format!(
+                "PDF scale must be between 0.1 and 2, got {}",
+                self.scale
+            )))
+        }
+    }
+}
+
+impl Default for PdfOptions {
+    fn default() -> Self {
+        Self {
+            paper: Paper::default(),
+            landscape: false,
+            print_background: false,
+            scale: 1.0,
+        }
+    }
+}
+
+/// A rendered page printed to PDF. The file itself went to the writer the
+/// print was given.
+#[derive(Debug, Clone)]
+pub struct Pdf {
+    /// Size of the PDF in bytes.
+    pub bytes: u64,
+    /// HTTP status of the page's document.
+    pub status: u16,
+    /// The page's URL after redirects.
+    pub url: String,
 }
 
 const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
@@ -148,6 +229,61 @@ pub struct Renderer {
     persistent: bool,
     proxy_login: Option<(String, String)>,
     check_documents: bool,
+    agent: String,
+    clearances: Arc<Mutex<Jar>>,
+}
+
+#[derive(Debug, Default)]
+struct Jar {
+    agent: String,
+    cookies: Vec<Clearance>,
+}
+
+impl Jar {
+    fn clearance(&self, url: &str) -> Option<(String, String)> {
+        let url = Url::parse(url).ok()?;
+        let now = unix_now();
+        let cookies: Vec<String> = self
+            .cookies
+            .iter()
+            .filter(|c| c.applies_to(&url, now))
+            .map(|c| format!("{}={}", c.name, c.value))
+            .collect();
+        (!cookies.is_empty()).then(|| (cookies.join("; "), self.agent.clone()))
+    }
+}
+
+const CLEARANCE_COOKIES: &[&str] = &["cf_clearance"];
+
+#[derive(Debug, Clone, PartialEq)]
+struct Clearance {
+    domain: String,
+    path: String,
+    secure: bool,
+    expires: Option<f64>,
+    name: String,
+    value: String,
+}
+
+impl Clearance {
+    fn applies_to(&self, url: &Url, now: f64) -> bool {
+        let Some(host) = url.host_str() else {
+            return false;
+        };
+        let path = url.path();
+        cookie_domain_matches(&self.domain, host)
+            && (path == self.path
+                || (path.starts_with(&self.path)
+                    && (self.path.ends_with('/') || path[self.path.len()..].starts_with('/'))))
+            && (!self.secure || url.scheme() == "https")
+            && self.expires.is_none_or(|at| at > now)
+    }
+}
+
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 impl Renderer {
@@ -158,6 +294,44 @@ impl Renderer {
     /// then the browsers on `PATH`.
     pub async fn launch(proxy: Option<&str>) -> Result<Self, FetchError> {
         Self::launch_with(proxy, &[]).await
+    }
+
+    /// [`Renderer::launch`], with the browser calling itself Chrome instead
+    /// of `HeadlessChrome` in its User-Agent, in every page and worker, so
+    /// that it can get past Cloudflare challenges. Chrome tells its version
+    /// only once it runs, so this launches it twice, about half a second more.
+    pub async fn launch_as_chrome(proxy: Option<&str>) -> Result<Self, FetchError> {
+        Self::launch_as_chrome_timed(proxy, None, COMMAND_TIMEOUT).await
+    }
+
+    async fn launch_as_chrome_timed(
+        proxy: Option<&str>,
+        profile: Option<&std::path::Path>,
+        command_timeout: Duration,
+    ) -> Result<Self, FetchError> {
+        let launch = async |args: &[&str]| match profile {
+            Some(dir) => {
+                Self::launch_in(proxy, args, dir.to_path_buf(), true, command_timeout).await
+            }
+            None => Self::launch_timed(proxy, args, command_timeout).await,
+        };
+        let renderer = launch(&[]).await?;
+        if renderer.agent.is_empty() {
+            renderer.close().await;
+            return Err(FetchError::Build(
+                "the browser did not tell its User-Agent, so it cannot present itself as Chrome"
+                    .into(),
+            ));
+        }
+        if !renderer.agent.contains("HeadlessChrome") {
+            return Ok(renderer);
+        }
+        let agent = format!(
+            "--user-agent={}",
+            renderer.agent.replace("HeadlessChrome", "Chrome")
+        );
+        renderer.close().await;
+        launch(&[agent.as_str()]).await
     }
 
     async fn launch_with(proxy: Option<&str>, args: &[&str]) -> Result<Self, FetchError> {
@@ -332,6 +506,7 @@ impl Renderer {
             Ok::<_, chromiumoxide::error::CdpError>(Some(paused))
         }
         .await;
+        let agent = browser.user_agent().await.unwrap_or_default();
         let mut renderer = Self {
             browser: Arc::new(browser),
             guard: None,
@@ -340,6 +515,8 @@ impl Renderer {
             persistent,
             proxy_login,
             check_documents: false,
+            agent,
+            clearances: Arc::default(),
         };
         match ready {
             Ok(paused) => {
@@ -505,6 +682,85 @@ impl Renderer {
         Ok((shot, visited.scripts))
     }
 
+    /// Render `url` like [`Renderer::screenshot`] and print it to PDF with
+    /// the page's print styles, every page of it, into `out`. Chrome hands
+    /// the file over in chunks, so a writer that fails, say past a size
+    /// limit, stops the copy there and fails the print.
+    pub async fn pdf(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        pdf: PdfOptions,
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<Pdf, FetchError> {
+        Ok(self.pdf_actions(url, options, pdf, &[], out).await?.0)
+    }
+
+    /// [`Renderer::pdf`] after `actions`, as [`Renderer::render_actions`] runs them.
+    pub async fn pdf_actions(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        pdf: PdfOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
+        self.print(url, None, options, pdf, actions, out).await
+    }
+
+    async fn print(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+        pdf: PdfOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
+        pdf.check()?;
+        let (width, height) = match pdf.paper {
+            Paper::Letter => (8.5, 11.0),
+            Paper::A4 => (210.0 / 25.4, 297.0 / 25.4),
+        };
+        let params = PrintToPdfParams::builder()
+            .paper_width(width)
+            .paper_height(height)
+            .landscape(pdf.landscape)
+            .print_background(pdf.print_background)
+            .scale(pdf.scale)
+            .transfer_mode(PrintToPdfTransferMode::ReturnAsStream)
+            .generate_tagged_pdf(false)
+            .build();
+        let visited = self
+            .visit(
+                url,
+                prefetched,
+                &RenderOptions {
+                    block: Block::default(),
+                    ..options.clone()
+                },
+                actions,
+                Some(SCREENSHOT_VIEWPORT),
+                None,
+                async move |page| Ok(copy_pdf(page, params, out).await),
+            )
+            .await
+            .map_err(|e| match e {
+                FetchError::Build(message) if message.ends_with(" timed out") => {
+                    FetchError::Build(format!(
+                        "{message}: the render timeout covers loading the page, its actions and printing it"
+                    ))
+                }
+                e => e,
+            })?;
+        let printed = Pdf {
+            bytes: visited.value.map_err(FetchError::Build)?,
+            status: visited.status,
+            url: visited.url,
+        };
+        Ok((printed, visited.scripts))
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn visit<T>(
         &self,
@@ -565,6 +821,7 @@ impl Renderer {
     ) -> Result<Visited<T>, FetchError> {
         let target = crate::url_security::validate_public_http_url(url).await?;
         let url = target.to_string();
+        let private = context.is_some();
         let mut blank = CreateTargetParams::new("about:blank");
         blank.browser_context_id = context;
         let page = self.browser.new_page(blank).await.map_err(browser_error)?;
@@ -584,6 +841,7 @@ impl Renderer {
         let documents = Arc::new(Mutex::new((None, None)));
         let seen = documents.clone();
         let check_documents = self.check_documents;
+        let solve = options.solve;
         let document_watch = tokio::spawn(async move {
             while let Some(event) = responses.next().await {
                 if event.r#type != ResourceType::Document {
@@ -595,7 +853,9 @@ impl Renderer {
                 if check_documents && seen.1.is_none() {
                     seen.1 = private_address(&event.response);
                 }
-                if seen.0.is_none() && (main_frame.is_none() || event.frame_id == main_frame) {
+                if (solve || seen.0.is_none())
+                    && (main_frame.is_none() || event.frame_id == main_frame)
+                {
                     seen.0 = Some(event.response.status);
                 }
             }
@@ -678,7 +938,10 @@ impl Renderer {
                     continue;
                 }
                 let mut resume = ContinueRequestParams::new(id);
-                if !extra.is_empty() && Url::parse(request_url).is_ok_and(|u| u.origin() == origin)
+                let untouched = solve && event.resource_type == ResourceType::Document;
+                if !extra.is_empty()
+                    && !untouched
+                    && Url::parse(request_url).is_ok_and(|u| u.origin() == origin)
                 {
                     resume.headers = Some(merged_headers(event.request.headers.inner(), &extra));
                 }
@@ -696,19 +959,30 @@ impl Renderer {
         let limit = options
             .timeout
             .saturating_mul(if actions.is_empty() { 1 } else { 2 });
+        let deadline = Instant::now()
+            + (options.timeout - options.timeout / 4).min(Duration::from_secs(86_400));
+        let mut solver = options.solve.then(|| solve::Solver::new(deadline));
+        let mut solved = async |page: &chromiumoxide::Page| match solver.as_mut() {
+            Some(solver) => solver
+                .run(page)
+                .await
+                .map_err(|e| FetchError::Build(format!("rendering {url}: {e}"))),
+            None => Ok(()),
+        };
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
+            solved(&page).await?;
             tokio::select! {
                 _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3) => {}
                 _ = text_settled(&page, settled_words) => {}
             }
+            solved(&page).await?;
             if let Some(selector) = &options.wait_for {
                 page.wait_for_selector(selector.as_str(), Some(options.timeout))
                     .await
                     .map_err(browser_error)?;
             }
             let scripts = crate::actions::run(&page, actions, options.timeout).await?;
-            let value = read(&page).await.map_err(browser_error)?;
             let final_url = page
                 .url()
                 .await
@@ -729,6 +1003,10 @@ impl Renderer {
                         })?;
                 }
             }
+            if options.solve && !private {
+                self.keep_clearance(&page, &final_url).await;
+            }
+            let value = read(&page).await.map_err(browser_error)?;
             Ok::<_, FetchError>((value, final_url, scripts))
         })
         .await;
@@ -778,6 +1056,48 @@ impl Renderer {
             .await
             .map(|_| ())
             .map_err(browser_error)
+    }
+
+    /// The Cloudflare clearance cookie for `url` that a render with
+    /// [`RenderOptions::solve`] got from getting past a challenge, as a
+    /// `Cookie` header value, and the User-Agent the browser sent.
+    /// Cloudflare accepts it from another client only with that User-Agent
+    /// and from the same IP address. Only `cf_clearance` is kept, under its
+    /// domain, path, `Secure` flag and expiry, and never from a render that
+    /// sent its own `Cookie` header.
+    pub fn clearance(&self, url: &str) -> Option<(String, String)> {
+        self.clearances.lock().ok()?.clearance(url)
+    }
+
+    async fn keep_clearance(&self, page: &chromiumoxide::Page, url: &str) {
+        let params = GetCookiesParams {
+            urls: Some(vec![url.to_string()]),
+        };
+        let Ok(cookies) = page.execute(params).await else {
+            return;
+        };
+        let now = unix_now();
+        let Ok(mut jar) = self.clearances.lock() else {
+            return;
+        };
+        jar.agent.clone_from(&self.agent);
+        jar.cookies.retain(|c| c.expires.is_none_or(|at| at > now));
+        for cookie in cookies.result.cookies {
+            if !CLEARANCE_COOKIES.contains(&cookie.name.as_str()) {
+                continue;
+            }
+            jar.cookies.retain(|c| {
+                c.domain != cookie.domain || c.path != cookie.path || c.name != cookie.name
+            });
+            jar.cookies.push(Clearance {
+                domain: cookie.domain,
+                path: cookie.path,
+                secure: cookie.secure,
+                expires: (!cookie.session && cookie.expires > 0.0).then_some(cookie.expires),
+                name: cookie.name,
+                value: cookie.value,
+            });
+        }
     }
 
     /// Shut down a browser this renderer launched and wait for it to exit,
@@ -848,13 +1168,16 @@ async fn shut_down(browser: std::sync::Weak<Browser>, dir: &std::path::Path) {
 /// Where a [`RenderPool`] gets its browser.
 #[derive(Debug, Clone)]
 pub enum BrowserSource {
-    /// Launch a local headless Chrome; see [`Renderer::launch`].
-    Launch { proxy: Option<String> },
-    /// Launch a local headless Chrome on the persistent profile in `dir`;
-    /// see [`Renderer::launch_with_profile`].
+    /// Launch a local headless Chrome; see [`Renderer::launch`]. With
+    /// `solve`, launch it with [`Renderer::launch_as_chrome`], which
+    /// [`RenderOptions::solve`] needs.
+    Launch { proxy: Option<String>, solve: bool },
+    /// [`BrowserSource::Launch`] on the persistent profile in `dir`; see
+    /// [`Renderer::launch_with_profile`].
     Profile {
         proxy: Option<String>,
         dir: std::path::PathBuf,
+        solve: bool,
     },
     /// Use a browser already running at this DevTools endpoint; see [`Renderer::connect`].
     Connect(String),
@@ -862,20 +1185,21 @@ pub enum BrowserSource {
 
 impl BrowserSource {
     /// Launch a local Chrome behind `config.proxy`, or behind one proxy
-    /// picked at random from `config.proxy_pool`.
-    pub fn launch_for(config: &crate::FetchConfig) -> Self {
+    /// picked at random from `config.proxy_pool`, ready to get past
+    /// Cloudflare challenges when `solve` is set.
+    pub fn launch_for(config: &crate::FetchConfig, solve: bool) -> Self {
         let proxy = config
             .proxy
             .clone()
             .or_else(|| config.proxy_pool.choose(&mut rand::thread_rng()).cloned());
-        Self::Launch { proxy }
+        Self::Launch { proxy, solve }
     }
 
     /// The same launch on the persistent profile in `dir`, when there is
     /// one. A browser to connect to is left as it is.
     pub fn with_profile(self, dir: Option<std::path::PathBuf>) -> Self {
         match (self, dir) {
-            (Self::Launch { proxy }, Some(dir)) => Self::Profile { proxy, dir },
+            (Self::Launch { proxy, solve }, Some(dir)) => Self::Profile { proxy, dir, solve },
             (source, _) => source,
         }
     }
@@ -895,6 +1219,7 @@ pub struct RenderPool {
     tabs: Semaphore,
     hosts: Mutex<HashMap<String, HostRenders>>,
     cookies: Mutex<Vec<(String, String)>>,
+    clearances: Arc<Mutex<Jar>>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -914,8 +1239,13 @@ pub struct RenderConfig {
     /// Also wait until an element matching this CSS selector exists.
     pub wait_for: Option<String>,
     /// Resource types whose requests fail while rendering; see [`Block`].
-    /// Screenshots load everything.
+    /// Screenshots and PDFs load everything.
     pub block: Block,
+    /// Render a page that comes back as a Cloudflare challenge and get past
+    /// it; see [`RenderOptions::solve`]. Later requests to that site over
+    /// HTTP then send the clearance cookie the browser got, with its
+    /// User-Agent; see [`Renderer::clearance`].
+    pub solve: bool,
 }
 
 impl std::fmt::Debug for RenderPool {
@@ -938,6 +1268,7 @@ impl RenderPool {
             tabs: Semaphore::new(MAX_TABS),
             hosts: Mutex::new(HashMap::new()),
             cookies: Mutex::new(Vec::new()),
+            clearances: Arc::default(),
         }
     }
 
@@ -950,14 +1281,16 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         block: Block,
+        solve: bool,
     ) -> Result<FetchResult, FetchError> {
         Ok(self
-            .render_actions(url, prefetched, wait_for, headers, block, &[])
+            .render_actions(url, prefetched, wait_for, headers, block, solve, &[])
             .await?
             .0)
     }
 
     /// Render `url` running `actions`; see [`Renderer::render_actions`].
+    #[allow(clippy::too_many_arguments)]
     pub async fn render_actions(
         &self,
         url: &str,
@@ -965,6 +1298,7 @@ impl RenderPool {
         wait_for: Option<&str>,
         headers: &[(String, String)],
         block: Block,
+        solve: bool,
         actions: &[Action],
     ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
         let _tab = self
@@ -977,10 +1311,19 @@ impl RenderPool {
             .render_actions(
                 url,
                 prefetched,
-                &self.options(wait_for, headers, block),
+                &RenderOptions {
+                    solve,
+                    ..self.options(wait_for, headers, block)
+                },
                 actions,
             )
             .await
+    }
+
+    /// [`Renderer::clearance`] for `url`, from any browser this pool has
+    /// started. It never waits for a browser to launch.
+    pub fn clearance(&self, url: &str) -> Option<(String, String)> {
+        self.clearances.lock().ok()?.clearance(url)
     }
 
     /// Screenshot `url`; see [`Renderer::screenshot`].
@@ -1022,6 +1365,49 @@ impl RenderPool {
             .await
     }
 
+    /// Print `url` to PDF; see [`Renderer::pdf`].
+    pub async fn pdf(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        pdf: PdfOptions,
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<Pdf, FetchError> {
+        Ok(self
+            .pdf_actions(url, wait_for, headers, pdf, &[], out)
+            .await?
+            .0)
+    }
+
+    /// Print `url` to PDF after `actions`; see [`Renderer::pdf_actions`].
+    pub async fn pdf_actions(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        pdf: PdfOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Pdf, Vec<serde_json::Value>), FetchError> {
+        pdf.check()?;
+        let _tab = self
+            .tabs
+            .acquire()
+            .await
+            .map_err(|_| FetchError::Build("browser closed".into()))?;
+        let renderer = self.renderer().await?;
+        renderer
+            .pdf_actions(
+                url,
+                &self.options(wait_for, headers, Block::default()),
+                pdf,
+                actions,
+                out,
+            )
+            .await
+    }
+
     fn options(
         &self,
         wait_for: Option<&str>,
@@ -1033,6 +1419,7 @@ impl RenderPool {
             timeout: self.timeout,
             headers: headers.to_vec(),
             block,
+            solve: false,
         }
     }
 
@@ -1045,11 +1432,27 @@ impl RenderPool {
                     .saturating_add(COMMAND_TIMEOUT)
                     .min(Duration::from_secs(86_400));
                 let started = match &self.source {
-                    BrowserSource::Launch { proxy } => {
-                        Renderer::launch_timed(proxy.as_deref(), &[], commands).await
+                    BrowserSource::Launch {
+                        proxy,
+                        solve: false,
+                    } => Renderer::launch_timed(proxy.as_deref(), &[], commands).await,
+                    BrowserSource::Launch { proxy, solve: true } => {
+                        Renderer::launch_as_chrome_timed(proxy.as_deref(), None, commands).await
                     }
-                    BrowserSource::Profile { proxy, dir } => {
+                    BrowserSource::Profile {
+                        proxy,
+                        dir,
+                        solve: false,
+                    } => {
                         Renderer::launch_in(proxy.as_deref(), &[], dir.clone(), true, commands)
+                            .await
+                    }
+                    BrowserSource::Profile {
+                        proxy,
+                        dir,
+                        solve: true,
+                    } => {
+                        Renderer::launch_as_chrome_timed(proxy.as_deref(), Some(dir), commands)
                             .await
                     }
                     BrowserSource::Connect(endpoint) => {
@@ -1059,7 +1462,14 @@ impl RenderPool {
                 if let Err(e) = &started {
                     warn!("no browser for rendering: {e}");
                 }
-                *slot = Some(started.map_err(|e| e.to_string()));
+                *slot = Some(
+                    started
+                        .map(|mut renderer| {
+                            renderer.clearances = self.clearances.clone();
+                            renderer
+                        })
+                        .map_err(|e| e.to_string()),
+                );
             }
         }
         let renderer = RwLockReadGuard::try_map(self.browser.read().await, |slot| {
@@ -1082,6 +1492,26 @@ impl RenderPool {
             }
         }
         Ok(renderer)
+    }
+
+    /// Render `fetched`, a Cloudflare challenge page, from a fresh request
+    /// and get past the challenge; see [`RenderOptions::solve`]. The error
+    /// says why when the challenge is still there.
+    pub async fn solve(
+        &self,
+        fetched: &FetchResult,
+        config: &RenderConfig,
+        headers: &[(String, String)],
+    ) -> Result<FetchResult, FetchError> {
+        self.render(
+            &fetched.url,
+            None,
+            config.wait_for.as_deref(),
+            headers,
+            config.block,
+            true,
+        )
+        .await
     }
 
     /// Render `fetched` when `config` asks for it and the page seems to need
@@ -1111,6 +1541,7 @@ impl RenderPool {
                 config.wait_for.as_deref(),
                 headers,
                 config.block,
+                config.solve,
             )
             .await;
         match rendered {
@@ -1200,8 +1631,15 @@ impl RenderPool {
             return fetched;
         }
         let rendered = if follow_redirects {
-            self.render(url, None, config.wait_for.as_deref(), headers, config.block)
-                .await
+            self.render(
+                url,
+                None,
+                config.wait_for.as_deref(),
+                headers,
+                config.block,
+                config.solve,
+            )
+            .await
         } else {
             self.render_unfollowed(url, config, headers).await
         };
@@ -1229,7 +1667,10 @@ impl RenderPool {
             .await
             .map_err(|_| FetchError::Build("browser closed".into()))?;
         let renderer = self.renderer().await?;
-        let options = self.options(config.wait_for.as_deref(), headers, config.block);
+        let options = RenderOptions {
+            solve: config.solve,
+            ..self.options(config.wait_for.as_deref(), headers, config.block)
+        };
         renderer.render_unfollowed(url, None, &options).await
     }
 
@@ -1288,6 +1729,12 @@ fn same_document(request: &str, target: &Url) -> bool {
     request.set_fragment(None);
     target.set_fragment(None);
     request == target
+}
+
+fn cookie_domain_matches(domain: &str, host: &str) -> bool {
+    let (domain, host) = (domain.to_ascii_lowercase(), host.to_ascii_lowercase());
+    let bare = domain.trim_start_matches('.');
+    host == bare || (domain.starts_with('.') && host.ends_with(&format!(".{bare}")))
 }
 
 fn host(url: &str) -> Option<String> {
@@ -1397,7 +1844,8 @@ fn percent_decode(text: &str) -> String {
         .map_or_else(|| text.to_string(), |(_, v)| v.into_owned())
 }
 
-fn base64(bytes: &[u8]) -> String {
+/// `bytes` in standard base64, as MCP image and resource content carries them.
+pub fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -1412,6 +1860,49 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+async fn copy_pdf(
+    page: &chromiumoxide::Page,
+    params: PrintToPdfParams,
+    out: &mut (dyn std::io::Write + Send),
+) -> Result<u64, String> {
+    let printed = page.execute(params).await.map_err(|e| match e {
+        chromiumoxide::error::CdpError::Chrome(e) if e.message.contains("Printing failed") => {
+            "Chrome could not print the page: it navigated away while printing, or it is too large to print".to_string()
+        }
+        e => e.to_string(),
+    })?;
+    let handle = printed
+        .result
+        .stream
+        .ok_or("Chrome printed the PDF without a stream")?;
+    let mut bytes = 0;
+    let copied = loop {
+        let mut read = ReadParams::new(handle.clone());
+        read.size = Some(1 << 20);
+        let chunk = match page.execute(read).await {
+            Ok(chunk) => chunk.result,
+            Err(e) => break Err(e.to_string()),
+        };
+        let data = if chunk.base64_encoded == Some(true) {
+            match chromiumoxide::utils::base64::decode(&chunk.data) {
+                Ok(data) => data,
+                Err(e) => break Err(e.to_string()),
+            }
+        } else {
+            chunk.data.into_bytes()
+        };
+        if let Err(e) = out.write_all(&data) {
+            break Err(format!("writing the PDF failed: {e}"));
+        }
+        bytes += data.len() as u64;
+        if chunk.eof {
+            break Ok(bytes);
+        }
+    };
+    let _ = page.execute(CloseParams::new(handle)).await;
+    copied
 }
 
 fn browser_error(e: impl std::fmt::Display) -> FetchError {
@@ -1656,6 +2147,7 @@ mod tests {
             super::BrowserSource::Profile {
                 proxy: None,
                 dir: profile.path().into(),
+                solve: false,
             },
             std::time::Duration::from_secs(20),
         );
@@ -1674,6 +2166,7 @@ mod tests {
                     None,
                     &[],
                     crate::Block::default(),
+                    false,
                 )
                 .await;
             seen.push(page.expect("render succeeds").html);
@@ -2470,6 +2963,176 @@ mod tests {
         assert_eq!(&jpeg.expect("jpeg screenshot").image[..3], b"\xff\xd8\xff");
     }
 
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_rendered_page_prints_to_a_pdf_with_its_text() {
+        let html = r#"<html><body><h1>Quarterly harvest report</h1><p id="late"></p><button id="more" onclick="document.getElementById('extra').textContent = 'Turnips added by a click'">more</button><p id="extra"></p><h2 style="break-before: page">Second sheet</h2><script>document.getElementById("late").textContent = "Pumpkins grown by script";</script></body></html>"#;
+        let actions = super::parse_actions(
+            r##"[{"type": "click", "selector": "#more"}, {"type": "executeJavascript", "code": "document.title = 'harvest'"}]"##,
+        )
+        .unwrap();
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        };
+        let print = async |out: &mut (dyn std::io::Write + Send)| {
+            renderer
+                .print(
+                    "https://example.com/",
+                    Some(Prefetched {
+                        html,
+                        headers: &headers,
+                    }),
+                    &options,
+                    super::PdfOptions {
+                        paper: super::Paper::A4,
+                        print_background: true,
+                        ..Default::default()
+                    },
+                    &actions,
+                    out,
+                )
+                .await
+        };
+        let mut data = Vec::new();
+        let printed = print(&mut data).await;
+        let mut full = std::io::Cursor::new([0u8; 100]);
+        let refused = print(&mut full).await;
+        let slow = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(1),
+                    wait_for: Some("#never".into()),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        let bad_scale = renderer
+            .pdf(
+                "https://example.com/",
+                &options,
+                super::PdfOptions {
+                    scale: 3.0,
+                    ..Default::default()
+                },
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let (printed, js_results) = printed.expect("PDF prints");
+        assert_eq!(js_results, [serde_json::json!("harvest")]);
+        assert_eq!(printed.bytes, data.len() as u64);
+        assert_eq!(&data[..5], b"%PDF-");
+        let refused = refused.expect_err("a full writer stops the print");
+        assert!(
+            refused.to_string().contains("writing the PDF failed"),
+            "{refused}"
+        );
+        let read = webclaw_pdf::extract_pdf(&data, webclaw_pdf::PdfMode::Auto)
+            .expect("webclaw-pdf reads the PDF");
+        assert_eq!(read.page_count, 2);
+        for text in [
+            "Quarterly harvest report",
+            "Pumpkins grown by script",
+            "Turnips added by a click",
+            "Second sheet",
+        ] {
+            assert!(
+                read.text.contains(text),
+                "{text} missing from {}",
+                read.text
+            );
+        }
+        assert!(bad_scale.is_err());
+        let slow = slow.expect_err("a page that never settles times out");
+        assert!(
+            slow.to_string()
+                .contains("the render timeout covers loading the page"),
+            "{slow}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_pdf_reports_the_url_it_printed_not_where_the_page_went_after() {
+        let html = r#"<html><body><p>printed here</p><script>addEventListener("afterprint", () => history.pushState(null, "", "/after"))</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let printed = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let (printed, _) = printed.expect("PDF prints");
+        assert_eq!(printed.url, "https://example.com/");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_page_that_navigates_while_printing_fails_in_plain_words() {
+        let html = r#"<html><body><p>leaving</p><script>addEventListener("beforeprint", () => { location.href = "https://example.com/elsewhere"; })</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let printed = renderer
+            .print(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                super::PdfOptions::default(),
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let error = printed.expect_err("printing fails").to_string();
+        assert!(error.contains("navigated away while printing"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_bad_pdf_scale_fails_before_the_browser_starts() {
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Connect("ws://127.0.0.1:9/never".into()),
+            std::time::Duration::from_secs(5),
+        );
+        let options = super::PdfOptions {
+            scale: 0.0,
+            ..Default::default()
+        };
+        let error = pool
+            .pdf("https://example.com/", None, &[], options, &mut Vec::new())
+            .await
+            .expect_err("the scale is refused");
+        assert!(error.to_string().contains("PDF scale"), "{error}");
+    }
+
     fn png_size(png: &[u8]) -> (u32, u32) {
         let be = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
         (be(16), be(20))
@@ -2616,7 +3279,10 @@ mod tests {
 
     fn pool() -> super::RenderPool {
         super::RenderPool::new(
-            super::BrowserSource::Launch { proxy: None },
+            super::BrowserSource::Launch {
+                proxy: None,
+                solve: false,
+            },
             std::time::Duration::from_secs(1),
         )
     }
@@ -2659,12 +3325,16 @@ mod tests {
     async fn blocked_renders_leave_the_host_verdict_alone() {
         let config = super::RenderConfig {
             pool: Arc::new(super::RenderPool::new(
-                super::BrowserSource::Launch { proxy: None },
+                super::BrowserSource::Launch {
+                    proxy: None,
+                    solve: false,
+                },
                 std::time::Duration::from_secs(20),
             )),
             always: false,
             wait_for: None,
             block: "images".parse().unwrap(),
+            solve: false,
         };
         let shell = page(
             "https://example.com/",
@@ -2772,12 +3442,12 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            super::BrowserSource::launch_for(&config),
-            super::BrowserSource::Launch { proxy: Some(p) } if p == "http://pool.example:8080"
+            super::BrowserSource::launch_for(&config, true),
+            super::BrowserSource::Launch { proxy: Some(p), solve: true } if p == "http://pool.example:8080"
         ));
         assert!(matches!(
-            super::BrowserSource::launch_for(&config).with_profile(Some("/p".into())),
-            super::BrowserSource::Profile { proxy: Some(p), dir } if p == "http://pool.example:8080" && dir == std::path::Path::new("/p")
+            super::BrowserSource::launch_for(&config, true).with_profile(Some("/p".into())),
+            super::BrowserSource::Profile { proxy: Some(p), dir, solve: true } if p == "http://pool.example:8080" && dir == std::path::Path::new("/p")
         ));
         assert!(matches!(
             super::BrowserSource::Connect("ws://x".into()).with_profile(Some("/p".into())),
@@ -2791,6 +3461,7 @@ mod tests {
             super::BrowserSource::Profile {
                 proxy: None,
                 dir: "/nonexistent/webclaw-profile".into(),
+                solve: false,
             },
             std::time::Duration::from_secs(1),
         );
@@ -2799,6 +3470,7 @@ mod tests {
             always: false,
             wait_for: None,
             block: crate::Block::default(),
+            solve: false,
         };
         let mut json = page("https://example.com/api", "{}", 200);
         json.headers
@@ -2826,5 +3498,351 @@ mod tests {
     fn proxy_credentials_are_percent_decoded() {
         assert_eq!(super::percent_decode("p%40ss%3Aword"), "p@ss:word");
         assert_eq!(super::percent_decode("plain"), "plain");
+    }
+
+    #[test]
+    fn solving_needs_a_chrome_profile() {
+        let config = |browser| crate::FetchConfig {
+            browser,
+            render: Some(super::RenderConfig {
+                pool: Arc::new(pool()),
+                always: false,
+                wait_for: None,
+                block: crate::Block::default(),
+                solve: true,
+            }),
+            ..Default::default()
+        };
+        use crate::BrowserProfile;
+        for ok in [
+            BrowserProfile::Chrome,
+            BrowserProfile::ChromeMacos,
+            BrowserProfile::Edge,
+        ] {
+            assert!(crate::FetchClient::new(config(ok)).is_ok());
+        }
+        for refused in [
+            BrowserProfile::Firefox,
+            BrowserProfile::Safari,
+            BrowserProfile::SafariIos,
+            BrowserProfile::Random,
+        ] {
+            assert!(crate::FetchClient::new(config(refused)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_clearance_goes_only_where_its_cookie_would() {
+        let kept = super::Clearance {
+            domain: ".example.com".into(),
+            path: "/shop".into(),
+            secure: true,
+            expires: Some(2_000.0),
+            name: "cf_clearance".into(),
+            value: "x".into(),
+        };
+        let url = |u: &str| url::Url::parse(u).unwrap();
+        assert!(kept.applies_to(&url("https://www.example.com/shop"), 1_000.0));
+        assert!(kept.applies_to(&url("https://example.com/shop/item"), 1_000.0));
+        assert!(!kept.applies_to(&url("https://example.com/shopping"), 1_000.0));
+        assert!(!kept.applies_to(&url("https://example.com/"), 1_000.0));
+        assert!(!kept.applies_to(&url("http://example.com/shop"), 1_000.0));
+        assert!(!kept.applies_to(&url("https://example.com/shop"), 3_000.0));
+        assert!(!kept.applies_to(&url("https://example.org/shop"), 1_000.0));
+    }
+
+    #[tokio::test]
+    async fn the_clearance_is_read_while_a_browser_launches() {
+        let pool = pool();
+        pool.clearances
+            .lock()
+            .unwrap()
+            .cookies
+            .push(super::Clearance {
+                domain: "example.com".into(),
+                path: "/".into(),
+                secure: false,
+                expires: None,
+                name: "cf_clearance".into(),
+                value: "x".into(),
+            });
+        let launching = pool.browser.write().await;
+        assert_eq!(
+            pool.clearance("https://example.com/a").map(|c| c.0),
+            Some("cf_clearance=x".to_string())
+        );
+        drop(launching);
+    }
+
+    #[test]
+    fn clearance_cookies_go_only_to_hosts_their_domain_covers() {
+        use super::cookie_domain_matches;
+        assert!(cookie_domain_matches(".example.com", "example.com"));
+        assert!(cookie_domain_matches(".example.com", "www.example.com"));
+        assert!(cookie_domain_matches("example.com", "EXAMPLE.com"));
+        assert!(!cookie_domain_matches("example.com", "www.example.com"));
+        assert!(!cookie_domain_matches(".example.com", "badexample.com"));
+        assert!(!cookie_domain_matches(".example.com", "example.org"));
+    }
+
+    const CHALLENGE: &str = r#"<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt = {cType: 'managed'};</script><div style="margin: 100px 0 0 40px"><iframe src="http://example.net:8080/cdn-cgi/challenge-platform/fixture" width="300" height="65" style="border: 0"></iframe></div><script>addEventListener("message", (e) => { if (e.data === "passed") { document.cookie = "cf_clearance=fixture; path=/"; location.reload(); } });</script></body></html>"#;
+
+    const CHECKBOX: &str = r#"<html><body style="margin: 0"><input type="checkbox" id="box" style="position: absolute; left: 16px; top: 16px; width: 32px; height: 32px; margin: 0"><script>document.getElementById("box").addEventListener("click", (e) => { if (e.isTrusted) parent.postMessage("passed", "*"); });</script></body></html>"#;
+
+    async fn challenge_proxy() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://localhost:{}", proxy.local_addr().unwrap().port());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = proxy.accept().await {
+                tokio::spawn(async move {
+                    let mut buffer = [0; 8192];
+                    let n = socket.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    let target = request.split_whitespace().nth(1).unwrap_or_default();
+                    let passed = request.lines().any(|l| {
+                        l.to_ascii_lowercase().starts_with("cookie:")
+                            && l.contains("cf_clearance=fixture")
+                    });
+                    let set_cookie = if passed && !target.contains("example.net") {
+                        "Set-Cookie: visitor=anon; Path=/\r\n"
+                    } else {
+                        ""
+                    };
+                    let (status, body) = if target.contains("challenge-platform") {
+                        ("200 OK", CHECKBOX.to_string())
+                    } else if target.contains("example.net") {
+                        ("404 Not Found", String::new())
+                    } else if target.contains("stuck") {
+                        (
+                            "403 Forbidden",
+                            CHALLENGE.replace("challenge-platform/fixture", "gone"),
+                        )
+                    } else if passed {
+                        (
+                            "200 OK",
+                            "<html><body><p>the real page</p></body></html>".to_string(),
+                        )
+                    } else {
+                        ("403 Forbidden", CHALLENGE.to_string())
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\n{set_cookie}Cache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_render_clicks_through_a_challenge_and_keeps_its_cookies() {
+        let proxy = challenge_proxy().await;
+        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        assert!(
+            !renderer.agent.contains("HeadlessChrome"),
+            "{}",
+            renderer.agent
+        );
+        let solved = renderer
+            .render(
+                "http://example.com:8080/page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(30),
+                    solve: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        let unsolved = renderer
+            .render(
+                "http://example.org:8080/page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let clearance = renderer.clearance("http://example.com:8080/other");
+        let elsewhere = renderer.clearance("http://example.org:8080/other");
+        renderer.close().await;
+        let solved = solved.expect("render succeeds");
+        assert!(solved.html.contains("the real page"), "{}", solved.html);
+        assert_eq!(solved.status, 200);
+        let (cookies, agent) = clearance.expect("the clearance is kept");
+        assert_eq!(cookies, "cf_clearance=fixture");
+        assert!(agent.contains("Chrome/") && !agent.contains("Headless"));
+        assert!(elsewhere.is_none());
+        let unsolved = unsolved.expect("a render without solve still returns the page");
+        assert_eq!(unsolved.status, 403);
+        assert!(unsolved.html.contains("Just a moment"));
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_callers_own_cookies_never_reach_the_shared_clearance() {
+        let proxy = challenge_proxy().await;
+        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        let solved = renderer
+            .render(
+                "http://example.com:8080/page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(30),
+                    solve: true,
+                    headers: vec![("Cookie".into(), "session=secretA".into())],
+                    ..Default::default()
+                },
+            )
+            .await;
+        let clearance = renderer.clearance("http://example.com:8080/other");
+        renderer.close().await;
+        let solved = solved.expect("render succeeds");
+        assert!(solved.html.contains("the real page"), "{}", solved.html);
+        assert_eq!(clearance, None);
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_widget_that_never_gives_a_token_costs_one_wait_per_render() {
+        let proxy = challenge_proxy().await;
+        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        let widget = r#"<html><body><p>Sign up for the newsletter.</p><div class="cf-turnstile"><iframe src="http://example.net:8080/cdn-cgi/challenge-platform/fixture" width="300" height="65" style="border: 0"></iframe></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body></html>"#;
+        let started = std::time::Instant::now();
+        let rendered = renderer
+            .render(
+                "http://example.com:8080/signup",
+                Some(Prefetched {
+                    html: widget,
+                    headers: &http::HeaderMap::new(),
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(40),
+                    solve: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        let took = started.elapsed();
+        renderer.close().await;
+        assert!(
+            rendered
+                .expect("the page is returned")
+                .html
+                .contains("newsletter")
+        );
+        assert!(took < std::time::Duration::from_secs(14), "{took:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_failed_solve_is_the_error_a_fetch_reports() {
+        let proxy = challenge_proxy().await;
+        let config = crate::FetchConfig {
+            proxy: Some(proxy.clone()),
+            render: Some(super::RenderConfig {
+                pool: Arc::new(super::RenderPool::new(
+                    super::BrowserSource::Launch {
+                        proxy: Some(proxy),
+                        solve: true,
+                    },
+                    std::time::Duration::from_secs(8),
+                )),
+                always: false,
+                wait_for: None,
+                block: crate::Block::default(),
+                solve: true,
+            }),
+            ..Default::default()
+        };
+        let client = crate::FetchClient::new(config.clone()).expect("client");
+        let fetched = client
+            .fetch("http://example.com:8080/stuck")
+            .await
+            .expect("the challenge comes back");
+        assert_eq!(fetched.status, 403);
+        let (_, extracted) = client
+            .extract_page(fetched, &webclaw_core::ExtractionOptions::default())
+            .await;
+        if let Some(render) = &config.render {
+            render.pool.close().await;
+        }
+        let error = extracted.expect_err("the solve fails").to_string();
+        assert!(error.contains("challenge was still shown"), "{error}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_challenge_that_never_clears_fails_the_render_in_time() {
+        let proxy = challenge_proxy().await;
+        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        let started = std::time::Instant::now();
+        let rendered = renderer
+            .render(
+                "http://example.com:8080/page",
+                Some(Prefetched {
+                    html: &CHALLENGE.replace("challenge-platform/fixture", "gone"),
+                    headers: &http::HeaderMap::new(),
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(5),
+                    solve: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        let error = rendered
+            .expect_err("the challenge never clears")
+            .to_string();
+        assert!(error.contains("challenge was still shown"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(8));
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn real_cloudflare_challenges_get_solved() {
+        let renderer = Renderer::launch_as_chrome(None)
+            .await
+            .expect("Chrome launches");
+        let mut failed = Vec::new();
+        for (url, marker) in [
+            (
+                "https://www.scrapingcourse.com/cloudflare-challenge",
+                "You bypassed the Cloudflare challenge",
+            ),
+            ("https://www.bscscan.com/", "BNB Smart Chain"),
+            ("https://gitlab.com/users/sign_in", "Remember me"),
+        ] {
+            let rendered = renderer
+                .render(
+                    url,
+                    None,
+                    &RenderOptions {
+                        timeout: std::time::Duration::from_secs(45),
+                        solve: true,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            if !rendered.as_ref().is_ok_and(|r| r.html.contains(marker)) {
+                failed.push((url, rendered.map(|r| r.status)));
+            }
+        }
+        renderer.close().await;
+        assert!(failed.is_empty(), "{failed:?}");
     }
 }

@@ -73,7 +73,7 @@ fn render_from_env(
     }
     let source = match std::env::var("WEBCLAW_CDP_URL") {
         Ok(endpoint) if !endpoint.is_empty() => BrowserSource::Connect(endpoint),
-        _ => BrowserSource::launch_for(config).with_profile(
+        _ => BrowserSource::launch_for(config, true).with_profile(
             std::env::var_os("WEBCLAW_BROWSER_PROFILE")
                 .filter(|dir| !dir.is_empty())
                 .map(Into::into),
@@ -84,6 +84,7 @@ fn render_from_env(
         always: mode == "always",
         wait_for: None,
         block: webclaw_fetch::Block::default(),
+        solve: false,
     })
 }
 
@@ -93,18 +94,22 @@ fn apply_render(
     mode: Option<&str>,
     wait_for: Option<String>,
     block: Option<&str>,
+    solve: Option<bool>,
 ) -> Result<(), String> {
     if !matches!(mode, None | Some("auto" | "always" | "never")) {
         return Err("render must be \"auto\", \"always\" or \"never\"".into());
     }
     let block = block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
     if mode == Some("never") {
+        if solve == Some(true) {
+            return Err("solve needs rendering, so it cannot run with render \"never\"".into());
+        }
         config.render = None;
         return Ok(());
     }
     let Some(render) = config.render.as_mut() else {
-        return match (mode, &wait_for) {
-            (None | Some("auto"), None) => Ok(()),
+        return match (mode, &wait_for, solve) {
+            (None | Some("auto"), None, None | Some(false)) => Ok(()),
             _ => Err("rendering is turned off for this server (WEBCLAW_RENDER=never)".into()),
         };
     };
@@ -117,6 +122,9 @@ fn apply_render(
     if let Some(block) = block {
         render.block = block;
     }
+    if let Some(solve) = solve {
+        render.solve = solve;
+    }
     Ok(())
 }
 
@@ -126,10 +134,11 @@ fn apply_render(
     mode: Option<&str>,
     wait_for: Option<String>,
     block: Option<&str>,
+    solve: Option<bool>,
 ) -> Result<(), String> {
     block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
-    match (mode, wait_for) {
-        (None | Some("auto" | "never"), None) => Ok(()),
+    match (mode, wait_for, solve) {
+        (None | Some("auto" | "never"), None, None | Some(false)) => Ok(()),
         _ => Err(
             "this webclaw-mcp build has no browser support; build it with `--features browser`"
                 .into(),
@@ -172,6 +181,71 @@ const MAX_CRAWL_QUERY_CHARS: usize = 1000;
 
 /// Maximum poll iterations for research jobs (~10 minutes at 3s intervals).
 const RESEARCH_MAX_POLLS: u32 = 200;
+
+#[cfg(feature = "browser")]
+const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
+
+#[cfg(feature = "browser")]
+struct Capped(Vec<u8>);
+
+#[cfg(feature = "browser")]
+impl std::io::Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.0.len() + buf.len() > MAX_PDF_BYTES {
+            return Err(std::io::Error::other(format!(
+                "the PDF is over the {} MiB this tool returns; save it with the webclaw CLI's --save-pdf instead",
+                MAX_PDF_BYTES >> 20
+            )));
+        }
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Capture {
+    Image { full_page: bool, jpeg: bool },
+    Pdf { a4: bool, print_background: bool },
+}
+
+fn capture(params: &ScreenshotParams) -> Result<Capture, String> {
+    let full_page = params.full_page.unwrap_or(false);
+    let jpeg = match params.format.as_deref() {
+        None | Some("png") => false,
+        Some("jpeg" | "jpg") => true,
+        Some("pdf") => {
+            if full_page {
+                return Err("full_page is for images: a PDF always holds the whole page".into());
+            }
+            let a4 = match params.paper.as_deref() {
+                None | Some("letter") => false,
+                Some("a4") => true,
+                Some(other) => {
+                    return Err(format!(
+                        "paper must be \"letter\" or \"a4\", got \"{other}\""
+                    ));
+                }
+            };
+            return Ok(Capture::Pdf {
+                a4,
+                print_background: params.print_background.unwrap_or(false),
+            });
+        }
+        Some(other) => {
+            return Err(format!(
+                "format must be \"png\", \"jpeg\" or \"pdf\", got \"{other}\""
+            ));
+        }
+    };
+    if params.paper.is_some() || params.print_background.is_some() {
+        return Err("paper and print_background are for format \"pdf\"".into());
+    }
+    Ok(Capture::Image { full_page, jpeg })
+}
 
 #[tool_router]
 impl WebclawMcp {
@@ -253,8 +327,7 @@ impl WebclawMcp {
         &self,
         url: &str,
         wait_for: Option<&str>,
-        full_page: bool,
-        jpeg: bool,
+        capture: Capture,
         actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
         let actions = parse_actions(actions)?;
@@ -263,6 +336,43 @@ impl WebclawMcp {
             .render
             .as_ref()
             .ok_or("screenshots need the browser, which is turned off for this server (WEBCLAW_RENDER=never)")?;
+        let (full_page, jpeg) = match capture {
+            Capture::Image { full_page, jpeg } => (full_page, jpeg),
+            Capture::Pdf {
+                a4,
+                print_background,
+            } => {
+                let mut pdf = webclaw_fetch::render::PdfOptions::default();
+                pdf.print_background = print_background;
+                if a4 {
+                    pdf.paper = webclaw_fetch::render::Paper::A4;
+                }
+                let mut data = Capped(Vec::new());
+                let (printed, js_results) = render
+                    .pool
+                    .pdf_actions(url, wait_for, &[], pdf, &actions, &mut data)
+                    .await
+                    .map_err(|e| format!("PDF failed: {e}"))?;
+                webclaw_fetch::FetchError::check_status(printed.status)
+                    .map_err(|e| e.to_string())?;
+                let mut content = vec![
+                    rmcp::model::ContentBlock::resource(
+                        rmcp::model::ResourceContents::blob(
+                            webclaw_fetch::render::base64(&data.0),
+                            printed.url.clone(),
+                        )
+                        .with_mime_type("application/pdf"),
+                    ),
+                    rmcp::model::ContentBlock::text(printed.url),
+                ];
+                if !js_results.is_empty() {
+                    content.push(rmcp::model::ContentBlock::text(
+                        serde_json::to_string_pretty(&js_results).unwrap_or_default(),
+                    ));
+                }
+                return Ok(CallToolResult::success(content));
+            }
+        };
         let (shot, js_results) = render
             .pool
             .screenshot_actions(
@@ -308,6 +418,7 @@ impl WebclawMcp {
             params.render.as_deref(),
             params.wait_for.clone(),
             params.block.as_deref(),
+            params.solve,
         )?;
         let render = config
             .render
@@ -325,6 +436,7 @@ impl WebclawMcp {
                 render.wait_for.as_deref(),
                 &headers,
                 render.block,
+                render.solve,
                 &actions,
             )
             .await
@@ -383,8 +495,7 @@ impl WebclawMcp {
         &self,
         _url: &str,
         _wait_for: Option<&str>,
-        _full_page: bool,
-        _jpeg: bool,
+        _capture: Capture,
         _actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
         Err(
@@ -459,7 +570,8 @@ impl WebclawMcp {
         let shared = cookie_header.is_none()
             && params.render.is_none()
             && params.wait_for.is_none()
-            && params.block.is_none();
+            && params.block.is_none()
+            && params.solve.is_none();
 
         let custom_client;
         let cached_firefox;
@@ -485,6 +597,7 @@ impl WebclawMcp {
                     params.render.as_deref(),
                     params.wait_for.clone(),
                     params.block.as_deref(),
+                    params.solve,
                 )?;
                 custom_client = webclaw_fetch::FetchClient::new(config)
                     .map_err(|e| format!("Failed to build client: {e}"))?;
@@ -577,7 +690,7 @@ impl WebclawMcp {
         let format = params.format.as_deref().unwrap_or("markdown");
 
         let mut fetch = self.fetch_config.clone();
-        apply_render(&mut fetch, None, None, params.block.as_deref())?;
+        apply_render(&mut fetch, None, None, params.block.as_deref(), None)?;
         let config = webclaw_fetch::CrawlConfig {
             fetch,
             max_depth: params.depth.unwrap_or(2) as usize,
@@ -684,27 +797,18 @@ impl WebclawMcp {
         .map_err(|e| e.to_string())?
     }
 
-    /// Take a screenshot of a web page in the local Chrome after its scripts ran: the 1280x720 viewport, or the whole page with `full_page`. Returns the image and the final URL, and with `actions` the values of their executeJavascript steps.
+    /// Capture a web page in the local Chrome after its scripts ran, as an image or a PDF. Images (PNG, or JPEG with `format`) show the 1280x720 viewport, or the whole page with `full_page`. With format "pdf" the whole page is printed to a Letter or A4 PDF and returned as an application/pdf resource of up to 10 MiB. Also returns the final URL, and with `actions` the values of their executeJavascript steps.
     #[tool]
     async fn screenshot(
         &self,
         Parameters(params): Parameters<ScreenshotParams>,
     ) -> Result<CallToolResult, String> {
         validate_url(&params.url).await?;
-        let jpeg = match params.format.as_deref() {
-            None | Some("png") => false,
-            Some("jpeg" | "jpg") => true,
-            Some(other) => {
-                return Err(format!(
-                    "format must be \"png\" or \"jpeg\", got \"{other}\""
-                ));
-            }
-        };
+        let capture = capture(&params)?;
         self.take_screenshot(
             &params.url,
             params.wait_for.as_deref(),
-            params.full_page.unwrap_or(false),
-            jpeg,
+            capture,
             params.actions.as_deref(),
         )
         .await
@@ -1475,6 +1579,41 @@ mod tests {
     use super::{check_select, slugify};
 
     #[test]
+    fn pdf_options_go_with_the_pdf_format_only() {
+        use super::Capture;
+        let capture = |params: serde_json::Value| {
+            let mut params = params;
+            params["url"] = "https://example.com".into();
+            super::capture(&serde_json::from_value(params).unwrap())
+        };
+        assert_eq!(
+            capture(
+                serde_json::json!({"format": "pdf", "paper": "a4", "print_background": "true"})
+            ),
+            Ok(Capture::Pdf {
+                a4: true,
+                print_background: true
+            })
+        );
+        assert_eq!(
+            capture(serde_json::json!({"format": "jpeg", "full_page": true})),
+            Ok(Capture::Image {
+                full_page: true,
+                jpeg: true
+            })
+        );
+        for refused in [
+            serde_json::json!({"format": "pdf", "full_page": true}),
+            serde_json::json!({"format": "pdf", "paper": "a3"}),
+            serde_json::json!({"paper": "a4"}),
+            serde_json::json!({"format": "png", "print_background": true}),
+            serde_json::json!({"format": "gif"}),
+        ] {
+            assert!(capture(refused.clone()).is_err(), "{refused}");
+        }
+    }
+
+    #[test]
     fn chunk_overlap_needs_chunk_and_chunk_needs_a_size() {
         assert!(super::chunk_sizes(None, Some(10)).is_err());
         assert!(super::chunk_sizes(Some(0), None).is_err());
@@ -1546,8 +1685,8 @@ mod tests {
     #[test]
     fn an_unknown_block_type_is_refused_with_or_without_a_browser() {
         let mut config = webclaw_fetch::FetchConfig::default();
-        assert!(super::apply_render(&mut config, None, None, Some("bogus")).is_err());
-        assert!(super::apply_render(&mut config, None, None, Some("images,fonts")).is_ok());
+        assert!(super::apply_render(&mut config, None, None, Some("bogus"), None).is_err());
+        assert!(super::apply_render(&mut config, None, None, Some("images,fonts"), None).is_ok());
     }
 
     #[test]

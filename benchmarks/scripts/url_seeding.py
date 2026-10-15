@@ -4,7 +4,9 @@ usage: url_seeding.py <label>
 Each arm lists one site's URLs once. Its output is kept in .work/url-seeding-out/<label>/<site>/<arm>.json and
 reused by a rerun with the same label, which then only rescores and never queries the index again; a new label (or
 deleting that directory) measures again, so numbers from an older build never carry over. The arms without the index
-run first; then every index arm of both tools runs in one stretch, site by site, alternating which tool goes first. A seeded sample of each arm's URLs is fetched once to check it answers 200 with HTML; those checks
+run first; then every index arm of both tools runs in one stretch, site by site, alternating which tool goes first,
+with a minute between index arms (URL_SEEDING_INDEX_GAP seconds): in faster runs the index began refusing
+connections from the benchmark machine partway through. A seeded sample of each arm's URLs is fetched once to check it answers 200 with HTML; those checks
 are kept in .work/url-seeding-out/live.json. Runs in the Scrapling venv for curl_cffi, which some sites (Hacker News)
 need before they answer a script at all.
 """
@@ -52,6 +54,7 @@ QUERIES = [
 SAMPLE = 20
 REFUSED = {0, 403, 419, 429, 503}
 ARM_TIMEOUT = 300
+INDEX_GAP = int(os.environ.get("URL_SEEDING_INDEX_GAP", "60"))
 
 
 def key(url):
@@ -109,7 +112,7 @@ def discover(run):
             result = run_webclaw(arm, site) if arm in WEBCLAW else run_other(arm, site, path)
             path.write_text(json.dumps(result))
             if arm in INDEX_ARMS:
-                time.sleep(5)
+                time.sleep(INDEX_GAP)
         found[site, arm] = json.loads(path.read_text())
     return found
 
@@ -178,7 +181,7 @@ def queries(run, found):
             keys = [key(e["url"]) for e in json.loads(r.stdout)] if r.stdout.strip().startswith("[") else []
             ranks["query"] = keys.index(target) + 1 if target in keys else None
             ranks["query_urls"] = len(keys)
-            time.sleep(5)
+            time.sleep(INDEX_GAP)
             path.write_text(json.dumps(ranks))
         rows.append({"site": site, "question": question, "target": target, **json.loads(path.read_text())})
     return rows

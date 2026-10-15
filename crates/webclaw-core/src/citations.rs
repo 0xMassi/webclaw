@@ -23,31 +23,46 @@ pub fn to_citations(markdown: &str, page_url: Option<&str>) -> String {
         numbers: HashMap::new(),
     };
     let mut out = String::with_capacity(markdown.len());
-    let mut fence: Option<&str> = None;
+    let mut fence: Option<(u8, usize)> = None;
     for line in markdown.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        let marker = ["```", "~~~"].into_iter().find(|m| trimmed.starts_with(m));
-        let inside = fence.is_some();
-        match (fence, marker) {
-            (None, Some(m)) => fence = Some(m),
-            (Some(f), Some(m)) if f == m => fence = None,
-            _ => {}
-        }
-        if inside || marker.is_some() {
-            out.push_str(line);
-        } else {
-            out.push_str(&refs.rewrite(line, false));
+        match (fence, fence_of(line)) {
+            (Some((c, n)), Some((fc, fnn, info)))
+                if fc == c && fnn >= n && info.trim().is_empty() =>
+            {
+                fence = None;
+                out.push_str(line);
+            }
+            (Some(_), _) => out.push_str(line),
+            (None, Some((c, n, info))) if c == b'~' || !info.contains('`') => {
+                fence = Some((c, n));
+                out.push_str(line);
+            }
+            (None, _) => out.push_str(&refs.rewrite(line, false)),
         }
     }
     if refs.urls.is_empty() {
         return out;
     }
     out.truncate(out.trim_end().len());
+    if let Some((c, n)) = fence {
+        out.push('\n');
+        out.push_str(&(c as char).to_string().repeat(n));
+    }
     out.push_str("\n\n## References\n");
     for (i, url) in refs.urls.iter().enumerate() {
         out.push_str(&format!("\n[^{}]: {url}", i + 1));
     }
     out
+}
+
+fn fence_of(line: &str) -> Option<(u8, usize, &str)> {
+    let rest = line.trim_start_matches(' ');
+    if line.len() - rest.len() > 3 {
+        return None;
+    }
+    let c = *rest.as_bytes().first()?;
+    let n = rest.bytes().take_while(|&b| b == c).count();
+    ((c == b'`' || c == b'~') && n >= 3).then(|| (c, n, &rest[n..]))
 }
 
 struct Refs {
@@ -250,6 +265,24 @@ mod tests {
         assert_eq!(
             to_citations(md, None),
             "Use `[a](b)` here.\n\n```md\n[x](https://x.com)\n```\n\n~~~\n```\n[y](https://y.com)\n~~~\n\nz[^1]\n\n## References\n\n[^1]: https://z.com"
+        );
+    }
+
+    #[test]
+    fn fences_follow_commonmark() {
+        let md = "````\n```\n[in](https://in.com)\n```\n[in2](https://in2.com)\n````\n  ~~~\n[t](https://t.com)\n  ~~~~\n```inline``` and [a](https://a.com)";
+        assert_eq!(
+            to_citations(md, None),
+            "````\n```\n[in](https://in.com)\n```\n[in2](https://in2.com)\n````\n  ~~~\n[t](https://t.com)\n  ~~~~\n```inline``` and a[^1]\n\n## References\n\n[^1]: https://a.com"
+        );
+    }
+
+    #[test]
+    fn unclosed_fence_is_closed_before_the_list() {
+        let md = "[a](https://a.com)\n\n~~~~\n[b](https://b.com)\n~~~";
+        assert_eq!(
+            to_citations(md, None),
+            "a[^1]\n\n~~~~\n[b](https://b.com)\n~~~\n~~~~\n\n## References\n\n[^1]: https://a.com"
         );
     }
 

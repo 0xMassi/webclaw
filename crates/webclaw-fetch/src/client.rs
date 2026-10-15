@@ -568,10 +568,10 @@ impl FetchClient {
         let fetched = self.fetch_over_http(url, extra).await?;
         #[cfg(feature = "browser")]
         if let Some(render) = &self.render {
-            return render
+            return Ok(render
                 .pool
                 .load_in_profile(url, fetched, render, &self.headers)
-                .await;
+                .await);
         }
         Ok(fetched)
     }

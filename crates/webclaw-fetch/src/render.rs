@@ -1051,14 +1051,15 @@ impl RenderPool {
 
     /// With a persistent profile, load `url` in the browser, which sends the
     /// profile's cookies, when `fetched`, its HTTP response, is an HTML page,
-    /// and return the rendered page in its place. Otherwise return `fetched`.
+    /// and return the rendered page in its place. Otherwise, or when the
+    /// browser fails, return `fetched`; a failure is logged.
     pub async fn load_in_profile(
         &self,
         url: &str,
         fetched: FetchResult,
         config: &RenderConfig,
         headers: &[(String, String)],
-    ) -> Result<FetchResult, FetchError> {
+    ) -> FetchResult {
         let html = fetched.document_bytes.is_none()
             && fetched
                 .headers
@@ -1066,10 +1067,21 @@ impl RenderPool {
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| v.contains("html"));
         if !self.persistent() || !html {
-            return Ok(fetched);
+            return fetched;
         }
-        self.render(url, None, config.wait_for.as_deref(), headers, config.block)
+        match self
+            .render(url, None, config.wait_for.as_deref(), headers, config.block)
             .await
+        {
+            Ok(rendered) => rendered,
+            Err(e) => {
+                warn!(
+                    url,
+                    "rendering in the profile failed, keeping the HTTP result: {e}"
+                );
+                fetched
+            }
+        }
     }
 
     /// Shut down the browser if this pool launched it. A later render starts a new one.
@@ -2550,8 +2562,7 @@ mod tests {
             .insert("content-type", "application/json".parse().unwrap());
         let kept = profile
             .load_in_profile("https://example.com/api", json, &config, &[])
-            .await
-            .expect("no browser is needed");
+            .await;
         assert_eq!(kept.html, "{}");
         let mut html = page("https://example.com/", "<script></script>", 200);
         html.headers
@@ -2559,9 +2570,12 @@ mod tests {
         assert!(profile.persistent() && !pool().persistent());
         assert!(pool().wants(&html, 0, true) && !profile.wants(&html, 0, true));
         let kept = pool()
+            .load_in_profile("https://example.com/", html.clone(), &config, &[])
+            .await;
+        assert_eq!(kept.html, "<script></script>");
+        let kept = profile
             .load_in_profile("https://example.com/", html, &config, &[])
-            .await
-            .expect("no browser is needed");
+            .await;
         assert_eq!(kept.html, "<script></script>");
     }
 

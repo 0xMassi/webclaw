@@ -123,8 +123,9 @@ impl NetworkCapture {
     /// Keep the responses whose URL matches the regular expression `pattern`
     /// (every URL when it is `None` or empty) and whose resource type is in
     /// the comma list `types` (`xhr,fetch` when `None`, `all` for every type).
-    /// With `credentials`, request headers that look like credentials, such
-    /// as `Authorization` or an API key, are kept too.
+    /// Without `credentials`, request headers whose name looks like a
+    /// credential, such as `Authorization` or `X-Api-Key`, are left out and
+    /// URL query parameters named that way read `REDACTED`.
     pub fn new(
         pattern: Option<&str>,
         types: Option<&str>,
@@ -226,7 +227,11 @@ impl NetworkCapture {
             .map(|(event, (body, truncated))| {
                 let request = requests.get(&event.request_id).map(|sent| &sent.request);
                 NetworkResponse {
-                    url: event.response.url.clone(),
+                    url: if self.credentials {
+                        event.response.url.clone()
+                    } else {
+                        redact_query(&event.response.url)
+                    },
                     method: request.map(|r| r.method.clone()).unwrap_or_default(),
                     status: u16::try_from(event.response.status).unwrap_or_default(),
                     resource_type: event.r#type.as_ref().to_ascii_lowercase(),
@@ -300,21 +305,64 @@ async fn network_quiet(
 }
 
 fn is_credential(name: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "access",
+        "apikey",
+        "appcheck",
+        "auth",
+        "authorization",
+        "bearer",
+        "cookie",
+        "credential",
+        "credentials",
+        "csrf",
+        "jwt",
+        "key",
+        "passwd",
+        "password",
+        "secret",
+        "session",
+        "sessionid",
+        "sig",
+        "signature",
+        "token",
+        "xsrf",
+    ];
     let name = name.to_ascii_lowercase();
-    name == "cookie"
-        || [
-            "auth",
-            "token",
-            "key",
-            "secret",
-            "session",
-            "csrf",
-            "xsrf",
-            "signature",
-            "password",
-        ]
-        .iter()
-        .any(|word| name.contains(word))
+    if name == "x-client-data" {
+        return true;
+    }
+    if name.starts_with("access-control-") {
+        return false;
+    }
+    name.split(['-', '_', '.']).any(|word| {
+        WORDS.contains(&word)
+            || ["token", "secret", "password", "apikey"]
+                .iter()
+                .any(|end| word.ends_with(end))
+    })
+}
+
+fn redact_query(url: &str) -> String {
+    let Ok(mut parsed) = Url::parse(url) else {
+        return url.to_string();
+    };
+    if !parsed.query_pairs().any(|(name, _)| is_credential(&name)) {
+        return url.to_string();
+    }
+    let pairs: Vec<(String, String)> = parsed
+        .query_pairs()
+        .map(|(name, value)| {
+            let value = if is_credential(&name) {
+                "REDACTED".to_string()
+            } else {
+                value.into_owned()
+            };
+            (name.into_owned(), value)
+        })
+        .collect();
+    parsed.query_pairs_mut().clear().extend_pairs(pairs);
+    parsed.into()
 }
 
 fn char_floor(text: &str, at: usize) -> usize {
@@ -2469,6 +2517,56 @@ mod tests {
             .unwrap()
             .headers(&sent);
         assert_eq!(all.len(), 6);
+    }
+
+    #[test]
+    fn credential_headers_are_told_apart_by_their_name_parts() {
+        for name in [
+            "Authorization",
+            "Proxy-Authorization",
+            "Cookie",
+            "X-Api-Key",
+            "X-Firebase-AppCheck",
+            "Bearer",
+            "X-Access",
+            "X-Sig",
+            "X-Client-Data",
+            "X-Amz-Security-Token",
+            "Private-Token",
+            "Ocp-Apim-Subscription-Key",
+            "X-Auth-Hash",
+            "X-CSRFToken",
+            "x_session_id",
+        ] {
+            assert!(super::is_credential(name), "{name} kept");
+        }
+        for name in [
+            "Accept",
+            "Content-Type",
+            "X-Author",
+            "X-Monkey",
+            "X-Requested-With",
+            "Access-Control-Request-Headers",
+            "Referer",
+        ] {
+            assert!(!super::is_credential(name), "{name} dropped");
+        }
+    }
+
+    #[test]
+    fn credentials_in_query_strings_are_redacted() {
+        assert_eq!(
+            super::redact_query("https://a.example/api?access_token=S1&q=rust&key=AIzaS2"),
+            "https://a.example/api?access_token=REDACTED&q=rust&key=REDACTED"
+        );
+        assert_eq!(
+            super::redact_query(
+                "https://x-dsn.algolia.net/1/indexes/i?query=a&x-algolia-api-key=S3&x-algolia-application-id=X"
+            ),
+            "https://x-dsn.algolia.net/1/indexes/i?query=a&x-algolia-api-key=REDACTED&x-algolia-application-id=X"
+        );
+        let untouched = "https://a.example/search?keyword=monkey%20key&page=2";
+        assert_eq!(super::redact_query(untouched), untouched);
     }
 
     #[test]

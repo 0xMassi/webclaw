@@ -738,10 +738,7 @@ impl Renderer {
             Some(path) if !shell => chrome_agent(path).await,
             _ => None,
         };
-        let mut flags: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
-        if let Some(agent) = &agent {
-            flags.push(format!("--user-agent={agent}"));
-        }
+        let plain: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
         let launch = async |flags: &[String], profile: std::path::PathBuf| {
             Self::start_chrome(
                 proxy,
@@ -753,14 +750,36 @@ impl Renderer {
             )
             .await
         };
-        let renderer = launch(&flags, profile.clone()).await?;
-        if shell || agent.is_some() || !renderer.agent.contains("HeadlessChrome") {
+        let renderer = match &agent {
+            Some(agent) => {
+                let flags = [plain.clone(), vec![format!("--user-agent={agent}")]].concat();
+                let renderer = launch(&flags, profile.clone()).await?;
+                let product = renderer
+                    .browser
+                    .version()
+                    .await
+                    .map(|version| version.product)
+                    .unwrap_or_default();
+                if chrome_major(&product).is_some() && chrome_major(&product) == chrome_major(agent)
+                {
+                    return Ok(renderer);
+                }
+                renderer.close().await;
+                launch(&plain, profile.clone()).await?
+            }
+            None => launch(&plain, profile.clone()).await?,
+        };
+        if shell || !renderer.agent.contains("HeadlessChrome") {
             return Ok(renderer);
         }
-        flags.push(format!(
-            "--user-agent={}",
-            renderer.agent.replace("HeadlessChrome", "Chrome")
-        ));
+        let flags = [
+            plain,
+            vec![format!(
+                "--user-agent={}",
+                renderer.agent.replace("HeadlessChrome", "Chrome")
+            )],
+        ]
+        .concat();
         renderer.close().await;
         launch(&flags, profile).await
     }
@@ -2291,6 +2310,14 @@ fn chrome_executable() -> Option<std::path::PathBuf> {
                 .find(|path| path.exists())
         })
         .or_else(|| chromiumoxide::detection::default_executable(Default::default()).ok())
+}
+
+fn chrome_major(text: &str) -> Option<&str> {
+    let (_, version) = text.split_once("Chrome/")?;
+    version
+        .split('.')
+        .next()
+        .filter(|major| !major.is_empty() && major.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn is_headless_shell(executable: &std::path::Path) -> bool {
@@ -4863,6 +4890,47 @@ mod tests {
             .unwrap()
             .success();
         assert!(!alive, "the --version process {} still runs", pid.trim());
+    }
+
+    #[test]
+    fn the_major_version_is_read_from_a_product_or_a_user_agent() {
+        use super::chrome_major;
+        assert_eq!(chrome_major("Chrome/155.0.8059.79"), Some("155"));
+        assert_eq!(chrome_major("HeadlessChrome/155.0.8059.79"), Some("155"));
+        assert_eq!(
+            chrome_major(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            Some("120")
+        );
+        assert_eq!(chrome_major(""), None);
+        assert_eq!(chrome_major("Chrome/"), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_version_that_lies_is_replaced_by_the_one_chrome_runs() {
+        let real = super::chrome_executable().expect("Chrome is installed");
+        let own = super::chrome_agent(&real)
+            .await
+            .expect("Chrome prints its version");
+        let dir = tempfile::tempdir().unwrap();
+        let liar = wrapper(dir.path(), "chrome", "echo Google Chrome 120.0.6099.71");
+        let profile = tempfile::tempdir().unwrap();
+        let renderer = Renderer::launch_from(
+            Some(liar),
+            None,
+            &[],
+            profile.path().to_path_buf(),
+            false,
+            std::time::Duration::from_secs(30),
+        )
+        .await
+        .expect("Chrome launches");
+        let agent = renderer.agent.clone();
+        renderer.close().await;
+        assert_eq!(agent, own);
     }
 
     #[test]

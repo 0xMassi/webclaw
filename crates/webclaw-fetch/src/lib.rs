@@ -37,7 +37,7 @@ pub use error::FetchError;
 pub use fetcher::Fetcher;
 pub use http::HeaderMap;
 pub use locale::{accept_language_for_tld, accept_language_for_url};
-pub use map::{MapOptions, discover_urls};
+pub use map::{MapOptions, SiteMap, common_crawl_urls, discover_urls, map_site};
 pub use progress::{PROGRESS_INTERVAL, with_progress};
 pub use proxy::{parse_proxy_file, parse_proxy_line};
 pub use search::{SearchOptions, SearchResult, parse_serper_organic, search};

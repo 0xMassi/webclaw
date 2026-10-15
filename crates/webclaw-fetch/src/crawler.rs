@@ -886,17 +886,14 @@ impl Crawler {
     fn qualify_link(&self, href: &str, visited: &HashSet<String>) -> Option<String> {
         let parsed = Url::parse(href).ok()?;
 
-        // Only http(s) schemes
         match parsed.scheme() {
             "http" | "https" => {}
             _ => return None,
         }
 
-        // Scope check: same-origin, subdomain, or external
         if !self.config.allow_external_links {
             let link_origin = origin_key(&parsed);
             if link_origin != self.seed_origin {
-                // Not same-origin. Check if subdomain crawling is allowed.
                 if self.config.allow_subdomains {
                     let link_root = root_domain(&parsed);
                     if link_root != self.seed_root_domain {
@@ -908,36 +905,16 @@ impl Crawler {
             }
         }
 
-        // Path prefix filter
-        if let Some(ref prefix) = self.config.path_prefix
-            && !parsed.path().starts_with(prefix.as_str())
-        {
-            return None;
-        }
-
-        // Include patterns: if any are set, path must match at least one
         let path = parsed.path();
-        if !self.config.include_patterns.is_empty()
-            && !self
-                .config
-                .include_patterns
-                .iter()
-                .any(|pat| glob_match(pat, path))
-        {
+        if !path_allowed(
+            path,
+            self.config.path_prefix.as_deref(),
+            &self.config.include_patterns,
+            &self.config.exclude_patterns,
+        ) {
             return None;
         }
 
-        // Exclude patterns: if path matches any, skip
-        if self
-            .config
-            .exclude_patterns
-            .iter()
-            .any(|pat| glob_match(pat, path))
-        {
-            return None;
-        }
-
-        // Skip common non-page file extensions
         const SKIP_EXTENSIONS: &[&str] = &[
             ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js",
             ".zip", ".tar", ".gz", ".xml", ".rss", ".mp3", ".mp4", ".avi", ".mov", ".woff",
@@ -1204,7 +1181,7 @@ const MAX_GLOB_LEN: usize = 1024;
 /// Validate a user-supplied glob pattern before it hits the matcher.
 /// Rejects patterns that would drive `glob_match_inner` into pathological
 /// backtracking (too many `**`, excessive length).
-fn validate_glob(pat: &str) -> Result<(), FetchError> {
+pub(crate) fn validate_glob(pat: &str) -> Result<(), FetchError> {
     if pat.len() > MAX_GLOB_LEN {
         return Err(FetchError::Build(format!(
             "glob pattern exceeds {MAX_GLOB_LEN} chars ({} given)",
@@ -1232,6 +1209,17 @@ fn validate_glob(pat: &str) -> Result<(), FetchError> {
         )));
     }
     Ok(())
+}
+
+pub(crate) fn path_allowed(
+    path: &str,
+    prefix: Option<&str>,
+    include: &[String],
+    exclude: &[String],
+) -> bool {
+    prefix.is_none_or(|p| path.starts_with(p))
+        && (include.is_empty() || include.iter().any(|pat| glob_match(pat, path)))
+        && !exclude.iter().any(|pat| glob_match(pat, path))
 }
 
 /// Simple glob matching for URL paths. Supports:

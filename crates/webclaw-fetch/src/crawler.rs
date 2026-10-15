@@ -206,6 +206,7 @@ pub struct Crawler {
     follow_redirects: bool,
     config: CrawlConfig,
     seed_origin: String,
+    seed_scheme: String,
     /// Root domain of the seed URL for subdomain matching (e.g. "example.com").
     seed_root_domain: String,
     robots: std::sync::Mutex<HashMap<String, Arc<RobotsRules>>>,
@@ -276,6 +277,7 @@ impl Crawler {
             ask: Ask::new(config.query.as_deref()),
             config,
             seed_origin,
+            seed_scheme: seed.scheme().to_string(),
             seed_root_domain,
             robots: Default::default(),
         })
@@ -527,7 +529,9 @@ impl Crawler {
                     Ok(entries) => {
                         let before = frontier.len();
                         for entry in entries {
-                            if let Some(url) = self.qualify_link(&entry.url, &visited) {
+                            if let Some(url) =
+                                self.qualify_link(&self.on_seed_scheme(&entry.url), &visited)
+                            {
                                 frontier.push_back(url, 0, 0.0);
                             }
                         }
@@ -731,7 +735,8 @@ impl Crawler {
                 }
                 let mut dropped = false;
                 for (href, score) in best {
-                    if let Some(candidate) = self.qualify_link(href, &visited) {
+                    if let Some(candidate) = self.qualify_link(&self.on_seed_scheme(href), &visited)
+                    {
                         dropped |= !frontier.push_capped(candidate, depth + 1, score, frontier_cap);
                     }
                 }
@@ -898,6 +903,20 @@ impl Crawler {
 
     /// Check if a discovered link should be added to the frontier.
     /// Returns `Some(normalized_url)` if it passes all filters, `None` otherwise.
+    fn on_seed_scheme(&self, href: &str) -> String {
+        match Url::parse(href) {
+            Ok(mut url)
+                if matches!(url.scheme(), "http" | "https")
+                    && url.scheme() != self.seed_scheme
+                    && origin_key(&as_https(&url)) == self.seed_origin =>
+            {
+                let _ = url.set_scheme(&self.seed_scheme);
+                url.to_string()
+            }
+            _ => href.to_string(),
+        }
+    }
+
     fn qualify_link(&self, href: &str, visited: &HashSet<String>) -> Option<String> {
         let parsed = Url::parse(href).ok()?;
 
@@ -2013,6 +2032,43 @@ mod tests {
         );
         assert_eq!(result.total, 2);
         assert_eq!(result.skipped_by_robots, 1);
+    }
+
+    #[tokio::test]
+    async fn a_link_in_the_other_scheme_is_fetched_on_the_seed_scheme() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "http://example.com/",
+            CrawlConfig {
+                max_depth: 1,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result = crawler
+            .run("http://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    if url.starts_with("https:") {
+                        return Page::failed("connection refused".into());
+                    }
+                    match Url::parse(&url).unwrap().path() {
+                        "/" => html_page(&url, "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='https://example.com/page'>Page</a><a href='http://example.com/page'>Page</a></main>"),
+                        _ => html_page(&url, "<main><h1>Leaf</h1><p>Leaf content for the crawl.</p></main>"),
+                    }
+                }
+            })
+            .await;
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec!["http://example.com/", "http://example.com/page"],
+            "{calls:?}"
+        );
+        assert_eq!((result.ok, result.errors), (2, 0));
     }
 
     #[tokio::test]

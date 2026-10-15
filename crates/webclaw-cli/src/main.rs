@@ -300,7 +300,7 @@ struct Cli {
     /// Links list at the end: `[text](url)` becomes `text[^1]`, and a URL
     /// used twice keeps one number. Applies to -f markdown and to the
     /// markdown inside -f json and jsonl, for one URL, several or --crawl
-    #[arg(long, conflicts_with_all = ["chunk", "raw_html", "select", "xpath", "find_text", "find_regex", "tables", "screenshot", "save_pdf", "watch", "diff_with", "brand", "map", "extract_json", "extract_prompt", "summarize", "research"])]
+    #[arg(long, conflicts_with_all = ["chunk", "raw_html", "capture_network", "select", "xpath", "find_text", "find_regex", "tables", "screenshot", "save_pdf", "watch", "diff_with", "brand", "map", "extract_json", "extract_prompt", "summarize", "research"])]
     citations: bool,
 
     /// Print what a CSS selector picks as a JSON array. End it in `::text`
@@ -4293,6 +4293,7 @@ mod tests {
     fn citations_refuse_modes_that_print_no_page_markdown() {
         for mode in [
             &["--select", "a"][..],
+            &["--capture-network", ""],
             &["--xpath", "//a"],
             &["--find-text", "x"],
             &["--tables"],

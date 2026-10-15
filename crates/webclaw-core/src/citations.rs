@@ -99,8 +99,13 @@ impl Refs {
                         self.rewrite(text, true)
                     };
                     let cited = self.cite(text, url, image);
+                    let line_start = !nested && out.trim_start_matches([' ', '\t']).is_empty();
+                    let cited = if line_start { block_safe(cited) } else { cited };
                     out.push_str(&cited);
-                    if cited.ends_with(']') && b.get(end + 1) == Some(&b'(') {
+                    let next = b.get(end + 1);
+                    if cited.ends_with(']') && next == Some(&b'(')
+                        || line_start && cited.starts_with("[^") && next == Some(&b':')
+                    {
                         out.push('\\');
                     }
                     i = end + 1;
@@ -226,6 +231,27 @@ fn destination(dest: &str) -> Option<&str> {
     titled.then_some(url)
 }
 
+fn block_safe(s: String) -> String {
+    let b = s.as_bytes();
+    let spaced = |i: usize| matches!(b.get(i), None | Some(b' ' | b'\t'));
+    let hashes = b.iter().take_while(|&&c| c == b'#').count();
+    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
+    let at = if (1..=6).contains(&hashes) && spaced(hashes)
+        || b.first() == Some(&b'>')
+        || matches!(b.first(), Some(b'-' | b'+' | b'*')) && spaced(1)
+    {
+        0
+    } else if (1..=9).contains(&digits)
+        && matches!(b.get(digits), Some(b'.' | b')'))
+        && spaced(digits + 1)
+    {
+        digits
+    } else {
+        return s;
+    };
+    format!("{}\\{}", &s[..at], &s[at..])
+}
+
 fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
     s.get(..prefix.len())
         .is_some_and(|p| p.eq_ignore_ascii_case(prefix))
@@ -296,6 +322,15 @@ mod tests {
         assert_eq!(
             to_citations(md, None),
             "docs[^1]\\(PDF), ![i][^2]\\(x), [1]\\(y)\n\n## References\n\n[^1]: https://d.com\n[^2]: https://i.com/i.png"
+        );
+    }
+
+    #[test]
+    fn marks_at_line_start_make_no_new_blocks() {
+        let md = "[](https://e.com): starts\n[## Title](https://t.com)\n  [> q](https://q.com)\n[1. One](https://o.com)\n[- item](https://i.com)\nmid [## x](https://x.com) [2024 results](https://r.com)";
+        assert_eq!(
+            to_citations(md, None),
+            "[^1]\\: starts\n\\## Title[^2]\n  \\> q[^3]\n1\\. One[^4]\n\\- item[^5]\nmid ## x[^6] 2024 results[^7]\n\n## References\n\n[^1]: https://e.com\n[^2]: https://t.com\n[^3]: https://q.com\n[^4]: https://o.com\n[^5]: https://i.com\n[^6]: https://x.com\n[^7]: https://r.com"
         );
     }
 

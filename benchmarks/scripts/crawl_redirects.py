@@ -2,7 +2,8 @@
 
 usage: crawl_redirects.py <label> [rounds]
 Each site is crawled one level deep from its seed. The ground truth is every same-host link on the seed page,
-followed to its final URL, that robots.txt allows before and after the redirect. An arm finds a page when it
+followed to its final URL, that robots.txt allows before and after the redirect. A link whose scheme fails is
+tried again on the seed's scheme. An arm finds a page when it
 returns content for that final URL, or for a link that redirects to it.
 """
 import json, os, re, statistics, subprocess, sys, time, urllib.request
@@ -18,6 +19,7 @@ SITES = [
     {"name": "quotes.toscrape.com-http", "seed": "http://quotes.toscrape.com/page/2/"},
     {"name": "www.python.org", "seed": "https://www.python.org/"},
     {"name": "go.dev", "seed": "https://go.dev/doc/"},
+    {"name": "www.columbia.edu", "seed": "https://www.columbia.edu/~fdc/"},
 ]
 MAX_PAGES, CONCURRENCY = 300, 4
 ARMS = {"webclaw-before": "base", "webclaw": "base", "scrapling": "scrapling", "crawl4ai": "crawl4ai"}
@@ -64,7 +66,10 @@ def truth(site):
         try:
             final = get(url)[0]
         except Exception:
-            continue
+            try:
+                final = get(urlparse(url)._replace(scheme=urlparse(final_seed).scheme).geturl())[0]
+            except Exception:
+                continue
         if urlparse(final).hostname != host or not allowed(url) or not allowed(final):
             continue
         if final != url:

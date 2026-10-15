@@ -2,7 +2,7 @@
 {"test": "login", "arm": "webclaw", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
 {"test": "storage", "arm": "webclaw", "stored": true, "local_storage": true, "indexed_db": true, "error": null}
 {"test": "timing", "arm": "webclaw", "runs": 5, "fresh_ms": 2116, "warm_ms": 1672, "none_ms": 2106, "fresh_mb": 8.8, "warm_mb": 8.9, "warm_renders": 6, "error": null}
-{"test": "lock", "arm": "webclaw", "first_ok": true, "second": "browser refused, HTTP page kept", "message": "", "second_ms": 200}
+{"test": "lock", "arm": "webclaw", "first_ok": true, "second": "refused", "message": "ime error: client build failed: client build failed: the browser profile DIR is in use by another browser (its lock names HOST-PID), and a profile takes one browser at a time", "second_ms": 106}
 {"test": "login", "arm": "scrapling", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": false, "control_logged_out": true, "error": null}
 {"test": "login", "arm": "scrapling", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": false, "kept": false, "control_logged_out": true, "error": null}
 {"test": "storage", "arm": "scrapling", "stored": true, "local_storage": true, "indexed_db": true, "error": null}

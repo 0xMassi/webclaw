@@ -1,4 +1,4 @@
-import json, os, shutil, statistics, subprocess, sys, time
+import json, os, re, shutil, statistics, subprocess, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -156,10 +156,9 @@ def lock(arm, rows):
     out, err = holder.communicate(timeout=300)
     first = parse(out, err)
     row = {"test": "lock", "arm": arm, "first_ok": not first["error"],
-           "second": "refused" if second["error"] else
-                     "browser refused, HTTP page kept" if "in use by another browser" in second.get("log", "") else
-                     "ran on the profile in use",
-           "message": " ".join((second["error"] or "").replace(str(profile), "DIR").split())[:240],
+           "second": "refused" if second["error"] else "ran on the profile in use",
+           "message": re.sub(r"its lock names [^)]*", "its lock names HOST-PID",
+                             " ".join((second["error"] or "").replace(str(profile), "DIR").split()))[:240],
            "second_ms": round(second["ms"] or 0)}
     rows.append(row)
     print(json.dumps(row), flush=True)
@@ -182,6 +181,11 @@ def main(label):
         logins(arm, rows)
         storage(arm, rows)
     crawl(rows)
+    summarize(label, rows)
+
+
+def summarize(label, rows):
+    res = ROOT / "results" / label
     (res / "profile-rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     by = lambda test: [r for r in rows if r["test"] == test]
     lines = [f"# Browser profile {label}", "",
@@ -215,4 +219,5 @@ def main(label):
     print("\n".join(lines))
 
 
-main(sys.argv[1])
+if __name__ == "__main__":
+    main(sys.argv[1])

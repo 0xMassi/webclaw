@@ -30,9 +30,9 @@ STATE = os.path.join(PROFILE, "state.json") if PROFILE else None
 TIMEOUT_S = 90
 
 
-def emit(t0, text=None, values=None, error=None, log=""):
+def emit(t0, text=None, values=None, error=None):
     print(json.dumps({"text": text, "values": values or [], "ms": 1000 * (time.perf_counter() - t0),
-                      "error": error, "log": log}), flush=True)
+                      "error": error}), flush=True)
 
 
 def webclaw():
@@ -52,7 +52,7 @@ def webclaw():
     if r.returncode != 0:
         return emit(t0, error=r.stderr.strip()[-300:])
     values = json.loads(r.stdout).get("js_results", [])
-    emit(t0, r.stdout, values, log=r.stderr[-2000:])
+    emit(t0, r.stdout, values)
 
 
 def playwright_steps(steps, values):

@@ -133,7 +133,7 @@ const RESOURCE_TYPES: &[&str] = &[
     "other",
 ];
 const MAX_RESPONSES: usize = 100;
-const QUIET: Duration = Duration::from_millis(2000);
+const QUIET: Duration = Duration::from_secs(1);
 const MAX_BODY_BYTES: usize = 1_000_000;
 const MAX_TOTAL_BYTES: usize = 5_000_000;
 
@@ -876,7 +876,7 @@ impl Renderer {
     /// [`Renderer::render_actions`], also keeping the network responses
     /// `capture` asks for. Returns the page, the `js_results` and the
     /// responses in the order they arrived. A capturing render waits until
-    /// no request is in flight and none has started for 2 seconds, up to a
+    /// no request is in flight and none has started for 1 second, up to a
     /// third of `options.timeout`, instead of stopping once the text settles.
     /// Requests from dedicated workers are not seen either. A failed render
     /// returns only the error. Only requests the browser was
@@ -3408,7 +3408,11 @@ mod tests {
         );
     }
 
-    async fn capture_on_example(html: &str, pattern: &str) -> Vec<super::NetworkResponse> {
+    async fn capture_on_example(
+        html: &str,
+        pattern: &str,
+        wait_for: Option<&str>,
+    ) -> Vec<super::NetworkResponse> {
         let headers = http::HeaderMap::new();
         let renderer = Renderer::launch(None).await.expect("Chrome launches");
         let rendered = renderer
@@ -3420,6 +3424,7 @@ mod tests {
                 }),
                 &RenderOptions {
                     timeout: std::time::Duration::from_secs(30),
+                    wait_for: wait_for.map(str::to_string),
                     ..Default::default()
                 },
                 &[],
@@ -3438,18 +3443,21 @@ mod tests {
                 .then(() => new Promise(done => setTimeout(done, 800)))
                 .then(() => fetch("/?second=1"));
             </script></body></html>"#;
-        let network = capture_on_example(html, r"\?(first|second)=").await;
+        let network = capture_on_example(html, r"\?(first|second)=", None).await;
         let urls: Vec<&str> = network.iter().map(|r| r.url.as_str()).collect();
         assert!(urls.iter().any(|u| u.ends_with("?second=1")), "{urls:?}");
     }
 
     #[tokio::test]
     #[ignore = "launches Chrome and needs network access"]
-    async fn a_capture_waits_for_a_request_started_by_a_timer() {
+    async fn a_late_request_is_caught_by_waiting_for_what_it_builds() {
         let html = r#"<html><body><p>timer</p><script>
-            setTimeout(() => fetch("/?late=1"), 1500);
+            setTimeout(() => fetch("/?late=1").then(() => {
+                const done = document.createElement("div"); done.id = "done"; document.body.appendChild(done);
+            }), 1500);
             </script></body></html>"#;
-        let network = capture_on_example(html, r"\?late=").await;
+        assert!(capture_on_example(html, r"\?late=", None).await.is_empty());
+        let network = capture_on_example(html, r"\?late=", Some("#done")).await;
         assert_eq!(network.len(), 1, "{network:?}");
     }
 
@@ -3860,7 +3868,7 @@ mod tests {
             setInterval(() => { new Image().src = "/beacon.gif?" + Date.now(); }, 700);
             </script></body></html>"#;
         let start = std::time::Instant::now();
-        let network = capture_on_example(html, r"\?data=").await;
+        let network = capture_on_example(html, r"\?data=", None).await;
         let took = start.elapsed();
         assert_eq!(network.len(), 1, "{network:?}");
         assert!(

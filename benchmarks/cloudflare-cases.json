@@ -1,0 +1,18 @@
+[
+  {"url": "https://www.scrapingcourse.com/cloudflare-challenge", "kind": "managed", "marker": "You bypassed the Cloudflare challenge"},
+  {"url": "https://www.scrapingcourse.com/antibot-challenge", "kind": "managed", "marker": "You bypassed the Antibot challenge"},
+  {"url": "https://demo.turnstile.workers.dev/", "kind": "embedded", "marker": "token"},
+  {"url": "https://seleniumbase.io/apps/turnstile", "kind": "embedded", "marker": "token"},
+  {"url": "https://peet.ws/turnstile-test/non-interactive.html", "kind": "embedded", "marker": "token"},
+  {"url": "https://peet.ws/turnstile-test/managed.html", "kind": "embedded", "marker": "token"},
+  {"url": "https://www.bscscan.com/", "kind": "non-interactive", "marker": "BNB Smart Chain"},
+  {"url": "https://basescan.org/", "kind": "non-interactive", "marker": "Blockchain Explorer"},
+  {"url": "https://gitlab.com/users/sign_in", "kind": "managed", "marker": "Remember me"},
+  {"url": "https://www.glassdoor.com/Reviews/index.htm", "kind": "managed", "marker": ["Accenture", "250 milioni", "250 million"]},
+  {"url": "https://www.crunchbase.com/organization/openai", "kind": "managed", "marker": "OpenAI"},
+  {"url": "https://www.cardmarket.com/en/Magic", "kind": "managed", "marker": "Magic: The Gathering"},
+  {"url": "https://www.bizjournals.com/", "kind": "managed", "marker": "The Business Journals"},
+  {"url": "https://www.pricecharting.com/", "kind": "managed", "marker": "Price Guide"},
+  {"url": "https://www.bbb.org/", "kind": "managed", "marker": "Scam Tracker"},
+  {"url": "https://www.capterra.com/", "kind": "managed", "marker": "Find The Right Software"}
+]

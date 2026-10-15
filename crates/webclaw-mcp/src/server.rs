@@ -73,13 +73,14 @@ fn render_from_env(
     }
     let source = match std::env::var("WEBCLAW_CDP_URL") {
         Ok(endpoint) if !endpoint.is_empty() => BrowserSource::Connect(endpoint),
-        _ => BrowserSource::launch_for(config),
+        _ => BrowserSource::launch_for(config, true),
     };
     Some(RenderConfig {
         pool: Arc::new(RenderPool::new(source, LOCAL_FETCH_TIMEOUT)),
         always: mode == "always",
         wait_for: None,
         block: webclaw_fetch::Block::default(),
+        solve: false,
     })
 }
 
@@ -89,18 +90,22 @@ fn apply_render(
     mode: Option<&str>,
     wait_for: Option<String>,
     block: Option<&str>,
+    solve: Option<bool>,
 ) -> Result<(), String> {
     if !matches!(mode, None | Some("auto" | "always" | "never")) {
         return Err("render must be \"auto\", \"always\" or \"never\"".into());
     }
     let block = block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
     if mode == Some("never") {
+        if solve == Some(true) {
+            return Err("solve needs rendering, so it cannot run with render \"never\"".into());
+        }
         config.render = None;
         return Ok(());
     }
     let Some(render) = config.render.as_mut() else {
-        return match (mode, &wait_for) {
-            (None | Some("auto"), None) => Ok(()),
+        return match (mode, &wait_for, solve) {
+            (None | Some("auto"), None, None | Some(false)) => Ok(()),
             _ => Err("rendering is turned off for this server (WEBCLAW_RENDER=never)".into()),
         };
     };
@@ -113,6 +118,9 @@ fn apply_render(
     if let Some(block) = block {
         render.block = block;
     }
+    if let Some(solve) = solve {
+        render.solve = solve;
+    }
     Ok(())
 }
 
@@ -122,10 +130,11 @@ fn apply_render(
     mode: Option<&str>,
     wait_for: Option<String>,
     block: Option<&str>,
+    solve: Option<bool>,
 ) -> Result<(), String> {
     block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
-    match (mode, wait_for) {
-        (None | Some("auto" | "never"), None) => Ok(()),
+    match (mode, wait_for, solve) {
+        (None | Some("auto" | "never"), None, None | Some(false)) => Ok(()),
         _ => Err(
             "this webclaw-mcp build has no browser support; build it with `--features browser`"
                 .into(),
@@ -405,6 +414,7 @@ impl WebclawMcp {
             params.render.as_deref(),
             params.wait_for.clone(),
             params.block.as_deref(),
+            params.solve,
         )?;
         let render = config
             .render
@@ -422,6 +432,7 @@ impl WebclawMcp {
                 render.wait_for.as_deref(),
                 &headers,
                 render.block,
+                render.solve,
                 &actions,
             )
             .await
@@ -548,7 +559,8 @@ impl WebclawMcp {
         let shared = cookie_header.is_none()
             && params.render.is_none()
             && params.wait_for.is_none()
-            && params.block.is_none();
+            && params.block.is_none()
+            && params.solve.is_none();
 
         let custom_client;
         let cached_firefox;
@@ -574,6 +586,7 @@ impl WebclawMcp {
                     params.render.as_deref(),
                     params.wait_for.clone(),
                     params.block.as_deref(),
+                    params.solve,
                 )?;
                 custom_client = webclaw_fetch::FetchClient::new(config)
                     .map_err(|e| format!("Failed to build client: {e}"))?;
@@ -666,7 +679,7 @@ impl WebclawMcp {
         let format = params.format.as_deref().unwrap_or("markdown");
 
         let mut fetch = self.fetch_config.clone();
-        apply_render(&mut fetch, None, None, params.block.as_deref())?;
+        apply_render(&mut fetch, None, None, params.block.as_deref(), None)?;
         let config = webclaw_fetch::CrawlConfig {
             fetch,
             max_depth: params.depth.unwrap_or(2) as usize,
@@ -1661,8 +1674,8 @@ mod tests {
     #[test]
     fn an_unknown_block_type_is_refused_with_or_without_a_browser() {
         let mut config = webclaw_fetch::FetchConfig::default();
-        assert!(super::apply_render(&mut config, None, None, Some("bogus")).is_err());
-        assert!(super::apply_render(&mut config, None, None, Some("images,fonts")).is_ok());
+        assert!(super::apply_render(&mut config, None, None, Some("bogus"), None).is_err());
+        assert!(super::apply_render(&mut config, None, None, Some("images,fonts"), None).is_ok());
     }
 
     #[test]

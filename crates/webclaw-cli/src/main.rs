@@ -495,7 +495,8 @@ struct Cli {
     #[arg(long, default_value = "5")]
     concurrency: usize,
 
-    /// Delay between requests in ms [default: 100]
+    /// Minimum time between two requests to the same host in ms, shared by
+    /// all workers. `0` = no spacing [default: 100]
     #[arg(long, default_value = "100")]
     delay: u64,
 

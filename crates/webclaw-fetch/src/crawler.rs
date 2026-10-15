@@ -2,7 +2,7 @@
 ///
 /// Starts from a seed URL, extracts content, discovers links, and follows
 /// them breadth-first up to a configurable depth/page limit. Uses a semaphore
-/// for bounded concurrency and per-request delays for politeness.
+/// for bounded concurrency and spaces the requests to each host for politeness.
 ///
 /// Scope control: by default only same-origin links are followed. Enable
 /// `allow_subdomains` to include sibling/child subdomains of the seed host,
@@ -49,7 +49,14 @@ pub struct CrawlConfig {
     pub max_pages: Option<usize>,
     /// Max concurrent in-flight requests.
     pub concurrency: usize,
-    /// Minimum delay before each request (politeness).
+    /// Minimum time between the starts of two requests to the same host
+    /// (host and port, `http://` and `https://` together), shared by all
+    /// workers. Each host is paced on its own, so a slow host never holds
+    /// back another, and `concurrency` still caps the requests in flight
+    /// across all hosts. A robots.txt `Crawl-delay` raises it for its host,
+    /// up to 30 seconds. While robots.txt is respected, every redirect hop
+    /// is a request of its own and is spaced too. `Duration::ZERO` means no
+    /// spacing.
     pub delay: Duration,
     /// Only follow URLs whose path starts with this prefix (e.g. "/docs/").
     pub path_prefix: Option<String>,
@@ -573,6 +580,7 @@ impl Crawler {
         let mut same_page_redirects: HashSet<String> = HashSet::new();
 
         loop {
+            let mut wake: Option<Instant> = None;
             while in_flight.len() < concurrency
                 && self.under_page_cap(started)
                 && !self.is_cancelled()
@@ -584,7 +592,18 @@ impl Crawler {
                         .next()
                         .map_or(usize::MAX, |shallowest| shallowest + 1),
                 };
-                let Some((url, depth, score)) = frontier.pop(deepest_allowed) else {
+                let now = Instant::now();
+                let Some((url, depth, score)) =
+                    frontier.pop(deepest_allowed, |url| {
+                        match pace_key(url).and_then(|host| next_start.get(&host)) {
+                            Some(&free) if free > now => {
+                                wake = Some(wake.map_or(free, |w| w.min(free)));
+                                false
+                            }
+                            _ => true,
+                        }
+                    })
+                else {
                     break;
                 };
                 let key = dedup_key(&url);
@@ -608,27 +627,21 @@ impl Crawler {
                 started += 1;
                 *in_flight_depths.entry(depth).or_default() += 1;
                 in_flight_urls.insert(url.clone(), (depth, score));
-                let wait = self.start_delay(&url, &mut next_start).await;
+                let interval = self.interval(&url).await;
+                if let Some(host) = pace_key(&url) {
+                    next_start.insert(host, Instant::now() + interval);
+                }
                 let fetch = Arc::clone(&fetch);
-                let cancel_flag = self.config.cancel_flag.clone();
                 let task_url = url.clone();
                 let ask = self.ask.clone();
                 let task = crate::transfer::spawn(async move {
                     let page_start = Instant::now();
-                    tokio::time::sleep(wait).await;
-                    let page = if cancel_flag
-                        .as_ref()
-                        .is_some_and(|flag| flag.load(Ordering::Relaxed))
-                    {
-                        Page::failed("crawl cancelled before fetch".into())
-                    } else {
-                        let page = fetch(task_url).await;
-                        match ask {
-                            Some(ask) => tokio::task::spawn_blocking(move || page.read(&ask))
-                                .await
-                                .unwrap_or_else(|e| Page::failed(format!("reading failed: {e}"))),
-                            None => page,
-                        }
+                    let page = fetch(task_url).await;
+                    let page = match ask {
+                        Some(ask) => tokio::task::spawn_blocking(move || page.read(&ask))
+                            .await
+                            .unwrap_or_else(|e| Page::failed(format!("reading failed: {e}"))),
+                        None => page,
                     };
                     (page, page_start.elapsed())
                 });
@@ -644,27 +657,30 @@ impl Crawler {
                 });
             }
 
-            let next = match &self.config.checkpoint {
-                Some(path) if dirty => {
-                    let wait = CHECKPOINT_INTERVAL.saturating_sub(last_checkpoint.elapsed());
-                    tokio::select! {
-                        next = in_flight.next() => next,
-                        () = tokio::time::sleep(wait) => {
-                            self.write_checkpoint(
-                                path,
-                                start_url,
-                                &visited,
-                                &frontier,
-                                &in_flight_urls,
-                                resumed_pages + completed,
-                            );
-                            last_checkpoint = Instant::now();
-                            dirty = false;
-                            continue;
-                        }
+            if in_flight.is_empty() && wake.is_none() {
+                break;
+            }
+            let checkpoint = self.config.checkpoint.as_ref().filter(|_| dirty);
+            let checkpoint_at = last_checkpoint + CHECKPOINT_INTERVAL;
+            let wake_at = wake.unwrap_or(checkpoint_at);
+            let next = tokio::select! {
+                next = in_flight.next(), if !in_flight.is_empty() => next,
+                () = tokio::time::sleep_until(wake_at.into()), if wake.is_some() => continue,
+                () = tokio::time::sleep_until(checkpoint_at.into()), if checkpoint.is_some() => {
+                    if let Some(path) = checkpoint {
+                        self.write_checkpoint(
+                            path,
+                            start_url,
+                            &visited,
+                            &frontier,
+                            &in_flight_urls,
+                            resumed_pages + completed,
+                        );
                     }
+                    last_checkpoint = Instant::now();
+                    dirty = false;
+                    continue;
                 }
-                _ => in_flight.next().await,
             };
             let Some((url, depth, page, elapsed)) = next else {
                 break;
@@ -875,7 +891,7 @@ impl Crawler {
         }
     }
 
-    async fn start_delay(&self, url: &str, next_start: &mut HashMap<String, Instant>) -> Duration {
+    async fn interval(&self, url: &str) -> Duration {
         let base = self.config.delay;
         let Ok(parsed) = Url::parse(url) else {
             return base;
@@ -883,22 +899,10 @@ impl Crawler {
         if !self.config.respect_robots {
             return base;
         }
-        let Some(gap) = self
-            .robots_for(&parsed)
+        self.robots_for(&parsed)
             .await
             .crawl_delay
-            .map(|d| d.min(MAX_CRAWL_DELAY))
-        else {
-            return base;
-        };
-        let now = Instant::now();
-        let earliest = now + base;
-        let origin = as_https(&parsed).origin().ascii_serialization();
-        let start = next_start
-            .get(&origin)
-            .map_or(earliest, |slot| (*slot).max(earliest));
-        next_start.insert(origin, start + gap);
-        start - now
+            .map_or(base, |d| d.min(MAX_CRAWL_DELAY).max(base))
     }
 
     fn on_seed_scheme(&self, href: &str) -> String {
@@ -984,6 +988,8 @@ impl Crawler {
 
 /// Canonical origin string for comparing same-origin: "scheme://host[:port]".
 const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
+// ponytail: the dispatcher looks this far into the frontier for a host that may start now; a host queued deeper behind a paced one waits its turn, keep a queue per host if that matters.
+const PACING_SCAN: usize = 256;
 // ponytail: a fixed 1s interval rewrites the whole visited set each time; space it out by size if crawls past ~100k pages make it costly.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -1031,12 +1037,20 @@ impl Frontier {
         true
     }
 
-    fn pop(&mut self, deepest_allowed: usize) -> Option<(String, usize, f64)> {
-        let (&(_, depth, _), _) = self.queue.first_key_value()?;
-        if depth > deepest_allowed {
-            return None;
-        }
-        let ((Reverse(score), depth, _), url) = self.queue.pop_first()?;
+    fn pop(
+        &mut self,
+        deepest_allowed: usize,
+        mut ready: impl FnMut(&str) -> bool,
+    ) -> Option<(String, usize, f64)> {
+        let key = *self
+            .queue
+            .iter()
+            .take(PACING_SCAN)
+            .take_while(|((_, depth, _), _)| *depth <= deepest_allowed)
+            .find(|(_, url)| ready(url))?
+            .0;
+        let url = self.queue.remove(&key)?;
+        let (Reverse(score), depth, _) = key;
         Some((url, depth, f64::from_bits(score)))
     }
 
@@ -1206,6 +1220,12 @@ fn as_https(url: &Url) -> Url {
         let _ = url.set_scheme("https");
     }
     url
+}
+
+fn pace_key(url: &str) -> Option<String> {
+    Url::parse(url)
+        .ok()
+        .map(|u| as_https(&u).origin().ascii_serialization())
 }
 
 pub(crate) fn normalize(url: &Url) -> String {
@@ -1473,47 +1493,6 @@ mod tests {
         assert!(calls.is_empty());
         assert_eq!(result.skipped_by_robots, 1);
         assert_eq!(result.total, 0);
-    }
-
-    #[tokio::test]
-    async fn crawl_delay_spaces_request_starts_per_origin() {
-        let crawler = Crawler::new(
-            "https://example.com/",
-            CrawlConfig {
-                delay: Duration::from_millis(100),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        crawler.preload_robots(
-            "https://example.com",
-            RobotsRules::parse("User-agent: *\nCrawl-delay: 2\n", USER_AGENT_TOKEN),
-        );
-        crawler.preload_robots(
-            "https://slow.test",
-            RobotsRules::parse("User-agent: *\nCrawl-delay: 3600\n", USER_AGENT_TOKEN),
-        );
-        crawler.preload_robots("https://other.test", RobotsRules::allow_all());
-        let mut slots = HashMap::new();
-        let first = crawler
-            .start_delay("https://example.com/a", &mut slots)
-            .await;
-        let second = crawler
-            .start_delay("https://example.com/b", &mut slots)
-            .await;
-        let third = crawler
-            .start_delay("https://example.com/c", &mut slots)
-            .await;
-        let other = crawler
-            .start_delay("https://other.test/a", &mut slots)
-            .await;
-        crawler.start_delay("https://slow.test/a", &mut slots).await;
-        let capped = crawler.start_delay("https://slow.test/b", &mut slots).await;
-        assert_eq!(first, Duration::from_millis(100));
-        assert!(second > Duration::from_millis(2000) && second <= Duration::from_millis(2100));
-        assert!(third > Duration::from_millis(4000) && third <= Duration::from_millis(4100));
-        assert_eq!(other, Duration::from_millis(100));
-        assert!(capped <= MAX_CRAWL_DELAY + Duration::from_millis(100));
     }
 
     fn html_page(url: &str, html: &str) -> Page {
@@ -1961,33 +1940,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn base_delay_and_crawl_delay_both_hold_between_starts() {
-        let crawler = Crawler::new(
-            "https://example.com/",
-            CrawlConfig {
-                delay: Duration::from_secs(1),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        crawler.preload_robots(
-            "https://example.com",
-            RobotsRules::parse("User-agent: *\nCrawl-delay: 1\n", USER_AGENT_TOKEN),
-        );
-        let mut slots = HashMap::new();
-        let first = crawler
-            .start_delay("https://example.com/a", &mut slots)
-            .await;
-        let second = crawler
-            .start_delay("https://example.com/b", &mut slots)
-            .await;
-        assert!(
-            second >= first + Duration::from_millis(990),
-            "{first:?} then {second:?}"
-        );
-    }
-
-    #[tokio::test]
     async fn redirects_go_through_scope_and_robots_checks() {
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let recorded = calls.clone();
@@ -2102,32 +2054,6 @@ mod tests {
         })
         .await;
         assert_eq!(*calls.lock().unwrap(), vec!["http://example.com/b"]);
-    }
-
-    #[tokio::test]
-    async fn crawl_delay_spaces_http_and_https_on_one_host_together() {
-        let crawler = Crawler::new(
-            "https://example.com/",
-            CrawlConfig {
-                delay: Duration::ZERO,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        for origin in ["https://example.com", "http://example.com"] {
-            crawler.preload_robots(
-                origin,
-                RobotsRules::parse("User-agent: *\nCrawl-delay: 2\n", USER_AGENT_TOKEN),
-            );
-        }
-        let mut slots = HashMap::new();
-        crawler
-            .start_delay("http://example.com/a", &mut slots)
-            .await;
-        let second = crawler
-            .start_delay("https://example.com/b", &mut slots)
-            .await;
-        assert!(second > Duration::from_millis(1900), "{second:?}");
     }
 
     #[tokio::test]
@@ -2524,5 +2450,259 @@ mod tests {
         assert!(glob_match("/blog*", "/blog"));
         assert!(glob_match("/blog*", "/blog-post"));
         assert!(!glob_match("/blog*", "/blog/post")); // * doesn't cross /
+    }
+
+    #[tokio::test]
+    async fn each_host_gets_the_larger_of_delay_and_crawl_delay() {
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::from_millis(1500),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for (origin, robots) in [
+            ("https://example.com", "User-agent: *\nCrawl-delay: 2\n"),
+            ("https://short.test", "User-agent: *\nCrawl-delay: 1\n"),
+            ("https://slow.test", "User-agent: *\nCrawl-delay: 3600\n"),
+            ("https://other.test", ""),
+        ] {
+            crawler.preload_robots(origin, RobotsRules::parse(robots, USER_AGENT_TOKEN));
+        }
+        let interval = |url: &'static str| crawler.interval(url);
+        assert_eq!(
+            interval("https://example.com/a").await,
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            interval("https://short.test/a").await,
+            Duration::from_millis(1500)
+        );
+        assert_eq!(interval("https://slow.test/a").await, MAX_CRAWL_DELAY);
+        assert_eq!(
+            interval("https://other.test/a").await,
+            Duration::from_millis(1500)
+        );
+    }
+
+    #[tokio::test]
+    async fn ignoring_robots_keeps_the_delay_and_drops_crawl_delay() {
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::from_millis(250),
+                respect_robots: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nCrawl-delay: 5\n", USER_AGENT_TOKEN),
+        );
+        assert_eq!(
+            crawler.interval("https://example.com/a").await,
+            Duration::from_millis(250)
+        );
+    }
+
+    #[test]
+    fn http_and_https_share_a_host_and_ports_do_not() {
+        assert_eq!(
+            pace_key("http://example.com/a"),
+            pace_key("https://example.com/b")
+        );
+        assert_ne!(
+            pace_key("https://example.com/a"),
+            pace_key("https://example.com:8443/a")
+        );
+        assert_ne!(
+            pace_key("https://example.com/a"),
+            pace_key("https://www.example.com/a")
+        );
+    }
+
+    #[test]
+    fn pop_skips_urls_whose_host_must_wait() {
+        let mut frontier = Frontier::default();
+        for url in ["https://a.test/1", "https://a.test/2", "https://b.test/1"] {
+            frontier.push_back(url.into(), 1, 0.0);
+        }
+        let first = frontier.pop(usize::MAX, |url| url.starts_with("https://b.test"));
+        assert_eq!(
+            first.map(|(url, ..)| url).as_deref(),
+            Some("https://b.test/1")
+        );
+        assert!(frontier.pop(usize::MAX, |_| false).is_none());
+        let next = frontier.pop(usize::MAX, |_| true);
+        assert_eq!(
+            next.map(|(url, ..)| url).as_deref(),
+            Some("https://a.test/1")
+        );
+        assert!(frontier.pop(0, |_| true).is_none());
+    }
+
+    type Hits = Arc<std::sync::Mutex<Vec<(String, String, Instant)>>>;
+
+    const SEED_HOST: &str = "example.com";
+    const OTHER_HOST: &str = "example.org";
+
+    fn two_host_html(host: &str, path: &str) -> Option<String> {
+        match (host, path) {
+            (_, "/robots.txt") => Some("User-agent: *\nAllow: /\n".into()),
+            (_, "/moved") => None,
+            (SEED_HOST, "/") => {
+                let mut links = String::new();
+                for i in 1..=4 {
+                    links.push_str(&format!(
+                        "<a href='/a{i}'>Page a{i}</a> <a href='http://{OTHER_HOST}/b{i}'>Page b{i}</a> "
+                    ));
+                }
+                Some(format!(
+                    "<html><body><main><h1>Seed</h1><p>Seed page with links to two hosts.</p>{links}<a href='/moved'>Moved</a></main></body></html>"
+                ))
+            }
+            _ => Some(format!(
+                "<html><body><main><h1>Leaf {path}</h1><p>Leaf page served for {host}.</p></main></body></html>"
+            )),
+        }
+    }
+
+    fn assert_paced(hits: &[(String, String, Instant)], delay: Duration, elapsed: Duration) {
+        let starts = |host: &str| -> Vec<Instant> {
+            hits.iter()
+                .filter(|(h, path, _)| h == host && path != "/robots.txt")
+                .map(|(_, _, at)| *at)
+                .collect()
+        };
+        let (seed, other) = (starts(SEED_HOST), starts(OTHER_HOST));
+        assert!(seed.len() >= 6 && other.len() == 4, "{hits:?}");
+        let tolerance = Duration::from_millis(30);
+        for host in [&seed, &other] {
+            for pair in host.windows(2) {
+                let gap = pair[1] - pair[0];
+                assert!(
+                    gap + tolerance >= delay,
+                    "two requests to one host {gap:?} apart"
+                );
+            }
+        }
+        assert!(other[0] < seed[1], "{hits:?}");
+        assert!(elapsed < delay * 9, "took {elapsed:?}");
+    }
+
+    #[tokio::test]
+    async fn delay_spaces_each_host_while_hosts_run_side_by_side() {
+        let hits: Hits = Default::default();
+        let recorded = hits.clone();
+        let delay = Duration::from_millis(300);
+        let seed = format!("https://{SEED_HOST}/");
+        let crawler = Crawler::new(
+            &seed,
+            CrawlConfig {
+                delay,
+                concurrency: 4,
+                allow_external_links: true,
+                respect_robots: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let started = Instant::now();
+        let result = crawler
+            .crawl_with_fetcher(&seed, None, move |url| {
+                let parsed = Url::parse(&url).unwrap();
+                let host = parsed.host_str().unwrap_or_default().to_string();
+                let path = parsed.path().to_string();
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push((host.clone(), path.clone(), Instant::now()));
+                async move {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    let html = two_host_html(&host, &path).unwrap_or_default();
+                    webclaw_core::extract_with_options(&html, Some(&url), &Default::default())
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await;
+        let elapsed = started.elapsed();
+        assert_eq!(result.total, 10, "{:?}", result.pages);
+        assert_paced(&hits.lock().unwrap(), delay, elapsed);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn delay_spaces_each_host_on_the_wire_including_redirect_hops() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let hits: Hits = Default::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let recorded = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let recorded = recorded.clone();
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !head.ends_with(b"\r\n\r\n") && head.len() < 16384 {
+                        match socket.read(&mut chunk).await {
+                            Ok(n) if n > 0 => head.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&head);
+                    let Some(url) = head.split(' ').nth(1).and_then(|u| Url::parse(u).ok()) else {
+                        return;
+                    };
+                    let host = url.host_str().unwrap_or_default().to_string();
+                    let path = url.path().to_string();
+                    recorded
+                        .lock()
+                        .unwrap()
+                        .push((host.clone(), path.clone(), Instant::now()));
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    let reply = match two_host_html(&host, &path) {
+                        Some(body) => format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        ),
+                        None => "HTTP/1.1 301 Moved Permanently\r\nLocation: /a5\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+                    };
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        let delay = Duration::from_millis(300);
+        let seed = format!("http://{SEED_HOST}/");
+        let crawler = Crawler::new(
+            &seed,
+            CrawlConfig {
+                fetch: FetchConfig {
+                    proxy: Some(proxy),
+                    ..Default::default()
+                },
+                delay,
+                concurrency: 4,
+                allow_external_links: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let started = Instant::now();
+        let result = crawler.crawl(&seed, None).await;
+        let elapsed = started.elapsed();
+        assert_eq!(result.ok, 10, "{:?}", result.pages);
+        let hits = hits.lock().unwrap().clone();
+        assert!(
+            hits.iter()
+                .any(|(h, path, _)| h == SEED_HOST && path == "/moved")
+                && hits
+                    .iter()
+                    .any(|(h, path, _)| h == SEED_HOST && path == "/a5"),
+            "{hits:?}"
+        );
+        assert_paced(&hits, delay, elapsed);
     }
 }

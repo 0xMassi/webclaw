@@ -7,7 +7,7 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 4664.961624890566,
+   "ms": 4939.108791993931,
    "kb": 3.7724609375,
    "error": null
   },
@@ -18,7 +18,7 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 2476.4024580363184,
+   "ms": 1949.9123329296708,
    "kb": 4.0400390625,
    "error": null
   },
@@ -29,20 +29,20 @@
    "ok": 1,
    "noise": 5,
    "captured": 6,
-   "ms": 2295.289000030607,
+   "ms": 2065.9856249112636,
    "kb": 227.9833984375,
    "error": null
   },
   "webclaw (filtered)": {
    "page": "https://quotes.toscrape.com/scroll",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 19.505999982357025,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 1,
+   "ms": 4186.683833133429,
+   "kb": 3.7724609375,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://quotes.toscrape.com/scroll",
@@ -51,7 +51,7 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 2567.7759998943657,
+   "ms": 1950.715582817793,
    "kb": 4.0400390625,
    "error": null
   }
@@ -64,8 +64,8 @@
    "ok": 1,
    "noise": 25,
    "captured": 26,
-   "ms": 11215.86100012064,
-   "kb": 685.357421875,
+   "ms": 11288.00579207018,
+   "kb": 684.630859375,
    "error": null
   },
   "scrapling": {
@@ -75,8 +75,8 @@
    "ok": 1,
    "noise": 43,
    "captured": 44,
-   "ms": 2604.894832940772,
-   "kb": 12518.84375,
+   "ms": 1795.9199170581996,
+   "kb": 12518.0107421875,
    "error": null
   },
   "crawl4ai": {
@@ -86,20 +86,20 @@
    "ok": 1,
    "noise": 18,
    "captured": 19,
-   "ms": 1560.8066660352051,
-   "kb": 3183.5927734375,
+   "ms": 1458.3337919320911,
+   "kb": 3182.8603515625,
    "error": null
   },
   "webclaw (filtered)": {
    "page": "https://earthquake.usgs.gov/earthquakes/map/",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 5.857707932591438,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 1,
+   "ms": 11235.691583016887,
+   "kb": 26.14453125,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://earthquake.usgs.gov/earthquakes/map/",
@@ -108,8 +108,8 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 1942.3093339428306,
-   "kb": 27.5986328125,
+   "ms": 1915.7018340192735,
+   "kb": 26.8291015625,
    "error": null
   }
  },
@@ -121,8 +121,8 @@
    "ok": 1,
    "noise": 3,
    "captured": 4,
-   "ms": 4466.621625004336,
-   "kb": 10.3671875,
+   "ms": 4866.403124993667,
+   "kb": 10.369140625,
    "error": null
   },
   "scrapling": {
@@ -132,8 +132,8 @@
    "ok": 1,
    "noise": 3,
    "captured": 4,
-   "ms": 2241.9074999634176,
-   "kb": 16.2509765625,
+   "ms": 1908.7353330105543,
+   "kb": 16.2080078125,
    "error": null
   },
   "crawl4ai": {
@@ -143,20 +143,20 @@
    "ok": 1,
    "noise": 88,
    "captured": 89,
-   "ms": 1858.5752921644598,
-   "kb": 3613.619140625,
+   "ms": 1987.7770829480141,
+   "kb": 3611.1884765625,
    "error": null
   },
   "webclaw (filtered)": {
    "page": "https://www.swpc.noaa.gov/products/planetary-k-index",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 5.410416983067989,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 1,
+   "ms": 11745.543374912813,
+   "kb": 5.47265625,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://www.swpc.noaa.gov/products/planetary-k-index",
@@ -165,8 +165,8 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 2128.2189590856433,
-   "kb": 6.384765625,
+   "ms": 1903.9523340761662,
+   "kb": 6.3837890625,
    "error": null
   }
  },
@@ -178,7 +178,7 @@
    "ok": 1,
    "noise": 8,
    "captured": 9,
-   "ms": 3997.493000002578,
+   "ms": 4304.305416997522,
    "kb": 85.2783203125,
    "error": null
   },
@@ -189,8 +189,8 @@
    "ok": 1,
    "noise": 8,
    "captured": 9,
-   "ms": 1951.8692498095334,
-   "kb": 92.3232421875,
+   "ms": 1967.0368330553174,
+   "kb": 92.3095703125,
    "error": null
   },
   "crawl4ai": {
@@ -200,20 +200,20 @@
    "ok": 1,
    "noise": 49,
    "captured": 50,
-   "ms": 2072.7016660384834,
-   "kb": 2472.328125,
+   "ms": 1856.2403749674559,
+   "kb": 2472.3388671875,
    "error": null
   },
   "webclaw (filtered)": {
    "page": "https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 5.468834191560745,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 1,
+   "ms": 11412.503625033423,
+   "kb": 63.8681640625,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London",
@@ -222,8 +222,8 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 2091.247749980539,
-   "kb": 64.5029296875,
+   "ms": 2165.7501249574125,
+   "kb": 64.5087890625,
    "error": null
   }
  },
@@ -235,7 +235,7 @@
    "ok": 0,
    "noise": 0,
    "captured": 0,
-   "ms": 939.8591248318553,
+   "ms": 935.7656252104789,
    "kb": 0.0,
    "error": "error: render error: client build failed: browser: net::ERR_HTTP2_PROTOCOL_ERROR\n"
   },
@@ -244,10 +244,10 @@
    "apis": 1,
    "found": 1,
    "ok": 1,
-   "noise": 16,
-   "captured": 27,
-   "ms": 31318.117749877274,
-   "kb": 1913.9296875,
+   "noise": 20,
+   "captured": 31,
+   "ms": 31261.169540928677,
+   "kb": 1918.2783203125,
    "error": null
   },
   "crawl4ai": {
@@ -257,7 +257,7 @@
    "ok": 0,
    "noise": 0,
    "captured": 0,
-   "ms": 60284.62737496011,
+   "ms": 60270.94183303416,
    "kb": 0.0,
    "error": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n 781                       # Walk the redirect chain.  Playwright returns only the last\n 782                       # hop, so we trace the `request.redirected_from` links until the\n 783                       # first response that differs from the final one and surface its"
   },
@@ -268,9 +268,9 @@
    "ok": 0,
    "noise": 0,
    "captured": 0,
-   "ms": 5.555415991693735,
+   "ms": 956.1666250228882,
    "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "error": "error: render error: client build failed: browser: net::ERR_HTTP2_PROTOCOL_ERROR\n"
   },
   "scrapling (filtered)": {
    "page": "https://www.nasdaq.com/market-activity/stocks/aapl",
@@ -279,8 +279,8 @@
    "ok": 1,
    "noise": 0,
    "captured": 11,
-   "ms": 31234.09187491052,
-   "kb": 40.3779296875,
+   "ms": 31207.210584077984,
+   "kb": 40.37890625,
    "error": null
   }
  },
@@ -292,8 +292,8 @@
    "ok": 1,
    "noise": 11,
    "captured": 12,
-   "ms": 5278.149124933407,
-   "kb": 1775.5810546875,
+   "ms": 5210.407875012606,
+   "kb": 1775.5869140625,
    "error": null
   },
   "scrapling": {
@@ -301,10 +301,10 @@
    "apis": 1,
    "found": 1,
    "ok": 1,
-   "noise": 10,
-   "captured": 11,
-   "ms": 2140.0686660781503,
-   "kb": 1786.4033203125,
+   "noise": 11,
+   "captured": 12,
+   "ms": 3440.582250012085,
+   "kb": 1787.4912109375,
    "error": null
   },
   "crawl4ai": {
@@ -314,20 +314,20 @@
    "ok": 1,
    "noise": 63,
    "captured": 64,
-   "ms": 3578.057707985863,
-   "kb": 9388.7919921875,
+   "ms": 3275.017875013873,
+   "kb": 9389.1171875,
    "error": null
   },
   "webclaw (filtered)": {
    "page": "https://www.aljazeera.com/",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 5.5078750010579824,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 1,
+   "ms": 5184.147875057533,
+   "kb": 0.9619140625,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://www.aljazeera.com/",
@@ -336,7 +336,7 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 3465.5106249265373,
+   "ms": 3344.3393749184906,
    "kb": 1.8173828125,
    "error": null
   }
@@ -349,7 +349,7 @@
    "ok": 1,
    "noise": 8,
    "captured": 9,
-   "ms": 4530.170875135809,
+   "ms": 4534.355042036623,
    "kb": 175.8837890625,
    "error": null
   },
@@ -360,31 +360,31 @@
    "ok": 1,
    "noise": 8,
    "captured": 9,
-   "ms": 2574.4525420013815,
-   "kb": 216.75,
+   "ms": 2496.8343330547214,
+   "kb": 216.767578125,
    "error": null
   },
   "crawl4ai": {
    "page": "https://github.com/rust-lang/cargo",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
-   "noise": 0,
-   "captured": 0,
-   "ms": 60302.63675004244,
-   "kb": 0.0,
-   "error": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n 781                       # Walk the redirect chain.  Playwright returns only the last\n 782                       # hop, so we trace the `request.redirected_from` links until the\n 783                       # first response that differs from the final one and surface its"
+   "found": 1,
+   "ok": 1,
+   "noise": 177,
+   "captured": 178,
+   "ms": 2708.868416957557,
+   "kb": 9049.1572265625,
+   "error": null
   },
   "webclaw (filtered)": {
    "page": "https://github.com/rust-lang/cargo",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 5.320915952324867,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 1,
+   "ms": 5443.109292071313,
+   "kb": 5.5595703125,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://github.com/rust-lang/cargo",
@@ -393,8 +393,8 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 4050.9277919773012,
-   "kb": 10.4482421875,
+   "ms": 2407.1241659112275,
+   "kb": 10.447265625,
    "error": null
   }
  },
@@ -406,8 +406,8 @@
    "ok": 1,
    "noise": 11,
    "captured": 22,
-   "ms": 12273.120084078982,
-   "kb": 212.4365234375,
+   "ms": 12033.7104590144,
+   "kb": 210.6728515625,
    "error": null
   },
   "scrapling": {
@@ -417,8 +417,8 @@
    "ok": 1,
    "noise": 11,
    "captured": 22,
-   "ms": 3632.6370420865715,
-   "kb": 274.5166015625,
+   "ms": 3047.0907920971513,
+   "kb": 273.21875,
    "error": null
   },
   "crawl4ai": {
@@ -428,20 +428,20 @@
    "ok": 1,
    "noise": 76,
    "captured": 87,
-   "ms": 3056.6519589629024,
-   "kb": 9342.0126953125,
+   "ms": 3347.8933749720454,
+   "kb": 9341.98046875,
    "error": null
   },
   "webclaw (filtered)": {
    "page": "https://gitlab.com/gitlab-org/gitlab",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 5.299124866724014,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 11,
+   "ms": 11980.05870799534,
+   "kb": 81.0830078125,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://gitlab.com/gitlab-org/gitlab",
@@ -450,8 +450,8 @@
    "ok": 1,
    "noise": 0,
    "captured": 11,
-   "ms": 3702.905167127028,
-   "kb": 118.251953125,
+   "ms": 3475.173332961276,
+   "kb": 110.6484375,
    "error": null
   }
  },
@@ -463,8 +463,8 @@
    "ok": 1,
    "noise": 6,
    "captured": 7,
-   "ms": 4113.792082993314,
-   "kb": 213.7900390625,
+   "ms": 3539.987249998376,
+   "kb": 213.7998046875,
    "error": null
   },
   "scrapling": {
@@ -474,8 +474,8 @@
    "ok": 1,
    "noise": 6,
    "captured": 7,
-   "ms": 1603.3026659861207,
-   "kb": 225.2041015625,
+   "ms": 1774.3458750192076,
+   "kb": 225.1103515625,
    "error": null
   },
   "crawl4ai": {
@@ -483,22 +483,22 @@
    "apis": 1,
    "found": 1,
    "ok": 1,
-   "noise": 24,
-   "captured": 25,
-   "ms": 1487.89754207246,
-   "kb": 2177.93359375,
+   "noise": 22,
+   "captured": 23,
+   "ms": 1594.1026248037815,
+   "kb": 1689.6181640625,
    "error": null
   },
   "webclaw (filtered)": {
    "page": "https://pokeapi.co/",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 5.389041965827346,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 1,
+   "ms": 3523.6253750044852,
+   "kb": 41.5380859375,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://pokeapi.co/",
@@ -507,8 +507,8 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 1625.037332996726,
-   "kb": 43.0615234375,
+   "ms": 1838.9261669944972,
+   "kb": 43.0556640625,
    "error": null
   }
  },
@@ -518,10 +518,10 @@
    "apis": 1,
    "found": 0,
    "ok": 0,
-   "noise": 11,
-   "captured": 11,
-   "ms": 5261.216042097658,
-   "kb": 17.826171875,
+   "noise": 10,
+   "captured": 10,
+   "ms": 11608.436375157908,
+   "kb": 17.1416015625,
    "error": null
   },
   "scrapling": {
@@ -531,8 +531,8 @@
    "ok": 1,
    "noise": 13,
    "captured": 14,
-   "ms": 31131.296917097643,
-   "kb": 34.11328125,
+   "ms": 31085.16270807013,
+   "kb": 34.1220703125,
    "error": null
   },
   "crawl4ai": {
@@ -542,8 +542,8 @@
    "ok": 1,
    "noise": 59,
    "captured": 60,
-   "ms": 31323.8324590493,
-   "kb": 2532.55078125,
+   "ms": 31312.481333035976,
+   "kb": 2532.578125,
    "error": null
   },
   "webclaw (filtered)": {
@@ -553,9 +553,9 @@
    "ok": 0,
    "noise": 0,
    "captured": 0,
-   "ms": 5.375874927267432,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "ms": 11516.44470798783,
+   "kb": 0.0029296875,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://bundlephobia.com/package/react",
@@ -564,7 +564,7 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 31193.695625057444,
+   "ms": 31068.85216687806,
    "kb": 2.4013671875,
    "error": null
   }
@@ -577,8 +577,8 @@
    "ok": 1,
    "noise": 3,
    "captured": 4,
-   "ms": 4304.878708906472,
-   "kb": 35.767578125,
+   "ms": 4228.154374985024,
+   "kb": 35.765625,
    "error": null
   },
   "scrapling": {
@@ -588,8 +588,8 @@
    "ok": 1,
    "noise": 3,
    "captured": 4,
-   "ms": 2353.0372919049114,
-   "kb": 40.05078125,
+   "ms": 2479.2282090056688,
+   "kb": 40.03125,
    "error": null
   },
   "crawl4ai": {
@@ -599,20 +599,20 @@
    "ok": 1,
    "noise": 13,
    "captured": 14,
-   "ms": 2437.271124916151,
-   "kb": 3819.0224609375,
+   "ms": 2324.8687922023237,
+   "kb": 3819.09375,
    "error": null
   },
   "webclaw (filtered)": {
    "page": "https://petstore.swagger.io/",
    "apis": 1,
-   "found": 0,
-   "ok": 0,
+   "found": 1,
+   "ok": 1,
    "noise": 0,
-   "captured": 0,
-   "ms": 5.209999857470393,
-   "kb": 0.0,
-   "error": "error: --capture-network takes one URL; give a pattern as --capture-network=PATTERN\n"
+   "captured": 1,
+   "ms": 4172.5502498447895,
+   "kb": 16.1611328125,
+   "error": null
   },
   "scrapling (filtered)": {
    "page": "https://petstore.swagger.io/",
@@ -621,7 +621,7 @@
    "ok": 1,
    "noise": 0,
    "captured": 1,
-   "ms": 2361.670207930729,
+   "ms": 2352.626125095412,
    "kb": 16.5341796875,
    "error": null
   }

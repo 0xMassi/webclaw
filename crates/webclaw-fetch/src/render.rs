@@ -285,6 +285,7 @@ async fn response_body(
 }
 
 async fn network_quiet(
+    capture: &NetworkCapture,
     mut sent: impl futures_util::Stream<Item = Arc<EventRequestWillBeSent>> + Unpin,
     finished: impl futures_util::Stream<Item = Arc<EventLoadingFinished>> + Unpin,
     failed: impl futures_util::Stream<Item = Arc<EventLoadingFailed>> + Unpin,
@@ -298,7 +299,11 @@ async fn network_quiet(
     loop {
         tokio::select! {
             Some(event) = sent.next() => {
-                if !ended_first.remove(&event.request_id) {
+                let kept = event
+                    .r#type
+                    .as_ref()
+                    .is_some_and(|kind| capture.wants(kind, &event.request.url));
+                if kept && !ended_first.remove(&event.request_id) {
                     in_flight.insert(event.request_id.clone());
                 }
             }
@@ -982,11 +987,11 @@ impl Renderer {
             .saturating_mul(if actions.is_empty() { 1 } else { 2 });
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
-            match quiet.take() {
-                Some((sent, finished, failed)) => {
+            match capture.zip(quiet.take()) {
+                Some((capture, (sent, finished, failed))) => {
                     let _ = tokio::time::timeout(
                         options.timeout / 3,
-                        network_quiet(sent, finished, failed),
+                        network_quiet(capture, sent, finished, failed),
                     )
                     .await;
                 }

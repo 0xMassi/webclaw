@@ -4,27 +4,27 @@ Each tool renders 11 pages whose data comes from JSON APIs, with a fresh browser
 
 | tool | pages ok | found | bodies ok | responses | noise | ms (median) | output KB (median) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| webclaw | 10/11 | 9/11 | 9/11 | 105 | 86 | 4530 | 85 |
-| scrapling | 11/11 | 11/11 | 11/11 | 152 | 121 | 2476 | 217 |
-| crawl4ai | 9/11 | 9/11 | 9/11 | 414 | 395 | 2437 | 2533 |
-| webclaw (filtered) | 0/11 | 0/11 | 0/11 | 0 | 0 | 5 | 0 |
-| scrapling (filtered) | 11/11 | 11/11 | 11/11 | 31 | 0 | 2568 | 17 |
+| webclaw | 10/11 | 9/11 | 9/11 | 104 | 85 | 4866 | 85 |
+| scrapling | 11/11 | 11/11 | 11/11 | 157 | 126 | 2479 | 217 |
+| crawl4ai | 10/11 | 10/11 | 10/11 | 590 | 570 | 2325 | 3183 |
+| webclaw (filtered) | 10/11 | 9/11 | 9/11 | 19 | 0 | 5443 | 6 |
+| scrapling (filtered) | 11/11 | 11/11 | 11/11 | 31 | 0 | 2353 | 17 |
 
 Bodies ok per page (responses captured):
 
 | page | webclaw | scrapling | crawl4ai | webclaw (filtered) | scrapling (filtered) |
 |---|---|---|---|---|---|
-| https://quotes.toscrape.com/scroll | 1/1 (1) | 1/1 (1) | 1/1 (6) | fail | 1/1 (1) |
-| https://earthquake.usgs.gov/earthquakes/map/ | 1/1 (26) | 1/1 (44) | 1/1 (19) | fail | 1/1 (1) |
-| https://www.swpc.noaa.gov/products/planetary-k-index | 1/1 (4) | 1/1 (4) | 1/1 (89) | fail | 1/1 (1) |
-| https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London | 1/1 (9) | 1/1 (9) | 1/1 (50) | fail | 1/1 (1) |
-| https://www.nasdaq.com/market-activity/stocks/aapl | fail | 1/1 (27) | fail | fail | 1/1 (11) |
-| https://www.aljazeera.com/ | 1/1 (12) | 1/1 (11) | 1/1 (64) | fail | 1/1 (1) |
-| https://github.com/rust-lang/cargo | 1/1 (9) | 1/1 (9) | fail | fail | 1/1 (1) |
-| https://gitlab.com/gitlab-org/gitlab | 1/1 (22) | 1/1 (22) | 1/1 (87) | fail | 1/1 (11) |
-| https://pokeapi.co/ | 1/1 (7) | 1/1 (7) | 1/1 (25) | fail | 1/1 (1) |
-| https://bundlephobia.com/package/react | 0/1 (11) | 1/1 (14) | 1/1 (60) | fail | 1/1 (1) |
-| https://petstore.swagger.io/ | 1/1 (4) | 1/1 (4) | 1/1 (14) | fail | 1/1 (1) |
+| https://quotes.toscrape.com/scroll | 1/1 (1) | 1/1 (1) | 1/1 (6) | 1/1 (1) | 1/1 (1) |
+| https://earthquake.usgs.gov/earthquakes/map/ | 1/1 (26) | 1/1 (44) | 1/1 (19) | 1/1 (1) | 1/1 (1) |
+| https://www.swpc.noaa.gov/products/planetary-k-index | 1/1 (4) | 1/1 (4) | 1/1 (89) | 1/1 (1) | 1/1 (1) |
+| https://www.yr.no/en/forecast/daily-table/2-2643743/United%20Kingdom/England/London/London | 1/1 (9) | 1/1 (9) | 1/1 (50) | 1/1 (1) | 1/1 (1) |
+| https://www.nasdaq.com/market-activity/stocks/aapl | fail | 1/1 (31) | fail | fail | 1/1 (11) |
+| https://www.aljazeera.com/ | 1/1 (12) | 1/1 (12) | 1/1 (64) | 1/1 (1) | 1/1 (1) |
+| https://github.com/rust-lang/cargo | 1/1 (9) | 1/1 (9) | 1/1 (178) | 1/1 (1) | 1/1 (1) |
+| https://gitlab.com/gitlab-org/gitlab | 1/1 (22) | 1/1 (22) | 1/1 (87) | 1/1 (11) | 1/1 (11) |
+| https://pokeapi.co/ | 1/1 (7) | 1/1 (7) | 1/1 (23) | 1/1 (1) | 1/1 (1) |
+| https://bundlephobia.com/package/react | 0/1 (10) | 1/1 (14) | 1/1 (60) | 0/1 (0) | 1/1 (1) |
+| https://petstore.swagger.io/ | 1/1 (4) | 1/1 (4) | 1/1 (14) | 1/1 (1) | 1/1 (1) |
 
 Direct API checks:
 

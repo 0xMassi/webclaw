@@ -106,7 +106,9 @@ pub struct CrawlConfig {
     pub respect_robots: bool,
     /// While crawling, write the crawl state to this file about once a second,
     /// so a crash or kill can resume from it via [`Crawler::load_state`].
-    /// Pages still in flight are saved back into the frontier.
+    /// Pages still in flight are saved back into the frontier. When each host
+    /// was last requested is not saved, so a resumed crawl starts each host's
+    /// [`delay`](Self::delay) spacing afresh.
     pub checkpoint: Option<std::path::PathBuf>,
     /// Called for every finished page, in order, before the page counts as
     /// done in a checkpoint. Unlike `progress_tx` it never drops a page, so

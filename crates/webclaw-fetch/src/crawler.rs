@@ -1255,8 +1255,9 @@ pub(crate) fn validate_glob(pat: &str) -> Result<(), FetchError> {
 pub(crate) fn is_page_path(path: &str) -> bool {
     const SKIP_EXTENSIONS: &[&str] = &[
         ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js", ".zip",
-        ".tar", ".gz", ".xml", ".rss", ".mp3", ".mp4", ".avi", ".mov", ".woff", ".woff2", ".ttf",
-        ".eot",
+        ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".xml", ".rss", ".mp3", ".mp4",
+        ".avi", ".mov", ".woff", ".woff2", ".ttf", ".eot", ".msi", ".pkg", ".exe", ".dmg", ".deb",
+        ".rpm", ".apk", ".iso",
     ];
     !SKIP_EXTENSIONS.iter().any(|ext| path.ends_with(ext))
 }

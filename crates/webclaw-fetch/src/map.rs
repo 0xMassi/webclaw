@@ -816,6 +816,8 @@ mod tests {
             vec![
                 "https://example.com/dl/go1.25.linux-amd64.tar.gz".to_string(),
                 "https://example.com/logo.png".to_string(),
+                "https://example.com/dl/go1.25.windows-amd64.msi".to_string(),
+                "https://example.com/dl/go1.25.darwin-arm64.pkg".to_string(),
                 "https://example.com/dl/".to_string(),
             ],
             &origin_of("https://example.com"),

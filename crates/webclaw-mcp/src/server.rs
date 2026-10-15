@@ -178,6 +178,7 @@ async fn validate_url(url: &str) -> Result<(), String> {
 /// Timeout for local fetch calls (prevents hanging on tarpitting servers).
 const LOCAL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CRAWL_QUERY_CHARS: usize = 1000;
+const INDEX_BUDGET: Duration = Duration::from_secs(60);
 #[cfg(feature = "browser")]
 const MCP_BODY_BYTES: usize = 100_000;
 #[cfg(feature = "browser")]
@@ -887,17 +888,55 @@ impl WebclawMcp {
         .await
     }
 
-    /// Discover URLs from a website's sitemaps (robots.txt + sitemap.xml).
+    /// Discover URLs from a website's sitemaps (robots.txt + sitemap.xml), and with `source` "sitemap,cc" or "cc" from the public Common Crawl index too, which also finds pages no sitemap lists.
     #[tool]
     async fn map(&self, Parameters(params): Parameters<MapParams>) -> Result<String, String> {
         validate_url(&params.url).await?;
-        let entries = webclaw_fetch::sitemap::discover(&self.fetch_client, &params.url)
+        if params
+            .query
+            .as_ref()
+            .is_some_and(|q| q.chars().count() > MAX_CRAWL_QUERY_CHARS)
+        {
+            return Err(format!(
+                "query cannot exceed {MAX_CRAWL_QUERY_CHARS} characters"
+            ));
+        }
+        let mut opts = webclaw_fetch::MapOptions {
+            crawl_fallback: false,
+            max_urls: params.limit,
+            query: params.query.clone(),
+            ..Default::default()
+        };
+        if let Some(list) = &params.source {
+            opts.set_sources(list)?;
+        }
+        let index_client;
+        let client = if opts.common_crawl {
+            index_client = webclaw_fetch::FetchClient::new(webclaw_fetch::FetchConfig {
+                total_timeout: Some(INDEX_BUDGET),
+                ..self.fetch_config.clone()
+            })
+            .map_err(|e| format!("Failed to build client: {e}"))?;
+            &index_client
+        } else {
+            self.fetch_client.as_ref()
+        };
+        let site = webclaw_fetch::map_site(client, &params.url, &opts)
             .await
-            .map_err(|e| format!("Sitemap discovery failed: {e}"))?;
+            .map_err(|e| e.to_string())?;
+        let note = match site.index_error {
+            Some(e) if !opts.sitemap => {
+                return Err(format!("The Common Crawl index could not be read: {e}"));
+            }
+            Some(e) => {
+                format!("The Common Crawl index could not be read ({e}); sitemap URLs only.\n\n")
+            }
+            None => String::new(),
+        };
 
-        let urls: Vec<&str> = entries.iter().map(|e| e.url.as_str()).collect();
+        let urls: Vec<&str> = site.entries.iter().map(|e| e.url.as_str()).collect();
         Ok(format!(
-            "Discovered {} URLs:\n\n{}",
+            "{note}Discovered {} URLs:\n\n{}",
             urls.len(),
             urls.join("\n")
         ))

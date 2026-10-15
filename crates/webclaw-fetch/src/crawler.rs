@@ -901,8 +901,6 @@ impl Crawler {
         start - now
     }
 
-    /// Check if a discovered link should be added to the frontier.
-    /// Returns `Some(normalized_url)` if it passes all filters, `None` otherwise.
     fn on_seed_scheme(&self, href: &str) -> String {
         match Url::parse(href) {
             Ok(mut url)
@@ -917,6 +915,8 @@ impl Crawler {
         }
     }
 
+    /// Check if a discovered link should be added to the frontier.
+    /// Returns `Some(normalized_url)` if it passes all filters, `None` otherwise.
     fn qualify_link(&self, href: &str, visited: &HashSet<String>) -> Option<String> {
         let parsed = Url::parse(href).ok()?;
 

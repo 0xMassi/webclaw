@@ -339,6 +339,27 @@ After a click, a key press or a scroll, webclaw waits until the page and the sit
 
 `--actions` takes one URL and renders the page even with `--render auto`. `js_results` comes in the output with `-f json` or `-f jsonl` and on stderr otherwise, and `--raw-html` prints the page after the steps. The MCP `scrape` and `screenshot` tools take the same list as `actions` and return `js_results` after the content. Local additions are `nth`, `all` and `repeat` on `click`, and `selector`, `repeat` and scrolling to the end on `scroll`. The hosted `screenshot` step is left out, since `--screenshot` does that.
 
+### Stay logged in between runs
+
+With a `browser` build, `--browser-profile DIR` keeps the browser's cookies, local storage and IndexedDB in `DIR`, so a login made once still holds on the next run:
+
+```bash
+webclaw https://quotes.toscrape.com/login --browser-profile ~/.webclaw-profile \
+  --actions '[{"type": "type", "selector": "#username", "value": "me"}, {"type": "type", "selector": "#password", "value": "secret"}, {"type": "click", "selector": "input[type=submit]"}]'
+webclaw https://quotes.toscrape.com/ --browser-profile ~/.webclaw-profile        # a later run, still logged in
+webclaw https://example.com/account --browser-profile ~/.webclaw-profile --cookie "session=..."   # or bring a session cookie in once
+```
+
+With a profile, every web page webclaw reads, in crawls and batches too, loads in the browser with the profile's cookies, after a plain HTTP request that tells web pages apart from PDFs, feeds and other files, which stay on HTTP. That makes every page a browser load: on our benchmark a 50-page crawl took 3.6 s without a profile, 12.4 s on a new one and 8.0 s on a warm one. `--raw-html` prints the page as the browser left it. When a page fails in the browser, webclaw warns and keeps the HTTP result. A profile that cannot be opened, because it is in use, refused (see below) or has unreadable preferences, stops the run with an error before the first page, crawls included; the MCP tools return that error. In a crawl, a redirect the browser meets is checked against robots.txt and the crawl's scope before it is followed, as over HTTP.
+
+Session cookies are kept as well: Chrome drops them when it closes, even on a kept profile, and most sites keep a login in one. All pages share the profile's cookies. Cookies from `--cookie` and `--cookie-file` are saved in the profile when the run starts, for the URLs on the command line (or in `--urls-file`) only, even when no page then needs the browser; with a profile, the browser sends no other cookie than its own. The MCP `scrape` tool saves its `cookies` in the profile for the URL it was given, and they stay there for later calls. Without `--browser-profile`, which stays the default, each run starts from an empty profile and a page rendered with cookies gets a browser context of its own, so nothing carries over between pages or runs.
+
+webclaw creates the directory when it is missing, readable by you only on Unix, and marks it as its own. It refuses a directory that is neither empty nor one it made, such as the profile of the Chrome you browse with, as well as a symbolic link and, on Unix, a directory other users can write to. Before each run it drops the tabs an earlier run left open and the service workers sites registered, and turns prefetching off in the profile's preferences, keeping the rest of them. The profile holds your logins, so treat it like a password. The checks above on what a rendered page can reach apply on a profile too.
+
+One webclaw at a time per profile: a second run on a profile in use stops with an error that names the process holding it, instead of opening it a second time, which can damage it. Stopping webclaw with Ctrl-C or SIGTERM closes its browser first; after a `kill -9`, stop the Chrome the error names. `--browser-profile` cannot be combined with `--cdp-url`; the MCP server takes the directory in `WEBCLAW_BROWSER_PROFILE`.
+
+On our benchmark, one run rendering a page took 1.7 s on a warm profile against 2.1 s on a new one, and the profile took about 9 MB on disk after six runs.
+
 ### Capture the JSON a page loads
 
 Single-page apps fetch their data as JSON and build the page from it. With a `browser` build, `--capture-network` renders the page and prints the responses it loaded as a JSON array instead of the page, so you get that JSON as the site's own API returned it:
@@ -641,6 +662,7 @@ webclaw/
 | `WEBCLAW_PROXY_FILE` | Proxy pool file |
 | `WEBCLAW_RENDER` | MCP server rendering: `auto` (default), `always` or `never`; needs a `browser` build |
 | `WEBCLAW_CDP_URL` | MCP server renders with the browser at this DevTools endpoint instead of launching Chrome |
+| `WEBCLAW_BROWSER_PROFILE` | MCP server keeps its browser's cookies and storage in this directory between runs; see `--browser-profile` |
 | `WEBCLAW_CHROME` | Chrome executable to launch for rendering |
 | `WEBCLAW_MCP_TOKEN` | Bearer token `webclaw-mcp --http` requires from every client |
 

@@ -209,6 +209,15 @@ struct Cli {
     #[arg(long)]
     cdp_url: Option<String>,
 
+    /// Keep the local browser's cookies, local storage and IndexedDB in this
+    /// directory, created when missing, so a login carries over to later
+    /// runs. Web pages then load in the browser with the profile's cookies,
+    /// and --cookie and --cookie-file cookies are saved in the profile. One
+    /// run at a time per directory; use a directory of its own, not your
+    /// everyday Chrome profile
+    #[arg(long, value_name = "DIR", conflicts_with = "cdp_url")]
+    browser_profile: Option<PathBuf>,
+
     /// When rendering, also wait until an element matching this CSS selector exists
     #[arg(long)]
     wait_for: Option<String>,
@@ -807,7 +816,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
             }
             Err(e) => {
                 eprintln!("error: failed to parse cookie file: {e}");
-                process::exit(1);
+                exit(1);
             }
         }
     }
@@ -826,7 +835,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
     #[cfg(feature = "browser")]
     if cli.render != RenderMode::Never {
         config.render = Some(webclaw_fetch::render::RenderConfig {
-            pool: Arc::new(render_pool(cli, &config)),
+            pool: render_pool(cli, &config),
             always: cli.render == RenderMode::Always,
             wait_for: cli.wait_for.clone(),
             block: cli.block.unwrap_or_default(),
@@ -837,11 +846,25 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
 }
 
 #[cfg(feature = "browser")]
-fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::RenderPool {
-    webclaw_fetch::render::RenderPool::new(
-        browser_source(cli, config),
-        std::time::Duration::from_secs(cli.timeout),
-    )
+fn render_pool(cli: &Cli, config: &FetchConfig) -> Arc<webclaw_fetch::render::RenderPool> {
+    use webclaw_fetch::render::RenderPool;
+    static PROFILE_POOL: std::sync::OnceLock<Arc<RenderPool>> = std::sync::OnceLock::new();
+    let build = || {
+        let pool = RenderPool::new(
+            browser_source(cli, config),
+            std::time::Duration::from_secs(cli.timeout),
+        );
+        if let Some(cookie) = config.headers.get("Cookie") {
+            for (url, _) in collect_urls(cli).unwrap_or_default() {
+                pool.save_cookies(&url, cookie);
+            }
+        }
+        Arc::new(pool)
+    };
+    match cli.browser_profile {
+        Some(_) => PROFILE_POOL.get_or_init(build).clone(),
+        None => build(),
+    }
 }
 
 #[cfg(feature = "browser")]
@@ -849,7 +872,8 @@ fn browser_source(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Bro
     use webclaw_fetch::render::BrowserSource;
     match &cli.cdp_url {
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
-        None => BrowserSource::launch_for(config, cli.solve || cli.capture_network.is_some()),
+        None => BrowserSource::launch_for(config, cli.solve || cli.capture_network.is_some())
+            .with_profile(cli.browser_profile.clone()),
     }
 }
 
@@ -3503,17 +3527,49 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
     ))
 }
 
+fn exit(code: i32) -> ! {
+    #[cfg(feature = "browser")]
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| runtime.block_on(webclaw_fetch::render::close_profiles()));
+    }
+    process::exit(code)
+}
+
 #[tokio::main]
 async fn main() {
+    run().await;
+    #[cfg(feature = "browser")]
+    webclaw_fetch::render::close_profiles().await;
+}
+
+async fn run() {
     dotenvy::dotenv().ok();
 
     let mut cli = Cli::parse();
     init_logging(cli.verbose);
+    if cli.browser_profile.is_some() && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
+        eprintln!(
+            "error: --browser-profile needs the browser: a build with the `browser` feature, and --render auto or always"
+        );
+        exit(1);
+    }
+    #[cfg(all(unix, feature = "browser"))]
+    if cli.browser_profile.is_some() {
+        webclaw_fetch::render::close_profiles_on_terminate();
+    }
+    #[cfg(feature = "browser")]
+    if cli.browser_profile.is_some()
+        && let Some(render) = build_fetch_config(&cli).render
+        && let Err(e) = render.pool.open().await
+    {
+        eprintln!("error: {e}");
+        exit(1);
+    }
     if cli.solve && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
         eprintln!(
             "error: --solve needs the browser: a build with `--features browser`, and no --render never"
         );
-        process::exit(1);
+        exit(1);
     }
 
     // Subcommand path. Handled before the flag dispatch so a subcommand
@@ -3529,7 +3585,7 @@ async fn main() {
                 };
                 if let Err(e) = bench::run(&args).await {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
                 return;
             }
@@ -3542,7 +3598,7 @@ async fn main() {
                         Ok(s) => println!("{s}"),
                         Err(e) => {
                             eprintln!("error: failed to serialise catalog: {e}");
-                            process::exit(1);
+                            exit(1);
                         }
                     }
                 } else {
@@ -3580,7 +3636,7 @@ async fn main() {
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("error: failed to build fetch client: {e}");
-                        process::exit(1);
+                        exit(1);
                     }
                 };
                 if let Some(cloud) = webclaw_fetch::cloud::CloudClient::from_env() {
@@ -3597,7 +3653,7 @@ async fn main() {
                             Ok(s) => println!("{s}"),
                             Err(e) => {
                                 eprintln!("error: JSON encode failed: {e}");
-                                process::exit(1);
+                                exit(1);
                             }
                         }
                     }
@@ -3605,7 +3661,7 @@ async fn main() {
                         // UrlMismatch / UnknownVertical / Fetch all get
                         // Display impls with actionable messages.
                         eprintln!("error: {e}");
-                        process::exit(1);
+                        exit(1);
                     }
                 }
                 return;
@@ -3625,7 +3681,7 @@ async fn main() {
                         eprintln!(
                             "error: search requires a Serper.dev API key: pass --serper-key or set SERPER_API_KEY (get one free at serper.dev)"
                         );
-                        process::exit(1);
+                        exit(1);
                     }
                 };
                 if let Err(e) = run_search(
@@ -3640,7 +3696,7 @@ async fn main() {
                 .await
                 {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
                 return;
             }
@@ -3651,7 +3707,7 @@ async fn main() {
     if cli.map {
         if let Err(e) = run_map(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3665,25 +3721,25 @@ async fn main() {
         Ok(u) => u,
         Err(e) => {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
     };
     backfill_single_file_url(&mut cli.urls, &entries);
     if let Err(e) = check_chunk_format(&cli) {
         eprintln!("error: {e}");
-        process::exit(1);
+        exit(1);
     }
 
     if cli.actions.is_some() || cli.scroll.is_some() {
         if entries.len() != 1 {
             eprintln!("error: {}", one_url_error(&cli));
-            process::exit(1);
+            exit(1);
         }
         if cli.render == RenderMode::Never {
             eprintln!(
                 "error: --actions and --scroll run in the browser, so they cannot run with --render never"
             );
-            process::exit(1);
+            exit(1);
         }
         cli.render = RenderMode::Always;
     }
@@ -3695,7 +3751,7 @@ async fn main() {
         };
         if let Err(e) = shot {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3710,7 +3766,7 @@ async fn main() {
         };
         if let Err(e) = captured {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3722,7 +3778,7 @@ async fn main() {
         };
         if let Err(e) = printed {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3735,7 +3791,7 @@ async fn main() {
         };
         if let Err(e) = found {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3752,7 +3808,7 @@ async fn main() {
         };
         if let Err(e) = selected {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3761,7 +3817,7 @@ async fn main() {
     if cli.crawl {
         if let Err(e) = run_crawl(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3771,7 +3827,7 @@ async fn main() {
         let watch_urls: Vec<String> = entries.iter().map(|(url, _)| url.clone()).collect();
         if let Err(e) = run_watch(&cli, &watch_urls).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3780,7 +3836,7 @@ async fn main() {
     if let Some(ref snapshot_path) = cli.diff_with {
         if let Err(e) = run_diff(&cli, snapshot_path).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3789,7 +3845,7 @@ async fn main() {
     if cli.brand {
         if let Err(e) = run_brand(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3798,7 +3854,7 @@ async fn main() {
     if let Some(ref query) = cli.research {
         if let Err(e) = run_research(&cli, query).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3809,25 +3865,25 @@ async fn main() {
         if entries.len() > 1 {
             if let Err(e) = run_batch_llm(&cli, &entries).await {
                 eprintln!("error: {e}");
-                process::exit(1);
+                exit(1);
             }
         } else if let Err(e) = run_llm(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
     if cli.query.is_some() && entries.len() > 1 {
         eprintln!("error: --query works on one page at a time");
-        process::exit(1);
+        exit(1);
     }
 
     // Multi-URL batch mode
     if entries.len() > 1 {
         if let Err(e) = run_batch(&cli, &entries).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -3844,12 +3900,12 @@ async fn main() {
                 println!("{}", r.html);
                 if let Err(e) = webclaw_fetch::FetchError::check_status(r.status) {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
             }
             Err(e) => {
                 eprintln!("error: {e}");
-                process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -3872,7 +3928,7 @@ async fn main() {
                 let content = format_output(&result, &cli.format, cli.metadata);
                 if let Err(e) = write_to_file(dir, &filename, &content) {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
             } else if let Some(sizes) = chunk_sizes(&cli) {
                 let chunks = chunk_page(
@@ -3920,7 +3976,7 @@ async fn main() {
         }
         Err(e) => {
             eprintln!("{e}");
-            process::exit(1);
+            exit(1);
         }
     }
 }

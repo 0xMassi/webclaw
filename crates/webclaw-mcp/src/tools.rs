@@ -136,7 +136,7 @@ pub struct ScrapeParams {
     pub only_main_content: Option<bool>,
     /// Browser profile: "chrome" (default), "chrome-macos", "firefox", "safari", "safari-ios", "edge", or "random"
     pub browser: Option<String>,
-    /// Cookies to send with the request (e.g. ["name=value", "session=abc123"])
+    /// Cookies to send with the request (e.g. ["name=value", "session=abc123"]). When the server keeps a browser profile (WEBCLAW_BROWSER_PROFILE), they are saved in it for this URL and sent on later calls too
     pub cookies: Option<Vec<String>>,
     /// JavaScript rendering in a local Chrome: "auto" (default) renders pages whose content needs it, "always" renders every page that runs scripts, "never" skips it
     pub render: Option<String>,

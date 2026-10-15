@@ -73,7 +73,11 @@ fn render_from_env(
     }
     let source = match std::env::var("WEBCLAW_CDP_URL") {
         Ok(endpoint) if !endpoint.is_empty() => BrowserSource::Connect(endpoint),
-        _ => BrowserSource::launch_for(config, true),
+        _ => BrowserSource::launch_for(config, true).with_profile(
+            std::env::var_os("WEBCLAW_BROWSER_PROFILE")
+                .filter(|dir| !dir.is_empty())
+                .map(Into::into),
+        ),
     };
     Some(RenderConfig {
         pool: Arc::new(RenderPool::new(source, LOCAL_FETCH_TIMEOUT)),
@@ -601,6 +605,16 @@ impl WebclawMcp {
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
         let browser = parse_browser(params.browser.as_deref())?;
+        #[cfg(feature = "browser")]
+        if let (Some(render), Some(cookies)) = (
+            &self.fetch_config.render,
+            params.cookies.as_ref().filter(|c| !c.is_empty()),
+        ) {
+            render.pool.save_cookies(&params.url, &cookies.join("; "));
+            if render.pool.persistent() {
+                render.pool.open().await.map_err(|e| e.to_string())?;
+            }
+        }
         if params.capture_network.is_none()
             && (params.capture_types.is_some() || params.capture_credentials.is_some())
         {
@@ -744,6 +758,12 @@ impl WebclawMcp {
 
         let mut fetch = self.fetch_config.clone();
         apply_render(&mut fetch, None, None, params.block.as_deref(), None)?;
+        #[cfg(feature = "browser")]
+        if let Some(render) = &fetch.render
+            && render.pool.persistent()
+        {
+            render.pool.open().await.map_err(|e| e.to_string())?;
+        }
         let config = webclaw_fetch::CrawlConfig {
             fetch,
             max_depth: params.depth.unwrap_or(2) as usize,

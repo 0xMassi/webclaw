@@ -132,6 +132,16 @@ It runs nine pages that need interaction, each in a fresh headless browser, 2 ro
 
 On 2026-10-15 ([results/actions-2026-10-15/actions-summary.md](results/actions-2026-10-15/actions-summary.md)) webclaw got every item in 18 of 18 runs (median 8.1 s), Scrapling in 16 (12.0 s) and Crawl4AI in 16 (11.7 s); rendering with no actions got none. Scrapling and Crawl4AI both kept NPR's first 24 stories in both rounds. NPR shows its button only once its scripts have run and covers it with a cookie banner; in a separate review run Crawl4AI's waiting loop reached 48 to 72 stories, so its result there varies from run to run. With its documented `scroll_delay=1.0`, Crawl4AI's `scan_full_page` gets all 117 items of the webscraper.io scroll shop (12 to 15 with the default 0.2 s), and it is slower on every scroll page for it.
 
+### Staying logged in
+
+```bash
+./benchmarks/profile.sh        # webclaw --browser-profile against the other tools' ways of keeping a login
+```
+
+Each tool runs every step in a process of its own, as one command per run does. Three arms use each tool's documented persistent-profile option: webclaw `--browser-profile`, Scrapling `DynamicFetcher(user_data_dir=...)` and Crawl4AI `BrowserConfig(use_persistent_context=True, user_data_dir=...)`. Three more keep a login the other documented ways: Scrapling with `extra_flags=["--restore-last-session"]` on its profile, Scrapling passing the response's cookies back as `cookies=` on the next run, and Crawl4AI saving the context's `storage_state` after each run and loading it with `BrowserConfig(storage_state=...)`. Crawl4AI's own `export_storage_state()` fails without a persistent context, so its arm saves the state from a `before_return_html` hook.
+
+It logs in through the login form of quotes.toscrape.com and practice.expandtesting.com (webclaw with `--actions`, Scrapling with a Playwright `page_action`, Crawl4AI with C4A-Script), then checks in a second process that the page behind the login still shows the logged-in marker, and that a new profile does not. Both logins keep the session in a session cookie, which Chrome drops when it closes unless it restores the last session. It stores a value in localStorage and IndexedDB from a script on example.com and reads both back in the next process. For the three profile arms, it times one process rendering quotes.toscrape.com/js with no profile, a new profile and a warm one, 5 runs each, measures the profile on disk, and opens a second process on a profile while the first still holds it and records whether the second one runs. Chrome refuses a second browser on a profile in use; in a separate run, Crawl4AI's second process still started its own Chrome on the profile, which ran next to the first one for about a second and returned the page. Last, it times a 50-page webclaw crawl of books.toscrape.com with no profile, a new one and a warm one, 3 runs each, since a profile loads every page in the browser. The practicetestautomation.com test login is left out, since its logged-in page shows the same text without a login, and the-internet.herokuapp.com did not load during the run. Results land in `results/<label>/profile-summary.md`.
+
 ### Network capture
 
 ```bash

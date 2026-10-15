@@ -14,7 +14,7 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
 };
 use chromiumoxide::cdp::browser_protocol::io::{CloseParams, ReadParams};
 use chromiumoxide::cdp::browser_protocol::network::{
-    ErrorReason, EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent,
+    CookieParam, ErrorReason, EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent,
     EventResponseReceived, GetCookiesParams, GetResponseBodyParams, ResourceType, SetCookieParams,
 };
 use chromiumoxide::cdp::browser_protocol::page::{
@@ -46,7 +46,8 @@ pub struct RenderOptions {
     pub timeout: Duration,
     /// Headers added to the page's requests to its own origin, such as
     /// `Authorization` or `Accept-Language`. A `Cookie` header is set as
-    /// cookies for the page's URL instead.
+    /// cookies for the page's URL instead, except on a persistent profile,
+    /// where it is ignored.
     pub headers: Vec<(String, String)>,
     /// Resource types whose requests fail; see [`Block`] for what it misses.
     pub block: Block,
@@ -539,6 +540,8 @@ pub struct Pdf {
 const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
+type Stopped = Arc<Mutex<Option<String>>>;
+
 struct Visited<T> {
     value: T,
     status: u16,
@@ -584,6 +587,7 @@ pub struct Renderer {
     guard: Option<tokio::task::JoinHandle<()>>,
     events: tokio::task::JoinHandle<()>,
     profile: Option<std::path::PathBuf>,
+    persistent: bool,
     proxy_login: Option<(String, String)>,
     check_documents: bool,
     agent: String,
@@ -658,14 +662,21 @@ impl Renderer {
     /// that it can get past Cloudflare challenges. Chrome tells its version
     /// only once it runs, so this launches it twice, about half a second more.
     pub async fn launch_as_chrome(proxy: Option<&str>) -> Result<Self, FetchError> {
-        Self::launch_as_chrome_timed(proxy, COMMAND_TIMEOUT).await
+        Self::launch_as_chrome_timed(proxy, None, COMMAND_TIMEOUT).await
     }
 
     async fn launch_as_chrome_timed(
         proxy: Option<&str>,
+        profile: Option<&std::path::Path>,
         command_timeout: Duration,
     ) -> Result<Self, FetchError> {
-        let renderer = Self::launch_timed(proxy, &[], command_timeout).await?;
+        let launch = async |args: &[&str]| match profile {
+            Some(dir) => {
+                Self::launch_in(proxy, args, dir.to_path_buf(), true, command_timeout).await
+            }
+            None => Self::launch_timed(proxy, args, command_timeout).await,
+        };
+        let renderer = launch(&[]).await?;
         if renderer.agent.is_empty() {
             renderer.close().await;
             return Err(FetchError::Build(
@@ -681,7 +692,7 @@ impl Renderer {
             renderer.agent.replace("HeadlessChrome", "Chrome")
         );
         renderer.close().await;
-        Self::launch_timed(proxy, &[agent.as_str()], command_timeout).await
+        launch(&[agent.as_str()]).await
     }
 
     async fn launch_with(proxy: Option<&str>, args: &[&str]) -> Result<Self, FetchError> {
@@ -702,14 +713,41 @@ impl Renderer {
                 .map_or(0, |d| d.as_nanos()),
             LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(profile.join("Default"))
-            .and_then(|()| {
-                std::fs::write(
-                    profile.join("Default").join("Preferences"),
-                    r#"{"net":{"network_prediction_options":2}}"#,
-                )
-            })
-            .map_err(|e| FetchError::Build(format!("browser profile: {e}")))?;
+        Self::launch_in(proxy, args, profile, false, command_timeout).await
+    }
+
+    /// Launch a local headless Chrome on the profile in `dir`, so cookies,
+    /// session cookies included, local storage and IndexedDB carry over to
+    /// later launches. Every render shares the profile's cookies. A `Cookie`
+    /// header in [`RenderOptions::headers`] is neither sent nor stored there;
+    /// put cookies in the profile with [`Renderer::save_cookies`]. One
+    /// browser can use a profile at a time: a second launch on it fails
+    /// while the first runs.
+    ///
+    /// `dir` is created when missing, readable by its owner only on Unix,
+    /// and marked as made by webclaw. A directory that is neither empty nor
+    /// marked, such as the profile of a Chrome you browse with, is refused,
+    /// as are a symbolic link and, on Unix, a directory other users can
+    /// write to. Tabs left open by an earlier launch and the service workers
+    /// sites registered are dropped, and the profile's preferences turn off
+    /// prefetching. Otherwise as [`Renderer::launch`].
+    pub async fn launch_with_profile(
+        proxy: Option<&str>,
+        dir: &std::path::Path,
+    ) -> Result<Self, FetchError> {
+        Self::launch_in(proxy, &[], dir.to_path_buf(), true, COMMAND_TIMEOUT).await
+    }
+
+    async fn launch_in(
+        proxy: Option<&str>,
+        args: &[&str],
+        profile: std::path::PathBuf,
+        persistent: bool,
+        command_timeout: Duration,
+    ) -> Result<Self, FetchError> {
+        prepare_profile(&profile, persistent).map_err(|e| {
+            FetchError::Build(format!("browser profile {}: {e}", profile.display()))
+        })?;
         let mut config = BrowserConfig::builder()
             .headless_mode(HeadlessMode::New)
             .enable_request_intercept()
@@ -755,16 +793,32 @@ impl Renderer {
         } else {
             config = config.arg("--no-proxy-server");
         }
+        if persistent {
+            config = config
+                .arg("--restore-last-session")
+                .arg("--profile-directory=Default");
+        }
         let config = config.build().map_err(browser_error)?;
         let (browser, handler) = match Browser::launch(config).await {
             Ok(launched) => launched,
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&profile);
-                return Err(browser_error(e));
-            }
+            Err(e) => return Err(launch_error(&profile, persistent, e.to_string())),
         };
-        let mut renderer = Self::start(browser, handler, Some(profile), proxy_login, true).await?;
+        let mut renderer = Self::start(
+            browser,
+            handler,
+            Some(profile),
+            proxy_login,
+            true,
+            persistent,
+        )
+        .await?;
         renderer.check_documents = proxy.is_none();
+        if persistent && let Some(dir) = &renderer.profile {
+            OPEN_PROFILES
+                .lock()
+                .map(|mut open| open.push((Arc::downgrade(&renderer.browser), dir.clone())))
+                .ok();
+        }
         Ok(renderer)
     }
 
@@ -783,7 +837,7 @@ impl Renderer {
         let (browser, handler) = Browser::connect_with_config(cdp_url, config)
             .await
             .map_err(browser_error)?;
-        Self::start(browser, handler, None, None, false).await
+        Self::start(browser, handler, None, None, false, false).await
     }
 
     async fn start(
@@ -792,6 +846,7 @@ impl Renderer {
         profile: Option<std::path::PathBuf>,
         proxy_login: Option<(String, String)>,
         browser_wide: bool,
+        persistent: bool,
     ) -> Result<Self, FetchError> {
         let events = tokio::spawn(async move {
             while let Some(event) = handler.next().await {
@@ -801,7 +856,9 @@ impl Renderer {
             }
         });
         let ready = async {
-            browser.start_incognito_context().await?;
+            if !persistent {
+                browser.start_incognito_context().await?;
+            }
             if !browser_wide {
                 return Ok(None);
             }
@@ -816,6 +873,7 @@ impl Renderer {
             guard: None,
             events,
             profile,
+            persistent,
             proxy_login,
             check_documents: false,
             agent,
@@ -845,7 +903,8 @@ impl Renderer {
     /// A render that sends a `Cookie` header runs in its own browser context,
     /// so those cookies, and any the site sets in reply, never reach another
     /// render. Other renders share one context of their own, with its cache and
-    /// cookies, apart from the browser's default profile.
+    /// cookies, apart from the browser's default profile. On a profile from
+    /// [`Renderer::launch_with_profile`], every render uses the profile.
     pub async fn render(
         &self,
         url: &str,
@@ -911,6 +970,7 @@ impl Renderer {
                 actions,
                 capture,
                 None,
+                None,
                 async |page| page.content().await,
             )
             .await?;
@@ -926,6 +986,52 @@ impl Renderer {
             page,
             js_results: visited.scripts,
             network: visited.network,
+        })
+    }
+
+    async fn render_unfollowed(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+    ) -> Result<FetchResult, FetchError> {
+        let start = Instant::now();
+        let stop: Stopped = Arc::default();
+        let visited = self
+            .visit(
+                url,
+                prefetched,
+                options,
+                &[],
+                None,
+                None,
+                Some(stop.clone()),
+                async |page| page.content().await,
+            )
+            .await;
+        let location = stop.lock().ok().and_then(|stop| stop.clone());
+        if let Some(location) = location {
+            let mut headers = http::HeaderMap::new();
+            if let Ok(value) = http::HeaderValue::from_str(&location) {
+                headers.insert(http::header::LOCATION, value);
+            }
+            return Ok(FetchResult {
+                html: String::new(),
+                document_bytes: None,
+                status: 302,
+                url: url.to_string(),
+                headers,
+                elapsed: start.elapsed(),
+            });
+        }
+        let visited = visited?;
+        Ok(FetchResult {
+            html: visited.value,
+            document_bytes: None,
+            status: visited.status,
+            url: visited.url,
+            headers: http::HeaderMap::new(),
+            elapsed: start.elapsed(),
         })
     }
 
@@ -967,6 +1073,7 @@ impl Renderer {
                 actions,
                 None,
                 Some(SCREENSHOT_VIEWPORT),
+                None,
                 async move |page| page.screenshot(params).await,
             )
             .await?;
@@ -1038,6 +1145,7 @@ impl Renderer {
                 actions,
                 None,
                 Some(SCREENSHOT_VIEWPORT),
+                None,
                 async move |page| Ok(copy_pdf(page, params, out).await),
             )
             .await
@@ -1066,16 +1174,18 @@ impl Renderer {
         actions: &[Action],
         capture: Option<&NetworkCapture>,
         viewport: Option<(i64, i64)>,
+        stop: Option<Stopped>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
     ) -> Result<Visited<T>, FetchError> {
-        let private = options
-            .headers
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
+        let private = !self.persistent
+            && options
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
         if !private {
             return self
                 .visit_in(
-                    None, url, prefetched, options, actions, capture, viewport, read,
+                    None, url, prefetched, options, actions, capture, viewport, stop, read,
                 )
                 .await;
         }
@@ -1095,6 +1205,7 @@ impl Renderer {
                 actions,
                 capture,
                 viewport,
+                stop,
                 read,
             )
             .await;
@@ -1112,6 +1223,7 @@ impl Renderer {
         actions: &[Action],
         capture: Option<&NetworkCapture>,
         viewport: Option<(i64, i64)>,
+        stop: Option<Stopped>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
     ) -> Result<Visited<T>, FetchError> {
         let target = crate::url_security::validate_public_http_url(url).await?;
@@ -1128,6 +1240,7 @@ impl Renderer {
             .map_err(browser_error)?;
         }
         let main_frame = page.mainframe().await.map_err(browser_error)?;
+        let navigating = main_frame.clone();
         let mut responses = page
             .event_listener::<EventResponseReceived>()
             .await
@@ -1158,6 +1271,9 @@ impl Renderer {
         let mut extra = Vec::new();
         for (name, value) in &options.headers {
             if name.eq_ignore_ascii_case("cookie") {
+                if self.persistent {
+                    continue;
+                }
                 for pair in value.split(';') {
                     if let Some((cookie, cookie_value)) = pair.trim().split_once('=') {
                         let mut set = SetCookieParams::new(cookie.trim(), cookie_value.trim());
@@ -1219,6 +1335,19 @@ impl Renderer {
             while let Some(event) = paused.next().await {
                 let request_url = event.request.url.as_str();
                 let id = event.request_id.clone();
+                if let Some(stop) = &stop
+                    && event.resource_type == ResourceType::Document
+                    && navigating.as_ref() == Some(&event.frame_id)
+                    && !same_document(request_url, &target)
+                {
+                    if let Ok(mut stop) = stop.lock() {
+                        stop.get_or_insert_with(|| request_url.to_string());
+                    }
+                    let _ = guard_page
+                        .execute(FailRequestParams::new(id, ErrorReason::BlockedByClient))
+                        .await;
+                    continue;
+                }
                 if event.resource_type == ResourceType::Document
                     && request_url == target.as_str()
                     && let Some((body, headers)) = main_document.take()
@@ -1363,6 +1492,26 @@ impl Renderer {
         })
     }
 
+    /// Store the cookies of `cookie`, a `Cookie` header value such as
+    /// `"a=1; b=2"`, in the browser for `url`. On a profile from
+    /// [`Renderer::launch_with_profile`] they are kept for later launches.
+    pub async fn save_cookies(&self, url: &str, cookie: &str) -> Result<(), FetchError> {
+        let cookies = cookie
+            .split(';')
+            .filter_map(|pair| {
+                let (name, value) = pair.trim().split_once('=')?;
+                let mut param = CookieParam::new(name.trim(), value.trim());
+                param.url = Some(url.to_string());
+                Some(param)
+            })
+            .collect();
+        self.browser
+            .set_cookies(cookies)
+            .await
+            .map(|_| ())
+            .map_err(browser_error)
+    }
+
     /// The Cloudflare clearance cookie for `url` that a render with
     /// [`RenderOptions::solve`] got from getting past a challenge, as a
     /// `Cookie` header value, and the User-Agent the browser sent.
@@ -1405,7 +1554,8 @@ impl Renderer {
         }
     }
 
-    /// Shut down a browser this renderer launched and wait for it to exit.
+    /// Shut down a browser this renderer launched and wait for it to exit,
+    /// which also writes a persistent profile's cookies and storage to disk.
     /// A browser reached through [`Renderer::connect`] keeps running.
     pub async fn close(mut self) {
         if let Some(guard) = self.guard.take() {
@@ -1413,13 +1563,66 @@ impl Renderer {
             let _ = guard.await;
         }
         if let Some(profile) = self.profile.take() {
+            if let Ok(mut open) = OPEN_PROFILES.lock() {
+                open.retain(|(browser, _)| browser.as_ptr() != Arc::as_ptr(&self.browser));
+            }
             let _ = self.browser.close().await;
             if let Some(browser) = Arc::get_mut(&mut self.browser) {
                 let _ = browser.wait().await;
             }
-            let _ = std::fs::remove_dir_all(profile);
+            if !self.persistent {
+                let _ = std::fs::remove_dir_all(profile);
+            }
         }
         self.events.abort();
+    }
+}
+
+type OpenProfile = (std::sync::Weak<Browser>, std::path::PathBuf);
+
+static OPEN_PROFILES: Mutex<Vec<OpenProfile>> = Mutex::new(Vec::new());
+
+/// On Unix, when the process gets SIGTERM, shut down the browsers it
+/// launched on persistent profiles and exit with status 143, so a stopped
+/// process leaves no Chrome holding its profile locked. Call it once, from
+/// inside a Tokio runtime.
+#[cfg(unix)]
+pub fn close_profiles_on_terminate() {
+    use tokio::signal::unix::{SignalKind, signal};
+    let Ok(mut terminate) = signal(SignalKind::terminate()) else {
+        return;
+    };
+    tokio::spawn(async move {
+        terminate.recv().await;
+        close_profiles().await;
+        std::process::exit(143);
+    });
+}
+
+/// Shut down every browser this process launched on a persistent profile
+/// and wait up to five seconds for each to release its profile, so a
+/// process that is about to exit leaves no Chrome holding a profile locked.
+pub async fn close_profiles() {
+    let open = OPEN_PROFILES
+        .lock()
+        .map(|mut open| std::mem::take(&mut *open))
+        .unwrap_or_default();
+    for (browser, dir) in open {
+        shut_down(browser, &dir).await;
+    }
+}
+
+async fn shut_down(browser: std::sync::Weak<Browser>, dir: &std::path::Path) {
+    let Some(browser) = browser.upgrade() else {
+        return;
+    };
+    let _ = browser.close().await;
+    let lock = dir.join("SingletonLock");
+    for _ in 0..50 {
+        if std::fs::symlink_metadata(&lock).is_err() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -1430,6 +1633,13 @@ pub enum BrowserSource {
     /// `solve`, launch it with [`Renderer::launch_as_chrome`], which
     /// [`RenderOptions::solve`] needs.
     Launch { proxy: Option<String>, solve: bool },
+    /// [`BrowserSource::Launch`] on the persistent profile in `dir`; see
+    /// [`Renderer::launch_with_profile`].
+    Profile {
+        proxy: Option<String>,
+        dir: std::path::PathBuf,
+        solve: bool,
+    },
     /// Use a browser already running at this DevTools endpoint; see [`Renderer::connect`].
     Connect(String),
 }
@@ -1444,6 +1654,15 @@ impl BrowserSource {
             .clone()
             .or_else(|| config.proxy_pool.choose(&mut rand::thread_rng()).cloned());
         Self::Launch { proxy, solve }
+    }
+
+    /// The same launch on the persistent profile in `dir`, when there is
+    /// one. A browser to connect to is left as it is.
+    pub fn with_profile(self, dir: Option<std::path::PathBuf>) -> Self {
+        match (self, dir) {
+            (Self::Launch { proxy, solve }, Some(dir)) => Self::Profile { proxy, dir, solve },
+            (source, _) => source,
+        }
     }
 }
 
@@ -1460,6 +1679,7 @@ pub struct RenderPool {
     browser: RwLock<Option<Result<Renderer, String>>>,
     tabs: Semaphore,
     hosts: Mutex<HashMap<String, HostRenders>>,
+    cookies: Mutex<Vec<(String, String)>>,
     clearances: Arc<Mutex<Jar>>,
 }
 
@@ -1508,12 +1728,14 @@ impl RenderPool {
             browser: RwLock::new(None),
             tabs: Semaphore::new(MAX_TABS),
             hosts: Mutex::new(HashMap::new()),
+            cookies: Mutex::new(Vec::new()),
             clearances: Arc::default(),
         }
     }
 
     /// Render `url`; see [`Renderer::render`]. A failed browser launch is
-    /// remembered, so later renders fail at once instead of retrying it.
+    /// remembered, so later renders fail at once instead of retrying it,
+    /// except on a persistent profile, which may be free again by then.
     pub async fn render(
         &self,
         url: &str,
@@ -1710,7 +1932,23 @@ impl RenderPool {
                         solve: false,
                     } => Renderer::launch_timed(proxy.as_deref(), &[], commands).await,
                     BrowserSource::Launch { proxy, solve: true } => {
-                        Renderer::launch_as_chrome_timed(proxy.as_deref(), commands).await
+                        Renderer::launch_as_chrome_timed(proxy.as_deref(), None, commands).await
+                    }
+                    BrowserSource::Profile {
+                        proxy,
+                        dir,
+                        solve: false,
+                    } => {
+                        Renderer::launch_in(proxy.as_deref(), &[], dir.clone(), true, commands)
+                            .await
+                    }
+                    BrowserSource::Profile {
+                        proxy,
+                        dir,
+                        solve: true,
+                    } => {
+                        Renderer::launch_as_chrome_timed(proxy.as_deref(), Some(dir), commands)
+                            .await
                     }
                     BrowserSource::Connect(endpoint) => {
                         Renderer::connect_timed(endpoint, commands).await
@@ -1719,17 +1957,24 @@ impl RenderPool {
                 if let Err(e) = &started {
                     warn!("no browser for rendering: {e}");
                 }
+                let started = match started {
+                    Err(e) if self.persistent() => return Err(e),
+                    started => started,
+                };
                 *slot = Some(
                     started
                         .map(|mut renderer| {
                             renderer.clearances = self.clearances.clone();
                             renderer
                         })
-                        .map_err(|e| e.to_string()),
+                        .map_err(|e| match e {
+                            FetchError::Build(message) => message,
+                            e => e.to_string(),
+                        }),
                 );
             }
         }
-        RwLockReadGuard::try_map(self.browser.read().await, |slot| {
+        let renderer = RwLockReadGuard::try_map(self.browser.read().await, |slot| {
             slot.as_ref().and_then(|started| started.as_ref().ok())
         })
         .map_err(|slot| {
@@ -1737,7 +1982,18 @@ impl RenderPool {
                 Some(Err(e)) => e.clone(),
                 _ => "browser closed".into(),
             })
-        })
+        })?;
+        let pending = self
+            .cookies
+            .lock()
+            .map(|mut pending| std::mem::take(&mut *pending))
+            .unwrap_or_default();
+        for (url, cookie) in pending {
+            if let Err(e) = renderer.save_cookies(&url, &cookie).await {
+                warn!(url, "cookies not saved in the browser profile: {e}");
+            }
+        }
+        Ok(renderer)
     }
 
     /// Render `fetched`, a Cloudflare challenge page, from a fresh request
@@ -1807,7 +2063,8 @@ impl RenderPool {
     }
 
     fn wants(&self, fetched: &FetchResult, http_words: usize, always: bool) -> bool {
-        if fetched.status >= 400
+        if self.persistent()
+            || fetched.status >= 400
             || fetched.document_bytes.is_some()
             || !crate::cloud::contains_ignore_case(&fetched.html, "<script")
         {
@@ -1831,6 +2088,102 @@ impl RenderPool {
         let seen = hosts.entry(host).or_default();
         seen.renders += 1;
         seen.helped += u32::from(rendered_words >= (2 * http_words).max(http_words + 50));
+    }
+
+    /// On a persistent profile, save the cookies of `cookie`, a `Cookie`
+    /// header value, in the profile for `url` before the next render; see
+    /// [`Renderer::save_cookies`]. Other pools ignore it.
+    pub fn save_cookies(&self, url: &str, cookie: &str) {
+        if self.persistent()
+            && let Ok(mut pending) = self.cookies.lock()
+        {
+            pending.push((url.to_string(), cookie.to_string()));
+        }
+    }
+
+    /// Whether this pool launches Chrome on a persistent profile.
+    pub fn persistent(&self) -> bool {
+        matches!(self.source, BrowserSource::Profile { .. })
+    }
+
+    /// With a persistent profile, load `url` in the browser, which sends the
+    /// profile's cookies, when `fetched`, its HTTP response, is an HTML page,
+    /// and return the rendered page in its place. Otherwise return `fetched`.
+    /// A profile that cannot be opened fails, as [`RenderPool::open`] does;
+    /// a page that fails in an opened profile is logged and `fetched` kept.
+    ///
+    /// Without `follow_redirects`, the browser stops at the page's first
+    /// redirect or navigation, which comes back as a 302 with its target in
+    /// `Location`, the way an HTTP client that does not follow redirects
+    /// answers, so a crawl can check the target before it is loaded.
+    pub async fn load_in_profile(
+        &self,
+        url: &str,
+        fetched: FetchResult,
+        config: &RenderConfig,
+        headers: &[(String, String)],
+        follow_redirects: bool,
+    ) -> Result<FetchResult, FetchError> {
+        let html = fetched.document_bytes.is_none()
+            && fetched
+                .headers
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.contains("html"));
+        if !self.persistent() || !html {
+            return Ok(fetched);
+        }
+        self.open().await?;
+        let rendered = if follow_redirects {
+            self.render(
+                url,
+                None,
+                config.wait_for.as_deref(),
+                headers,
+                config.block,
+                config.solve,
+            )
+            .await
+        } else {
+            self.render_unfollowed(url, config, headers).await
+        };
+        Ok(match rendered {
+            Ok(rendered) => rendered,
+            Err(e) => {
+                warn!(
+                    url,
+                    "rendering in the profile failed, keeping the HTTP result: {e}"
+                );
+                fetched
+            }
+        })
+    }
+
+    /// Start the browser if it has not started, and save the cookies queued
+    /// with [`RenderPool::save_cookies`] in it, so a browser or a profile
+    /// that cannot be opened (in use, refused, unreadable) fails here, before
+    /// any page is fetched.
+    pub async fn open(&self) -> Result<(), FetchError> {
+        self.renderer().await.map(|_| ())
+    }
+
+    async fn render_unfollowed(
+        &self,
+        url: &str,
+        config: &RenderConfig,
+        headers: &[(String, String)],
+    ) -> Result<FetchResult, FetchError> {
+        let _tab = self
+            .tabs
+            .acquire()
+            .await
+            .map_err(|_| FetchError::Build("browser closed".into()))?;
+        let renderer = self.renderer().await?;
+        let options = RenderOptions {
+            solve: config.solve,
+            ..self.options(config.wait_for.as_deref(), headers, config.block)
+        };
+        renderer.render_unfollowed(url, None, &options).await
     }
 
     /// Shut down the browser if this pool launched it. A later render starts a new one.
@@ -1878,6 +2231,16 @@ async fn is_public(url: &str) -> bool {
         || crate::url_security::validate_public_http_url(url)
             .await
             .is_ok()
+}
+
+fn same_document(request: &str, target: &Url) -> bool {
+    let Ok(mut request) = Url::parse(request) else {
+        return false;
+    };
+    let mut target = target.clone();
+    request.set_fragment(None);
+    target.set_fragment(None);
+    request == target
 }
 
 fn cookie_domain_matches(domain: &str, host: &str) -> bool {
@@ -2058,6 +2421,121 @@ fn browser_error(e: impl std::fmt::Display) -> FetchError {
     FetchError::Build(format!("browser: {e}"))
 }
 
+const PROFILE_MARKER: &str = ".webclaw-profile";
+
+fn prepare_profile(dir: &std::path::Path, persistent: bool) -> Result<(), String> {
+    if persistent {
+        claim_profile(dir)?;
+    }
+    let default = dir.join("Default");
+    std::fs::create_dir_all(&default).map_err(|e| e.to_string())?;
+    let path = default.join("Preferences");
+    let existing = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    let preferences = without_prediction(existing.as_deref())
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let staged = default.join("Preferences.webclaw");
+    std::fs::write(&staged, preferences)
+        .and_then(|()| std::fs::rename(&staged, &path))
+        .map_err(|e| e.to_string())?;
+    if persistent {
+        let _ = std::fs::remove_dir_all(default.join("Sessions"));
+        let _ = std::fs::remove_dir_all(default.join("Service Worker"));
+    }
+    Ok(())
+}
+
+fn claim_profile(dir: &std::path::Path) -> Result<(), String> {
+    let marker = dir.join(PROFILE_MARKER);
+    let found = match std::fs::symlink_metadata(dir) {
+        Ok(found) => found,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(dir)
+                    .map_err(|e| e.to_string())?;
+            }
+            #[cfg(not(unix))]
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            return std::fs::write(&marker, b"").map_err(|e| e.to_string());
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    if found.file_type().is_symlink() {
+        return Err("it is a symbolic link; give the directory itself".into());
+    }
+    if !found.is_dir() {
+        return Err("it is not a directory".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if found.permissions().mode() & 0o022 != 0 {
+            return Err("other users can write to it; make it private with chmod 700".into());
+        }
+    }
+    if marker.exists() {
+        return Ok(());
+    }
+    let empty = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .next()
+        .is_none();
+    if !empty {
+        return Err(
+            "it is not empty and webclaw did not make it; give webclaw a new or empty directory, \
+             not the profile of a Chrome you browse with"
+                .into(),
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&marker, b"").map_err(|e| e.to_string())
+}
+
+fn without_prediction(existing: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let mut preferences = match existing {
+        Some(bytes) => serde_json::from_slice(bytes).map_err(|e| e.to_string())?,
+        None => serde_json::json!({}),
+    };
+    let net = preferences
+        .as_object_mut()
+        .ok_or("not a JSON object")?
+        .entry("net")
+        .or_insert_with(|| serde_json::json!({}));
+    net.as_object_mut()
+        .ok_or("\"net\" is not a JSON object")?
+        .insert("network_prediction_options".into(), 2.into());
+    serde_json::to_vec(&preferences).map_err(|e| e.to_string())
+}
+
+fn launch_error(profile: &std::path::Path, persistent: bool, error: String) -> FetchError {
+    if !persistent {
+        let _ = std::fs::remove_dir_all(profile);
+    }
+    if !persistent || !error.contains("ProcessSingleton") {
+        return browser_error(error);
+    }
+    let owner = std::fs::read_link(profile.join("SingletonLock"))
+        .map(|owner| format!(" (its lock names {})", owner.display()))
+        .unwrap_or_default();
+    FetchError::Build(format!(
+        "the browser profile {} is in use by another browser{owner}, and a profile takes one browser at a time",
+        profile.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Prefetched, RenderOptions, Renderer};
@@ -2080,12 +2558,167 @@ mod tests {
             r#"<html><body><p id="msg">rendered</p><img src="http://127.0.0.1:{port}/img"><script>fetch("http://127.0.0.1:{port}/xhr").catch(() => {{}}); document.getElementById("msg").textContent = "scripts ran";</script></body></html>"#
         );
         let headers = http::HeaderMap::new();
-        let renderer = Renderer::launch(None).await.expect("Chrome launches");
-        let rendered = renderer
+        let profile = tempfile::tempdir().unwrap();
+        for renderer in [
+            Renderer::launch(None).await,
+            Renderer::launch_with_profile(None, profile.path()).await,
+        ] {
+            let renderer = renderer.expect("Chrome launches");
+            let rendered = renderer
+                .render(
+                    "https://example.com/",
+                    Some(Prefetched {
+                        html: &html,
+                        headers: &headers,
+                    }),
+                    &RenderOptions {
+                        timeout: std::time::Duration::from_secs(20),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            renderer.close().await;
+            let rendered = rendered.expect("render succeeds");
+            assert!(rendered.html.contains("scripts ran"), "{}", rendered.html);
+            assert_eq!(hits.load(Ordering::SeqCst), 0, "the page reached loopback");
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_profile_keeps_cookies_and_storage_between_launches() {
+        let profile = tempfile::tempdir().unwrap();
+        let mut served = http::HeaderMap::new();
+        served.insert("set-cookie", "served=1; Path=/".parse().unwrap());
+        let writer = r#"<html><body><script>localStorage.setItem("kept", "local"); indexedDB.open("wc", 1).onupgradeneeded = (e) => e.target.result.createObjectStore("s").put("indexed", "k");</script></body></html>"#;
+        let reader = r#"<html><body><p id="c"></p><script>const out = document.getElementById("c"); const r = indexedDB.open("wc", 1); r.onupgradeneeded = () => {}; r.onsuccess = () => { const db = r.result; if (!db.objectStoreNames.contains("s")) { out.textContent = document.cookie + "|" + localStorage.getItem("kept") + "|none"; out.id = "done"; return; } db.transaction("s").objectStore("s").get("k").onsuccess = (e) => { out.textContent = document.cookie + "|" + localStorage.getItem("kept") + "|" + e.target.result; out.id = "done"; }; };</script></body></html>"#;
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            wait_for: Some("#done".into()),
+            ..Default::default()
+        };
+        let first = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches");
+        first
+            .save_cookies("https://example.com/", "imported=2")
+            .await
+            .expect("cookies are saved");
+        let wrote = first
             .render(
                 "https://example.com/",
                 Some(Prefetched {
-                    html: &html,
+                    html: writer,
+                    headers: &served,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    headers: vec![("Cookie".into(), "header=3".into())],
+                    ..Default::default()
+                },
+            )
+            .await;
+        first.close().await;
+        wrote.expect("first render succeeds");
+        let empty = http::HeaderMap::new();
+        let second = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches again on the profile");
+        let read = second
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: reader,
+                    headers: &empty,
+                }),
+                &options,
+            )
+            .await;
+        second.close().await;
+        let read = read.expect("second render succeeds").html;
+        assert!(read.contains("served=1"), "{read}");
+        assert!(read.contains("imported=2"), "{read}");
+        assert!(!read.contains("header=3"), "{read}");
+        assert!(read.contains("|local|indexed"), "{read}");
+
+        let fresh = Renderer::launch(None).await.expect("Chrome launches");
+        let unrelated = fresh
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: reader,
+                    headers: &empty,
+                }),
+                &options,
+            )
+            .await;
+        fresh.close().await;
+        let unrelated = unrelated.expect("fresh render succeeds").html;
+        assert!(unrelated.contains(">|null|none<"), "{unrelated}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_profile_pool_saves_cookies_only_for_the_url_given() {
+        let profile = tempfile::tempdir().unwrap();
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Profile {
+                proxy: None,
+                dir: profile.path().into(),
+                solve: false,
+            },
+            std::time::Duration::from_secs(20),
+        );
+        pool.save_cookies("https://example.com/", "given=4");
+        let reader = r#"<html><body><p id="c"></p><script>document.getElementById("c").textContent = "cookies:" + document.cookie + ":end";</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let mut seen = Vec::new();
+        for url in ["https://example.com/", "https://example.org/"] {
+            let page = pool
+                .render(
+                    url,
+                    Some(Prefetched {
+                        html: reader,
+                        headers: &headers,
+                    }),
+                    None,
+                    &[],
+                    crate::Block::default(),
+                    false,
+                )
+                .await;
+            seen.push(page.expect("render succeeds").html);
+        }
+        pool.close().await;
+        assert!(seen[0].contains("cookies:given=4:end"), "{}", seen[0]);
+        assert!(seen[1].contains("cookies::end"), "{}", seen[1]);
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn cookies_are_saved_when_the_profile_opens() {
+        let profile = tempfile::tempdir().unwrap();
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Profile {
+                proxy: None,
+                dir: profile.path().into(),
+                solve: false,
+            },
+            std::time::Duration::from_secs(20),
+        );
+        pool.save_cookies("https://example.com/", "opened=5");
+        pool.open().await.expect("the profile opens");
+        pool.close().await;
+        let reader = r#"<html><body><p id="c"></p><script>document.getElementById("c").textContent = "cookies:" + document.cookie + ":end";</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches");
+        let read = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: reader,
                     headers: &headers,
                 }),
                 &RenderOptions {
@@ -2095,9 +2728,292 @@ mod tests {
             )
             .await;
         renderer.close().await;
-        let rendered = rendered.expect("render succeeds");
-        assert!(rendered.html.contains("scripts ran"), "{}", rendered.html);
-        assert_eq!(hits.load(Ordering::SeqCst), 0, "the page reached loopback");
+        let read = read.expect("render succeeds").html;
+        assert!(read.contains("cookies:opened=5:end"), "{read}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_profile_always_opens_its_default_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("profile");
+        super::prepare_profile(&dir, true).unwrap();
+        std::fs::write(
+            dir.join("Local State"),
+            br#"{"profile": {"last_used": "Profile 1"}}"#,
+        )
+        .unwrap();
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch_with_profile(None, &dir)
+            .await
+            .expect("Chrome launches");
+        let rendered = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: "<p>rendered</p>",
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        rendered.expect("render succeeds");
+        assert!(!dir.join("Profile 1").exists(), "Chrome opened Profile 1");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn an_unfollowed_render_stops_at_the_first_navigation() {
+        let headers = http::HeaderMap::new();
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        };
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let moved = renderer
+            .render_unfollowed(
+                "https://example.com/start",
+                Some(Prefetched {
+                    html: r#"<html><body><script>location.hash = "top"; location.href = "https://example.org/elsewhere";</script></body></html>"#,
+                    headers: &headers,
+                }),
+                &options,
+            )
+            .await;
+        let stayed = renderer
+            .render_unfollowed(
+                "https://example.com/start",
+                Some(Prefetched {
+                    html: r#"<html><body><p id="here">stayed</p><script>location.hash = "top";</script></body></html>"#,
+                    headers: &headers,
+                }),
+                &options,
+            )
+            .await;
+        renderer.close().await;
+        let moved = moved.expect("a stopped navigation is not an error");
+        assert_eq!(moved.status, 302);
+        assert_eq!(
+            moved.headers.get(http::header::LOCATION).unwrap(),
+            "https://example.org/elsewhere"
+        );
+        let stayed = stayed.expect("render succeeds");
+        assert_eq!(stayed.status, 200);
+        assert!(stayed.html.contains("stayed"), "{}", stayed.html);
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_page_that_fails_in_an_open_profile_keeps_its_http_page() {
+        let profile = tempfile::tempdir().unwrap();
+        let config = super::RenderConfig {
+            pool: Arc::new(super::RenderPool::new(
+                super::BrowserSource::Profile {
+                    proxy: None,
+                    dir: profile.path().into(),
+                    solve: false,
+                },
+                std::time::Duration::from_secs(3),
+            )),
+            always: false,
+            wait_for: Some("#never-there".into()),
+            block: crate::Block::default(),
+            solve: false,
+        };
+        let mut http = page("https://example.com/", "<p>from http</p>", 200);
+        http.headers
+            .insert("content-type", "text/html".parse().unwrap());
+        let kept = config
+            .pool
+            .load_in_profile("https://example.com/", http, &config, &[], true)
+            .await;
+        config.pool.close().await;
+        assert_eq!(kept.expect("the page falls back").html, "<p>from http</p>");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_profile_pool_opens_once_the_profile_is_free_again() {
+        let profile = tempfile::tempdir().unwrap();
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Profile {
+                proxy: None,
+                dir: profile.path().into(),
+                solve: false,
+            },
+            std::time::Duration::from_secs(20),
+        );
+        let holder = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches");
+        let busy = pool.open().await;
+        holder.close().await;
+        let opened = pool.open().await;
+        pool.close().await;
+        let busy = busy.expect_err("the profile is in use").to_string();
+        assert!(busy.contains("in use by another browser"), "{busy}");
+        opened.expect("the pool opens the profile once it is free");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn shutting_down_a_profile_browser_frees_its_profile() {
+        let profile = tempfile::tempdir().unwrap();
+        let first = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches");
+        super::shut_down(Arc::downgrade(&first.browser), profile.path()).await;
+        let second = Renderer::launch_with_profile(None, profile.path()).await;
+        drop(first);
+        second
+            .expect("the profile is free once its browser shut down")
+            .close()
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_profile_takes_one_browser_at_a_time() {
+        let profile = tempfile::tempdir().unwrap();
+        let first = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches");
+        let second = Renderer::launch_with_profile(None, profile.path()).await;
+        first.close().await;
+        let error = second.err().expect("a second browser on the profile fails");
+        assert!(
+            error.to_string().contains("in use by another browser"),
+            "{error}"
+        );
+        #[cfg(unix)]
+        assert!(error.to_string().contains("its lock names"), "{error}");
+        let again = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("the profile is free once the first browser closed");
+        again.close().await;
+    }
+
+    #[test]
+    fn a_profile_is_prepared_without_losing_the_users_preferences() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("new");
+        super::prepare_profile(&dir, true).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+        let default = dir.join("Default");
+        std::fs::write(
+            default.join("Preferences"),
+            br#"{"homepage": "https://example.com"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(default.join("Sessions")).unwrap();
+        std::fs::create_dir_all(default.join("Service Worker")).unwrap();
+        super::prepare_profile(&dir, true).unwrap();
+        let kept: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(default.join("Preferences")).unwrap()).unwrap();
+        assert_eq!(kept["homepage"], "https://example.com");
+        assert_eq!(kept["net"]["network_prediction_options"], 2);
+        assert!(!default.join("Sessions").exists());
+        assert!(!default.join("Service Worker").exists());
+        std::fs::write(default.join("Preferences"), b"{broken").unwrap();
+        assert!(super::prepare_profile(&dir, true).is_err());
+        assert_eq!(
+            std::fs::read(default.join("Preferences")).unwrap(),
+            b"{broken"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn only_chromes_own_refusal_reads_as_a_profile_in_use() {
+        let profile = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink("otherhost-4242", profile.path().join("SingletonLock")).unwrap();
+        let other = super::launch_error(profile.path(), true, "no executable found".into());
+        assert!(!other.to_string().contains("in use"), "{other}");
+        let refused = super::launch_error(
+            profile.path(),
+            true,
+            "Failed to create a ProcessSingleton for your profile directory".into(),
+        )
+        .to_string();
+        assert!(refused.contains("in use by another browser"), "{refused}");
+        assert!(refused.contains("otherhost-4242"), "{refused}");
+    }
+
+    #[test]
+    fn only_a_private_directory_webclaw_made_or_an_empty_one_becomes_a_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let made = root.path().join("made");
+        super::prepare_profile(&made, true).unwrap();
+        assert!(made.join(super::PROFILE_MARKER).exists());
+        super::prepare_profile(&made, true).expect("its own profile again");
+
+        let empty = root.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&empty, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        super::prepare_profile(&empty, true).expect("an empty directory");
+        assert!(empty.join(super::PROFILE_MARKER).exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&empty).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+
+        let chrome = root.path().join("chrome");
+        std::fs::create_dir(&chrome).unwrap();
+        std::fs::write(chrome.join("Local State"), b"{}").unwrap();
+        let refused = super::prepare_profile(&chrome, true).unwrap_err();
+        assert!(refused.contains("did not make it"), "{refused}");
+        assert!(!chrome.join("Default").exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let open = root.path().join("open");
+            std::fs::create_dir(&open).unwrap();
+            std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+            let refused = super::prepare_profile(&open, true).unwrap_err();
+            assert!(refused.contains("other users can write"), "{refused}");
+
+            let link = root.path().join("link");
+            std::os::unix::fs::symlink(&made, &link).unwrap();
+            let refused = super::prepare_profile(&link, true).unwrap_err();
+            assert!(refused.contains("symbolic link"), "{refused}");
+        }
+    }
+
+    #[test]
+    fn profile_preferences_keep_the_users_own() {
+        let merged = super::without_prediction(Some(
+            br#"{"homepage": "https://example.com", "net": {"other": 1, "network_prediction_options": 0}}"#,
+        ))
+        .unwrap();
+        let merged: serde_json::Value = serde_json::from_slice(&merged).unwrap();
+        assert_eq!(merged["homepage"], "https://example.com");
+        assert_eq!(merged["net"]["other"], 1);
+        assert_eq!(merged["net"]["network_prediction_options"], 2);
+        let fresh: serde_json::Value =
+            serde_json::from_slice(&super::without_prediction(None).unwrap()).unwrap();
+        assert_eq!(
+            fresh,
+            serde_json::json!({"net": {"network_prediction_options": 2}})
+        );
+        assert!(super::without_prediction(Some(b"{broken")).is_err());
+        assert!(super::without_prediction(Some(b"[]")).is_err());
+        assert!(super::without_prediction(Some(br#"{"net": 3}"#)).is_err());
     }
 
     async fn loopback_listener() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
@@ -3149,6 +4065,72 @@ mod tests {
             super::BrowserSource::launch_for(&config, true),
             super::BrowserSource::Launch { proxy: Some(p), solve: true } if p == "http://pool.example:8080"
         ));
+        assert!(matches!(
+            super::BrowserSource::launch_for(&config, true).with_profile(Some("/p".into())),
+            super::BrowserSource::Profile { proxy: Some(p), dir, solve: true } if p == "http://pool.example:8080" && dir == std::path::Path::new("/p")
+        ));
+        assert!(matches!(
+            super::BrowserSource::Connect("ws://x".into()).with_profile(Some("/p".into())),
+            super::BrowserSource::Connect(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_profile_pool_passes_through_what_is_not_a_web_page() {
+        let profile = super::RenderPool::new(
+            super::BrowserSource::Profile {
+                proxy: None,
+                dir: "/nonexistent/webclaw-profile".into(),
+                solve: false,
+            },
+            std::time::Duration::from_secs(1),
+        );
+        let config = super::RenderConfig {
+            pool: Arc::new(pool()),
+            always: false,
+            wait_for: None,
+            block: crate::Block::default(),
+            solve: false,
+        };
+        let mut json = page("https://example.com/api", "{}", 200);
+        json.headers
+            .insert("content-type", "application/json".parse().unwrap());
+        let kept = profile
+            .load_in_profile("https://example.com/api", json, &config, &[], true)
+            .await
+            .expect("no browser is needed");
+        assert_eq!(kept.html, "{}");
+        let mut html = page("https://example.com/", "<script></script>", 200);
+        html.headers
+            .insert("content-type", "text/html".parse().unwrap());
+        assert!(profile.persistent() && !pool().persistent());
+        assert!(pool().wants(&html, 0, true) && !profile.wants(&html, 0, true));
+        let kept = pool()
+            .load_in_profile("https://example.com/", html.clone(), &config, &[], true)
+            .await
+            .expect("no browser is needed");
+        assert_eq!(kept.html, "<script></script>");
+        let failed = profile
+            .load_in_profile("https://example.com/", html, &config, &[], true)
+            .await
+            .expect_err("a profile that cannot be opened fails the page")
+            .to_string();
+        assert!(failed.contains("/nonexistent/webclaw-profile"), "{failed}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_launch_is_reported_with_one_prefix() {
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Launch {
+                proxy: Some("not a proxy url".into()),
+                solve: false,
+            },
+            std::time::Duration::from_secs(1),
+        );
+        for _ in 0..2 {
+            let error = pool.open().await.expect_err("the launch fails").to_string();
+            assert_eq!(error, "client build failed: invalid proxy for the browser");
+        }
     }
 
     #[test]

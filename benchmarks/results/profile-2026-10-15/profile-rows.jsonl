@@ -1,0 +1,25 @@
+{"test": "login", "arm": "webclaw", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "webclaw", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "webclaw", "stored": true, "local_storage": true, "indexed_db": true, "error": null}
+{"test": "timing", "arm": "webclaw", "runs": 5, "fresh_ms": 2116, "warm_ms": 1672, "none_ms": 2106, "fresh_mb": 8.8, "warm_mb": 8.9, "warm_renders": 6, "error": null}
+{"test": "lock", "arm": "webclaw", "first_ok": true, "second": "refused", "message": "es one browser at a time error: client build failed: the browser profile DIR is in use by another browser (its lock names HOST-PID), and a profile takes one browser at a time", "second_ms": 181}
+{"test": "login", "arm": "scrapling", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": false, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "scrapling", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": false, "kept": false, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "scrapling", "stored": true, "local_storage": true, "indexed_db": true, "error": null}
+{"test": "timing", "arm": "scrapling", "runs": 5, "fresh_ms": 2077, "warm_ms": 1677, "none_ms": 2099, "fresh_mb": 8.7, "warm_mb": 8.8, "warm_renders": 6, "error": null}
+{"test": "lock", "arm": "scrapling", "first_ok": true, "second": "refused", "message": "ill force kill> - [pid=65441] exception while trying to kill process: Error: kill EPERM - [pid=65441] <process did exit: exitCode=21, signal=null> - [pid=65441] starting temporary directories cleanup - [pid=65441] finished temporary directo", "second_ms": 347}
+{"test": "login", "arm": "crawl4ai", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": false, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "crawl4ai", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": false, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "crawl4ai", "stored": true, "local_storage": true, "indexed_db": true, "error": null}
+{"test": "timing", "arm": "crawl4ai", "runs": 5, "fresh_ms": 1566, "warm_ms": 1296, "none_ms": 1535, "fresh_mb": 1.9, "warm_mb": 2.1, "warm_renders": 6, "error": null}
+{"test": "lock", "arm": "crawl4ai", "first_ok": true, "second": "ran on the profile in use", "message": "", "second_ms": 1607}
+{"test": "login", "arm": "scrapling-restore", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "scrapling-restore", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "scrapling-restore", "stored": true, "local_storage": true, "indexed_db": true, "error": null}
+{"test": "login", "arm": "scrapling-cookies", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "scrapling-cookies", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "scrapling-cookies", "stored": true, "local_storage": false, "indexed_db": false, "error": null}
+{"test": "login", "arm": "crawl4ai-state", "site": "quotes.toscrape.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "login", "arm": "crawl4ai-state", "site": "practice.expandtesting.com", "cookie": "session", "logged_in": true, "kept": true, "control_logged_out": true, "error": null}
+{"test": "storage", "arm": "crawl4ai-state", "stored": true, "local_storage": true, "indexed_db": false, "error": null}
+{"test": "crawl", "arm": "webclaw", "pages": {"none": 50, "fresh": 50, "warm": 50}, "none_ms": 3648, "fresh_ms": 12400, "warm_ms": 7998}

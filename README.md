@@ -277,6 +277,17 @@ webclaw https://example.com --cache          # fetch once, answer later runs fro
 
 `--cache` keeps every successful page in `~/.cache/webclaw` (or `WEBCLAW_CACHE_DIR`), readable by you only, and answers later fetches of the same URL with the same browser profile and headers from there, with no network request. Crawls and batches use it page by page. Entries never expire; delete the directory to refresh. Error responses, challenge pages and `Set-Cookie` headers are never stored. The cache keeps the HTTP response only: a page that needs JavaScript still renders in the browser, which loads its scripts over the network.
 
+### Keep a web archive
+
+```bash
+webclaw https://example.com --warc page.warc.gz
+webclaw https://docs.example.com --crawl --depth 2 --warc site.warc.gz > site.md
+```
+
+`--warc FILE` keeps every HTTP response webclaw fetches, with the request that asked for it, in a WARC file, the web archive format of ISO 28500 that web archives and replay tools read. The output goes where it always goes; the archive is written beside it. A name that ends in `.gz` gzips each record on its own, as `.warc.gz` files do. It works with one URL, several, `--crawl` (robots.txt and redirect responses included) and `--map` (the sitemaps it tried). Records are written as they arrive, so a crawl you stop keeps every page it fetched. Each record carries SHA-1 digests of its content.
+
+The response is kept as webclaw received it: status, headers and body. A compressed body is stored decoded, without its `Content-Encoding` and `Content-Length` headers, and an HTTP/2 response is written as HTTP/1.1. The request record lists the headers webclaw sent, `-H` and `--cookie` values included, so keep the file as safe as those values; cookies a site set during the run are not listed. A redirect the client follows on its own, outside a crawl, leaves only the final response. Pages a browser renders are not in it, so `--warc` refuses `--render always`, `--actions` and `--scroll`; with `--render auto`, the HTTP response of a page that then gets rendered is kept. It also refuses `--cache`, whose answers never touch the network, and `--cloud`. Use `--save-mhtml` to keep a rendered page.
+
 ### Render JavaScript pages
 
 Build with the `browser` feature (`cargo build --release --features browser`) and webclaw renders pages in your local Chrome when the plain HTTP response has no content yet:
@@ -306,6 +317,8 @@ Behind a proxy, the proxy resolves host names itself and the document check is o
 `--screenshot page.png` saves the rendered page's 1280x720 viewport, `--full-page` the whole page, and a `.jpg` name gives a JPEG. The MCP `screenshot` tool returns the same image to the agent.
 
 `--save-pdf page.pdf` (or `-` for stdout) prints the rendered page to a PDF through the browser's print engine: every page, with the site's print styles and Chrome's default margins, without the accessibility tags some browsers add. `--paper a4` changes the US Letter default, `--landscape` turns the paper sideways, `--print-background` keeps background colors and images, and `--scale 0.8` zooms the content (0.1 to 2). It takes `--wait-for`, `--actions` and `--scroll` like any render, and loading plus printing must fit in `--timeout`. Chrome lays out the whole page to print it, so a very long page, such as a full web standard on one page, can take several GB of memory in Chrome while it prints. The flag is not `--pdf` because `--pdf-mode` is about reading PDFs you fetch, not making them. The MCP `screenshot` tool returns the same PDF with `format: "pdf"`, as an `application/pdf` resource of up to 10 MiB, and takes `paper`, `print_background` and `actions` the same way.
+
+`--save-mhtml page.mhtml` (or `-` for stdout) saves the rendered page as MHTML, the one-file web archive of "Save page as, single file": the page as it is after its scripts ran, with the images, styles and frames it loaded. Chrome opens it offline, without running its scripts. It takes `--wait-for`, `--actions` and `--scroll` like any render. An image that loads only once you scroll to it is in the file only if it loaded first, so add `--scroll` for pages with those. Chrome hands the file over in one piece, so it is in memory once while it is written: an 18.6 MB archive of the one-page HTML standard took about 100 MB more than a screenshot of the same page. The MCP `screenshot` tool returns the same file with `format: "mhtml"`, as a `multipart/related` resource of up to 10 MiB.
 
 `--solve` gets past Cloudflare challenge pages, the ones that say "Just a moment..." or "Performing security verification". When a page comes back as one, webclaw opens it in Chrome, waits for the challenge to clear, clicks its checkbox when it asks for a click, and reads the page it leads to, all within `--timeout`. When the challenge is still there after three quarters of it, the command fails with that as its error. Later pages of the same site, in a crawl or a batch, go over plain HTTP again with the clearance cookie Chrome got (`cf_clearance` only, never the site's other cookies) and Chrome's User-Agent; Cloudflare accepts it from the same IP address on about half the sites we tried, and when it does not, webclaw solves again. A Turnstile checkbox inside a page that webclaw renders, as on a sign-up form, is clicked too, so that page actions can submit the form; add `--render always` for pages that would not otherwise be rendered. webclaw waits up to 10 seconds for such a widget's token, then reads the page as it is. The clearance goes with Chrome's User-Agent, so `--solve` needs `--browser chrome` (the default), `chrome-macos` or `edge`. Headers you pass with `-H` still go to the page's other requests, but not to its documents, since rewriting a document request fails the challenge. A browser you connect with `--cdp-url` keeps its own User-Agent. The MCP `scrape` tool takes `solve: true`.
 
@@ -510,7 +523,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | --- | --- | :-: |
 | `scrape` | Extract one URL as markdown, text, JSON, LLM format, or HTML | Yes |
 | `select` | Pick values or records from a page with CSS selectors or XPath, its data tables, elements found by text, or every element like an example, as JSON | Yes |
-| `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG, or print it to PDF | Yes, with a `browser` build |
+| `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG, print it to PDF, or save it as one MHTML file | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages, most relevant first with a `query` | Yes |
 | `map` | Discover URLs without extracting every page | Yes |
 | `batch` | Scrape multiple URLs in parallel | Yes |

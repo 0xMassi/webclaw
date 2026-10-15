@@ -82,13 +82,15 @@ pub struct NetworkResponse {
 
 /// Which of a rendered page's network responses to keep.
 ///
-/// At most 100 responses are kept, each body is cut to 1 MB and all bodies
-/// together to 5 MB.
+/// At most 100 responses are kept. Each body is cut to 1 MB and all bodies
+/// together to 5 MB, unless [`NetworkCapture::limit_bytes`] sets other limits.
 #[derive(Debug, Clone)]
 pub struct NetworkCapture {
     pattern: Option<regex::Regex>,
     types: Vec<String>,
     credentials: bool,
+    max_body: usize,
+    max_total: usize,
 }
 
 const RESOURCE_TYPES: &[&str] = &[
@@ -156,7 +158,35 @@ impl NetworkCapture {
             pattern,
             types,
             credentials,
+            max_body: MAX_BODY_BYTES,
+            max_total: MAX_TOTAL_BYTES,
         })
+    }
+
+    /// Cut each body to `body` bytes and all bodies together to `total`
+    /// bytes, for output that has to fit in a smaller space, such as a
+    /// model's context.
+    pub fn limit_bytes(mut self, body: usize, total: usize) -> Self {
+        self.max_body = body;
+        self.max_total = total;
+        self
+    }
+
+    fn cut(&self, bodies: Vec<Option<String>>) -> Vec<(Option<String>, bool)> {
+        let mut budget = self.max_total;
+        bodies
+            .into_iter()
+            .map(|body| {
+                let limit = self.max_body.min(budget);
+                let truncated = body.as_ref().is_some_and(|text| text.len() > limit);
+                let body = body.map(|mut text| {
+                    text.truncate(char_floor(&text, limit));
+                    text
+                });
+                budget -= body.as_ref().map_or(0, String::len);
+                (body, truncated)
+            })
+            .collect()
     }
 
     fn wants(&self, kind: &ResourceType, url: &str) -> bool {
@@ -191,18 +221,10 @@ impl NetworkCapture {
         let bodies =
             futures_util::future::join_all(kept.iter().map(|event| response_body(page, event)))
                 .await;
-        let mut budget = MAX_TOTAL_BYTES;
         kept.iter()
-            .zip(bodies)
-            .map(|(event, body)| {
+            .zip(self.cut(bodies))
+            .map(|(event, (body, truncated))| {
                 let request = requests.get(&event.request_id).map(|sent| &sent.request);
-                let limit = MAX_BODY_BYTES.min(budget);
-                let truncated = body.as_ref().is_some_and(|text| text.len() > limit);
-                let body = body.map(|mut text| {
-                    text.truncate(char_floor(&text, limit));
-                    text
-                });
-                budget -= body.as_ref().map_or(0, String::len);
                 NetworkResponse {
                     url: event.response.url.clone(),
                     method: request.map(|r| r.method.clone()).unwrap_or_default(),
@@ -2447,6 +2469,27 @@ mod tests {
             .unwrap()
             .headers(&sent);
         assert_eq!(all.len(), 6);
+    }
+
+    #[test]
+    fn bodies_are_cut_to_their_own_limit_and_to_the_total() {
+        let capture = super::NetworkCapture::new(None, None, false)
+            .unwrap()
+            .limit_bytes(4, 6);
+        let bodies = ["abcdef", "xyz", "q"]
+            .map(|body| Some(body.to_string()))
+            .into_iter()
+            .chain([None])
+            .collect();
+        assert_eq!(
+            capture.cut(bodies),
+            [
+                (Some("abcd".to_string()), true),
+                (Some("xy".to_string()), true),
+                (Some(String::new()), true),
+                (None, false),
+            ]
+        );
     }
 
     #[test]

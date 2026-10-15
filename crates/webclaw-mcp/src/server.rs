@@ -165,6 +165,10 @@ async fn validate_url(url: &str) -> Result<(), String> {
 /// Timeout for local fetch calls (prevents hanging on tarpitting servers).
 const LOCAL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CRAWL_QUERY_CHARS: usize = 1000;
+#[cfg(feature = "browser")]
+const MCP_BODY_BYTES: usize = 100_000;
+#[cfg(feature = "browser")]
+const MCP_CAPTURE_BYTES: usize = 1_000_000;
 
 /// Maximum poll iterations for research jobs (~10 minutes at 3s intervals).
 const RESEARCH_MAX_POLLS: u32 = 200;
@@ -307,6 +311,7 @@ impl WebclawMcp {
                     params.capture_types.as_deref(),
                     params.capture_credentials.unwrap_or(false),
                 )
+                .map(|capture| capture.limit_bytes(MCP_BODY_BYTES, MCP_CAPTURE_BYTES))
             })
             .transpose()?;
         if sizes.is_some() && capture.is_some() {

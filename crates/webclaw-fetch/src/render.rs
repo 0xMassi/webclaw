@@ -310,8 +310,15 @@ impl Screenshot {
     }
 }
 
-/// A captured render: the page, its `js_results` and its network responses.
-pub type Captured = (FetchResult, Vec<serde_json::Value>, Vec<NetworkResponse>);
+/// A render that kept its network responses; see [`Renderer::capture`].
+#[derive(Debug, Clone)]
+pub struct Captured {
+    pub page: FetchResult,
+    /// The values of the `executeJavascript` steps, the hosted API's `js_results`.
+    pub js_results: Vec<serde_json::Value>,
+    /// The kept responses, in the order they arrived.
+    pub network: Vec<NetworkResponse>,
+}
 
 const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
@@ -555,10 +562,10 @@ impl Renderer {
         options: &RenderOptions,
         actions: &[Action],
     ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
-        let (page, js_results, _) = self
+        let captured = self
             .rendered(url, prefetched, options, actions, None)
             .await?;
-        Ok((page, js_results))
+        Ok((captured.page, captured.js_results))
     }
 
     /// [`Renderer::render_actions`], also keeping the network responses
@@ -608,7 +615,11 @@ impl Renderer {
             headers: http::HeaderMap::new(),
             elapsed: start.elapsed(),
         };
-        Ok((page, visited.scripts, visited.network))
+        Ok(Captured {
+            page,
+            js_results: visited.scripts,
+            network: visited.network,
+        })
     }
 
     /// Render `url` in a 1280x720 viewport and capture it once its content
@@ -2412,7 +2423,7 @@ mod tests {
             )
             .await;
         renderer.close().await;
-        let (_, _, network) = rendered.expect("render succeeds");
+        let network = rendered.expect("render succeeds").network;
         let api = network
             .iter()
             .find(|r| r.url.contains("/api/quotes?page=1"))
@@ -2462,7 +2473,7 @@ mod tests {
             )
             .await;
         renderer.close().await;
-        let (_, _, network) = rendered.expect("render succeeds");
+        let network = rendered.expect("render succeeds").network;
         assert_eq!(network.len(), super::MAX_RESPONSES, "{network:?}");
         assert!(network.iter().all(|r| r.resource_type == "fetch"));
         let keyed = network

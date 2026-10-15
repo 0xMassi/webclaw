@@ -327,7 +327,11 @@ impl WebclawMcp {
         if let Some(cookies) = params.cookies.as_ref().filter(|c| !c.is_empty()) {
             headers.push(("Cookie".into(), cookies.join("; ")));
         }
-        let (page, results, network) = match &capture {
+        let webclaw_fetch::render::Captured {
+            page,
+            js_results: results,
+            network,
+        } = match &capture {
             Some(capture) => {
                 render
                     .pool
@@ -352,7 +356,11 @@ impl WebclawMcp {
                     &actions,
                 )
                 .await
-                .map(|(page, results)| (page, results, Vec::new())),
+                .map(|(page, js_results)| webclaw_fetch::render::Captured {
+                    page,
+                    js_results,
+                    network: Vec::new(),
+                }),
         }
         .map_err(|e| format!("Render failed: {e}"))?;
         webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;

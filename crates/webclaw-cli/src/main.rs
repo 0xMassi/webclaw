@@ -1278,7 +1278,11 @@ async fn run_capture(cli: &Cli, url: &str, pattern: &str) -> Result<(), String> 
     )
     .await;
     close_browser(&config).await;
-    let (page, js_results, network) = captured.map_err(|e| format!("render error: {e}"))?;
+    let webclaw_fetch::render::Captured {
+        page,
+        js_results,
+        network,
+    } = captured.map_err(|e| format!("render error: {e}"))?;
     print_script_results(&js_results);
     webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
     println!(

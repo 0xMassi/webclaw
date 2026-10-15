@@ -72,8 +72,11 @@ pub struct FetchConfig {
     pub cache: Option<std::path::PathBuf>,
     /// Hand every HTTP response the client receives, with the request that
     /// asked for it, to this callback, for example to keep them in a WARC
-    /// file with [`crate::warc::Writer`]. Responses answered from `cache`
-    /// are not passed, nor pages a browser loads.
+    /// file with [`crate::warc::Writer`]. With `follow_redirects`, the client
+    /// then follows redirects itself, so every hop is passed, under the same
+    /// rules: each target is checked, and credentials stay on their origin.
+    /// Responses answered from `cache` are not passed, nor pages a browser
+    /// loads.
     pub archive: Option<crate::warc::Archive>,
     /// Render pages that need JavaScript in a browser after fetching them
     /// over HTTP, keeping whichever extraction has more text. `None` never renders.
@@ -339,6 +342,7 @@ pub struct FetchClient {
     total_timeout: Option<Duration>,
     cache: Option<crate::cache::ResponseCache>,
     archive: Option<crate::warc::Archive>,
+    redirects: Option<u32>,
     #[cfg(feature = "browser")]
     render: Option<crate::render::RenderConfig>,
     #[cfg(feature = "browser")]
@@ -405,7 +409,7 @@ impl FetchClient {
                         config.timeout,
                         &config.headers,
                         config.proxy.as_deref(),
-                        config.follow_redirects,
+                        config.follow_redirects && config.archive.is_none(),
                         config.max_redirects,
                     )
                     .map(|client| ObservedClient {
@@ -439,7 +443,7 @@ impl FetchClient {
                         config.timeout,
                         &config.headers,
                         Some(proxy),
-                        config.follow_redirects,
+                        config.follow_redirects && config.archive.is_none(),
                         config.max_redirects,
                     )
                     .map(|client| ObservedClient {
@@ -482,6 +486,8 @@ impl FetchClient {
             total_timeout: config.total_timeout,
             cache,
             archive: config.archive.clone(),
+            redirects: (config.follow_redirects && config.archive.is_some())
+                .then_some(config.max_redirects),
             #[cfg(feature = "browser")]
             render: config.render.clone(),
             #[cfg(feature = "browser")]
@@ -598,14 +604,7 @@ impl FetchClient {
             sent.push(("cookie", cookies));
             sent.push(("user-agent", agent));
         }
-        let mut req = client.get(url);
-        for (k, v) in &sent {
-            req = req.header(*k, v.as_str());
-        }
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = req.send().await?;
-        let response = Response::from_wreq(resp, attempt).await?;
-        self.archive(client, &sent, &response);
+        let response = self.send(client, url, &sent).await?;
         response_to_result(response, start)
     }
 
@@ -727,28 +726,87 @@ impl FetchClient {
         (wait < ceiling).then_some(wait)
     }
 
-    fn archive(&self, client: &ObservedClient, sent: &[(&str, String)], response: &Response) {
+    async fn send(
+        &self,
+        client: &ObservedClient,
+        url: &str,
+        sent: &[(&str, String)],
+    ) -> Result<Response, FetchError> {
         let Some(archive) = &self.archive else {
-            return;
+            let mut req = client.get(url);
+            for (k, v) in sent {
+                req = req.header(*k, v.as_str());
+            }
+            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
+            return Response::from_wreq(req.send().await?, attempt).await;
         };
-        let mut request_headers = client.sends.clone().unwrap_or_default();
+        let mut headers = client.sends.clone().unwrap_or_default();
         for (name, value) in sent {
             if let (Ok(name), Ok(value)) = (
                 http::header::HeaderName::from_bytes(name.as_bytes()),
                 http::header::HeaderValue::from_str(value),
             ) {
-                request_headers.insert(name, value);
+                headers.insert(name, value);
             }
         }
-        (archive.0)(&crate::warc::Exchange {
-            url: &response.url,
-            request_headers: &request_headers,
-            status: response.status,
-            version: response.version,
-            headers: &response.headers,
-            body: &response.body,
-            ip: response.ip,
-        });
+        let mut url = url::Url::parse(url).map_err(|_| FetchError::InvalidUrl(url.into()))?;
+        let mut hops = 0;
+        loop {
+            let attempt = crate::transfer::Attempt::new(url.as_str(), client.proxy.as_deref());
+            let resp = client
+                .get(url.as_str())
+                .default_headers(false)
+                .headers(headers.clone())
+                .send()
+                .await?;
+            let response = Response::from_wreq(resp, attempt).await?;
+            (archive.0)(&crate::warc::Exchange {
+                url: &response.url,
+                request_headers: &headers,
+                status: response.status,
+                version: response.version,
+                headers: &response.headers,
+                body: &response.body,
+                ip: response.ip,
+            });
+            let next = self
+                .redirects
+                .filter(|_| matches!(response.status, 301 | 302 | 303 | 307 | 308))
+                .and_then(|_| response.headers.get(http::header::LOCATION)?.to_str().ok())
+                .and_then(|location| url.join(location).ok());
+            let Some(next) = next else {
+                return Ok(response);
+            };
+            hops += 1;
+            if Some(hops) > self.redirects {
+                return Err(FetchError::Build(format!(
+                    "too many redirects fetching {url}"
+                )));
+            }
+            let next = crate::url_security::validate_public_http_url(next.as_str()).await?;
+            if next.origin() != url.origin() {
+                for name in [
+                    http::header::AUTHORIZATION,
+                    http::header::COOKIE,
+                    http::header::HeaderName::from_static("cookie2"),
+                    http::header::PROXY_AUTHORIZATION,
+                    http::header::WWW_AUTHENTICATE,
+                ] {
+                    headers.remove(name);
+                }
+            }
+            headers.remove(http::header::REFERER);
+            if !(url.scheme() == "https" && next.scheme() == "http") {
+                let mut referer = url.clone();
+                let _ = referer.set_username("");
+                let _ = referer.set_password(None);
+                referer.set_fragment(None);
+                if let Ok(value) = http::HeaderValue::from_str(referer.as_str()) {
+                    headers.insert(http::header::REFERER, value);
+                }
+            }
+            url = next;
+        }
     }
 
     /// Fetch a URL and return the raw, undecoded response body as bytes.
@@ -769,10 +827,7 @@ impl FetchClient {
             let parsed_url = crate::url_security::validate_public_http_url(url).await?;
             let url = parsed_url.as_str();
             let client = self.pick_client(url);
-            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-            let resp = client.get(url).send().await?;
-            let response = Response::from_wreq(resp, attempt).await?;
-            self.archive(client, &[], &response);
+            let response = self.send(client, url, &[]).await?;
             Ok((response.status(), response.into_body()))
         })
         .await
@@ -1463,6 +1518,76 @@ mod tests {
         assert_eq!(sent["x-configured"], "yes");
         assert_eq!(sent["x-request"], "also");
         assert!(sent["user-agent"].to_str().unwrap().contains("Chrome/"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn an_archive_gets_every_redirect_hop_and_cookies_stay_on_their_origin() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let wire = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for reply in [
+                "HTTP/1.1 301 Moved Permanently\r\nLocation: /b\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 302 Found\r\nLocation: http://example.org/c\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 9\r\nConnection: close\r\n\r\n<p>c</p>\n",
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = Vec::new();
+                while !buffer.ends_with(b"\r\n\r\n") {
+                    let mut chunk = [0; 4096];
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert!(n > 0);
+                    buffer.extend_from_slice(&chunk[..n]);
+                }
+                requests.push(String::from_utf8(buffer).unwrap().to_ascii_lowercase());
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        type Hop = (String, u16, http::HeaderMap);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Hop>::new()));
+        let sink = seen.clone();
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::new(),
+            archive: Some(crate::warc::Archive(Arc::new(move |exchange| {
+                sink.lock().unwrap().push((
+                    exchange.url.to_string(),
+                    exchange.status,
+                    exchange.request_headers.clone(),
+                ));
+            }))),
+            ..Default::default()
+        })
+        .unwrap();
+        let page = client
+            .fetch_with_headers("http://example.com/a", &[("Cookie", "session=1")])
+            .await
+            .unwrap();
+        let wire = wire.await.unwrap();
+        assert_eq!(page.url, "http://example.org/c");
+        assert_eq!(page.html, "<p>c</p>\n");
+        let seen = seen.lock().unwrap();
+        let hops: Vec<_> = seen
+            .iter()
+            .map(|(url, status, _)| (url.as_str(), *status))
+            .collect();
+        assert_eq!(
+            hops,
+            [
+                ("http://example.com/a", 301),
+                ("http://example.com/b", 302),
+                ("http://example.org/c", 200)
+            ]
+        );
+        assert_eq!(seen[1].2["cookie"], "session=1");
+        assert!(seen[2].2.get("cookie").is_none());
+        assert_eq!(seen[2].2["referer"], "http://example.com/b");
+        assert!(wire[1].contains("cookie: session=1\r\n"));
+        assert!(!wire[2].contains("cookie:"), "{}", wire[2]);
+        assert!(wire[2].contains("referer: http://example.com/b\r\n"));
     }
 
     fn cached_config(proxy: String, dir: &std::path::Path) -> FetchConfig {

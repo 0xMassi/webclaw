@@ -98,6 +98,8 @@ impl Screenshot {
 const SCREENSHOT_VIEWPORT: (i64, i64) = (1280, 720);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
+type Stopped = Arc<Mutex<Option<String>>>;
+
 struct Visited<T> {
     value: T,
     status: u16,
@@ -385,9 +387,15 @@ impl Renderer {
     ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
         let start = Instant::now();
         let visited = self
-            .visit(url, prefetched, options, actions, None, async |page| {
-                page.content().await
-            })
+            .visit(
+                url,
+                prefetched,
+                options,
+                actions,
+                None,
+                None,
+                async |page| page.content().await,
+            )
             .await?;
         let page = FetchResult {
             html: visited.value,
@@ -398,6 +406,51 @@ impl Renderer {
             elapsed: start.elapsed(),
         };
         Ok((page, visited.scripts))
+    }
+
+    async fn render_unfollowed(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+    ) -> Result<FetchResult, FetchError> {
+        let start = Instant::now();
+        let stop: Stopped = Arc::default();
+        let visited = self
+            .visit(
+                url,
+                prefetched,
+                options,
+                &[],
+                None,
+                Some(stop.clone()),
+                async |page| page.content().await,
+            )
+            .await;
+        let location = stop.lock().ok().and_then(|stop| stop.clone());
+        if let Some(location) = location {
+            let mut headers = http::HeaderMap::new();
+            if let Ok(value) = http::HeaderValue::from_str(&location) {
+                headers.insert(http::header::LOCATION, value);
+            }
+            return Ok(FetchResult {
+                html: String::new(),
+                document_bytes: None,
+                status: 302,
+                url: url.to_string(),
+                headers,
+                elapsed: start.elapsed(),
+            });
+        }
+        let visited = visited?;
+        Ok(FetchResult {
+            html: visited.value,
+            document_bytes: None,
+            status: visited.status,
+            url: visited.url,
+            headers: http::HeaderMap::new(),
+            elapsed: start.elapsed(),
+        })
     }
 
     /// Render `url` in a 1280x720 viewport and capture it once its content
@@ -437,6 +490,7 @@ impl Renderer {
                 },
                 actions,
                 Some(SCREENSHOT_VIEWPORT),
+                None,
                 async move |page| page.screenshot(params).await,
             )
             .await?;
@@ -448,6 +502,7 @@ impl Renderer {
         Ok((shot, visited.scripts))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn visit<T>(
         &self,
         url: &str,
@@ -455,6 +510,7 @@ impl Renderer {
         options: &RenderOptions,
         actions: &[Action],
         viewport: Option<(i64, i64)>,
+        stop: Option<Stopped>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
     ) -> Result<Visited<T>, FetchError> {
         let private = !self.persistent
@@ -464,7 +520,9 @@ impl Renderer {
                 .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
         if !private {
             return self
-                .visit_in(None, url, prefetched, options, actions, viewport, read)
+                .visit_in(
+                    None, url, prefetched, options, actions, viewport, stop, read,
+                )
                 .await;
         }
         let context = self
@@ -482,6 +540,7 @@ impl Renderer {
                 options,
                 actions,
                 viewport,
+                stop,
                 read,
             )
             .await;
@@ -498,6 +557,7 @@ impl Renderer {
         options: &RenderOptions,
         actions: &[Action],
         viewport: Option<(i64, i64)>,
+        stop: Option<Stopped>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
     ) -> Result<Visited<T>, FetchError> {
         let target = crate::url_security::validate_public_http_url(url).await?;
@@ -513,6 +573,7 @@ impl Renderer {
             .map_err(browser_error)?;
         }
         let main_frame = page.mainframe().await.map_err(browser_error)?;
+        let navigating = main_frame.clone();
         let mut responses = page
             .event_listener::<EventResponseReceived>()
             .await
@@ -576,6 +637,19 @@ impl Renderer {
             while let Some(event) = paused.next().await {
                 let request_url = event.request.url.as_str();
                 let id = event.request_id.clone();
+                if let Some(stop) = &stop
+                    && event.resource_type == ResourceType::Document
+                    && navigating.as_ref() == Some(&event.frame_id)
+                    && !same_document(request_url, &target)
+                {
+                    if let Ok(mut stop) = stop.lock() {
+                        stop.get_or_insert_with(|| request_url.to_string());
+                    }
+                    let _ = guard_page
+                        .execute(FailRequestParams::new(id, ErrorReason::BlockedByClient))
+                        .await;
+                    continue;
+                }
                 if event.resource_type == ResourceType::Document
                     && request_url == target.as_str()
                     && let Some((body, headers)) = main_document.take()
@@ -1053,12 +1127,18 @@ impl RenderPool {
     /// profile's cookies, when `fetched`, its HTTP response, is an HTML page,
     /// and return the rendered page in its place. Otherwise, or when the
     /// browser fails, return `fetched`; a failure is logged.
+    ///
+    /// Without `follow_redirects`, the browser stops at the page's first
+    /// redirect or navigation, which comes back as a 302 with its target in
+    /// `Location`, the way an HTTP client that does not follow redirects
+    /// answers, so a crawl can check the target before it is loaded.
     pub async fn load_in_profile(
         &self,
         url: &str,
         fetched: FetchResult,
         config: &RenderConfig,
         headers: &[(String, String)],
+        follow_redirects: bool,
     ) -> FetchResult {
         let html = fetched.document_bytes.is_none()
             && fetched
@@ -1069,10 +1149,13 @@ impl RenderPool {
         if !self.persistent() || !html {
             return fetched;
         }
-        match self
-            .render(url, None, config.wait_for.as_deref(), headers, config.block)
-            .await
-        {
+        let rendered = if follow_redirects {
+            self.render(url, None, config.wait_for.as_deref(), headers, config.block)
+                .await
+        } else {
+            self.render_unfollowed(url, config, headers).await
+        };
+        match rendered {
             Ok(rendered) => rendered,
             Err(e) => {
                 warn!(
@@ -1082,6 +1165,22 @@ impl RenderPool {
                 fetched
             }
         }
+    }
+
+    async fn render_unfollowed(
+        &self,
+        url: &str,
+        config: &RenderConfig,
+        headers: &[(String, String)],
+    ) -> Result<FetchResult, FetchError> {
+        let _tab = self
+            .tabs
+            .acquire()
+            .await
+            .map_err(|_| FetchError::Build("browser closed".into()))?;
+        let renderer = self.renderer().await?;
+        let options = self.options(config.wait_for.as_deref(), headers, config.block);
+        renderer.render_unfollowed(url, None, &options).await
     }
 
     /// Shut down the browser if this pool launched it. A later render starts a new one.
@@ -1129,6 +1228,16 @@ async fn is_public(url: &str) -> bool {
         || crate::url_security::validate_public_http_url(url)
             .await
             .is_ok()
+}
+
+fn same_document(request: &str, target: &Url) -> bool {
+    let Ok(mut request) = Url::parse(request) else {
+        return false;
+    };
+    let mut target = target.clone();
+    request.set_fragment(None);
+    target.set_fragment(None);
+    request == target
 }
 
 fn host(url: &str) -> Option<String> {
@@ -1514,6 +1623,47 @@ mod tests {
         renderer.close().await;
         rendered.expect("render succeeds");
         assert!(!dir.join("Profile 1").exists(), "Chrome opened Profile 1");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn an_unfollowed_render_stops_at_the_first_navigation() {
+        let headers = http::HeaderMap::new();
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        };
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let moved = renderer
+            .render_unfollowed(
+                "https://example.com/start",
+                Some(Prefetched {
+                    html: r#"<html><body><script>location.hash = "top"; location.href = "https://example.org/elsewhere";</script></body></html>"#,
+                    headers: &headers,
+                }),
+                &options,
+            )
+            .await;
+        let stayed = renderer
+            .render_unfollowed(
+                "https://example.com/start",
+                Some(Prefetched {
+                    html: r#"<html><body><p id="here">stayed</p><script>location.hash = "top";</script></body></html>"#,
+                    headers: &headers,
+                }),
+                &options,
+            )
+            .await;
+        renderer.close().await;
+        let moved = moved.expect("a stopped navigation is not an error");
+        assert_eq!(moved.status, 302);
+        assert_eq!(
+            moved.headers.get(http::header::LOCATION).unwrap(),
+            "https://example.org/elsewhere"
+        );
+        let stayed = stayed.expect("render succeeds");
+        assert_eq!(stayed.status, 200);
+        assert!(stayed.html.contains("stayed"), "{}", stayed.html);
     }
 
     #[tokio::test]
@@ -2561,7 +2711,7 @@ mod tests {
         json.headers
             .insert("content-type", "application/json".parse().unwrap());
         let kept = profile
-            .load_in_profile("https://example.com/api", json, &config, &[])
+            .load_in_profile("https://example.com/api", json, &config, &[], true)
             .await;
         assert_eq!(kept.html, "{}");
         let mut html = page("https://example.com/", "<script></script>", 200);
@@ -2570,11 +2720,11 @@ mod tests {
         assert!(profile.persistent() && !pool().persistent());
         assert!(pool().wants(&html, 0, true) && !profile.wants(&html, 0, true));
         let kept = pool()
-            .load_in_profile("https://example.com/", html.clone(), &config, &[])
+            .load_in_profile("https://example.com/", html.clone(), &config, &[], true)
             .await;
         assert_eq!(kept.html, "<script></script>");
         let kept = profile
-            .load_in_profile("https://example.com/", html, &config, &[])
+            .load_in_profile("https://example.com/", html, &config, &[], true)
             .await;
         assert_eq!(kept.html, "<script></script>");
     }

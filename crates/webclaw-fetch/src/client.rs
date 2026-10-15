@@ -329,6 +329,8 @@ pub struct FetchClient {
     render: Option<crate::render::RenderConfig>,
     #[cfg(feature = "browser")]
     headers: Vec<(String, String)>,
+    #[cfg(feature = "browser")]
+    follow_redirects: bool,
 }
 
 impl FetchClient {
@@ -450,6 +452,8 @@ impl FetchClient {
             render: config.render.clone(),
             #[cfg(feature = "browser")]
             headers: config.headers.clone().into_iter().collect(),
+            #[cfg(feature = "browser")]
+            follow_redirects: config.follow_redirects,
         })
     }
 
@@ -570,7 +574,7 @@ impl FetchClient {
         if let Some(render) = &self.render {
             return Ok(render
                 .pool
-                .load_in_profile(url, fetched, render, &self.headers)
+                .load_in_profile(url, fetched, render, &self.headers, self.follow_redirects)
                 .await);
         }
         Ok(fetched)

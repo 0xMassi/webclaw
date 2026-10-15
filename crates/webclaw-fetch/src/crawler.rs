@@ -206,6 +206,7 @@ pub struct Crawler {
     follow_redirects: bool,
     config: CrawlConfig,
     seed_origin: String,
+    seed_scheme: String,
     /// Root domain of the seed URL for subdomain matching (e.g. "example.com").
     seed_root_domain: String,
     robots: std::sync::Mutex<HashMap<String, Arc<RobotsRules>>>,
@@ -248,14 +249,9 @@ impl Crawler {
     /// Constructs the underlying `FetchClient` from `config.fetch`.
     pub fn new(seed_url: &str, config: CrawlConfig) -> Result<Self, FetchError> {
         let seed = Url::parse(seed_url).map_err(|_| FetchError::InvalidUrl(seed_url.into()))?;
-        let seed_origin = origin_key(&seed);
+        let seed_origin = origin_key(&as_https(&seed));
         let seed_root_domain = root_domain(&seed);
 
-        // Reject pathological user-supplied glob patterns before they can
-        // exercise the recursive `**` handler in glob_match_inner. The
-        // matcher is a straight backtracking implementation; a deeply
-        // nested `**/**/**/...` pattern against a long path can degrade
-        // to exponential time per link checked, per page crawled.
         for pat in config
             .include_patterns
             .iter()
@@ -281,6 +277,7 @@ impl Crawler {
             ask: Ask::new(config.query.as_deref()),
             config,
             seed_origin,
+            seed_scheme: seed.scheme().to_string(),
             seed_root_domain,
             robots: Default::default(),
         })
@@ -501,7 +498,7 @@ impl Crawler {
             ..Default::default()
         };
         if let Some(state) = resume_state {
-            visited = state.visited.into_iter().collect();
+            visited = state.visited.iter().map(|k| dedup_key(k)).collect();
             let query = self.ask.as_ref().map(|a| a.query.as_str());
             let scores = if query.is_some() && state.query.as_deref() == query {
                 state.scores
@@ -532,7 +529,9 @@ impl Crawler {
                     Ok(entries) => {
                         let before = frontier.len();
                         for entry in entries {
-                            if let Some(url) = self.qualify_link(&entry.url, &visited) {
+                            if let Some(url) =
+                                self.qualify_link(&self.on_seed_scheme(&entry.url), &visited)
+                            {
                                 frontier.push_back(url, 0, 0.0);
                             }
                         }
@@ -571,6 +570,7 @@ impl Crawler {
         let mut last_checkpoint = Instant::now();
         let mut dirty = false;
         let mut redirect_hops: HashMap<String, usize> = HashMap::new();
+        let mut same_page_redirects: HashSet<String> = HashSet::new();
 
         loop {
             while in_flight.len() < concurrency
@@ -587,16 +587,24 @@ impl Crawler {
                 let Some((url, depth, score)) = frontier.pop(deepest_allowed) else {
                     break;
                 };
-                if visited.contains(&dedup_key(&url)) || denied.contains(&url) {
+                let key = dedup_key(&url);
+                let same_page_target = same_page_redirects.remove(&url);
+                if visited.contains(&key) || denied.contains(&url) {
+                    if same_page_target {
+                        visited.insert(key);
+                    }
                     continue;
                 }
                 if self.config.respect_robots && !self.robots_allow(&url).await {
                     debug!(url = %url, "skipped: disallowed by robots.txt");
                     skipped_by_robots += 1;
+                    if same_page_target {
+                        visited.insert(key);
+                    }
                     denied.insert(url);
                     continue;
                 }
-                visited.insert(dedup_key(&url));
+                visited.insert(key);
                 started += 1;
                 *in_flight_depths.entry(depth).or_default() += 1;
                 in_flight_urls.insert(url.clone(), (depth, score));
@@ -678,11 +686,22 @@ impl Crawler {
                     if let Some(target) = Url::parse(&url)
                         .ok()
                         .and_then(|base| base.join(&location).ok())
-                        .and_then(|target| self.qualify_link(target.as_str(), &visited))
                     {
-                        debug!(from = %url, to = %target, "following redirect");
-                        redirect_hops.insert(target.clone(), hop);
-                        frontier.push_front(target, depth, score);
+                        let source = dedup_key(&url);
+                        let same_page = page_key(&target) == source;
+                        if same_page {
+                            visited.remove(&source);
+                        }
+                        if let Some(target) = self.qualify_link(target.as_str(), &visited) {
+                            debug!(from = %url, to = %target, "following redirect");
+                            if same_page {
+                                same_page_redirects.insert(target.clone());
+                            }
+                            redirect_hops.insert(target.clone(), hop);
+                            frontier.push_front(target, depth, score);
+                        } else if same_page {
+                            visited.insert(source);
+                        }
                     }
                     continue;
                 }
@@ -716,7 +735,8 @@ impl Crawler {
                 }
                 let mut dropped = false;
                 for (href, score) in best {
-                    if let Some(candidate) = self.qualify_link(href, &visited) {
+                    if let Some(candidate) = self.qualify_link(&self.on_seed_scheme(href), &visited)
+                    {
                         dropped |= !frontier.push_capped(candidate, depth + 1, score, frontier_cap);
                     }
                 }
@@ -873,7 +893,7 @@ impl Crawler {
         };
         let now = Instant::now();
         let earliest = now + base;
-        let origin = parsed.origin().ascii_serialization();
+        let origin = as_https(&parsed).origin().ascii_serialization();
         let start = next_start
             .get(&origin)
             .map_or(earliest, |slot| (*slot).max(earliest));
@@ -881,22 +901,33 @@ impl Crawler {
         start - now
     }
 
+    fn on_seed_scheme(&self, href: &str) -> String {
+        match Url::parse(href) {
+            Ok(mut url)
+                if matches!(url.scheme(), "http" | "https")
+                    && url.scheme() != self.seed_scheme
+                    && origin_key(&as_https(&url)) == self.seed_origin =>
+            {
+                let _ = url.set_scheme(&self.seed_scheme);
+                url.to_string()
+            }
+            _ => href.to_string(),
+        }
+    }
+
     /// Check if a discovered link should be added to the frontier.
     /// Returns `Some(normalized_url)` if it passes all filters, `None` otherwise.
     fn qualify_link(&self, href: &str, visited: &HashSet<String>) -> Option<String> {
         let parsed = Url::parse(href).ok()?;
 
-        // Only http(s) schemes
         match parsed.scheme() {
             "http" | "https" => {}
             _ => return None,
         }
 
-        // Scope check: same-origin, subdomain, or external
         if !self.config.allow_external_links {
-            let link_origin = origin_key(&parsed);
+            let link_origin = origin_key(&as_https(&parsed));
             if link_origin != self.seed_origin {
-                // Not same-origin. Check if subdomain crawling is allowed.
                 if self.config.allow_subdomains {
                     let link_root = root_domain(&parsed);
                     if link_root != self.seed_root_domain {
@@ -908,14 +939,12 @@ impl Crawler {
             }
         }
 
-        // Path prefix filter
         if let Some(ref prefix) = self.config.path_prefix
             && !parsed.path().starts_with(prefix.as_str())
         {
             return None;
         }
 
-        // Include patterns: if any are set, path must match at least one
         let path = parsed.path();
         if !self.config.include_patterns.is_empty()
             && !self
@@ -927,7 +956,6 @@ impl Crawler {
             return None;
         }
 
-        // Exclude patterns: if path matches any, skip
         if self
             .config
             .exclude_patterns
@@ -937,7 +965,6 @@ impl Crawler {
             return None;
         }
 
-        // Skip common non-page file extensions
         const SKIP_EXTENSIONS: &[&str] = &[
             ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js",
             ".zip", ".tar", ".gz", ".xml", ".rss", ".mp3", ".mp4", ".avi", ".mov", ".woff",
@@ -947,7 +974,7 @@ impl Crawler {
             return None;
         }
 
-        if visited.contains(&normalize(&parsed)) {
+        if visited.contains(&page_key(&parsed)) {
             return None;
         }
 
@@ -1166,7 +1193,19 @@ fn without_fragment(url: &Url) -> String {
 }
 
 fn dedup_key(url: &str) -> String {
-    Url::parse(url).map_or_else(|_| url.to_string(), |u| normalize(&u))
+    Url::parse(url).map_or_else(|_| url.to_string(), |u| page_key(&u))
+}
+
+fn page_key(url: &Url) -> String {
+    normalize(&as_https(url))
+}
+
+fn as_https(url: &Url) -> Url {
+    let mut url = url.clone();
+    if url.scheme() == "http" {
+        let _ = url.set_scheme("https");
+    }
+    url
 }
 
 pub(crate) fn normalize(url: &Url) -> String {
@@ -1992,6 +2031,181 @@ mod tests {
         );
         assert_eq!(result.total, 2);
         assert_eq!(result.skipped_by_robots, 1);
+    }
+
+    #[tokio::test]
+    async fn a_link_in_the_other_scheme_is_fetched_on_the_seed_scheme() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "http://example.com/",
+            CrawlConfig {
+                max_depth: 1,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result = crawler
+            .run("http://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    if url.starts_with("https:") {
+                        return Page::failed("connection refused".into());
+                    }
+                    match Url::parse(&url).unwrap().path() {
+                        "/" => html_page(&url, "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='https://example.com/page'>Page</a><a href='http://example.com/page'>Page</a></main>"),
+                        _ => html_page(&url, "<main><h1>Leaf</h1><p>Leaf content for the crawl.</p></main>"),
+                    }
+                }
+            })
+            .await;
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec!["http://example.com/", "http://example.com/page"],
+            "{calls:?}"
+        );
+        assert_eq!((result.ok, result.errors), (2, 0));
+    }
+
+    #[tokio::test]
+    async fn a_resume_from_an_older_state_skips_visited_http_pages() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let state = CrawlState {
+            seed_url: "http://example.com/".into(),
+            visited: vec!["http://example.com/".into(), "http://example.com/a".into()],
+            frontier: vec![("http://example.com/b".into(), 1)],
+            completed_pages: 2,
+            max_pages: 0,
+            max_depth: 2,
+            scores: HashMap::new(),
+            query: None,
+        };
+        Crawler::new(
+            "http://example.com/",
+            CrawlConfig {
+                max_depth: 2,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .run("http://example.com/", Some(state), move |url| {
+            recorded.lock().unwrap().push(url.clone());
+            async move {
+                html_page(&url, "<main><h1>Page</h1><p>Page content for the crawl.</p><a href='/'>Home</a><a href='/a'>A</a></main>")
+            }
+        })
+        .await;
+        assert_eq!(*calls.lock().unwrap(), vec!["http://example.com/b"]);
+    }
+
+    #[tokio::test]
+    async fn crawl_delay_spaces_http_and_https_on_one_host_together() {
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for origin in ["https://example.com", "http://example.com"] {
+            crawler.preload_robots(
+                origin,
+                RobotsRules::parse("User-agent: *\nCrawl-delay: 2\n", USER_AGENT_TOKEN),
+            );
+        }
+        let mut slots = HashMap::new();
+        crawler
+            .start_delay("http://example.com/a", &mut slots)
+            .await;
+        let second = crawler
+            .start_delay("https://example.com/b", &mut slots)
+            .await;
+        assert!(second > Duration::from_millis(1900), "{second:?}");
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_the_same_page_is_followed_once() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_depth: 2,
+                delay: Duration::ZERO,
+                fetch: FetchConfig {
+                    max_redirects: 3,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let robots = "User-agent: *\nDisallow: /tag/x/\nDisallow: /private\n";
+        for origin in ["https://example.com", "http://example.com"] {
+            crawler.preload_robots(origin, RobotsRules::parse(robots, USER_AGENT_TOKEN));
+        }
+        crawler.preload_robots("https://www.example.com", RobotsRules::allow_all());
+        let result = crawler
+            .run("https://example.com/", None, move |url| {
+                recorded.lock().unwrap().push(url.clone());
+                async move {
+                    let path = Url::parse(&url).unwrap().path().to_string();
+                    match path.as_str() {
+                        "/author/a" | "/tag/x" | "/plain" | "/loop" => redirect(&format!("{path}/")),
+                        "/loop/" => redirect("/loop"),
+                        "/plain/" if url.starts_with("https:") => redirect("http://example.com/plain/"),
+                        "/Upper" => redirect("/upper"),
+                        "/index.html" => redirect("/"),
+                        "/w" if !url.contains("www.") => redirect("https://www.example.com/w"),
+                        "/w" => html_page(&url, "<main><h1>W</h1><p>Leaf content for the crawl.</p></main>"),
+                        "/start" => redirect("/private/report"),
+                        "/" => html_page(&url, "<main><h1>Seed</h1><p>Seed content for the crawl.</p><a href='/author/a'>A</a><a href='/tag/x'>X</a><a href='/plain'>P</a><a href='/loop'>L</a><a href='/Upper'>U</a><a href='/index.html'>I</a><a href='/w'>W</a><a href='/start'>S</a></main>"),
+                        _ => html_page(&url, "<main><h1>Leaf</h1><p>Leaf content for the crawl.</p><a href='/author/a'>A</a><a href='/author/a/'>A</a><a href='/tag/x'>X</a></main>"),
+                    }
+                }
+            })
+            .await;
+        let calls = calls.lock().unwrap().clone();
+        let count = |u: &str| calls.iter().filter(|c| *c == u).count();
+        for url in [
+            "https://example.com/",
+            "https://example.com/author/a",
+            "https://example.com/author/a/",
+            "https://example.com/tag/x",
+            "https://example.com/plain",
+            "https://example.com/plain/",
+            "http://example.com/plain/",
+            "https://example.com/upper",
+            "https://www.example.com/w",
+        ] {
+            assert_eq!(count(url), 1, "{url} in {calls:?}");
+        }
+        for url in [
+            "https://example.com/tag/x/",
+            "https://example.com/private/report",
+        ] {
+            assert_eq!(count(url), 0, "{url} in {calls:?}");
+        }
+        assert_eq!(
+            count("https://example.com/loop") + count("https://example.com/loop/"),
+            4,
+            "{calls:?}"
+        );
+        assert_eq!(result.skipped_by_robots, 2);
+        let pages: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
+        assert!(
+            pages.contains(&"https://example.com/author/a/"),
+            "{pages:?}"
+        );
+        assert!(pages.contains(&"http://example.com/plain/"), "{pages:?}");
+        assert_eq!(result.errors, 1, "{pages:?}");
     }
 
     #[tokio::test]

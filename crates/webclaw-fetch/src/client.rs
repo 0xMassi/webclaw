@@ -544,7 +544,7 @@ impl FetchClient {
         }
         #[cfg(feature = "browser")]
         if let Some(render) = self.render.as_ref().filter(|render| render.solve)
-            && let Some((cookies, agent)) = render.pool.clearance(url).await
+            && let Some((cookies, agent)) = render.pool.clearance(url)
         {
             debug!(url, "sending the clearance from a solved challenge");
             let own = self

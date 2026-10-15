@@ -158,7 +158,27 @@ pub struct Renderer {
     proxy_login: Option<(String, String)>,
     check_documents: bool,
     agent: String,
-    clearances: Mutex<Vec<Clearance>>,
+    clearances: Arc<Mutex<Jar>>,
+}
+
+#[derive(Debug, Default)]
+struct Jar {
+    agent: String,
+    cookies: Vec<Clearance>,
+}
+
+impl Jar {
+    fn clearance(&self, url: &str) -> Option<(String, String)> {
+        let url = Url::parse(url).ok()?;
+        let now = unix_now();
+        let cookies: Vec<String> = self
+            .cookies
+            .iter()
+            .filter(|c| c.applies_to(&url, now))
+            .map(|c| format!("{}={}", c.name, c.value))
+            .collect();
+        (!cookies.is_empty()).then(|| (cookies.join("; "), self.agent.clone()))
+    }
 }
 
 const CLEARANCE_COOKIES: &[&str] = &["cf_clearance"];
@@ -363,7 +383,7 @@ impl Renderer {
             proxy_login,
             check_documents: false,
             agent,
-            clearances: Mutex::new(Vec::new()),
+            clearances: Arc::default(),
         };
         match ready {
             Ok(paused) => {
@@ -737,15 +757,7 @@ impl Renderer {
     /// domain, path, `Secure` flag and expiry, and never from a render that
     /// sent its own `Cookie` header.
     pub fn clearance(&self, url: &str) -> Option<(String, String)> {
-        let url = Url::parse(url).ok()?;
-        let now = unix_now();
-        let jar = self.clearances.lock().ok()?;
-        let cookies: Vec<String> = jar
-            .iter()
-            .filter(|c| c.applies_to(&url, now))
-            .map(|c| format!("{}={}", c.name, c.value))
-            .collect();
-        (!cookies.is_empty()).then(|| (cookies.join("; "), self.agent.clone()))
+        self.clearances.lock().ok()?.clearance(url)
     }
 
     async fn keep_clearance(&self, page: &chromiumoxide::Page, url: &str) {
@@ -759,15 +771,16 @@ impl Renderer {
         let Ok(mut jar) = self.clearances.lock() else {
             return;
         };
-        jar.retain(|c| c.expires.is_none_or(|at| at > now));
+        jar.agent.clone_from(&self.agent);
+        jar.cookies.retain(|c| c.expires.is_none_or(|at| at > now));
         for cookie in cookies.result.cookies {
             if !CLEARANCE_COOKIES.contains(&cookie.name.as_str()) {
                 continue;
             }
-            jar.retain(|c| {
+            jar.cookies.retain(|c| {
                 c.domain != cookie.domain || c.path != cookie.path || c.name != cookie.name
             });
-            jar.push(Clearance {
+            jar.cookies.push(Clearance {
                 domain: cookie.domain,
                 path: cookie.path,
                 secure: cookie.secure,
@@ -833,6 +846,7 @@ pub struct RenderPool {
     browser: RwLock<Option<Result<Renderer, String>>>,
     tabs: Semaphore,
     hosts: Mutex<HashMap<String, HostRenders>>,
+    clearances: Arc<Mutex<Jar>>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -880,6 +894,7 @@ impl RenderPool {
             browser: RwLock::new(None),
             tabs: Semaphore::new(MAX_TABS),
             hosts: Mutex::new(HashMap::new()),
+            clearances: Arc::default(),
         }
     }
 
@@ -931,12 +946,10 @@ impl RenderPool {
             .await
     }
 
-    /// [`Renderer::clearance`] for `url`, once the browser has started.
-    pub async fn clearance(&self, url: &str) -> Option<(String, String)> {
-        match self.browser.read().await.as_ref() {
-            Some(Ok(renderer)) => renderer.clearance(url),
-            _ => None,
-        }
+    /// [`Renderer::clearance`] for `url`, from any browser this pool has
+    /// started. It never waits for a browser to launch.
+    pub fn clearance(&self, url: &str) -> Option<(String, String)> {
+        self.clearances.lock().ok()?.clearance(url)
     }
 
     /// Screenshot `url`; see [`Renderer::screenshot`].
@@ -1016,7 +1029,14 @@ impl RenderPool {
                 if let Err(e) = &started {
                     warn!("no browser for rendering: {e}");
                 }
-                *slot = Some(started.map_err(|e| e.to_string()));
+                *slot = Some(
+                    started
+                        .map(|mut renderer| {
+                            renderer.clearances = self.clearances.clone();
+                            renderer
+                        })
+                        .map_err(|e| e.to_string()),
+                );
             }
         }
         RwLockReadGuard::try_map(self.browser.read().await, |slot| {
@@ -2260,6 +2280,29 @@ mod tests {
         assert!(!kept.applies_to(&url("http://example.com/shop"), 1_000.0));
         assert!(!kept.applies_to(&url("https://example.com/shop"), 3_000.0));
         assert!(!kept.applies_to(&url("https://example.org/shop"), 1_000.0));
+    }
+
+    #[tokio::test]
+    async fn the_clearance_is_read_while_a_browser_launches() {
+        let pool = pool();
+        pool.clearances
+            .lock()
+            .unwrap()
+            .cookies
+            .push(super::Clearance {
+                domain: "example.com".into(),
+                path: "/".into(),
+                secure: false,
+                expires: None,
+                name: "cf_clearance".into(),
+                value: "x".into(),
+            });
+        let launching = pool.browser.write().await;
+        assert_eq!(
+            pool.clearance("https://example.com/a").map(|c| c.0),
+            Some("cf_clearance=x".to_string())
+        );
+        drop(launching);
     }
 
     #[test]

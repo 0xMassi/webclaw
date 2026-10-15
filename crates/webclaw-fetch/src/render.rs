@@ -178,15 +178,19 @@ impl Renderer {
         Self::launch_in(proxy, args, profile, false, command_timeout).await
     }
 
-    /// Launch a local headless Chrome on the profile in `dir`, created when
-    /// missing and then readable by its owner only on Unix, so cookies, session cookies included, local storage and
-    /// IndexedDB carry over to later launches. Every render shares the
-    /// profile's cookies, and the cookies of a `Cookie` header are saved in
-    /// it. One browser can use a profile at a time: a second launch on it
-    /// fails while the first runs. Give it a directory of its own, not the
-    /// profile of a Chrome you browse with, since tabs left open by an
-    /// earlier launch are dropped and the profile's preferences are changed
-    /// to turn off prefetching. Otherwise as [`Renderer::launch`].
+    /// Launch a local headless Chrome on the profile in `dir`, so cookies,
+    /// session cookies included, local storage and IndexedDB carry over to
+    /// later launches. Every render shares the profile's cookies, and the
+    /// cookies of a `Cookie` header are saved in it. One browser can use a
+    /// profile at a time: a second launch on it fails while the first runs.
+    ///
+    /// `dir` is created when missing, readable by its owner only on Unix,
+    /// and marked as made by webclaw. A directory that is neither empty nor
+    /// marked, such as the profile of a Chrome you browse with, is refused,
+    /// as are a symbolic link and, on Unix, a directory other users can
+    /// write to. Tabs left open by an earlier launch are dropped and the
+    /// profile's preferences turn off prefetching. Otherwise as
+    /// [`Renderer::launch`].
     pub async fn launch_with_profile(
         proxy: Option<&str>,
         dir: &std::path::Path,
@@ -1243,15 +1247,11 @@ fn browser_error(e: impl std::fmt::Display) -> FetchError {
     FetchError::Build(format!("browser: {e}"))
 }
 
+const PROFILE_MARKER: &str = ".webclaw-profile";
+
 fn prepare_profile(dir: &std::path::Path, persistent: bool) -> Result<(), String> {
-    #[cfg(unix)]
     if persistent {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-            .map_err(|e| e.to_string())?;
+        claim_profile(dir)?;
     }
     let default = dir.join("Default");
     std::fs::create_dir_all(&default).map_err(|e| e.to_string())?;
@@ -1271,6 +1271,56 @@ fn prepare_profile(dir: &std::path::Path, persistent: bool) -> Result<(), String
         let _ = std::fs::remove_dir_all(default.join("Sessions"));
     }
     Ok(())
+}
+
+fn claim_profile(dir: &std::path::Path) -> Result<(), String> {
+    let marker = dir.join(PROFILE_MARKER);
+    let found = match std::fs::symlink_metadata(dir) {
+        Ok(found) => found,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(dir)
+                    .map_err(|e| e.to_string())?;
+            }
+            #[cfg(not(unix))]
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            return std::fs::write(&marker, b"").map_err(|e| e.to_string());
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    if found.file_type().is_symlink() {
+        return Err("it is a symbolic link; give the directory itself".into());
+    }
+    if !found.is_dir() {
+        return Err("it is not a directory".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if found.permissions().mode() & 0o022 != 0 {
+            return Err("other users can write to it; make it private with chmod 700".into());
+        }
+    }
+    if marker.exists() {
+        return Ok(());
+    }
+    let empty = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .next()
+        .is_none();
+    if !empty {
+        return Err(
+            "it is not empty and webclaw did not make it; give webclaw a new or empty directory, \
+             not the profile of a Chrome you browse with"
+                .into(),
+        );
+    }
+    std::fs::write(&marker, b"").map_err(|e| e.to_string())
 }
 
 fn without_prediction(existing: Option<&[u8]>) -> Result<Vec<u8>, String> {
@@ -1539,6 +1589,42 @@ mod tests {
         .to_string();
         assert!(refused.contains("in use by another browser"), "{refused}");
         assert!(refused.contains("otherhost-4242"), "{refused}");
+    }
+
+    #[test]
+    fn only_a_private_directory_webclaw_made_or_an_empty_one_becomes_a_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let made = root.path().join("made");
+        super::prepare_profile(&made, true).unwrap();
+        assert!(made.join(super::PROFILE_MARKER).exists());
+        super::prepare_profile(&made, true).expect("its own profile again");
+
+        let empty = root.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        super::prepare_profile(&empty, true).expect("an empty directory");
+        assert!(empty.join(super::PROFILE_MARKER).exists());
+
+        let chrome = root.path().join("chrome");
+        std::fs::create_dir(&chrome).unwrap();
+        std::fs::write(chrome.join("Local State"), b"{}").unwrap();
+        let refused = super::prepare_profile(&chrome, true).unwrap_err();
+        assert!(refused.contains("did not make it"), "{refused}");
+        assert!(!chrome.join("Default").exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let open = root.path().join("open");
+            std::fs::create_dir(&open).unwrap();
+            std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+            let refused = super::prepare_profile(&open, true).unwrap_err();
+            assert!(refused.contains("other users can write"), "{refused}");
+
+            let link = root.path().join("link");
+            std::os::unix::fs::symlink(&made, &link).unwrap();
+            let refused = super::prepare_profile(&link, true).unwrap_err();
+            assert!(refused.contains("symbolic link"), "{refused}");
+        }
     }
 
     #[test]

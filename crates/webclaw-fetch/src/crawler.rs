@@ -122,6 +122,12 @@ pub struct CrawlConfig {
     /// [`webclaw_core::focus_extraction`]. The first 32 distinct words of the
     /// question count, and a query without letters or digits counts as none.
     pub query: Option<String>,
+    /// With a [`query`](Self::query), stop starting new pages once a page
+    /// rated at least 0.8 has been fetched and the 8 pages fetched after it
+    /// rated no higher. Pages already in flight still finish, and
+    /// [`max_pages`](Self::max_pages) still caps the crawl. Without a query
+    /// it does nothing.
+    pub stop_when_answered: bool,
 }
 
 /// A callback that receives each finished page; see [`CrawlConfig::on_page`].
@@ -155,6 +161,7 @@ impl Default for CrawlConfig {
             checkpoint: None,
             on_page: None,
             query: None,
+            stop_when_answered: false,
         }
     }
 }
@@ -590,11 +597,14 @@ impl Crawler {
         let mut dirty = false;
         let mut redirect_hops: HashMap<String, usize> = HashMap::new();
         let mut same_page_redirects: HashSet<String> = HashSet::new();
+        let mut quiet = Quiet::default();
+        let mut answered = false;
 
         loop {
             let mut wake: Option<Instant> = None;
             while in_flight.len() < concurrency
                 && self.under_page_cap(started)
+                && !answered
                 && !self.is_cancelled()
             {
                 let deepest_allowed = match rating {
@@ -747,6 +757,17 @@ impl Crawler {
                 let (rated, scores) = rater.rate(words);
                 relevance = Some(rated);
                 link_scores = scores;
+            }
+            if self.config.stop_when_answered
+                && rating.is_some()
+                && !answered
+                && quiet.answered(relevance.unwrap_or(0.0))
+            {
+                info!(
+                    best = quiet.best,
+                    "stopping: no better page in the last {ANSWERED_AFTER}"
+                );
+                answered = true;
             }
 
             if depth < self.config.max_depth && extraction.is_ok() {
@@ -1004,6 +1025,27 @@ const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
 const CANCEL_POLL: Duration = Duration::from_millis(100);
 // ponytail: a fixed 1s interval rewrites the whole visited set each time; space it out by size if crawls past ~100k pages make it costly.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
+
+const ANSWERED_RELEVANCE: f64 = 0.8;
+const ANSWERED_AFTER: usize = 8;
+
+#[derive(Default)]
+struct Quiet {
+    best: f64,
+    since: usize,
+}
+
+impl Quiet {
+    fn answered(&mut self, relevance: f64) -> bool {
+        if relevance > self.best {
+            self.best = relevance;
+            self.since = 0;
+        } else {
+            self.since += 1;
+        }
+        self.best >= ANSWERED_RELEVANCE && self.since >= ANSWERED_AFTER
+    }
+}
 
 type FrontierKey = (Reverse<u64>, usize, i64);
 
@@ -1716,6 +1758,68 @@ mod tests {
         assert!(markdown.contains("ripe bananas"), "{markdown}");
         assert!(!markdown.contains("tin"), "{markdown}");
         assert!(result.pages.iter().all(|p| p.relevance.is_some()));
+    }
+
+    #[test]
+    fn answered_once_a_good_page_has_no_better_successor_for_eight_pages() {
+        let mut quiet = Quiet::default();
+        assert!(!quiet.answered(0.7));
+        assert!((0..20).all(|_| !quiet.answered(0.2)));
+        assert!(!quiet.answered(0.8));
+        assert!((0..7).all(|_| !quiet.answered(0.8)));
+        assert!(!quiet.answered(0.9));
+        assert!((0..7).all(|_| !quiet.answered(0.1)));
+        assert!(quiet.answered(0.9));
+    }
+
+    fn library(url: &str) -> Page {
+        let path = Url::parse(url).unwrap().path().to_string();
+        let html = if path == "/" {
+            let mut links = String::from("<a href='/banana'>Fruit loaf</a>");
+            for i in 0..30 {
+                links.push_str(&format!("<a href='/shelf{i}'>Shelf {i}</a>"));
+            }
+            format!("<main><h1>Library</h1><p>Our kitchen notes.</p>{links}</main>")
+        } else if path == "/banana" {
+            "<main><h1>Banana bread recipe</h1><p>Mash ripe bananas into the batter.</p><p>Bake it for an hour.</p></main>".to_string()
+        } else {
+            format!("<main><h1>{path}</h1><p>Notes on bread, without fruit.</p></main>")
+        };
+        html_page(url, &html)
+    }
+
+    async fn crawl_library(query: Option<&str>, stop: bool) -> CrawlResult {
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                max_depth: 1,
+                concurrency: 1,
+                delay: Duration::ZERO,
+                respect_robots: false,
+                query: query.map(String::from),
+                stop_when_answered: stop,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler
+            .run(
+                "https://example.com/",
+                None,
+                |url| async move { library(&url) },
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn stop_when_answered_ends_a_query_crawl_eight_pages_after_its_best_page() {
+        let full = crawl_library(Some("banana bread recipe"), false).await;
+        assert_eq!(full.total, 32);
+        let stopped = crawl_library(Some("banana bread recipe"), true).await;
+        let urls: Vec<&str> = stopped.pages.iter().map(|p| p.url.as_str()).collect();
+        assert_eq!(urls[1], "https://example.com/banana", "{urls:?}");
+        assert_eq!(stopped.total, 10, "{urls:?}");
+        assert_eq!(crawl_library(None, true).await.total, 32);
     }
 
     #[tokio::test]

@@ -253,9 +253,9 @@ async fn crawl_fallback(
 /// URLs first) or after ten index pages of about 15,000 captures each. Where a page was captured over both schemes, the `https` URL is kept.
 ///
 /// The index is a free public service and often slow: requests go one at a
-/// time, a second apart, and bypass the client's response cache. A busy
-/// answer (429 or 5xx), an answer cut short, or a failed request is retried
-/// twice, after two and five seconds. One request can take 20 seconds or
+/// time, a second apart, and bypass the client's response cache. An error
+/// answer the busy index gives (400, 429 or 5xx), an answer cut short, or a
+/// failed request is retried twice, after two and five seconds. One request can take 20 seconds or
 /// more, so give `client` a generous [`FetchConfig::total_timeout`]. Errors
 /// when the index cannot be read; a site it holds nothing for is an empty
 /// list.
@@ -398,8 +398,7 @@ async fn index_get(client: &FetchClient, url: &str) -> Result<Option<String>, Fe
 }
 
 fn busy(status: u16, body: &[u8]) -> bool {
-    status == 429
-        || status >= 500
+    matches!(status, 400 | 429 | 500..)
         || ((200..300).contains(&status) && !whole(&String::from_utf8_lossy(body)))
 }
 
@@ -729,7 +728,8 @@ mod tests {
         assert!(busy(503, b"<html>busy</html>"));
         assert!(busy(429, b""));
         assert!(!busy(404, b"{\"message\": \"No Captures found\"}"));
-        assert!(!busy(400, b"{\"message\": \"Page 1 invalid\"}"));
+        assert!(busy(400, b"{\"message\": \"Page 1 invalid\"}"));
+        assert!(!busy(403, b"forbidden"));
     }
 
     #[test]

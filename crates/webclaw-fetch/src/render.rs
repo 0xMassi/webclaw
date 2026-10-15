@@ -1734,7 +1734,8 @@ impl RenderPool {
     }
 
     /// Render `url`; see [`Renderer::render`]. A failed browser launch is
-    /// remembered, so later renders fail at once instead of retrying it.
+    /// remembered, so later renders fail at once instead of retrying it,
+    /// except on a persistent profile, which may be free again by then.
     pub async fn render(
         &self,
         url: &str,
@@ -1956,6 +1957,10 @@ impl RenderPool {
                 if let Err(e) = &started {
                     warn!("no browser for rendering: {e}");
                 }
+                let started = match started {
+                    Err(e) if self.persistent() => return Err(e),
+                    started => started,
+                };
                 *slot = Some(
                     started
                         .map(|mut renderer| {
@@ -2825,6 +2830,30 @@ mod tests {
             .await;
         config.pool.close().await;
         assert_eq!(kept.expect("the page falls back").html, "<p>from http</p>");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_profile_pool_opens_once_the_profile_is_free_again() {
+        let profile = tempfile::tempdir().unwrap();
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Profile {
+                proxy: None,
+                dir: profile.path().into(),
+                solve: false,
+            },
+            std::time::Duration::from_secs(20),
+        );
+        let holder = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches");
+        let busy = pool.open().await;
+        holder.close().await;
+        let opened = pool.open().await;
+        pool.close().await;
+        let busy = busy.expect_err("the profile is in use").to_string();
+        assert!(busy.contains("in use by another browser"), "{busy}");
+        opened.expect("the pool opens the profile once it is free");
     }
 
     #[tokio::test]

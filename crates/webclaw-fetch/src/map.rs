@@ -589,9 +589,22 @@ fn rank(entries: &mut Vec<SitemapEntry>, query: &str) {
         .join("\n\n");
     let (_, scores) =
         webclaw_core::Relevance::new(&question).rate(&question.read(&paths, &anchors));
-    let mut scored: Vec<(f64, SitemapEntry)> = scores.into_iter().zip(entries.drain(..)).collect();
-    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    entries.extend(scored.into_iter().map(|(_, e)| e));
+    let exact: Vec<u32> = anchors
+        .iter()
+        .map(|a| {
+            Url::parse(&a.href)
+                .map(|u| question.exact_words(u.path()))
+                .unwrap_or(0)
+        })
+        .collect();
+    let mut scored: Vec<(f64, u32, SitemapEntry)> = scores
+        .into_iter()
+        .zip(exact)
+        .zip(entries.drain(..))
+        .map(|((score, exact), entry)| (score, exact, entry))
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.cmp(&a.1)));
+    entries.extend(scored.into_iter().map(|(_, _, e)| e));
 }
 
 fn bare_entry(url: String) -> SitemapEntry {
@@ -1100,6 +1113,18 @@ mod tests {
                 "https://docs.python.org/3/tutorial/index.html",
             ]
         );
+    }
+
+    #[test]
+    fn exact_path_words_rank_above_words_they_start() {
+        let mut entries = vec![
+            entry("https://example.com/docs/autovacuum.html"),
+            entry("https://example.com/docs/auto.html"),
+            entry("https://example.com/docs/index.html"),
+        ];
+        rank(&mut entries, "auto");
+        assert_eq!(entries[0].url, "https://example.com/docs/auto.html");
+        assert_eq!(entries[1].url, "https://example.com/docs/autovacuum.html");
     }
 
     #[test]

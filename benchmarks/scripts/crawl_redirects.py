@@ -3,8 +3,9 @@
 usage: crawl_redirects.py <label> [rounds]
 Each site is crawled one level deep from its seed. The ground truth is every same-host link on the seed page,
 followed to its final URL, that robots.txt allows before and after the redirect. A link whose scheme fails is
-tried again on the seed's scheme. An arm finds a page when it
-returns content for that final URL, or for a link that redirects to it.
+tried again on the seed's scheme. An arm finds a page when it returns content for that final URL, or for a
+link that redirects to it. A site whose ground truth comes out empty, because the seed page cannot be read or
+has no usable links, is skipped and marked in the summary instead of being scored 0/0.
 """
 import gzip, json, os, re, statistics, subprocess, sys, time, urllib.request
 from pathlib import Path
@@ -58,7 +59,10 @@ def allowed(url):
 def truth(site):
     seed = site["seed"]
     host = urlparse(seed).hostname
-    final_seed, html = get(seed)
+    try:
+        final_seed, html = get(seed)
+    except Exception as e:
+        return {"links": 0, "redirecting": 0, "moved": {}, "expected": [], "skipped": f"site refused: {e}"}
     links = []
     for href in re.findall(r'<a\s[^>]*href=["\']([^"\'#]+)', html):
         url = urljoin(final_seed, href)
@@ -114,7 +118,9 @@ def main(label, rounds):
     for site in SITES:
         gt = truths[site["name"]] = truth(site)
         if not gt["expected"]:
-            sys.exit(f"no expected pages for {site['name']}; not scoring against an empty ground truth")
+            gt.setdefault("skipped", "no usable links on the seed page")
+            print(f"skipping {site['name']}: no ground truth ({gt['skipped']})", flush=True)
+            continue
         print(json.dumps({"site": site["name"], "links": gt["links"], "redirecting": gt["redirecting"],
                           "expected": len(gt["expected"])}), flush=True)
         for rnd in range(rounds):
@@ -136,6 +142,10 @@ def main(label, rounds):
              "|---|---:|---:|---|---:|---:|---:|---:|---:|"]
     for site in SITES:
         gt = truths[site["name"]]
+        if "skipped" in gt:
+            reason = "site refused" if gt["skipped"].startswith("site refused") else gt["skipped"]
+            lines.append(f"| {site['name']} | - | - | all | 0 | skipped: no ground truth ({reason}) | - | - | - |")
+            continue
         for arm in arms:
             rs = [r for r in rows if r["site"] == site["name"] and r["arm"] == arm]
             med = lambda k: statistics.median(r[k] for r in rs)

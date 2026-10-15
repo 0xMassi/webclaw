@@ -345,6 +345,36 @@ struct Cli {
     #[arg(long, requires = "screenshot")]
     full_page: bool,
 
+    /// Render the page in the local browser and print the responses it
+    /// loaded as a JSON array instead of the page: url, method, status,
+    /// resource type, MIME type, request headers and the body of text
+    /// responses. PATTERN is a regular expression the URL must match, given
+    /// with an equals sign: --capture-network=/api/. With --actions or
+    /// --scroll, the steps run first, so the responses they trigger are
+    /// captured too. Needs the `browser` feature
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "",
+        conflicts_with_all = [
+            "pick", "crawl", "watch", "map", "screenshot", "save_pdf", "brand", "raw_html", "cloud",
+            "format", "query", "chunk", "include", "exclude", "only_main_content", "metadata"
+        ]
+    )]
+    capture_network: Option<String>,
+
+    /// With --capture-network, the resource types to keep: a comma list such
+    /// as xhr,fetch (the default), document, script, or all
+    #[arg(long, value_name = "TYPES", requires = "capture_network")]
+    capture_types: Option<String>,
+
+    /// With --capture-network, also keep request headers that carry
+    /// credentials, such as Authorization or API keys
+    #[arg(long, requires = "capture_network")]
+    capture_credentials: bool,
+
     /// Save the rendered page as a PDF to this file (- for stdout), every
     /// page of it, as the browser prints it. Needs the `browser` feature
     #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
@@ -808,12 +838,19 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
 
 #[cfg(feature = "browser")]
 fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::RenderPool {
-    use webclaw_fetch::render::{BrowserSource, RenderPool};
-    let source = match &cli.cdp_url {
+    webclaw_fetch::render::RenderPool::new(
+        browser_source(cli, config),
+        std::time::Duration::from_secs(cli.timeout),
+    )
+}
+
+#[cfg(feature = "browser")]
+fn browser_source(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::BrowserSource {
+    use webclaw_fetch::render::BrowserSource;
+    match &cli.cdp_url {
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
-        None => BrowserSource::launch_for(config, cli.solve),
-    };
-    RenderPool::new(source, std::time::Duration::from_secs(cli.timeout))
+        None => BrowserSource::launch_for(config, cli.solve || cli.capture_network.is_some()),
+    }
 }
 
 fn cache_dir() -> PathBuf {
@@ -1277,6 +1314,54 @@ async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String>
         shot.url
     );
     Ok(())
+}
+
+#[cfg(feature = "browser")]
+async fn run_capture(cli: &Cli, url: &str, pattern: &str) -> Result<(), String> {
+    let actions = page_actions(cli)?;
+    let capture = webclaw_fetch::render::NetworkCapture::new(
+        Some(pattern),
+        cli.capture_types.as_deref(),
+        cli.capture_credentials,
+    )?;
+    let config = build_fetch_config(cli);
+    let render = config
+        .render
+        .as_ref()
+        .ok_or("--capture-network needs the browser, so it cannot run with --render never")?;
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let captured = webclaw_fetch::with_progress(
+        url,
+        render.pool.capture(
+            url,
+            render.wait_for.as_deref(),
+            &headers,
+            render.block,
+            render.solve,
+            &actions,
+            &capture,
+        ),
+    )
+    .await;
+    close_browser(&config).await;
+    let webclaw_fetch::render::Captured {
+        page,
+        js_results,
+        network,
+    } = captured.map_err(|e| format!("render error: {e}"))?;
+    print_script_results(&js_results);
+    webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&network).map_err(|e| e.to_string())?
+    );
+    eprintln!("captured {} responses of {}", network.len(), page.url);
+    Ok(())
+}
+
+#[cfg(not(feature = "browser"))]
+async fn run_capture(_cli: &Cli, _url: &str, _pattern: &str) -> Result<(), String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
 #[cfg(not(feature = "browser"))]
@@ -3615,6 +3700,21 @@ async fn main() {
         return;
     }
 
+    if let Some(ref pattern) = cli.capture_network {
+        let captured = match (entries.len(), cli.urls.first()) {
+            (1, Some(url)) => run_capture(&cli, &normalize_url(url), pattern).await,
+            _ => Err(
+                "--capture-network takes one URL; give a pattern as --capture-network=PATTERN"
+                    .to_string(),
+            ),
+        };
+        if let Err(e) = captured {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
     if let Some(ref path) = cli.save_pdf {
         let printed = match (entries.len(), cli.urls.first()) {
             (1, Some(url)) => run_save_pdf(&cli, &normalize_url(url), path).await,
@@ -4375,5 +4475,55 @@ mod tests {
         assert!(slug.chars().count() <= 50);
         // Round-trips through formatting without panicking.
         let _ = format!("research-{slug}.json");
+    }
+
+    #[test]
+    fn a_capture_pattern_needs_an_equals_sign() {
+        let cli =
+            Cli::try_parse_from(["webclaw", "--capture-network", "https://example.com"]).unwrap();
+        assert_eq!(cli.capture_network.as_deref(), Some(""));
+        assert_eq!(cli.urls, ["https://example.com"]);
+        let cli =
+            Cli::try_parse_from(["webclaw", "--capture-network=/api/", "https://example.com"])
+                .unwrap();
+        assert_eq!(cli.capture_network.as_deref(), Some("/api/"));
+    }
+
+    #[test]
+    fn a_capture_refuses_page_options_it_would_ignore() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com", "--capture-network"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        assert!(parse(&[]).is_ok());
+        for extra in [
+            &["-f", "markdown"][..],
+            &["--query", "price"],
+            &["--chunk", "200"],
+            &["--include", "main"],
+            &["--exclude", "nav"],
+            &["--only-main-content"],
+            &["--metadata"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?} was accepted");
+        }
+    }
+
+    #[cfg(feature = "browser")]
+    #[test]
+    fn a_capture_launches_chrome_as_a_regular_browser() {
+        let source = |args: &[&str]| {
+            let cli = Cli::try_parse_from(args).unwrap();
+            browser_source(&cli, &build_fetch_config(&cli))
+        };
+        assert!(matches!(
+            source(&["webclaw", "https://example.com", "--capture-network"]),
+            webclaw_fetch::render::BrowserSource::Launch { solve: true, .. }
+        ));
+        assert!(matches!(
+            source(&["webclaw", "https://example.com", "--render", "always"]),
+            webclaw_fetch::render::BrowserSource::Launch { solve: false, .. }
+        ));
     }
 }

@@ -250,7 +250,9 @@ impl Renderer {
             config = config.arg("--no-proxy-server");
         }
         if persistent {
-            config = config.arg("--restore-last-session");
+            config = config
+                .arg("--restore-last-session")
+                .arg("--profile-directory=Default");
         }
         let config = config.build().map_err(browser_error)?;
         let (browser, handler) = match Browser::launch(config).await {
@@ -1368,6 +1370,39 @@ mod tests {
         fresh.close().await;
         let unrelated = unrelated.expect("fresh render succeeds").html;
         assert!(unrelated.contains(">|null|none<"), "{unrelated}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_profile_always_opens_its_default_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("profile");
+        super::prepare_profile(&dir, true).unwrap();
+        std::fs::write(
+            dir.join("Local State"),
+            br#"{"profile": {"last_used": "Profile 1"}}"#,
+        )
+        .unwrap();
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch_with_profile(None, &dir)
+            .await
+            .expect("Chrome launches");
+        let rendered = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: "<p>rendered</p>",
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        rendered.expect("render succeeds");
+        assert!(!dir.join("Profile 1").exists(), "Chrome opened Profile 1");
     }
 
     #[tokio::test]

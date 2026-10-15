@@ -893,8 +893,13 @@ fn browser_source(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Bro
 }
 
 fn check_warc(cli: &Cli) -> Result<(), String> {
-    if cli.warc.is_none() {
+    let Some(path) = &cli.warc else {
         return Ok(());
+    };
+    if path == Path::new("-") {
+        return Err(
+            "--warc needs a file: an archive is appended to, so it cannot go to stdout".into(),
+        );
     }
     if cli.command.is_some() {
         return Err(
@@ -4219,6 +4224,7 @@ mod tests {
             .is_err()
         );
         assert!(check(&["webclaw", "--warc", "a.warc", "extractors"]).is_err());
+        assert!(check(&["webclaw", "https://example.com", "--warc", "-"]).is_err());
         assert!(
             check(&[
                 "webclaw",

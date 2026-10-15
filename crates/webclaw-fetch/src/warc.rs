@@ -75,7 +75,7 @@ impl<W: Write> Writer<W> {
                 ("WARC-Date", warc_date(SystemTime::now())),
                 ("Content-Type", "application/warc-fields".into()),
             ],
-            info.as_bytes(),
+            &[info.as_bytes()],
         )?;
         writer.out.flush()?;
         Ok(writer)
@@ -121,8 +121,6 @@ impl<W: Write> Writer<W> {
             }
         }
         response.extend_from_slice(b"\r\n");
-        let head = response.len();
-        response.extend_from_slice(exchange.body);
 
         let mut fields = vec![
             ("WARC-Type", "response".to_string()),
@@ -134,12 +132,12 @@ impl<W: Write> Writer<W> {
         if let Some(ip) = exchange.ip {
             fields.push(("WARC-IP-Address", ip.to_string()));
         }
-        fields.push(("WARC-Payload-Digest", digest(&response[head..])));
+        fields.push(("WARC-Payload-Digest", digest(&[exchange.body])));
         fields.push((
             "Content-Type",
             "application/http; msgtype=response".to_string(),
         ));
-        self.record(&fields, &response)?;
+        self.record(&fields, &[&response, exchange.body])?;
         self.record(
             &[
                 ("WARC-Type", "request".into()),
@@ -150,7 +148,7 @@ impl<W: Write> Writer<W> {
                 ("WARC-Warcinfo-ID", self.info.clone()),
                 ("Content-Type", "application/http; msgtype=request".into()),
             ],
-            &request,
+            &[&request],
         )?;
         self.out.flush()
     }
@@ -160,29 +158,34 @@ impl<W: Write> Writer<W> {
         self.out
     }
 
-    fn record(&mut self, fields: &[(&str, String)], block: &[u8]) -> io::Result<()> {
-        let mut record = b"WARC/1.1\r\n".to_vec();
+    fn record(&mut self, fields: &[(&str, String)], block: &[&[u8]]) -> io::Result<()> {
+        let mut head = b"WARC/1.1\r\n".to_vec();
         for (name, value) in fields {
-            record.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
+            head.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
         }
-        record.extend_from_slice(
+        head.extend_from_slice(
             format!(
                 "WARC-Block-Digest: {}\r\nContent-Length: {}\r\n\r\n",
                 digest(block),
-                block.len()
+                block.iter().map(|part| part.len()).sum::<usize>()
             )
             .as_bytes(),
         );
-        record.extend_from_slice(block);
-        record.extend_from_slice(b"\r\n\r\n");
+        let write = |out: &mut dyn Write| {
+            out.write_all(&head)?;
+            for part in block {
+                out.write_all(part)?;
+            }
+            out.write_all(b"\r\n\r\n")
+        };
         if self.gzip {
             let mut gz =
                 flate2::write::GzEncoder::new(&mut self.out, flate2::Compression::default());
-            gz.write_all(&record)?;
+            write(&mut gz)?;
             gz.finish()?;
             Ok(())
         } else {
-            self.out.write_all(&record)
+            write(&mut self.out)
         }
     }
 }
@@ -229,9 +232,9 @@ fn warc_date(time: SystemTime) -> String {
     )
 }
 
-fn digest(data: &[u8]) -> String {
+fn digest(parts: &[&[u8]]) -> String {
     const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let hash = sha1(data);
+    let hash = sha1(parts);
     let mut out = String::from("sha1:");
     for chunk in hash.chunks(5) {
         let n = chunk.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b));
@@ -242,44 +245,24 @@ fn digest(data: &[u8]) -> String {
     out
 }
 
-fn sha1(data: &[u8]) -> [u8; 20] {
+fn sha1(parts: &[&[u8]]) -> [u8; 20] {
     let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
-    let mut message = data.to_vec();
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
-    }
-    message.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
-    for block in message.chunks(64) {
-        let mut w = [0u32; 80];
-        for (i, word) in block.chunks(4).enumerate() {
-            w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e] = h;
-        for (i, word) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..20 => ((b & c) | (!b & d), 0x5A827999),
-                20..40 => (b ^ c ^ d, 0x6ED9EBA1),
-                40..60 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
-                _ => (b ^ c ^ d, 0xCA62C1D6),
-            };
-            let t = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*word);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = t;
-        }
-        for (h, v) in h.iter_mut().zip([a, b, c, d, e]) {
-            *h = h.wrapping_add(v);
+    let total: u64 = parts.iter().map(|part| part.len() as u64).sum();
+    let mut tail = vec![0x80];
+    tail.resize(1 + (119 - (total % 64) as usize) % 64, 0);
+    tail.extend_from_slice(&(total * 8).to_be_bytes());
+    let mut block = [0u8; 64];
+    let mut filled = 0;
+    for mut part in parts.iter().copied().chain([tail.as_slice()]) {
+        while !part.is_empty() {
+            let take = (64 - filled).min(part.len());
+            block[filled..filled + take].copy_from_slice(&part[..take]);
+            filled += take;
+            part = &part[take..];
+            if filled == 64 {
+                compress(&mut h, &block);
+                filled = 0;
+            }
         }
     }
     let mut out = [0u8; 20];
@@ -289,9 +272,63 @@ fn sha1(data: &[u8]) -> [u8; 20] {
     out
 }
 
+fn compress(h: &mut [u32; 5], block: &[u8; 64]) {
+    let mut w = [0u32; 80];
+    for (i, word) in block.chunks(4).enumerate() {
+        w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+    }
+    for i in 16..80 {
+        w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+    }
+    let [mut a, mut b, mut c, mut d, mut e] = *h;
+    for (i, word) in w.iter().enumerate() {
+        let (f, k) = match i {
+            0..20 => ((b & c) | (!b & d), 0x5A827999),
+            20..40 => (b ^ c ^ d, 0x6ED9EBA1),
+            40..60 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
+            _ => (b ^ c ^ d, 0xCA62C1D6),
+        };
+        let t = a
+            .rotate_left(5)
+            .wrapping_add(f)
+            .wrapping_add(e)
+            .wrapping_add(k)
+            .wrapping_add(*word);
+        e = d;
+        d = c;
+        c = b.rotate_left(30);
+        b = a;
+        a = t;
+    }
+    for (h, v) in h.iter_mut().zip([a, b, c, d, e]) {
+        *h = h.wrapping_add(v);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sha1(data: &[u8]) -> [u8; 20] {
+        super::sha1(&[data])
+    }
+
+    fn digest(data: &[u8]) -> String {
+        super::digest(&[data])
+    }
+
+    #[test]
+    fn digests_stream_over_parts_cut_anywhere() {
+        let million = vec![b'a'; 1_000_000];
+        for cut in [0, 1, 55, 56, 63, 64, 65, 999_999] {
+            let (left, right) = million.split_at(cut);
+            assert_eq!(
+                super::digest(&[left, &[], right]),
+                digest(&million),
+                "cut at {cut}"
+            );
+        }
+    }
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()

@@ -228,13 +228,13 @@ struct Cli {
     /// with the clearance cookie it got. A Turnstile checkbox in any page
     /// that gets rendered is clicked too. Needs a build with the `browser`
     /// feature
-    #[arg(long, conflicts_with_all = ["screenshot", "save_pdf"])]
+    #[arg(long, conflicts_with_all = ["screenshot", "save_pdf", "save_mhtml"])]
     solve: bool,
 
     /// When rendering a page for its content, skip these resources: a comma
     /// list of images, fonts and media, or none. Screenshots and PDFs
     /// load everything
-    #[arg(long, value_name = "TYPES", conflicts_with_all = ["screenshot", "save_pdf"])]
+    #[arg(long, value_name = "TYPES", conflicts_with_all = ["screenshot", "save_pdf", "save_mhtml"])]
     block: Option<webclaw_fetch::Block>,
 
     /// Steps to run in the local browser once the page has loaded, before it
@@ -288,7 +288,7 @@ struct Cli {
     /// each chunk stays under about this many tokens. Works with several URLs
     /// and --crawl (chunks per page)
     #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(1..),
-          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "save_pdf", "output_dir", "metadata", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
+          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "save_pdf", "save_mhtml", "output_dir", "metadata", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
     chunk: Option<u32>,
 
     /// With --chunk, start each chunk with up to this many tokens from the end
@@ -375,7 +375,7 @@ struct Cli {
         require_equals = true,
         default_missing_value = "",
         conflicts_with_all = [
-            "pick", "crawl", "watch", "map", "screenshot", "save_pdf", "brand", "raw_html", "cloud",
+            "pick", "crawl", "watch", "map", "screenshot", "save_pdf", "save_mhtml", "brand", "raw_html", "cloud",
             "format", "query", "chunk", "include", "exclude", "only_main_content", "metadata"
         ]
     )]
@@ -395,6 +395,22 @@ struct Cli {
     /// page of it, as the browser prints it. Needs the `browser` feature
     #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
     save_pdf: Option<PathBuf>,
+
+    /// Save the rendered page as MHTML to this file (- for stdout): one file
+    /// with the page and the images, styles and frames it loaded, which a
+    /// browser opens offline. Needs the `browser` feature
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "save_pdf", "paper", "landscape", "print_background", "scale", "full_page", "capture_types", "capture_credentials", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
+    save_mhtml: Option<PathBuf>,
+
+    /// Also keep every HTTP response webclaw fetches, with its request, in
+    /// this WARC file, the web archive format (ISO 28500), gzipped record by
+    /// record when FILE ends in .gz. Works with one URL, several, and
+    /// --crawl. Records are written as they arrive, so a stopped crawl keeps
+    /// what it fetched, and a FILE that exists is added to, each run starting
+    /// with its own warcinfo record. Pages a browser renders are not in it:
+    /// use --save-mhtml for those
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["cache", "cloud", "stdin", "file", "screenshot", "save_pdf", "save_mhtml", "capture_network", "full_page", "paper", "landscape", "print_background", "scale", "capture_types", "capture_credentials"])]
+    warc: Option<PathBuf>,
 
     /// With --save-pdf, the paper size
     #[arg(long, value_enum, default_value_t = PaperArg::Letter, requires = "save_pdf")]
@@ -837,6 +853,7 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
         pdf_mode: cli.pdf_mode.clone().into(),
         headers,
         cache: cli.cache.then(cache_dir),
+        archive: cli.warc.as_deref().map(warc_archive),
         ..Default::default()
     };
     #[cfg(feature = "browser")]
@@ -881,6 +898,75 @@ fn browser_source(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Bro
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
         None => BrowserSource::launch_for(config).with_profile(cli.browser_profile.clone()),
     }
+}
+
+fn check_warc(cli: &Cli) -> Result<(), String> {
+    let Some(path) = &cli.warc else {
+        return Ok(());
+    };
+    if path == Path::new("-") {
+        return Err(
+            "--warc needs a file: an archive is appended to, so it cannot go to stdout".into(),
+        );
+    }
+    if cli.command.is_some() {
+        return Err(
+            "--warc does not reach the subcommands; run the fetch, crawl or map without one".into(),
+        );
+    }
+    if cli.render == RenderMode::Always || cli.actions.is_some() || cli.scroll.is_some() {
+        return Err("--warc keeps the HTTP responses webclaw fetches, and --render always, --actions and --scroll load the page in the browser instead; save a rendered page with --save-mhtml".into());
+    }
+    Ok(())
+}
+
+fn open_warc(path: &Path) -> io::Result<webclaw_fetch::warc::Writer<io::BufWriter<std::fs::File>>> {
+    let gzip = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("gz"));
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)?;
+    if !webclaw_fetch::warc::ends_whole(&mut file, gzip)? {
+        return Err(io::Error::other(if gzip {
+            "it ends inside a record, or is not gzipped, so records added to it would be unreadable; a run that stopped while writing can leave it so. Give --warc a new file"
+        } else {
+            "it ends inside a record, or is not a WARC file, so records added to it would be unreadable; a run that stopped while writing can leave it so. Give --warc a new file"
+        }));
+    }
+    webclaw_fetch::warc::Writer::new(
+        io::BufWriter::new(file),
+        gzip,
+        concat!("webclaw/", env!("CARGO_PKG_VERSION")),
+    )
+}
+
+fn warc_archive(path: &Path) -> webclaw_fetch::warc::Archive {
+    static ARCHIVE: std::sync::OnceLock<webclaw_fetch::warc::Archive> = std::sync::OnceLock::new();
+    ARCHIVE
+        .get_or_init(|| {
+            let fail = |e: io::Error| -> ! {
+                eprintln!("error: cannot write {}: {e}", path.display());
+                exit(1);
+            };
+            let writer = open_warc(path).unwrap_or_else(|e| fail(e));
+            // ponytail: one lock, written on the fetching task; a writer thread if a wide crawl waits on it
+            let writer = std::sync::Mutex::new(writer);
+            let path = path.to_path_buf();
+            webclaw_fetch::warc::Archive(Arc::new(move |exchange| {
+                let written = match writer.lock() {
+                    Ok(mut writer) => writer.write(exchange),
+                    Err(e) => Err(io::Error::other(e.to_string())),
+                };
+                if let Err(e) = written {
+                    eprintln!("error: cannot write {}: {e}", path.display());
+                    exit(1);
+                }
+            }))
+        })
+        .clone()
 }
 
 fn cache_dir() -> PathBuf {
@@ -1400,14 +1486,18 @@ async fn run_screenshot(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), Stri
 }
 
 #[cfg(feature = "browser")]
-async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
+async fn run_save(cli: &Cli, url: &str, path: &Path, pdf: bool) -> Result<(), String> {
     use webclaw_fetch::render::{Paper, PdfOptions};
+    let (flag, kind) = if pdf {
+        ("--save-pdf", "PDF")
+    } else {
+        ("--save-mhtml", "MHTML")
+    };
     let actions = page_actions(cli)?;
     let config = build_fetch_config(cli);
-    let render = config
-        .render
-        .as_ref()
-        .ok_or("--save-pdf needs the browser, so it cannot run with --render never")?;
+    let render = config.render.as_ref().ok_or(format!(
+        "{flag} needs the browser, so it cannot run with --render never"
+    ))?;
     let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
     let to_stdout = path == Path::new("-");
     let mut part = path.as_os_str().to_owned();
@@ -1421,36 +1511,39 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
                 .map_err(|e| format!("cannot write {}: {e}", part.display()))?,
         )
     };
-    let mut options = PdfOptions::default();
-    options.paper = match cli.paper {
-        PaperArg::Letter => Paper::Letter,
-        PaperArg::A4 => Paper::A4,
+    let wait_for = render.wait_for.as_deref();
+    let printed = if pdf {
+        let mut options = PdfOptions::default();
+        options.paper = match cli.paper {
+            PaperArg::Letter => Paper::Letter,
+            PaperArg::A4 => Paper::A4,
+        };
+        options.landscape = cli.landscape;
+        options.print_background = cli.print_background;
+        options.scale = cli.scale;
+        render
+            .pool
+            .pdf_actions(url, wait_for, &headers, options, &actions, &mut out)
+            .await
+            .map(|(p, js)| ((p.bytes, p.status, p.url), js))
+    } else {
+        render
+            .pool
+            .mhtml_actions(url, wait_for, &headers, &actions, &mut out)
+            .await
+            .map(|(m, js)| ((m.bytes, m.status, m.url), js))
     };
-    options.landscape = cli.landscape;
-    options.print_background = cli.print_background;
-    options.scale = cli.scale;
-    let printed = render
-        .pool
-        .pdf_actions(
-            url,
-            render.wait_for.as_deref(),
-            &headers,
-            options,
-            &actions,
-            &mut out,
-        )
-        .await;
     close_browser(&config).await;
     let printed = printed
         .map_err(|e| match e.to_string() {
             e if e.contains("the render timeout covers") => {
-                format!("PDF error: {e}; raise it with --timeout")
+                format!("{kind} error: {e}; raise it with --timeout")
             }
-            e => format!("PDF error: {e}"),
+            e => format!("{kind} error: {e}"),
         })
         .and_then(|(printed, js_results)| {
             print_script_results(&js_results);
-            webclaw_fetch::FetchError::check_status(printed.status)
+            webclaw_fetch::FetchError::check_status(printed.1)
                 .map(|()| printed)
                 .map_err(|e| e.to_string())
         });
@@ -1483,15 +1576,12 @@ async fn run_save_pdf(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
     } else {
         path.display().to_string()
     };
-    eprintln!(
-        "saved {target} ({} bytes) of {}",
-        printed.bytes, printed.url
-    );
+    eprintln!("saved {target} ({} bytes) of {}", printed.0, printed.2);
     Ok(())
 }
 
 #[cfg(not(feature = "browser"))]
-async fn run_save_pdf(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), String> {
+async fn run_save(_cli: &Cli, _url: &str, _path: &Path, _pdf: bool) -> Result<(), String> {
     Err("this webclaw build has no browser support; build it with `--features browser`".into())
 }
 
@@ -3597,6 +3687,11 @@ async fn run() {
 
     let mut cli = Cli::parse();
     init_logging(cli.verbose);
+    if let Err(e) = check_warc(&cli) {
+        eprintln!("error: {e}");
+        exit(1);
+    }
+
     if cli.browser_profile.is_some() && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
         eprintln!(
             "error: --browser-profile needs the browser: a build with the `browser` feature, and --render auto or always"
@@ -3801,10 +3896,13 @@ async fn run() {
         return;
     }
 
-    if let Some(ref path) = cli.save_pdf {
+    let save = (cli.save_pdf.as_ref().map(|path| (path, true)))
+        .or(cli.save_mhtml.as_ref().map(|path| (path, false)));
+    if let Some((path, pdf)) = save {
         let printed = match (entries.len(), cli.urls.first()) {
-            (1, Some(url)) => run_save_pdf(&cli, &normalize_url(url), path).await,
-            _ => Err("--save-pdf takes one URL".to_string()),
+            (1, Some(url)) => run_save(&cli, &normalize_url(url), path, pdf).await,
+            _ if pdf => Err("--save-pdf takes one URL".to_string()),
+            _ => Err("--save-mhtml takes one URL".to_string()),
         };
         if let Err(e) = printed {
             eprintln!("error: {e}");
@@ -4142,13 +4240,126 @@ mod tests {
             path.to_str().unwrap(),
         ])
         .unwrap();
-        let saved = run_save_pdf(&cli, "https://example.com/", &path).await;
+        let saved = run_save(&cli, "https://example.com/", &path, true).await;
         let kept = std::fs::read_to_string(&path).unwrap();
         let leftovers = std::fs::read_dir(&dir).unwrap().count();
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(saved.is_err());
         assert_eq!(kept, "earlier PDF");
         assert_eq!(leftovers, 1);
+    }
+
+    #[test]
+    fn a_new_run_appends_to_an_existing_warc_with_its_own_warcinfo() {
+        let dir = std::env::temp_dir().join(format!("webclaw-warc-append-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("site.warc");
+        drop(open_warc(&path).unwrap());
+        let earlier = std::fs::read(&path).unwrap();
+        drop(open_warc(&path).unwrap());
+        let file = std::fs::read(&path).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(file.starts_with(&earlier));
+        let text = String::from_utf8_lossy(&file);
+        assert_eq!(text.matches("WARC-Type: warcinfo").count(), 2);
+    }
+
+    #[test]
+    fn a_warc_cut_inside_a_record_is_refused_and_left_alone() {
+        let dir = std::env::temp_dir().join(format!("webclaw-warc-cut-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["site.warc", "site.warc.gz"] {
+            let path = dir.join(name);
+            drop(open_warc(&path).unwrap());
+            let whole = std::fs::read(&path).unwrap();
+            std::fs::write(&path, &whole[..whole.len() - 5]).unwrap();
+            let refused = open_warc(&path).err().map(|e| e.to_string());
+            assert!(
+                refused.as_deref().is_some_and(|e| e.contains("new file")),
+                "{name}: {refused:?}"
+            );
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                whole[..whole.len() - 5],
+                "{name}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn warc_refuses_what_never_goes_over_http() {
+        let check = |args: &[&str]| check_warc(&Cli::try_parse_from(args).unwrap());
+        assert!(check(&["webclaw", "https://example.com", "--warc", "a.warc"]).is_ok());
+        assert!(
+            check(&[
+                "webclaw",
+                "https://example.com",
+                "--warc",
+                "a.warc",
+                "--render",
+                "always"
+            ])
+            .is_err()
+        );
+        assert!(check(&["webclaw", "--warc", "a.warc", "extractors"]).is_err());
+        assert!(check(&["webclaw", "https://example.com", "--warc", "-"]).is_err());
+        assert!(
+            check(&[
+                "webclaw",
+                "--warc",
+                "a.warc",
+                "vertical",
+                "github_repo",
+                "https://github.com/a/b"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn warc_goes_with_fetches_and_crawls_but_not_with_other_sources() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com", "--warc", "a.warc.gz"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        for fine in [
+            &[][..],
+            &["--crawl", "--depth", "2"],
+            &["-f", "json"],
+            &["--raw-html"],
+        ] {
+            assert!(parse(fine).is_ok(), "{fine:?}");
+        }
+        for refused in [
+            &["--cache"][..],
+            &["--cloud"],
+            &["--stdin"],
+            &["--file", "page.html"],
+            &["--screenshot", "a.png"],
+            &["--save-pdf", "a.pdf"],
+            &["--save-mhtml", "a.mhtml"],
+            &["--capture-network"],
+            &["--full-page"],
+            &["--paper", "a4"],
+            &["--landscape"],
+            &["--print-background"],
+            &["--scale", "0.5"],
+            &["--capture-types", "xhr"],
+            &["--capture-credentials"],
+        ] {
+            assert!(parse(refused).is_err(), "{refused:?}");
+        }
+        for refused in [
+            &["--full-page"][..],
+            &["--capture-types", "xhr"],
+            &["--capture-credentials"],
+        ] {
+            let mut args = vec!["webclaw", "https://example.com", "--save-mhtml", "a.mhtml"];
+            args.extend_from_slice(refused);
+            assert!(Cli::try_parse_from(args).is_err(), "{refused:?}");
+        }
     }
 
     #[test]
@@ -4190,7 +4401,21 @@ mod tests {
             assert!(parse(extra).is_err(), "{extra:?}");
         }
         assert!(parse(&["--screenshot", "a.png"]).is_ok());
-        for output in ["--screenshot", "--save-pdf"] {
+        assert!(parse(&["--save-mhtml", "a.mhtml", "--wait-for", "main", "--scroll"]).is_ok());
+        for extra in [
+            &["--save-mhtml", "a.mhtml", "--save-pdf", "a.pdf"][..],
+            &["--save-mhtml", "a.mhtml", "--screenshot", "a.png"],
+            &["--save-mhtml", "a.mhtml", "--print-background"],
+            &["--save-mhtml", "a.mhtml", "--crawl"],
+            &["--save-mhtml", "a.mhtml", "--block", "images"],
+            &["--save-mhtml", "a.mhtml", "--solve"],
+            &["--save-mhtml", "a.mhtml", "--chunk", "64"],
+            &["--save-mhtml", "a.mhtml", "--capture-network"],
+            &["--save-mhtml", "a.mhtml", "--warc", "a.warc"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?}");
+        }
+        for output in ["--screenshot", "--save-pdf", "--save-mhtml"] {
             for other in [
                 &["-f", "json"][..],
                 &["--summarize"],

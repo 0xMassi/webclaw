@@ -154,6 +154,14 @@ It screenshots 10 public pages with each tool, the viewport and the whole page, 
 
 It prints the 10 pages of the screenshot benchmark to PDF with each tool, first with a fresh browser per page and then with one browser kept open (webclaw through its MCP server). It records the time, the file size and the page count, reads each PDF's text back with webclaw's PDF reader, and scores the share of the page's content words, as webclaw reads the rendered page, that the PDF holds. Every arm prints US Letter with backgrounds; Crawl4AI's `pdf=True` prints with no margins, webclaw with Chrome's default margins. Scrapling has no PDF export, so it has no arm. Recall is a relative measure: webclaw's PDF reader drops some right-to-left text (the Arabic line on example.com, for one), which understates the absolute number for every tool alike; read with macOS PDFKit instead, the cold run scores 0.939 for webclaw and 0.934 for Crawl4AI, against 0.911 and 0.906 with webclaw's reader, so the comparison holds. It writes `results/<label>/pdf-summary.md`.
 
+### Page archives
+
+```bash
+./benchmarks/archive.sh        # webclaw --save-mhtml, the MCP screenshot tool's mhtml format and --warc against the other tools
+```
+
+It saves the 10 pages of the screenshot benchmark as MHTML with each tool, first with a fresh browser per page and then with one browser kept open (webclaw through its MCP server, Crawl4AI with one crawler and `capture_mhtml=True`). Each archive is opened from disk in a fresh headless Chromium with the network off, and compared with the live page as the same Chromium shows it: the share of the live page's visible words the offline copy shows, and its loaded images against the live page's. It records the time and the file size. Then it runs `webclaw --warc` on the same pages and on a 30-page crawl, and checks every WARC file with a reader written for the benchmark on the Python standard library: one gzip member per record, the required fields, unique record ids, and every block and payload digest. Scrapling has no page archive of either kind, and Crawl4AI writes no WARC, so they have no arm there. It writes `results/<label>/archive-summary.md`.
+
 ### Blocking resources while rendering
 
 ```bash

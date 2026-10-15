@@ -3,7 +3,7 @@
 usage: network_arms.py <arm> <filtered:0|1> <cases.json>
 Prints one JSON line per page: {"page", "ms", "bytes", "error", "responses": [{"url", "status", "body"}]}.
 `bytes` is the size of what the tool hands back, serialized as JSON. With filtered=1 each tool keeps only
-the URLs matching the page's ground-truth pattern, where it can: webclaw with `--capture-network PATTERN`,
+the URLs matching the page's ground-truth pattern, where it can: webclaw with `--capture-network=PATTERN`,
 Scrapling with `capture_xhr=PATTERN`. Crawl4AI's `capture_network_requests` has no filter.
 """
 import asyncio, json, os, subprocess, sys, time
@@ -30,7 +30,8 @@ def text(body):
 
 def webclaw():
     for case in CASES:
-        cmd = [os.environ["WEBCLAW_BIN"], case["page"], "--capture-network"] + ([pattern(case)] if FILTERED else [])
+        flag = f"--capture-network={pattern(case)}" if FILTERED else "--capture-network"
+        cmd = [os.environ["WEBCLAW_BIN"], case["page"], flag]
         t0 = time.perf_counter()
         r = subprocess.run(cmd, capture_output=True, timeout=180)
         if r.returncode != 0:

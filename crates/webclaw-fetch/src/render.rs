@@ -14,8 +14,8 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
 };
 use chromiumoxide::cdp::browser_protocol::io::{CloseParams, ReadParams};
 use chromiumoxide::cdp::browser_protocol::network::{
-    CookieParam, ErrorReason, EventResponseReceived, GetCookiesParams, ResourceType,
-    SetCookieParams,
+    CookieParam, ErrorReason, EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent,
+    EventResponseReceived, GetCookiesParams, GetResponseBodyParams, ResourceType, SetCookieParams,
 };
 use chromiumoxide::cdp::browser_protocol::page::{
     CaptureScreenshotFormat, PrintToPdfParams, PrintToPdfTransferMode,
@@ -24,7 +24,7 @@ use chromiumoxide::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams,
 };
 use chromiumoxide::page::ScreenshotParams;
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use rand::seq::SliceRandom;
 use tokio::sync::{RwLock, RwLockReadGuard, Semaphore};
 use tracing::warn;
@@ -77,6 +77,356 @@ impl Default for RenderOptions {
     }
 }
 
+/// A response a rendered page received, as [`Renderer::capture`] keeps it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NetworkResponse {
+    /// The response's URL, after redirects.
+    pub url: String,
+    pub method: String,
+    pub status: u16,
+    /// The browser's resource type in lowercase, such as `xhr`, `fetch` or `script`.
+    pub resource_type: String,
+    pub mime_type: String,
+    /// The headers the page set on the request. Cookies are added by the
+    /// browser afterwards and are never here; headers that carry credentials
+    /// are left out unless the capture asked for them.
+    pub request_headers: std::collections::BTreeMap<String, String>,
+    /// The body of a text response (JSON, HTML, JavaScript, XML, plain text),
+    /// cut to the capture's size limits. `None` for binary responses and for
+    /// bodies the browser no longer holds.
+    pub body: Option<String>,
+    /// Whether the size limits cut `body` short.
+    pub truncated: bool,
+}
+
+/// Which of a rendered page's network responses to keep.
+///
+/// At most 100 responses are kept. Each body is cut to 1 MB and all bodies
+/// together to 5 MB, unless [`NetworkCapture::limit_bytes`] sets other limits.
+#[derive(Debug, Clone)]
+pub struct NetworkCapture {
+    pattern: Option<regex::Regex>,
+    types: Vec<String>,
+    credentials: bool,
+    max_body: usize,
+    max_total: usize,
+}
+
+const RESOURCE_TYPES: &[&str] = &[
+    "xhr",
+    "fetch",
+    "document",
+    "script",
+    "stylesheet",
+    "image",
+    "font",
+    "media",
+    "texttrack",
+    "eventsource",
+    "websocket",
+    "manifest",
+    "prefetch",
+    "preflight",
+    "ping",
+    "signedexchange",
+    "cspviolationreport",
+    "fedcm",
+    "other",
+];
+const MAX_RESPONSES: usize = 100;
+const QUIET: Duration = Duration::from_secs(1);
+const MAX_BODY_BYTES: usize = 1_000_000;
+const MAX_TOTAL_BYTES: usize = 5_000_000;
+
+impl NetworkCapture {
+    /// Keep the responses whose URL matches the regular expression `pattern`
+    /// (every URL when it is `None` or empty) and whose resource type is in
+    /// the comma list `types` (`xhr,fetch` when `None`, `all` for every type).
+    /// Without `credentials`, request headers whose name looks like a
+    /// credential, such as `Authorization` or `X-Api-Key`, are left out and
+    /// URL query parameters named that way read `REDACTED`.
+    pub fn new(
+        pattern: Option<&str>,
+        types: Option<&str>,
+        credentials: bool,
+    ) -> Result<Self, String> {
+        let pattern = pattern
+            .filter(|p| !p.is_empty())
+            .map(regex::Regex::new)
+            .transpose()
+            .map_err(|e| format!("invalid capture pattern: {e}"))?;
+        let mut types: Vec<String> = types
+            .unwrap_or("xhr,fetch")
+            .split(',')
+            .map(|t| t.trim().to_ascii_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
+        if types.is_empty() {
+            return Err(format!(
+                "no resource types to capture: use all or a comma list of {}",
+                RESOURCE_TYPES.join(", ")
+            ));
+        }
+        if let Some(unknown) = types
+            .iter()
+            .find(|t| *t != "all" && !RESOURCE_TYPES.contains(&t.as_str()))
+        {
+            return Err(format!(
+                "unknown resource type \"{unknown}\": use all or a comma list of {}",
+                RESOURCE_TYPES.join(", ")
+            ));
+        }
+        if types.iter().any(|t| t == "all") {
+            types.clear();
+        }
+        Ok(Self {
+            pattern,
+            types,
+            credentials,
+            max_body: MAX_BODY_BYTES,
+            max_total: MAX_TOTAL_BYTES,
+        })
+    }
+
+    /// Cut each body to `body` bytes and all bodies together to `total`
+    /// bytes, for output that has to fit in a smaller space, such as a
+    /// model's context.
+    pub fn limit_bytes(mut self, body: usize, total: usize) -> Self {
+        self.max_body = body;
+        self.max_total = total;
+        self
+    }
+
+    fn cut(&self, bodies: Vec<Option<String>>) -> Vec<(Option<String>, bool)> {
+        let mut budget = self.max_total;
+        bodies
+            .into_iter()
+            .map(|body| {
+                let limit = self.max_body.min(budget);
+                let truncated = body.as_ref().is_some_and(|text| text.len() > limit);
+                let body = body.map(|mut text| {
+                    text.truncate(char_floor(&text, limit));
+                    text
+                });
+                budget -= body.as_ref().map_or(0, String::len);
+                (body, truncated)
+            })
+            .collect()
+    }
+
+    fn wants(&self, kind: &ResourceType, url: &str) -> bool {
+        (self.types.is_empty()
+            || self
+                .types
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(kind.as_ref())))
+            && self.pattern.as_ref().is_none_or(|p| p.is_match(url))
+    }
+
+    fn keeps(&self, event: &EventResponseReceived, check_addresses: bool) -> bool {
+        self.wants(&event.r#type, &event.response.url)
+            && !(check_addresses && private_address(&event.response).is_some())
+    }
+
+    async fn collect(
+        &self,
+        page: &chromiumoxide::Page,
+        mut sent: impl futures_util::Stream<Item = Arc<EventRequestWillBeSent>> + Unpin,
+        mut received: impl futures_util::Stream<Item = Arc<EventResponseReceived>> + Unpin,
+        check_addresses: bool,
+    ) -> Vec<NetworkResponse> {
+        let (requests, kept) = tokio::task::unconstrained(async {
+            let mut requests = HashMap::new();
+            while let Some(Some(event)) = sent.next().now_or_never() {
+                requests.insert(event.request_id.clone(), event);
+            }
+            let mut kept = Vec::new();
+            while let Some(Some(event)) = received.next().now_or_never() {
+                if kept.len() < MAX_RESPONSES && self.keeps(&event, check_addresses) {
+                    kept.push(event);
+                }
+            }
+            (requests, kept)
+        })
+        .await;
+        let bodies =
+            futures_util::future::join_all(kept.iter().map(|event| response_body(page, event)))
+                .await;
+        kept.iter()
+            .zip(self.cut(bodies))
+            .map(|(event, (body, truncated))| {
+                let request = requests.get(&event.request_id).map(|sent| &sent.request);
+                NetworkResponse {
+                    url: if self.credentials {
+                        event.response.url.clone()
+                    } else {
+                        redact_query(&event.response.url)
+                    },
+                    method: request.map(|r| r.method.clone()).unwrap_or_default(),
+                    status: u16::try_from(event.response.status).unwrap_or_default(),
+                    resource_type: event.r#type.as_ref().to_ascii_lowercase(),
+                    mime_type: event.response.mime_type.clone(),
+                    request_headers: request
+                        .map(|r| self.headers(r.headers.inner()))
+                        .unwrap_or_default(),
+                    body,
+                    truncated,
+                }
+            })
+            .collect()
+    }
+
+    fn headers(&self, sent: &serde_json::Value) -> std::collections::BTreeMap<String, String> {
+        sent.as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(name, _)| self.credentials || !is_credential(name))
+            .filter_map(|(name, value)| {
+                let value = value.as_str()?;
+                let value = if !self.credentials && name.eq_ignore_ascii_case("referer") {
+                    redact_query(value)
+                } else {
+                    value.to_string()
+                };
+                Some((name.clone(), value))
+            })
+            .collect()
+    }
+}
+
+async fn response_body(
+    page: &chromiumoxide::Page,
+    event: &EventResponseReceived,
+) -> Option<String> {
+    let mime = event.response.mime_type.to_ascii_lowercase();
+    if ["image/", "audio/", "video/", "font/"]
+        .iter()
+        .any(|kind| mime.starts_with(kind))
+    {
+        return None;
+    }
+    let body = page
+        .execute(GetResponseBodyParams::new(event.request_id.clone()))
+        .await
+        .ok()?
+        .result;
+    (!body.base64_encoded).then_some(body.body)
+}
+
+async fn network_quiet(
+    capture: &NetworkCapture,
+    mut sent: impl futures_util::Stream<Item = Arc<EventRequestWillBeSent>> + Unpin,
+    finished: impl futures_util::Stream<Item = Arc<EventLoadingFinished>> + Unpin,
+    failed: impl futures_util::Stream<Item = Arc<EventLoadingFailed>> + Unpin,
+) {
+    let mut done = futures_util::stream::select(
+        finished.map(|event| event.request_id.clone()),
+        failed.map(|event| event.request_id.clone()),
+    );
+    let mut in_flight = std::collections::HashSet::new();
+    let quiet = tokio::time::sleep(QUIET);
+    tokio::pin!(quiet);
+    loop {
+        tokio::select! {
+            biased;
+            Some(event) = sent.next() => {
+                let kept = event
+                    .r#type
+                    .as_ref()
+                    .is_some_and(|kind| capture.wants(kind, &event.request.url));
+                if kept && in_flight.insert(event.request_id.clone()) {
+                    quiet.as_mut().reset(tokio::time::Instant::now() + QUIET);
+                }
+            }
+            Some(id) = done.next() => {
+                if in_flight.remove(&id) {
+                    quiet.as_mut().reset(tokio::time::Instant::now() + QUIET);
+                }
+            }
+            _ = &mut quiet, if in_flight.is_empty() => return,
+            else => return,
+        }
+    }
+}
+
+fn is_credential(name: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "access",
+        "apikey",
+        "appcheck",
+        "auth",
+        "authorization",
+        "bearer",
+        "cookie",
+        "credential",
+        "credentials",
+        "csrf",
+        "jwt",
+        "key",
+        "passwd",
+        "password",
+        "secret",
+        "session",
+        "sessionid",
+        "sig",
+        "signature",
+        "token",
+        "xsrf",
+    ];
+    let name = name.to_ascii_lowercase();
+    if name == "x-client-data" {
+        return true;
+    }
+    if name.starts_with("access-control-") {
+        return false;
+    }
+    name.split(['-', '_', '.']).any(|word| {
+        WORDS.contains(&word)
+            || ["token", "secret", "password", "apikey"]
+                .iter()
+                .any(|end| word.ends_with(end))
+    })
+}
+
+fn redact_query(url: &str) -> String {
+    let (rest, fragment) = match url.split_once('#') {
+        Some((rest, fragment)) => (rest, Some(fragment)),
+        None => (url, None),
+    };
+    let (base, query) = match rest.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (rest, None),
+    };
+    let mut out = base.to_string();
+    if let Some(query) = query {
+        out.push('?');
+        out.push_str(&redact_pairs(query));
+    }
+    if let Some(fragment) = fragment {
+        out.push('#');
+        out.push_str(&redact_pairs(fragment));
+    }
+    out
+}
+
+fn redact_pairs(pairs: &str) -> String {
+    pairs
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((name, _)) if is_credential(&percent_decode(name)) => format!("{name}=REDACTED"),
+            _ => pair.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn char_floor(text: &str, at: usize) -> usize {
+    (0..=at.min(text.len()))
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0)
+}
+
 impl Block {
     fn blocks(self, kind: &ResourceType) -> bool {
         match kind {
@@ -113,6 +463,16 @@ impl Screenshot {
     pub fn base64(&self) -> String {
         base64(&self.image)
     }
+}
+
+/// A render that kept its network responses; see [`Renderer::capture`].
+#[derive(Debug, Clone)]
+pub struct Captured {
+    pub page: FetchResult,
+    /// The values of the `executeJavascript` steps, the hosted API's `js_results`.
+    pub js_results: Vec<serde_json::Value>,
+    /// The kept responses, in the order they arrived.
+    pub network: Vec<NetworkResponse>,
 }
 
 /// Paper size of a PDF.
@@ -187,6 +547,7 @@ struct Visited<T> {
     status: u16,
     url: String,
     scripts: Vec<serde_json::Value>,
+    network: Vec<NetworkResponse>,
 }
 
 /// A page already fetched over HTTP, handed to the browser so it does not
@@ -565,6 +926,41 @@ impl Renderer {
         options: &RenderOptions,
         actions: &[Action],
     ) -> Result<(FetchResult, Vec<serde_json::Value>), FetchError> {
+        let captured = self
+            .rendered(url, prefetched, options, actions, None)
+            .await?;
+        Ok((captured.page, captured.js_results))
+    }
+
+    /// [`Renderer::render_actions`], also keeping the network responses
+    /// `capture` asks for. Returns the page, the `js_results` and the
+    /// responses in the order they arrived. A capturing render waits until
+    /// no request is in flight and none has started for 1 second, up to a
+    /// third of `options.timeout`, instead of stopping once the text settles.
+    /// Requests from dedicated workers are not seen either. A failed render
+    /// returns only the error. Only requests the browser was
+    /// allowed to make get a response. The requests a cross-site frame makes
+    /// itself are not seen, since Chrome runs it in its own process.
+    pub async fn capture(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+        actions: &[Action],
+        capture: &NetworkCapture,
+    ) -> Result<Captured, FetchError> {
+        self.rendered(url, prefetched, options, actions, Some(capture))
+            .await
+    }
+
+    async fn rendered(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+        actions: &[Action],
+        capture: Option<&NetworkCapture>,
+    ) -> Result<Captured, FetchError> {
         let start = Instant::now();
         let visited = self
             .visit(
@@ -572,6 +968,7 @@ impl Renderer {
                 prefetched,
                 options,
                 actions,
+                capture,
                 None,
                 None,
                 async |page| page.content().await,
@@ -585,7 +982,11 @@ impl Renderer {
             headers: http::HeaderMap::new(),
             elapsed: start.elapsed(),
         };
-        Ok((page, visited.scripts))
+        Ok(Captured {
+            page,
+            js_results: visited.scripts,
+            network: visited.network,
+        })
     }
 
     async fn render_unfollowed(
@@ -602,6 +1003,7 @@ impl Renderer {
                 prefetched,
                 options,
                 &[],
+                None,
                 None,
                 Some(stop.clone()),
                 async |page| page.content().await,
@@ -669,6 +1071,7 @@ impl Renderer {
                     ..options.clone()
                 },
                 actions,
+                None,
                 Some(SCREENSHOT_VIEWPORT),
                 None,
                 async move |page| page.screenshot(params).await,
@@ -740,6 +1143,7 @@ impl Renderer {
                     ..options.clone()
                 },
                 actions,
+                None,
                 Some(SCREENSHOT_VIEWPORT),
                 None,
                 async move |page| Ok(copy_pdf(page, params, out).await),
@@ -768,6 +1172,7 @@ impl Renderer {
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
         actions: &[Action],
+        capture: Option<&NetworkCapture>,
         viewport: Option<(i64, i64)>,
         stop: Option<Stopped>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
@@ -780,7 +1185,7 @@ impl Renderer {
         if !private {
             return self
                 .visit_in(
-                    None, url, prefetched, options, actions, viewport, stop, read,
+                    None, url, prefetched, options, actions, capture, viewport, stop, read,
                 )
                 .await;
         }
@@ -798,6 +1203,7 @@ impl Renderer {
                 prefetched,
                 options,
                 actions,
+                capture,
                 viewport,
                 stop,
                 read,
@@ -815,6 +1221,7 @@ impl Renderer {
         prefetched: Option<Prefetched<'_>>,
         options: &RenderOptions,
         actions: &[Action],
+        capture: Option<&NetworkCapture>,
         viewport: Option<(i64, i64)>,
         stop: Option<Stopped>,
         read: impl AsyncFnOnce(&chromiumoxide::Page) -> Result<T, chromiumoxide::error::CdpError>,
@@ -883,6 +1290,31 @@ impl Renderer {
             .event_listener::<EventRequestPaused>()
             .await
             .map_err(browser_error)?;
+        let traffic = match capture {
+            Some(_) => Some((
+                page.event_listener::<EventRequestWillBeSent>()
+                    .await
+                    .map_err(browser_error)?,
+                page.event_listener::<EventResponseReceived>()
+                    .await
+                    .map_err(browser_error)?,
+            )),
+            None => None,
+        };
+        let mut quiet = match capture {
+            Some(_) => Some((
+                page.event_listener::<EventRequestWillBeSent>()
+                    .await
+                    .map_err(browser_error)?,
+                page.event_listener::<EventLoadingFinished>()
+                    .await
+                    .map_err(browser_error)?,
+                page.event_listener::<EventLoadingFailed>()
+                    .await
+                    .map_err(browser_error)?,
+            )),
+            None => None,
+        };
         if let Some((username, password)) = &self.proxy_login {
             page.authenticate(Credentials {
                 username: username.clone(),
@@ -972,9 +1404,18 @@ impl Renderer {
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
             solved(&page).await?;
-            tokio::select! {
-                _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3) => {}
-                _ = text_settled(&page, settled_words) => {}
+            match capture.zip(quiet.take()) {
+                Some((capture, (sent, finished, failed))) => {
+                    let _ = tokio::time::timeout(
+                        options.timeout / 3,
+                        network_quiet(capture, sent, finished, failed),
+                    )
+                    .await;
+                }
+                None => tokio::select! {
+                    _ = page.wait_for_network_almost_idle_with_timeout(options.timeout / 3) => {}
+                    _ = text_settled(&page, settled_words) => {}
+                },
             }
             solved(&page).await?;
             if let Some(selector) = &options.wait_for {
@@ -1017,6 +1458,15 @@ impl Renderer {
             Some(popups) => popups.close(&self.browser).await,
             None => Ok(()),
         };
+        let network = match (capture, traffic, &outcome) {
+            (Some(capture), Some((sent, received)), Ok(Ok(_))) => tokio::time::timeout(
+                options.timeout,
+                capture.collect(&page, sent, received, self.check_documents),
+            )
+            .await
+            .ok(),
+            _ => Some(Vec::new()),
+        };
         let _ = page.close().await;
 
         if let Some(address) = private {
@@ -1028,6 +1478,9 @@ impl Renderer {
         popped?;
         let (value, final_url, scripts) =
             outcome.map_err(|_| FetchError::Build(format!("rendering {url} timed out")))??;
+        let network = network.ok_or_else(|| {
+            FetchError::Build(format!("reading the captured responses of {url} timed out"))
+        })?;
         Ok(Visited {
             value,
             status: status
@@ -1035,6 +1488,7 @@ impl Renderer {
                 .unwrap_or(200),
             url: final_url,
             scripts,
+            network,
         })
     }
 
@@ -1316,6 +1770,39 @@ impl RenderPool {
                     ..self.options(wait_for, headers, block)
                 },
                 actions,
+            )
+            .await
+    }
+
+    /// Render `url` running `actions` and keep the network responses
+    /// `capture` asks for; see [`Renderer::capture`].
+    #[allow(clippy::too_many_arguments)]
+    pub async fn capture(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        block: Block,
+        solve: bool,
+        actions: &[Action],
+        capture: &NetworkCapture,
+    ) -> Result<Captured, FetchError> {
+        let _tab = self
+            .tabs
+            .acquire()
+            .await
+            .map_err(|_| FetchError::Build("browser closed".into()))?;
+        let renderer = self.renderer().await?;
+        renderer
+            .capture(
+                url,
+                None,
+                &RenderOptions {
+                    solve,
+                    ..self.options(wait_for, headers, block)
+                },
+                actions,
+                capture,
             )
             .await
     }
@@ -3599,6 +4086,310 @@ mod tests {
     }
 
     #[test]
+    fn a_capture_keeps_xhr_and_fetch_unless_told_otherwise() {
+        use chromiumoxide::cdp::browser_protocol::network::ResourceType;
+        let default = super::NetworkCapture::new(None, None, false).unwrap();
+        assert!(default.wants(&ResourceType::Xhr, "https://a.example/api"));
+        assert!(default.wants(&ResourceType::Fetch, "https://a.example/api"));
+        assert!(!default.wants(&ResourceType::Script, "https://a.example/app.js"));
+        let all = super::NetworkCapture::new(Some(""), Some("all"), false).unwrap();
+        assert!(all.wants(&ResourceType::Image, "https://a.example/a.png"));
+        let scripts =
+            super::NetworkCapture::new(Some(r"/api/\d+"), Some(" Script, XHR "), false).unwrap();
+        assert!(scripts.wants(&ResourceType::Script, "https://a.example/api/12"));
+        assert!(scripts.wants(&ResourceType::Xhr, "https://a.example/api/12"));
+        assert!(!scripts.wants(&ResourceType::Xhr, "https://a.example/api/x"));
+        assert!(!scripts.wants(&ResourceType::Fetch, "https://a.example/api/12"));
+        let unknown = super::NetworkCapture::new(None, Some("xhr,json"), false).unwrap_err();
+        assert!(unknown.contains("\"json\""), "{unknown}");
+        assert!(super::NetworkCapture::new(Some("("), None, false).is_err());
+        for empty in [",", " , ", ""] {
+            assert!(
+                super::NetworkCapture::new(None, Some(empty), false).is_err(),
+                "{empty:?} captured something"
+            );
+        }
+    }
+
+    #[test]
+    fn credential_headers_are_left_out_unless_asked_for() {
+        let sent = serde_json::json!({
+            "Accept": "application/json",
+            "Authorization": "Bearer secret",
+            "X-Api-Key": "k",
+            "X-CSRF-Token": "t",
+            "Cookie": "a=b",
+            "X-Requested-With": "XMLHttpRequest",
+        });
+        let kept = super::NetworkCapture::new(None, None, false)
+            .unwrap()
+            .headers(&sent);
+        assert_eq!(
+            kept.keys().collect::<Vec<_>>(),
+            ["Accept", "X-Requested-With"]
+        );
+        let all = super::NetworkCapture::new(None, None, true)
+            .unwrap()
+            .headers(&sent);
+        assert_eq!(all.len(), 6);
+    }
+
+    #[test]
+    fn responses_from_private_addresses_are_not_kept() {
+        let response = |ip: &str| {
+            serde_json::from_value::<
+                chromiumoxide::cdp::browser_protocol::network::EventResponseReceived,
+            >(serde_json::json!({
+                "requestId": "1",
+                "loaderId": "1",
+                "timestamp": 1.0,
+                "type": "XHR",
+                "hasExtraInfo": false,
+                "response": {
+                    "url": "https://a.example/api",
+                    "status": 200,
+                    "statusText": "",
+                    "headers": {},
+                    "mimeType": "application/json",
+                    "charset": "",
+                    "connectionReused": false,
+                    "connectionId": 1.0,
+                    "remoteIPAddress": ip,
+                    "encodedDataLength": 10.0,
+                    "securityState": "secure"
+                }
+            }))
+            .unwrap()
+        };
+        let capture = super::NetworkCapture::new(None, None, false).unwrap();
+        assert!(capture.keeps(&response("93.184.215.14"), true));
+        assert!(!capture.keeps(&response("127.0.0.1"), true));
+        assert!(!capture.keeps(&response("[::1]"), true));
+        assert!(!capture.keeps(&response("10.1.2.3"), true));
+        assert!(capture.keeps(&response("127.0.0.1"), false));
+    }
+
+    #[test]
+    fn credential_headers_are_told_apart_by_their_name_parts() {
+        for name in [
+            "Authorization",
+            "Proxy-Authorization",
+            "Cookie",
+            "X-Api-Key",
+            "X-Firebase-AppCheck",
+            "Bearer",
+            "X-Access",
+            "X-Sig",
+            "X-Client-Data",
+            "X-Amz-Security-Token",
+            "Private-Token",
+            "Ocp-Apim-Subscription-Key",
+            "X-Auth-Hash",
+            "X-CSRFToken",
+            "x_session_id",
+        ] {
+            assert!(super::is_credential(name), "{name} kept");
+        }
+        for name in [
+            "Accept",
+            "Content-Type",
+            "X-Author",
+            "X-Monkey",
+            "X-Requested-With",
+            "Access-Control-Request-Headers",
+            "Referer",
+        ] {
+            assert!(!super::is_credential(name), "{name} dropped");
+        }
+    }
+
+    #[test]
+    fn credentials_in_query_strings_are_redacted() {
+        assert_eq!(
+            super::redact_query("https://a.example/api?access_token=S1&q=rust&key=AIzaS2"),
+            "https://a.example/api?access_token=REDACTED&q=rust&key=REDACTED"
+        );
+        assert_eq!(
+            super::redact_query(
+                "https://x-dsn.algolia.net/1/indexes/i?query=a&x-algolia-api-key=S3&x-algolia-application-id=X"
+            ),
+            "https://x-dsn.algolia.net/1/indexes/i?query=a&x-algolia-api-key=REDACTED&x-algolia-application-id=X"
+        );
+        let untouched = "https://a.example/search?keyword=monkey%20key&page=2";
+        assert_eq!(super::redact_query(untouched), untouched);
+    }
+
+    #[test]
+    fn bodies_are_cut_to_their_own_limit_and_to_the_total() {
+        let capture = super::NetworkCapture::new(None, None, false)
+            .unwrap()
+            .limit_bytes(4, 6);
+        let bodies = ["abcdef", "xyz", "q"]
+            .map(|body| Some(body.to_string()))
+            .into_iter()
+            .chain([None])
+            .collect();
+        assert_eq!(
+            capture.cut(bodies),
+            [
+                (Some("abcd".to_string()), true),
+                (Some("xy".to_string()), true),
+                (Some(String::new()), true),
+                (None, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn bodies_are_cut_on_a_character_boundary() {
+        assert_eq!(super::char_floor("héllo", 2), 1);
+        assert_eq!(super::char_floor("héllo", 3), 3);
+        assert_eq!(super::char_floor("abc", 10), 3);
+        assert_eq!(super::char_floor("abc", 0), 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a local Chrome and network access"]
+    async fn a_render_captures_the_json_a_page_loads() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let rendered = renderer
+            .capture(
+                "https://quotes.toscrape.com/scroll",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(30),
+                    ..Default::default()
+                },
+                &[],
+                &super::NetworkCapture::new(None, None, false).unwrap(),
+            )
+            .await;
+        renderer.close().await;
+        let network = rendered.expect("render succeeds").network;
+        let api = network
+            .iter()
+            .find(|r| r.url.contains("/api/quotes?page=1"))
+            .unwrap_or_else(|| panic!("no API response in {network:?}"));
+        assert_eq!(
+            (api.method.as_str(), api.status, api.resource_type.as_str()),
+            ("GET", 200, "xhr")
+        );
+        assert!(api.mime_type.contains("json"), "{}", api.mime_type);
+        let body: serde_json::Value = serde_json::from_str(api.body.as_deref().unwrap()).unwrap();
+        assert!(body["quotes"].as_array().is_some_and(|q| !q.is_empty()));
+        assert!(!api.truncated);
+        assert!(
+            network
+                .iter()
+                .all(|r| r.resource_type == "xhr" || r.resource_type == "fetch")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_capture_keeps_responses_up_to_its_limit_and_none_that_were_blocked() {
+        let html = r#"<html><body><p id="msg">rendered</p><img src="/blocked.png"><script>
+            fetch("/?keyed=1&access_token=S1", {headers: {"Authorization": "Bearer secret", "X-Api-Key": "k", "X-Custom": "v"}})
+                .then(() => Promise.allSettled([...Array(140).keys()].map(i => fetch("/?n=" + i))))
+                .then(() => {
+                    const done = document.createElement("div"); done.id = "done"; document.body.appendChild(done);
+                });
+            </script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let rendered = renderer
+            .capture(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(30),
+                    wait_for: Some("#done".into()),
+                    block: "images".parse().unwrap(),
+                    ..Default::default()
+                },
+                &[],
+                &super::NetworkCapture::new(None, Some("fetch,image"), false).unwrap(),
+            )
+            .await;
+        renderer.close().await;
+        let network = rendered.expect("render succeeds").network;
+        assert_eq!(network.len(), super::MAX_RESPONSES, "{network:?}");
+        assert!(network.iter().all(|r| r.resource_type == "fetch"));
+        let keyed = network
+            .iter()
+            .find(|r| r.url.ends_with("?keyed=1&access_token=REDACTED"))
+            .expect("the keyed request was captured");
+        assert_eq!(
+            keyed.request_headers.get("X-Custom").map(String::as_str),
+            Some("v")
+        );
+        assert!(!keyed.request_headers.contains_key("Authorization"));
+        assert!(!keyed.request_headers.contains_key("X-Api-Key"));
+        assert!(
+            keyed
+                .body
+                .as_deref()
+                .is_some_and(|b| b.contains("Example Domain"))
+        );
+    }
+
+    async fn capture_on_example(
+        html: &str,
+        pattern: &str,
+        wait_for: Option<&str>,
+    ) -> Vec<super::NetworkResponse> {
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let rendered = renderer
+            .capture(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(30),
+                    wait_for: wait_for.map(str::to_string),
+                    ..Default::default()
+                },
+                &[],
+                &super::NetworkCapture::new(Some(pattern), None, false).unwrap(),
+            )
+            .await;
+        renderer.close().await;
+        rendered.expect("render succeeds").network
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_capture_waits_for_a_request_that_follows_a_pause() {
+        let html = r#"<html><body><p>paused</p><script>
+            fetch("/?first=1")
+                .then(() => new Promise(done => setTimeout(done, 800)))
+                .then(() => fetch("/?second=1"));
+            </script></body></html>"#;
+        let network = capture_on_example(html, r"\?(first|second)=", None).await;
+        let urls: Vec<&str> = network.iter().map(|r| r.url.as_str()).collect();
+        assert!(urls.iter().any(|u| u.ends_with("?second=1")), "{urls:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn a_late_request_is_caught_by_waiting_for_what_it_builds() {
+        let html = r#"<html><body><p>timer</p><script>
+            setTimeout(() => fetch("/?late=1").then(() => {
+                const done = document.createElement("div"); done.id = "done"; document.body.appendChild(done);
+            }), 1500);
+            </script></body></html>"#;
+        assert!(capture_on_example(html, r"\?late=", None).await.is_empty());
+        let network = capture_on_example(html, r"\?late=", Some("#done")).await;
+        assert_eq!(network.len(), 1, "{network:?}");
+    }
+
+    #[test]
     fn solving_needs_a_chrome_profile() {
         let config = |browser| crate::FetchConfig {
             browser,
@@ -3942,5 +4733,112 @@ mod tests {
         }
         renderer.close().await;
         assert!(failed.is_empty(), "{failed:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_capture_through_a_local_proxy_keeps_its_responses() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_url = format!("http://localhost:{}", proxy.local_addr().unwrap().port());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = proxy.accept().await {
+                tokio::spawn(async move {
+                    let mut buffer = [0; 4096];
+                    let n = socket.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    let (kind, body) = if request.contains("/api ") {
+                        ("application/json", r#"{"ok":true}"#)
+                    } else {
+                        (
+                            "text/html",
+                            r#"<html><body><p>proxied</p><script>fetch("/api");</script></body></html>"#,
+                        )
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let renderer = Renderer::launch(Some(&proxy_url))
+            .await
+            .expect("Chrome launches");
+        let rendered = renderer
+            .capture(
+                "http://example.com/page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+                &[],
+                &super::NetworkCapture::new(None, None, false).unwrap(),
+            )
+            .await;
+        renderer.close().await;
+        let network = rendered.expect("render succeeds").network;
+        assert!(
+            network
+                .iter()
+                .any(|r| r.url.ends_with("/api") && r.body.as_deref() == Some(r#"{"ok":true}"#)),
+            "{network:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs network access"]
+    async fn requests_a_capture_drops_do_not_hold_it_open() {
+        let html = r#"<html><body><p>beacons</p><script>
+            fetch("/?data=1");
+            setInterval(() => { new Image().src = "/beacon.gif?" + Date.now(); }, 700);
+            </script></body></html>"#;
+        let start = std::time::Instant::now();
+        let network = capture_on_example(html, r"\?data=", None).await;
+        let took = start.elapsed();
+        assert_eq!(network.len(), 1, "{network:?}");
+        assert!(
+            took < std::time::Duration::from_secs(7),
+            "the capture took {took:?}"
+        );
+    }
+
+    #[test]
+    fn the_page_url_in_a_referer_is_redacted_too() {
+        let sent = serde_json::json!({
+            "Referer": "https://a.example/page?access_token=PAGE_SECRET&q=1",
+        });
+        let kept = super::NetworkCapture::new(None, None, false)
+            .unwrap()
+            .headers(&sent);
+        assert_eq!(
+            kept["Referer"],
+            "https://a.example/page?access_token=REDACTED&q=1"
+        );
+        let all = super::NetworkCapture::new(None, None, true)
+            .unwrap()
+            .headers(&sent);
+        assert_eq!(
+            all["Referer"],
+            "https://a.example/page?access_token=PAGE_SECRET&q=1"
+        );
+    }
+
+    #[test]
+    fn redaction_leaves_the_rest_of_the_url_as_it_was() {
+        assert_eq!(
+            super::redact_query("https://a.example/s?q=a%20b&token=T1&x=%7E~#frag"),
+            "https://a.example/s?q=a%20b&token=REDACTED&x=%7E~#frag"
+        );
+        assert_eq!(
+            super::redact_query("https://a.example/cb#access_token=T2&state=s%20t&expires_in=3600"),
+            "https://a.example/cb#access_token=REDACTED&state=s%20t&expires_in=3600"
+        );
+        assert_eq!(
+            super::redact_query("https://a.example/s?Access%5FToken=T3"),
+            "https://a.example/s?Access%5FToken=REDACTED"
+        );
     }
 }

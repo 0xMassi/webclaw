@@ -360,6 +360,25 @@ One webclaw at a time per profile: a second run on a profile in use stops with a
 
 On our benchmark, one run rendering a page took 1.7 s on a warm profile against 2.1 s on a new one, and the profile took about 9 MB on disk after six runs.
 
+### Capture the JSON a page loads
+
+Single-page apps fetch their data as JSON and build the page from it. With a `browser` build, `--capture-network` renders the page and prints the responses it loaded as a JSON array instead of the page, so you get that JSON as the site's own API returned it:
+
+```bash
+webclaw https://quotes.toscrape.com/scroll --capture-network                  # every XHR and fetch response
+webclaw https://github.com/rust-lang/cargo --capture-network=latest-commit
+webclaw https://quotes.toscrape.com/scroll --scroll --capture-network=/api/quotes
+webclaw https://example.com --capture-network --capture-types all             # documents, scripts, images too
+```
+
+Each response has its `url`, `method`, `status`, `resource_type`, `mime_type`, the `request_headers` the page set, and the `body` of text responses (JSON, HTML, JavaScript, XML, plain text). Binary bodies are left out. The pattern is a regular expression the URL must match, written after an equals sign. Only `xhr` and `fetch` responses are kept unless `--capture-types` names others, as a comma list of the browser's resource types or `all`. At most 100 responses are kept, each body is cut to 1 MB and all bodies together to 5 MB, and a cut body has `truncated` set.
+
+Unless you pass `--capture-credentials`, request headers whose name marks a credential (Authorization, API keys, tokens, sessions, signatures) are left out, and URL query parameters named that way, such as `access_token` or `key`, read `REDACTED`. Cookies are added by the browser after the page sends a request, so they are never there. Response bodies are kept as the site sent them, so a token the site returns in its JSON stays in the output; check what you share.
+
+A capturing render waits until no request it would keep is in flight and none has started for 1 second, up to a third of `--timeout`, before it reads the responses. A request the page starts later than that is missed; `--wait-for` or a `wait` step catches it. With `--actions` or `--scroll` the steps run first, so the responses they trigger are captured too. If the render fails or times out, the command fails and prints no responses.
+
+The capture only sees what the browser was allowed to load: a request the address checks above or `--block` stop never gets a response, and a response that came from a private address is left out. The requests a cross-site frame or a dedicated worker makes itself are not captured. A page that ships its data inside its HTML calls no API, so there is nothing to capture: read the page itself, or keep its document with `--capture-types document`. The MCP `scrape` tool takes the same options as `capture_network`, `capture_types` and `capture_credentials`, cuts each body to 100 KB and all bodies together to 1 MB to fit a model's context, and returns the responses after the content, or under `network` with `format: "json"`.
+
 ### Crawl a documentation site
 
 ```bash

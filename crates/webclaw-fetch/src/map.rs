@@ -220,14 +220,7 @@ async fn crawl_fallback(
     let Some(base_origin) = Url::parse(base_url).ok().map(|u| crawler::origin_key(&u)) else {
         return;
     };
-    let config = CrawlConfig {
-        fetch: FetchConfig::default(),
-        max_depth: opts.crawl_depth,
-        max_pages: Some(opts.max_crawl_pages),
-        delay: Duration::from_millis(50),
-        ..CrawlConfig::default()
-    };
-    let Ok(crawler) = Crawler::new(base_url, config) else {
+    let Ok(crawler) = Crawler::new(base_url, fallback_config(opts)) else {
         return;
     };
     let result = crawler.crawl(base_url, None).await;
@@ -252,6 +245,19 @@ async fn crawl_fallback(
     discovered.extend(result.remaining_frontier.into_iter().map(|(url, _)| url));
 
     append_crawled(entries, seen, discovered, &base_origin);
+}
+
+fn fallback_config(opts: &MapOptions) -> CrawlConfig {
+    CrawlConfig {
+        fetch: FetchConfig::default(),
+        max_depth: opts.crawl_depth,
+        max_pages: Some(opts.max_crawl_pages),
+        delay: Duration::from_millis(50),
+        path_prefix: opts.path_prefix.clone(),
+        include_patterns: opts.include_patterns.clone(),
+        exclude_patterns: opts.exclude_patterns.clone(),
+        ..CrawlConfig::default()
+    }
 }
 
 /// What [`common_crawl_urls`] read.
@@ -994,6 +1000,21 @@ mod tests {
         };
         assert_eq!(room(&ranked, 5), None);
         assert_eq!(room(&MapOptions::default(), 5), None);
+    }
+
+    #[test]
+    fn the_fallback_crawl_follows_the_map_path_rules() {
+        let opts = MapOptions {
+            path_prefix: Some("/docs".into()),
+            include_patterns: vec!["/docs/**".into()],
+            exclude_patterns: vec!["/docs/old/*".into()],
+            ..MapOptions::default()
+        };
+        let config = fallback_config(&opts);
+        assert_eq!(config.path_prefix.as_deref(), Some("/docs"));
+        assert_eq!(config.include_patterns, vec!["/docs/**"]);
+        assert_eq!(config.exclude_patterns, vec!["/docs/old/*"]);
+        assert_eq!(config.max_pages, Some(150));
     }
 
     #[test]

@@ -59,23 +59,13 @@ struct Refs {
 impl Refs {
     fn rewrite(&mut self, s: &str, nested: bool) -> String {
         let b = s.as_bytes();
-        let pair = pairs(b);
-        let mut unclosed_ticks: Vec<usize> = Vec::new();
+        let code = code_spans(b);
+        let pair = pairs(b, &code);
         let mut out = String::with_capacity(s.len());
         let (mut i, mut copied) = (0, 0);
         while i < b.len() {
             match b[i] {
-                b'`' => {
-                    let run = b[i..].iter().take_while(|&&c| c == b'`').count();
-                    let ticks = &b[i..i + run];
-                    i += run;
-                    if !unclosed_ticks.contains(&run) {
-                        match b[i..].windows(run).position(|w| w == ticks) {
-                            Some(end) => i += end + run,
-                            None => unclosed_ticks.push(run),
-                        }
-                    }
-                }
+                b'`' if code[i] != NONE => i = code[i],
                 b'[' if pair[i] != NONE
                     && b.get(pair[i] + 1) == Some(&b'(')
                     && pair[pair[i] + 1] != NONE =>
@@ -136,11 +126,47 @@ impl Refs {
 
 const NONE: usize = usize::MAX;
 
-fn pairs(b: &[u8]) -> Vec<usize> {
+fn code_spans(b: &[u8]) -> Vec<usize> {
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let len = b[i..].iter().take_while(|&&c| c == b'`').count();
+        if len > 0 {
+            runs.push((i, len));
+        }
+        i += len.max(1);
+    }
+    let mut next = vec![NONE; runs.len()];
+    let mut seen: HashMap<usize, usize> = HashMap::new();
+    for r in (0..runs.len()).rev() {
+        if let Some(&n) = seen.get(&runs[r].1) {
+            next[r] = n;
+        }
+        seen.insert(runs[r].1, r);
+    }
+    let mut end = vec![NONE; b.len()];
+    let mut r = 0;
+    while r < runs.len() {
+        match next[r] {
+            NONE => r += 1,
+            n => {
+                end[runs[r].0] = runs[n].0 + runs[n].1;
+                r = n + 1;
+            }
+        }
+    }
+    end
+}
+
+fn pairs(b: &[u8], code: &[usize]) -> Vec<usize> {
     let mut pair = vec![NONE; b.len()];
     let (mut brackets, mut parens) = (Vec::new(), Vec::new());
     let mut i = 0;
     while i < b.len() {
+        if code[i] != NONE {
+            i = code[i];
+            continue;
+        }
         match b[i] {
             b'\\' => i += 1,
             b'[' => brackets.push(i),
@@ -274,6 +300,9 @@ mod tests {
         );
         let started = std::time::Instant::now();
         assert_eq!(to_citations(&md, None), md);
-        assert!(started.elapsed().as_secs() < 10);
+        let descending: String = (1001..=2000).rev().map(|n| "`".repeat(n) + "a").collect();
+        let descending = format!("x {descending} [x](https://x.com)");
+        assert!(to_citations(&descending, None).contains("x[^1]"));
+        assert!(started.elapsed().as_secs() < 2);
     }
 }

@@ -1,0 +1,468 @@
+{"arm": "webclaw-auto", "mode": "url", "id": "news02", "run": 0, "ok": true, "seconds": 0.153, "error": null, "hits": 2, "nfacts": 2, "tokens": 2068}
+{"arm": "webclaw-auto", "mode": "url", "id": "news03", "run": 0, "ok": true, "seconds": 0.109, "error": null, "hits": 2, "nfacts": 2, "tokens": 1461}
+{"arm": "webclaw-auto", "mode": "url", "id": "news04", "run": 0, "ok": true, "seconds": 0.111, "error": null, "hits": 2, "nfacts": 2, "tokens": 1404}
+{"arm": "webclaw-auto", "mode": "url", "id": "news06", "run": 0, "ok": true, "seconds": 0.112, "error": null, "hits": 2, "nfacts": 2, "tokens": 1510}
+{"arm": "webclaw-auto", "mode": "url", "id": "news07", "run": 0, "ok": true, "seconds": 0.114, "error": null, "hits": 2, "nfacts": 2, "tokens": 3532}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop01", "run": 0, "ok": true, "seconds": 0.47, "error": null, "hits": 2, "nfacts": 2, "tokens": 630}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop02", "run": 0, "ok": true, "seconds": 0.382, "error": null, "hits": 2, "nfacts": 2, "tokens": 565}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop03", "run": 0, "ok": true, "seconds": 0.378, "error": null, "hits": 2, "nfacts": 2, "tokens": 547}
+{"arm": "webclaw-render", "mode": "url", "id": "news02", "run": 0, "ok": true, "seconds": 1.916, "error": null, "hits": 2, "nfacts": 2, "tokens": 2068}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop04", "run": 0, "ok": true, "seconds": 0.387, "error": null, "hits": 2, "nfacts": 2, "tokens": 1012}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop05", "run": 0, "ok": true, "seconds": 0.398, "error": null, "hits": 2, "nfacts": 2, "tokens": 1104}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop06", "run": 0, "ok": true, "seconds": 0.409, "error": null, "hits": 2, "nfacts": 2, "tokens": 864}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop07", "run": 0, "ok": true, "seconds": 0.507, "error": null, "hits": 2, "nfacts": 2, "tokens": 1169}
+{"arm": "webclaw-render", "mode": "url", "id": "news03", "run": 0, "ok": true, "seconds": 1.871, "error": null, "hits": 2, "nfacts": 2, "tokens": 1461}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop08", "run": 0, "ok": true, "seconds": 0.513, "error": null, "hits": 2, "nfacts": 2, "tokens": 1993}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop09", "run": 0, "ok": true, "seconds": 0.504, "error": null, "hits": 2, "nfacts": 2, "tokens": 1432}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs01", "run": 0, "ok": true, "seconds": 0.114, "error": null, "hits": 2, "nfacts": 2, "tokens": 2538}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs02", "run": 0, "ok": true, "seconds": 0.084, "error": null, "hits": 2, "nfacts": 2, "tokens": 6738}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs03", "run": 0, "ok": true, "seconds": 0.107, "error": null, "hits": 2, "nfacts": 2, "tokens": 8158}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs04", "run": 0, "ok": true, "seconds": 0.102, "error": null, "hits": 2, "nfacts": 2, "tokens": 7282}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs05", "run": 0, "ok": true, "seconds": 0.119, "error": null, "hits": 2, "nfacts": 2, "tokens": 8380}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs06", "run": 0, "ok": true, "seconds": 0.13, "error": null, "hits": 2, "nfacts": 2, "tokens": 13390}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs07", "run": 0, "ok": true, "seconds": 0.344, "error": null, "hits": 2, "nfacts": 2, "tokens": 24294}
+{"arm": "webclaw-render", "mode": "url", "id": "news04", "run": 0, "ok": true, "seconds": 1.93, "error": null, "hits": 2, "nfacts": 2, "tokens": 1404}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs08", "run": 0, "ok": true, "seconds": 0.708, "error": null, "hits": 2, "nfacts": 2, "tokens": 5922}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs09", "run": 0, "ok": true, "seconds": 0.265, "error": null, "hits": 2, "nfacts": 2, "tokens": 5698}
+{"arm": "webclaw-render", "mode": "url", "id": "news06", "run": 0, "ok": true, "seconds": 1.887, "error": null, "hits": 2, "nfacts": 2, "tokens": 1510}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa01", "run": 0, "ok": true, "seconds": 2.531, "error": null, "hits": 2, "nfacts": 2, "tokens": 358}
+{"arm": "webclaw-render", "mode": "url", "id": "news07", "run": 0, "ok": true, "seconds": 1.869, "error": null, "hits": 2, "nfacts": 2, "tokens": 3532}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa02", "run": 0, "ok": true, "seconds": 2.706, "error": null, "hits": 2, "nfacts": 2, "tokens": 773}
+{"arm": "webclaw-render", "mode": "url", "id": "shop01", "run": 0, "ok": true, "seconds": 2.411, "error": null, "hits": 2, "nfacts": 2, "tokens": 630}
+{"arm": "webclaw-render", "mode": "url", "id": "shop02", "run": 0, "ok": true, "seconds": 2.268, "error": null, "hits": 2, "nfacts": 2, "tokens": 565}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa03", "run": 0, "ok": true, "seconds": 2.538, "error": null, "hits": 2, "nfacts": 2, "tokens": 405}
+{"arm": "webclaw-render", "mode": "url", "id": "shop03", "run": 0, "ok": true, "seconds": 2.29, "error": null, "hits": 2, "nfacts": 2, "tokens": 547}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa04", "run": 0, "ok": true, "seconds": 2.608, "error": null, "hits": 2, "nfacts": 2, "tokens": 323}
+{"arm": "webclaw-render", "mode": "url", "id": "shop04", "run": 0, "ok": true, "seconds": 2.24, "error": null, "hits": 2, "nfacts": 2, "tokens": 1012}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa05", "run": 0, "ok": true, "seconds": 2.053, "error": null, "hits": 1, "nfacts": 2, "tokens": 75}
+{"arm": "webclaw-render", "mode": "url", "id": "shop05", "run": 0, "ok": true, "seconds": 2.306, "error": null, "hits": 2, "nfacts": 2, "tokens": 1104}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa06", "run": 0, "ok": true, "seconds": 2.039, "error": null, "hits": 1, "nfacts": 2, "tokens": 104}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa07", "run": 0, "ok": true, "seconds": 2.26, "error": null, "hits": 0, "nfacts": 2, "tokens": 46}
+{"arm": "webclaw-render", "mode": "url", "id": "shop06", "run": 0, "ok": true, "seconds": 2.374, "error": null, "hits": 2, "nfacts": 2, "tokens": 864}
+{"arm": "webclaw-render", "mode": "url", "id": "shop07", "run": 0, "ok": true, "seconds": 2.33, "error": null, "hits": 2, "nfacts": 2, "tokens": 1169}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa08", "run": 0, "ok": true, "seconds": 2.502, "error": null, "hits": 2, "nfacts": 2, "tokens": 4399}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa09", "run": 0, "ok": true, "seconds": 0.176, "error": null, "hits": 2, "nfacts": 2, "tokens": 264}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf01", "run": 0, "ok": true, "seconds": 0.29, "error": null, "hits": 2, "nfacts": 2, "tokens": 9782}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf02", "run": 0, "ok": true, "seconds": 0.196, "error": null, "hits": 2, "nfacts": 2, "tokens": 17424}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf03", "run": 0, "ok": true, "seconds": 0.409, "error": null, "hits": 2, "nfacts": 2, "tokens": 64190}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf04", "run": 0, "ok": true, "seconds": 0.185, "error": null, "hits": 2, "nfacts": 2, "tokens": 17043}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf05", "run": 0, "ok": true, "seconds": 0.352, "error": null, "hits": 1, "nfacts": 2, "tokens": 15373}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf06", "run": 0, "ok": true, "seconds": 0.187, "error": null, "hits": 2, "nfacts": 2, "tokens": 13218}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf07", "run": 0, "ok": true, "seconds": 0.314, "error": null, "hits": 2, "nfacts": 2, "tokens": 25609}
+{"arm": "webclaw-render", "mode": "url", "id": "shop08", "run": 0, "ok": true, "seconds": 2.488, "error": null, "hits": 2, "nfacts": 2, "tokens": 1993}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf08", "run": 0, "ok": true, "seconds": 0.43, "error": null, "hits": 2, "nfacts": 2, "tokens": 57209}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf09", "run": 0, "ok": true, "seconds": 0.173, "error": null, "hits": 2, "nfacts": 2, "tokens": 13153}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang01", "run": 0, "ok": true, "seconds": 0.366, "error": null, "hits": 2, "nfacts": 2, "tokens": 83726}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang02", "run": 0, "ok": true, "seconds": 0.388, "error": null, "hits": 2, "nfacts": 2, "tokens": 71078}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang03", "run": 0, "ok": true, "seconds": 0.537, "error": null, "hits": 2, "nfacts": 2, "tokens": 109351}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang04", "run": 0, "ok": true, "seconds": 0.351, "error": null, "hits": 2, "nfacts": 2, "tokens": 66184}
+{"arm": "webclaw-render", "mode": "url", "id": "shop09", "run": 0, "ok": true, "seconds": 2.222, "error": null, "hits": 2, "nfacts": 2, "tokens": 1432}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang05", "run": 0, "ok": true, "seconds": 0.317, "error": null, "hits": 2, "nfacts": 2, "tokens": 61105}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang06", "run": 0, "ok": true, "seconds": 0.272, "error": null, "hits": 2, "nfacts": 2, "tokens": 55767}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang07", "run": 0, "ok": true, "seconds": 0.305, "error": null, "hits": 2, "nfacts": 2, "tokens": 91427}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang08", "run": 0, "ok": true, "seconds": 0.322, "error": null, "hits": 2, "nfacts": 2, "tokens": 119599}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang09", "run": 0, "ok": true, "seconds": 0.315, "error": null, "hits": 2, "nfacts": 2, "tokens": 74007}
+{"arm": "webclaw-auto", "mode": "url", "id": "news10", "run": 0, "ok": true, "seconds": 0.127, "error": null, "hits": 2, "nfacts": 2, "tokens": 4581}
+{"arm": "webclaw-render", "mode": "url", "id": "docs01", "run": 0, "ok": true, "seconds": 1.521, "error": null, "hits": 2, "nfacts": 2, "tokens": 2538}
+{"arm": "webclaw-auto", "mode": "url", "id": "news11", "run": 0, "ok": true, "seconds": 0.601, "error": null, "hits": 2, "nfacts": 2, "tokens": 5743}
+{"arm": "webclaw-auto", "mode": "url", "id": "news12", "run": 0, "ok": true, "seconds": 0.586, "error": null, "hits": 2, "nfacts": 2, "tokens": 4682}
+{"arm": "webclaw-auto", "mode": "url", "id": "news13", "run": 0, "ok": true, "seconds": 0.105, "error": null, "hits": 2, "nfacts": 2, "tokens": 3975}
+{"arm": "webclaw-auto", "mode": "url", "id": "article01", "run": 0, "ok": false, "seconds": 0.133, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article02", "run": 0, "ok": false, "seconds": 0.107, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article03", "run": 0, "ok": false, "seconds": 0.111, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "docs02", "run": 0, "ok": true, "seconds": 1.541, "error": null, "hits": 2, "nfacts": 2, "tokens": 6738}
+{"arm": "webclaw-auto", "mode": "url", "id": "article04", "run": 0, "ok": false, "seconds": 0.165, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article05", "run": 0, "ok": false, "seconds": 0.104, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article06", "run": 0, "ok": false, "seconds": 0.1, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "home00", "run": 0, "ok": true, "seconds": 0.335, "error": null, "hits": 3, "nfacts": 5, "tokens": 1144}
+{"arm": "webclaw-auto", "mode": "url", "id": "home01", "run": 0, "ok": true, "seconds": 0.179, "error": null, "hits": 1, "nfacts": 5, "tokens": 1314}
+{"arm": "webclaw-auto", "mode": "url", "id": "home02", "run": 0, "ok": true, "seconds": 0.227, "error": null, "hits": 2, "nfacts": 5, "tokens": 784}
+{"arm": "webclaw-auto", "mode": "url", "id": "home03", "run": 0, "ok": true, "seconds": 0.175, "error": null, "hits": 3, "nfacts": 5, "tokens": 838}
+{"arm": "webclaw-render", "mode": "url", "id": "docs03", "run": 0, "ok": true, "seconds": 1.483, "error": null, "hits": 2, "nfacts": 2, "tokens": 8238}
+{"arm": "webclaw-auto", "mode": "url", "id": "home04", "run": 0, "ok": true, "seconds": 0.602, "error": null, "hits": 5, "nfacts": 5, "tokens": 3179}
+{"arm": "webclaw-auto", "mode": "url", "id": "home05", "run": 0, "ok": true, "seconds": 0.511, "error": null, "hits": 5, "nfacts": 5, "tokens": 2385}
+{"arm": "webclaw-auto", "mode": "url", "id": "home06", "run": 0, "ok": true, "seconds": 0.295, "error": null, "hits": 3, "nfacts": 5, "tokens": 1508}
+{"arm": "webclaw-auto", "mode": "url", "id": "home07", "run": 0, "ok": true, "seconds": 0.079, "error": null, "hits": 4, "nfacts": 5, "tokens": 842}
+{"arm": "webclaw-auto", "mode": "url", "id": "home08", "run": 0, "ok": true, "seconds": 0.208, "error": null, "hits": 5, "nfacts": 5, "tokens": 3331}
+{"arm": "webclaw-render", "mode": "url", "id": "docs04", "run": 0, "ok": true, "seconds": 1.578, "error": null, "hits": 2, "nfacts": 2, "tokens": 7311}
+{"arm": "webclaw-auto", "mode": "url", "id": "home09", "run": 0, "ok": true, "seconds": 0.23, "error": null, "hits": 4, "nfacts": 5, "tokens": 728}
+{"arm": "webclaw-auto", "mode": "url", "id": "home10", "run": 0, "ok": true, "seconds": 0.213, "error": null, "hits": 4, "nfacts": 5, "tokens": 891}
+{"arm": "webclaw-auto", "mode": "url", "id": "home11", "run": 0, "ok": true, "seconds": 0.22, "error": null, "hits": 5, "nfacts": 5, "tokens": 1432}
+{"arm": "webclaw-auto", "mode": "url", "id": "home12", "run": 0, "ok": true, "seconds": 0.257, "error": null, "hits": 5, "nfacts": 5, "tokens": 50044}
+{"arm": "webclaw-auto", "mode": "url", "id": "home13", "run": 0, "ok": false, "seconds": 0.377, "error": "RuntimeError: the target returned HTTP 404 instead of a successful page", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "docs05", "run": 0, "ok": true, "seconds": 1.612, "error": null, "hits": 2, "nfacts": 2, "tokens": 6178}
+{"arm": "webclaw-auto", "mode": "url", "id": "home14", "run": 0, "ok": true, "seconds": 0.659, "error": null, "hits": 2, "nfacts": 5, "tokens": 144}
+{"arm": "webclaw-auto", "mode": "url", "id": "home15", "run": 0, "ok": true, "seconds": 0.193, "error": null, "hits": 5, "nfacts": 5, "tokens": 7693}
+{"arm": "webclaw-auto", "mode": "url", "id": "home16", "run": 0, "ok": true, "seconds": 0.263, "error": null, "hits": 4, "nfacts": 5, "tokens": 2761}
+{"arm": "webclaw-render", "mode": "url", "id": "docs06", "run": 0, "ok": true, "seconds": 1.698, "error": null, "hits": 2, "nfacts": 2, "tokens": 7548}
+{"arm": "webclaw-auto", "mode": "url", "id": "home17", "run": 0, "ok": false, "seconds": 1.241, "error": "RuntimeError: 10-15T05:24:50.757468Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebclaw_fetch::client\u001b[0m\u001b[2m:\u001b[0m retryable status, will retry \u001b[3murl\u001b[0m\u001b[2m=\u001b[0m\"https://www.hashicorp.com\" \u001b[3mstatus\u001b[0m\u001b[2m=\u001b[0m429 \u001b[3mattempt_no\u001b[0m\u001b[2m=\u001b[0m1 \u001b[3mwait_ms\u001b[0m\u001b[2m=\u001b[0m1000\nthe target returned HTTP 429 instead of a s", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "news02", "run": 1, "ok": true, "seconds": 0.126, "error": null, "hits": 2, "nfacts": 2, "tokens": 2068}
+{"arm": "webclaw-auto", "mode": "url", "id": "news03", "run": 1, "ok": true, "seconds": 0.11, "error": null, "hits": 2, "nfacts": 2, "tokens": 1461}
+{"arm": "webclaw-auto", "mode": "url", "id": "news04", "run": 1, "ok": true, "seconds": 0.107, "error": null, "hits": 2, "nfacts": 2, "tokens": 1404}
+{"arm": "webclaw-auto", "mode": "url", "id": "news06", "run": 1, "ok": true, "seconds": 0.115, "error": null, "hits": 2, "nfacts": 2, "tokens": 1510}
+{"arm": "webclaw-auto", "mode": "url", "id": "news07", "run": 1, "ok": true, "seconds": 0.099, "error": null, "hits": 2, "nfacts": 2, "tokens": 3532}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop01", "run": 1, "ok": true, "seconds": 0.407, "error": null, "hits": 2, "nfacts": 2, "tokens": 630}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop02", "run": 1, "ok": true, "seconds": 0.387, "error": null, "hits": 2, "nfacts": 2, "tokens": 565}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop03", "run": 1, "ok": true, "seconds": 0.402, "error": null, "hits": 2, "nfacts": 2, "tokens": 547}
+{"arm": "webclaw-render", "mode": "url", "id": "docs07", "run": 0, "ok": true, "seconds": 2.145, "error": null, "hits": 2, "nfacts": 2, "tokens": 25174}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop04", "run": 1, "ok": true, "seconds": 0.391, "error": null, "hits": 2, "nfacts": 2, "tokens": 1012}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop05", "run": 1, "ok": true, "seconds": 0.505, "error": null, "hits": 2, "nfacts": 2, "tokens": 1104}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop06", "run": 1, "ok": true, "seconds": 0.411, "error": null, "hits": 2, "nfacts": 2, "tokens": 864}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop07", "run": 1, "ok": true, "seconds": 0.534, "error": null, "hits": 2, "nfacts": 2, "tokens": 1169}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop08", "run": 1, "ok": true, "seconds": 0.517, "error": null, "hits": 2, "nfacts": 2, "tokens": 1993}
+{"arm": "webclaw-render", "mode": "url", "id": "docs08", "run": 0, "ok": true, "seconds": 2.598, "error": null, "hits": 2, "nfacts": 2, "tokens": 5922}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop09", "run": 1, "ok": true, "seconds": 0.509, "error": null, "hits": 2, "nfacts": 2, "tokens": 1432}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs01", "run": 1, "ok": true, "seconds": 0.074, "error": null, "hits": 2, "nfacts": 2, "tokens": 2538}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs02", "run": 1, "ok": true, "seconds": 0.076, "error": null, "hits": 2, "nfacts": 2, "tokens": 6738}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs03", "run": 1, "ok": true, "seconds": 0.089, "error": null, "hits": 2, "nfacts": 2, "tokens": 8158}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs04", "run": 1, "ok": true, "seconds": 0.086, "error": null, "hits": 2, "nfacts": 2, "tokens": 7282}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs05", "run": 1, "ok": true, "seconds": 0.099, "error": null, "hits": 2, "nfacts": 2, "tokens": 8380}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs06", "run": 1, "ok": true, "seconds": 0.129, "error": null, "hits": 2, "nfacts": 2, "tokens": 13390}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs07", "run": 1, "ok": true, "seconds": 0.299, "error": null, "hits": 2, "nfacts": 2, "tokens": 24294}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs08", "run": 1, "ok": true, "seconds": 0.212, "error": null, "hits": 2, "nfacts": 2, "tokens": 5922}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs09", "run": 1, "ok": true, "seconds": 0.097, "error": null, "hits": 2, "nfacts": 2, "tokens": 5698}
+{"arm": "webclaw-render", "mode": "url", "id": "docs09", "run": 0, "ok": true, "seconds": 1.536, "error": null, "hits": 2, "nfacts": 2, "tokens": 5698}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa01", "run": 1, "ok": true, "seconds": 2.622, "error": null, "hits": 2, "nfacts": 2, "tokens": 358}
+{"arm": "webclaw-render", "mode": "url", "id": "spa01", "run": 0, "ok": true, "seconds": 2.44, "error": null, "hits": 2, "nfacts": 2, "tokens": 358}
+{"arm": "webclaw-render", "mode": "url", "id": "spa02", "run": 0, "ok": true, "seconds": 2.222, "error": null, "hits": 2, "nfacts": 2, "tokens": 773}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa02", "run": 1, "ok": true, "seconds": 2.517, "error": null, "hits": 2, "nfacts": 2, "tokens": 773}
+{"arm": "webclaw-render", "mode": "url", "id": "spa03", "run": 0, "ok": true, "seconds": 2.337, "error": null, "hits": 2, "nfacts": 2, "tokens": 405}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa03", "run": 1, "ok": true, "seconds": 2.47, "error": null, "hits": 2, "nfacts": 2, "tokens": 405}
+{"arm": "webclaw-render", "mode": "url", "id": "spa04", "run": 0, "ok": true, "seconds": 2.322, "error": null, "hits": 2, "nfacts": 2, "tokens": 323}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa04", "run": 1, "ok": true, "seconds": 2.571, "error": null, "hits": 2, "nfacts": 2, "tokens": 323}
+{"arm": "webclaw-render", "mode": "url", "id": "spa05", "run": 0, "ok": true, "seconds": 1.978, "error": null, "hits": 1, "nfacts": 2, "tokens": 75}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa05", "run": 1, "ok": true, "seconds": 2.032, "error": null, "hits": 1, "nfacts": 2, "tokens": 75}
+{"arm": "webclaw-render", "mode": "url", "id": "spa06", "run": 0, "ok": true, "seconds": 1.908, "error": null, "hits": 1, "nfacts": 2, "tokens": 104}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa06", "run": 1, "ok": true, "seconds": 1.49, "error": null, "hits": 1, "nfacts": 2, "tokens": 104}
+{"arm": "webclaw-render", "mode": "url", "id": "spa07", "run": 0, "ok": true, "seconds": 2.136, "error": null, "hits": 0, "nfacts": 2, "tokens": 46}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa07", "run": 1, "ok": true, "seconds": 1.967, "error": null, "hits": 0, "nfacts": 2, "tokens": 46}
+{"arm": "webclaw-render", "mode": "url", "id": "spa08", "run": 0, "ok": true, "seconds": 2.254, "error": null, "hits": 2, "nfacts": 2, "tokens": 4399}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa08", "run": 1, "ok": true, "seconds": 2.262, "error": null, "hits": 2, "nfacts": 2, "tokens": 4399}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa09", "run": 1, "ok": true, "seconds": 0.082, "error": null, "hits": 2, "nfacts": 2, "tokens": 264}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf01", "run": 1, "ok": true, "seconds": 0.293, "error": null, "hits": 2, "nfacts": 2, "tokens": 9782}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf02", "run": 1, "ok": true, "seconds": 0.197, "error": null, "hits": 2, "nfacts": 2, "tokens": 17424}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf03", "run": 1, "ok": true, "seconds": 0.407, "error": null, "hits": 2, "nfacts": 2, "tokens": 64190}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf04", "run": 1, "ok": true, "seconds": 0.177, "error": null, "hits": 2, "nfacts": 2, "tokens": 17043}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf05", "run": 1, "ok": true, "seconds": 0.252, "error": null, "hits": 1, "nfacts": 2, "tokens": 15373}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf06", "run": 1, "ok": true, "seconds": 0.169, "error": null, "hits": 2, "nfacts": 2, "tokens": 13218}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf07", "run": 1, "ok": true, "seconds": 0.314, "error": null, "hits": 2, "nfacts": 2, "tokens": 25609}
+{"arm": "webclaw-render", "mode": "url", "id": "spa09", "run": 0, "ok": true, "seconds": 2.01, "error": null, "hits": 2, "nfacts": 2, "tokens": 264}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf08", "run": 1, "ok": true, "seconds": 0.549, "error": null, "hits": 2, "nfacts": 2, "tokens": 57209}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf09", "run": 1, "ok": true, "seconds": 0.164, "error": null, "hits": 2, "nfacts": 2, "tokens": 13153}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang01", "run": 1, "ok": true, "seconds": 0.34, "error": null, "hits": 2, "nfacts": 2, "tokens": 83726}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang02", "run": 1, "ok": true, "seconds": 0.367, "error": null, "hits": 2, "nfacts": 2, "tokens": 71078}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf01", "run": 0, "ok": false, "seconds": 1.788, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang03", "run": 1, "ok": true, "seconds": 0.503, "error": null, "hits": 2, "nfacts": 2, "tokens": 109351}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang04", "run": 1, "ok": true, "seconds": 0.346, "error": null, "hits": 2, "nfacts": 2, "tokens": 66184}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang05", "run": 1, "ok": true, "seconds": 1.021, "error": null, "hits": 2, "nfacts": 2, "tokens": 61105}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf02", "run": 0, "ok": false, "seconds": 1.727, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang06", "run": 1, "ok": true, "seconds": 0.273, "error": null, "hits": 2, "nfacts": 2, "tokens": 55767}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang07", "run": 1, "ok": true, "seconds": 0.287, "error": null, "hits": 2, "nfacts": 2, "tokens": 91427}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang08", "run": 1, "ok": true, "seconds": 0.319, "error": null, "hits": 2, "nfacts": 2, "tokens": 119599}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang09", "run": 1, "ok": true, "seconds": 0.68, "error": null, "hits": 2, "nfacts": 2, "tokens": 74007}
+{"arm": "webclaw-auto", "mode": "url", "id": "news10", "run": 1, "ok": true, "seconds": 0.119, "error": null, "hits": 2, "nfacts": 2, "tokens": 4581}
+{"arm": "webclaw-auto", "mode": "url", "id": "news11", "run": 1, "ok": true, "seconds": 0.127, "error": null, "hits": 2, "nfacts": 2, "tokens": 5743}
+{"arm": "webclaw-auto", "mode": "url", "id": "news12", "run": 1, "ok": true, "seconds": 0.132, "error": null, "hits": 2, "nfacts": 2, "tokens": 4682}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf03", "run": 0, "ok": false, "seconds": 1.699, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "news13", "run": 1, "ok": true, "seconds": 0.109, "error": null, "hits": 2, "nfacts": 2, "tokens": 3975}
+{"arm": "webclaw-auto", "mode": "url", "id": "article01", "run": 1, "ok": false, "seconds": 0.116, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article02", "run": 1, "ok": false, "seconds": 0.119, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article03", "run": 1, "ok": false, "seconds": 0.126, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article04", "run": 1, "ok": false, "seconds": 0.088, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article05", "run": 1, "ok": false, "seconds": 0.101, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article06", "run": 1, "ok": false, "seconds": 0.107, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "home00", "run": 1, "ok": true, "seconds": 0.322, "error": null, "hits": 3, "nfacts": 5, "tokens": 1144}
+{"arm": "webclaw-auto", "mode": "url", "id": "home01", "run": 1, "ok": true, "seconds": 0.176, "error": null, "hits": 1, "nfacts": 5, "tokens": 1314}
+{"arm": "webclaw-auto", "mode": "url", "id": "home02", "run": 1, "ok": true, "seconds": 0.216, "error": null, "hits": 2, "nfacts": 5, "tokens": 784}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf04", "run": 0, "ok": false, "seconds": 1.712, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "home03", "run": 1, "ok": true, "seconds": 0.281, "error": null, "hits": 3, "nfacts": 5, "tokens": 838}
+{"arm": "webclaw-auto", "mode": "url", "id": "home04", "run": 1, "ok": true, "seconds": 0.544, "error": null, "hits": 5, "nfacts": 5, "tokens": 3179}
+{"arm": "webclaw-auto", "mode": "url", "id": "home05", "run": 1, "ok": true, "seconds": 0.458, "error": null, "hits": 5, "nfacts": 5, "tokens": 2385}
+{"arm": "webclaw-auto", "mode": "url", "id": "home06", "run": 1, "ok": true, "seconds": 0.262, "error": null, "hits": 3, "nfacts": 5, "tokens": 1508}
+{"arm": "webclaw-auto", "mode": "url", "id": "home07", "run": 1, "ok": true, "seconds": 0.163, "error": null, "hits": 4, "nfacts": 5, "tokens": 842}
+{"arm": "webclaw-auto", "mode": "url", "id": "home08", "run": 1, "ok": true, "seconds": 0.19, "error": null, "hits": 5, "nfacts": 5, "tokens": 3331}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf05", "run": 0, "ok": false, "seconds": 1.689, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "home09", "run": 1, "ok": true, "seconds": 0.148, "error": null, "hits": 4, "nfacts": 5, "tokens": 728}
+{"arm": "webclaw-auto", "mode": "url", "id": "home10", "run": 1, "ok": true, "seconds": 0.153, "error": null, "hits": 4, "nfacts": 5, "tokens": 891}
+{"arm": "webclaw-auto", "mode": "url", "id": "home11", "run": 1, "ok": true, "seconds": 0.205, "error": null, "hits": 5, "nfacts": 5, "tokens": 1432}
+{"arm": "webclaw-auto", "mode": "url", "id": "home12", "run": 1, "ok": true, "seconds": 0.257, "error": null, "hits": 5, "nfacts": 5, "tokens": 50044}
+{"arm": "webclaw-auto", "mode": "url", "id": "home13", "run": 1, "ok": false, "seconds": 0.081, "error": "RuntimeError: the target returned HTTP 404 instead of a successful page", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "home14", "run": 1, "ok": true, "seconds": 0.525, "error": null, "hits": 2, "nfacts": 5, "tokens": 144}
+{"arm": "webclaw-auto", "mode": "url", "id": "home15", "run": 1, "ok": true, "seconds": 0.134, "error": null, "hits": 5, "nfacts": 5, "tokens": 7693}
+{"arm": "webclaw-auto", "mode": "url", "id": "home16", "run": 1, "ok": true, "seconds": 0.206, "error": null, "hits": 4, "nfacts": 5, "tokens": 2761}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf06", "run": 0, "ok": false, "seconds": 1.697, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "home17", "run": 1, "ok": false, "seconds": 1.148, "error": "RuntimeError: 10-15T05:25:27.863903Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebclaw_fetch::client\u001b[0m\u001b[2m:\u001b[0m retryable status, will retry \u001b[3murl\u001b[0m\u001b[2m=\u001b[0m\"https://www.hashicorp.com\" \u001b[3mstatus\u001b[0m\u001b[2m=\u001b[0m429 \u001b[3mattempt_no\u001b[0m\u001b[2m=\u001b[0m1 \u001b[3mwait_ms\u001b[0m\u001b[2m=\u001b[0m1000\nthe target returned HTTP 429 instead of a s", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "news02", "run": 2, "ok": true, "seconds": 0.134, "error": null, "hits": 2, "nfacts": 2, "tokens": 2068}
+{"arm": "webclaw-auto", "mode": "url", "id": "news03", "run": 2, "ok": true, "seconds": 0.102, "error": null, "hits": 2, "nfacts": 2, "tokens": 1461}
+{"arm": "webclaw-auto", "mode": "url", "id": "news04", "run": 2, "ok": true, "seconds": 0.103, "error": null, "hits": 2, "nfacts": 2, "tokens": 1404}
+{"arm": "webclaw-auto", "mode": "url", "id": "news06", "run": 2, "ok": true, "seconds": 0.112, "error": null, "hits": 2, "nfacts": 2, "tokens": 1510}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf07", "run": 0, "ok": false, "seconds": 1.706, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "news07", "run": 2, "ok": true, "seconds": 0.118, "error": null, "hits": 2, "nfacts": 2, "tokens": 3532}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop01", "run": 2, "ok": true, "seconds": 0.386, "error": null, "hits": 2, "nfacts": 2, "tokens": 630}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop02", "run": 2, "ok": true, "seconds": 0.4, "error": null, "hits": 2, "nfacts": 2, "tokens": 565}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop03", "run": 2, "ok": true, "seconds": 0.413, "error": null, "hits": 2, "nfacts": 2, "tokens": 547}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop04", "run": 2, "ok": true, "seconds": 0.404, "error": null, "hits": 2, "nfacts": 2, "tokens": 1012}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf08", "run": 0, "ok": false, "seconds": 1.715, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop05", "run": 2, "ok": true, "seconds": 0.513, "error": null, "hits": 2, "nfacts": 2, "tokens": 1104}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop06", "run": 2, "ok": true, "seconds": 0.395, "error": null, "hits": 2, "nfacts": 2, "tokens": 864}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop07", "run": 2, "ok": true, "seconds": 0.401, "error": null, "hits": 2, "nfacts": 2, "tokens": 1169}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop08", "run": 2, "ok": true, "seconds": 0.508, "error": null, "hits": 2, "nfacts": 2, "tokens": 1993}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf09", "run": 0, "ok": false, "seconds": 1.719, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "shop09", "run": 2, "ok": true, "seconds": 0.499, "error": null, "hits": 2, "nfacts": 2, "tokens": 1432}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs01", "run": 2, "ok": true, "seconds": 0.088, "error": null, "hits": 2, "nfacts": 2, "tokens": 2538}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs02", "run": 2, "ok": true, "seconds": 0.09, "error": null, "hits": 2, "nfacts": 2, "tokens": 6738}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs03", "run": 2, "ok": true, "seconds": 0.189, "error": null, "hits": 2, "nfacts": 2, "tokens": 8158}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs04", "run": 2, "ok": true, "seconds": 0.091, "error": null, "hits": 2, "nfacts": 2, "tokens": 7282}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs05", "run": 2, "ok": true, "seconds": 0.104, "error": null, "hits": 2, "nfacts": 2, "tokens": 8380}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs06", "run": 2, "ok": true, "seconds": 0.117, "error": null, "hits": 2, "nfacts": 2, "tokens": 13390}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs07", "run": 2, "ok": true, "seconds": 0.335, "error": null, "hits": 2, "nfacts": 2, "tokens": 24294}
+{"arm": "webclaw-render", "mode": "url", "id": "lang01", "run": 0, "ok": true, "seconds": 1.954, "error": null, "hits": 2, "nfacts": 2, "tokens": 84028}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs08", "run": 2, "ok": true, "seconds": 0.66, "error": null, "hits": 2, "nfacts": 2, "tokens": 5922}
+{"arm": "webclaw-auto", "mode": "url", "id": "docs09", "run": 2, "ok": true, "seconds": 0.094, "error": null, "hits": 2, "nfacts": 2, "tokens": 5698}
+{"arm": "webclaw-render", "mode": "url", "id": "lang02", "run": 0, "ok": true, "seconds": 2.057, "error": null, "hits": 2, "nfacts": 2, "tokens": 71314}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa01", "run": 2, "ok": true, "seconds": 2.546, "error": null, "hits": 2, "nfacts": 2, "tokens": 358}
+{"arm": "webclaw-render", "mode": "url", "id": "lang03", "run": 0, "ok": true, "seconds": 2.369, "error": null, "hits": 2, "nfacts": 2, "tokens": 128709}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa02", "run": 2, "ok": true, "seconds": 2.556, "error": null, "hits": 2, "nfacts": 2, "tokens": 773}
+{"arm": "webclaw-render", "mode": "url", "id": "lang04", "run": 0, "ok": true, "seconds": 2.173, "error": null, "hits": 2, "nfacts": 2, "tokens": 66159}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa03", "run": 2, "ok": true, "seconds": 2.635, "error": null, "hits": 2, "nfacts": 2, "tokens": 405}
+{"arm": "webclaw-render", "mode": "url", "id": "lang05", "run": 0, "ok": true, "seconds": 2.111, "error": null, "hits": 2, "nfacts": 2, "tokens": 61528}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa04", "run": 2, "ok": true, "seconds": 2.596, "error": null, "hits": 2, "nfacts": 2, "tokens": 323}
+{"arm": "webclaw-render", "mode": "url", "id": "lang06", "run": 0, "ok": true, "seconds": 2.644, "error": null, "hits": 2, "nfacts": 2, "tokens": 55951}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa05", "run": 2, "ok": true, "seconds": 1.96, "error": null, "hits": 1, "nfacts": 2, "tokens": 75}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa06", "run": 2, "ok": true, "seconds": 1.973, "error": null, "hits": 1, "nfacts": 2, "tokens": 104}
+{"arm": "webclaw-render", "mode": "url", "id": "lang07", "run": 0, "ok": true, "seconds": 4.429, "error": null, "hits": 2, "nfacts": 2, "tokens": 92567}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa07", "run": 2, "ok": true, "seconds": 2.243, "error": null, "hits": 0, "nfacts": 2, "tokens": 46}
+{"arm": "webclaw-render", "mode": "url", "id": "lang08", "run": 0, "ok": true, "seconds": 2.293, "error": null, "hits": 2, "nfacts": 2, "tokens": 119599}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa08", "run": 2, "ok": true, "seconds": 2.324, "error": null, "hits": 2, "nfacts": 2, "tokens": 4399}
+{"arm": "webclaw-auto", "mode": "url", "id": "spa09", "run": 2, "ok": true, "seconds": 0.078, "error": null, "hits": 2, "nfacts": 2, "tokens": 264}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf01", "run": 2, "ok": true, "seconds": 0.258, "error": null, "hits": 2, "nfacts": 2, "tokens": 9782}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf02", "run": 2, "ok": true, "seconds": 0.181, "error": null, "hits": 2, "nfacts": 2, "tokens": 17424}
+{"arm": "webclaw-render", "mode": "url", "id": "lang09", "run": 0, "ok": true, "seconds": 1.998, "error": null, "hits": 2, "nfacts": 2, "tokens": 73964}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf03", "run": 2, "ok": true, "seconds": 0.429, "error": null, "hits": 2, "nfacts": 2, "tokens": 64190}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf04", "run": 2, "ok": true, "seconds": 0.183, "error": null, "hits": 2, "nfacts": 2, "tokens": 17043}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf05", "run": 2, "ok": true, "seconds": 0.303, "error": null, "hits": 1, "nfacts": 2, "tokens": 15373}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf06", "run": 2, "ok": true, "seconds": 0.217, "error": null, "hits": 2, "nfacts": 2, "tokens": 13218}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf07", "run": 2, "ok": true, "seconds": 0.346, "error": null, "hits": 2, "nfacts": 2, "tokens": 25609}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf08", "run": 2, "ok": true, "seconds": 0.454, "error": null, "hits": 2, "nfacts": 2, "tokens": 57209}
+{"arm": "webclaw-auto", "mode": "url", "id": "pdf09", "run": 2, "ok": true, "seconds": 0.175, "error": null, "hits": 2, "nfacts": 2, "tokens": 13153}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang01", "run": 2, "ok": true, "seconds": 0.343, "error": null, "hits": 2, "nfacts": 2, "tokens": 83726}
+{"arm": "webclaw-render", "mode": "url", "id": "news10", "run": 0, "ok": true, "seconds": 2.237, "error": null, "hits": 2, "nfacts": 2, "tokens": 4581}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang02", "run": 2, "ok": true, "seconds": 0.369, "error": null, "hits": 2, "nfacts": 2, "tokens": 71078}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang03", "run": 2, "ok": true, "seconds": 0.508, "error": null, "hits": 2, "nfacts": 2, "tokens": 109351}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang04", "run": 2, "ok": true, "seconds": 0.428, "error": null, "hits": 2, "nfacts": 2, "tokens": 66184}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang05", "run": 2, "ok": true, "seconds": 0.497, "error": null, "hits": 2, "nfacts": 2, "tokens": 61105}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang06", "run": 2, "ok": true, "seconds": 0.273, "error": null, "hits": 2, "nfacts": 2, "tokens": 55767}
+{"arm": "webclaw-render", "mode": "url", "id": "news11", "run": 0, "ok": true, "seconds": 2.16, "error": null, "hits": 2, "nfacts": 2, "tokens": 5743}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang07", "run": 2, "ok": true, "seconds": 0.287, "error": null, "hits": 2, "nfacts": 2, "tokens": 91427}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang08", "run": 2, "ok": true, "seconds": 0.344, "error": null, "hits": 2, "nfacts": 2, "tokens": 119599}
+{"arm": "webclaw-auto", "mode": "url", "id": "lang09", "run": 2, "ok": true, "seconds": 0.308, "error": null, "hits": 2, "nfacts": 2, "tokens": 74007}
+{"arm": "webclaw-auto", "mode": "url", "id": "news10", "run": 2, "ok": true, "seconds": 0.103, "error": null, "hits": 2, "nfacts": 2, "tokens": 4581}
+{"arm": "webclaw-auto", "mode": "url", "id": "news11", "run": 2, "ok": true, "seconds": 0.137, "error": null, "hits": 2, "nfacts": 2, "tokens": 5743}
+{"arm": "webclaw-auto", "mode": "url", "id": "news12", "run": 2, "ok": true, "seconds": 0.145, "error": null, "hits": 2, "nfacts": 2, "tokens": 4682}
+{"arm": "webclaw-auto", "mode": "url", "id": "news13", "run": 2, "ok": true, "seconds": 0.11, "error": null, "hits": 2, "nfacts": 2, "tokens": 3975}
+{"arm": "webclaw-auto", "mode": "url", "id": "article01", "run": 2, "ok": false, "seconds": 0.138, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article02", "run": 2, "ok": false, "seconds": 0.122, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article03", "run": 2, "ok": false, "seconds": 0.117, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article04", "run": 2, "ok": false, "seconds": 0.117, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article05", "run": 2, "ok": false, "seconds": 0.109, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "article06", "run": 2, "ok": false, "seconds": 0.097, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "news12", "run": 0, "ok": true, "seconds": 1.944, "error": null, "hits": 2, "nfacts": 2, "tokens": 4682}
+{"arm": "webclaw-auto", "mode": "url", "id": "home00", "run": 2, "ok": true, "seconds": 0.307, "error": null, "hits": 3, "nfacts": 5, "tokens": 1144}
+{"arm": "webclaw-auto", "mode": "url", "id": "home01", "run": 2, "ok": true, "seconds": 0.192, "error": null, "hits": 1, "nfacts": 5, "tokens": 1314}
+{"arm": "webclaw-auto", "mode": "url", "id": "home02", "run": 2, "ok": true, "seconds": 0.201, "error": null, "hits": 2, "nfacts": 5, "tokens": 784}
+{"arm": "webclaw-auto", "mode": "url", "id": "home03", "run": 2, "ok": true, "seconds": 0.144, "error": null, "hits": 3, "nfacts": 5, "tokens": 838}
+{"arm": "webclaw-auto", "mode": "url", "id": "home04", "run": 2, "ok": true, "seconds": 0.588, "error": null, "hits": 5, "nfacts": 5, "tokens": 3179}
+{"arm": "webclaw-auto", "mode": "url", "id": "home05", "run": 2, "ok": true, "seconds": 0.269, "error": null, "hits": 5, "nfacts": 5, "tokens": 2385}
+{"arm": "webclaw-auto", "mode": "url", "id": "home06", "run": 2, "ok": true, "seconds": 0.233, "error": null, "hits": 3, "nfacts": 5, "tokens": 1508}
+{"arm": "webclaw-render", "mode": "url", "id": "news13", "run": 0, "ok": true, "seconds": 1.856, "error": null, "hits": 2, "nfacts": 2, "tokens": 3975}
+{"arm": "webclaw-auto", "mode": "url", "id": "home07", "run": 2, "ok": true, "seconds": 0.09, "error": null, "hits": 4, "nfacts": 5, "tokens": 842}
+{"arm": "webclaw-auto", "mode": "url", "id": "home08", "run": 2, "ok": true, "seconds": 0.164, "error": null, "hits": 5, "nfacts": 5, "tokens": 3331}
+{"arm": "webclaw-auto", "mode": "url", "id": "home09", "run": 2, "ok": true, "seconds": 0.16, "error": null, "hits": 4, "nfacts": 5, "tokens": 728}
+{"arm": "webclaw-auto", "mode": "url", "id": "home10", "run": 2, "ok": true, "seconds": 0.201, "error": null, "hits": 4, "nfacts": 5, "tokens": 891}
+{"arm": "webclaw-auto", "mode": "url", "id": "home11", "run": 2, "ok": true, "seconds": 0.261, "error": null, "hits": 5, "nfacts": 5, "tokens": 1432}
+{"arm": "webclaw-auto", "mode": "url", "id": "home12", "run": 2, "ok": true, "seconds": 0.285, "error": null, "hits": 5, "nfacts": 5, "tokens": 50044}
+{"arm": "webclaw-auto", "mode": "url", "id": "home13", "run": 2, "ok": false, "seconds": 0.081, "error": "RuntimeError: the target returned HTTP 404 instead of a successful page", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-auto", "mode": "url", "id": "home14", "run": 2, "ok": true, "seconds": 0.543, "error": null, "hits": 2, "nfacts": 5, "tokens": 144}
+{"arm": "webclaw-auto", "mode": "url", "id": "home15", "run": 2, "ok": true, "seconds": 0.123, "error": null, "hits": 5, "nfacts": 5, "tokens": 7693}
+{"arm": "webclaw-auto", "mode": "url", "id": "home16", "run": 2, "ok": true, "seconds": 0.214, "error": null, "hits": 4, "nfacts": 5, "tokens": 2761}
+{"arm": "webclaw-render", "mode": "url", "id": "article01", "run": 0, "ok": true, "seconds": 2.366, "error": null, "hits": 2, "nfacts": 2, "tokens": 1815}
+{"arm": "webclaw-auto", "mode": "url", "id": "home17", "run": 2, "ok": false, "seconds": 1.156, "error": "RuntimeError: 10-15T05:26:05.369738Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebclaw_fetch::client\u001b[0m\u001b[2m:\u001b[0m retryable status, will retry \u001b[3murl\u001b[0m\u001b[2m=\u001b[0m\"https://www.hashicorp.com\" \u001b[3mstatus\u001b[0m\u001b[2m=\u001b[0m429 \u001b[3mattempt_no\u001b[0m\u001b[2m=\u001b[0m1 \u001b[3mwait_ms\u001b[0m\u001b[2m=\u001b[0m1000\nthe target returned HTTP 429 instead of a s", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "article02", "run": 0, "ok": true, "seconds": 2.195, "error": null, "hits": 2, "nfacts": 2, "tokens": 1803}
+{"arm": "webclaw-render", "mode": "url", "id": "article03", "run": 0, "ok": true, "seconds": 2.142, "error": null, "hits": 2, "nfacts": 2, "tokens": 1787}
+{"arm": "webclaw-render", "mode": "url", "id": "article04", "run": 0, "ok": false, "seconds": 1.846, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "article05", "run": 0, "ok": false, "seconds": 1.87, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "article06", "run": 0, "ok": false, "seconds": 1.848, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home00", "run": 0, "ok": true, "seconds": 2.551, "error": null, "hits": 3, "nfacts": 5, "tokens": 1144}
+{"arm": "webclaw-render", "mode": "url", "id": "home01", "run": 0, "ok": true, "seconds": 1.852, "error": null, "hits": 1, "nfacts": 5, "tokens": 1314}
+{"arm": "webclaw-render", "mode": "url", "id": "home02", "run": 0, "ok": true, "seconds": 2.277, "error": null, "hits": 2, "nfacts": 5, "tokens": 791}
+{"arm": "webclaw-render", "mode": "url", "id": "home03", "run": 0, "ok": true, "seconds": 1.808, "error": null, "hits": 3, "nfacts": 5, "tokens": 915}
+{"arm": "webclaw-render", "mode": "url", "id": "home04", "run": 0, "ok": true, "seconds": 3.662, "error": null, "hits": 5, "nfacts": 5, "tokens": 3636}
+{"arm": "webclaw-render", "mode": "url", "id": "home05", "run": 0, "ok": true, "seconds": 2.083, "error": null, "hits": 5, "nfacts": 5, "tokens": 2385}
+{"arm": "webclaw-render", "mode": "url", "id": "home06", "run": 0, "ok": true, "seconds": 2.154, "error": null, "hits": 3, "nfacts": 5, "tokens": 1512}
+{"arm": "webclaw-render", "mode": "url", "id": "home07", "run": 0, "ok": true, "seconds": 1.426, "error": null, "hits": 4, "nfacts": 5, "tokens": 842}
+{"arm": "webclaw-render", "mode": "url", "id": "home08", "run": 0, "ok": true, "seconds": 1.677, "error": null, "hits": 5, "nfacts": 5, "tokens": 3331}
+{"arm": "webclaw-render", "mode": "url", "id": "home09", "run": 0, "ok": true, "seconds": 1.619, "error": null, "hits": 4, "nfacts": 5, "tokens": 728}
+{"arm": "webclaw-render", "mode": "url", "id": "home10", "run": 0, "ok": true, "seconds": 1.723, "error": null, "hits": 4, "nfacts": 5, "tokens": 891}
+{"arm": "webclaw-render", "mode": "url", "id": "home11", "run": 0, "ok": true, "seconds": 2.137, "error": null, "hits": 5, "nfacts": 5, "tokens": 1442}
+{"arm": "webclaw-render", "mode": "url", "id": "home12", "run": 0, "ok": true, "seconds": 1.83, "error": null, "hits": 5, "nfacts": 5, "tokens": 50103}
+{"arm": "webclaw-render", "mode": "url", "id": "home13", "run": 0, "ok": false, "seconds": 1.454, "error": "RuntimeError: the target returned HTTP 404 instead of a successful page", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home14", "run": 0, "ok": false, "seconds": 36.54, "error": "RuntimeError: # webclaw: still fetching https://paulgraham.com/essays.html (10s)\n# webclaw: still fetching https://paulgraham.com/essays.html (20s)\n# webclaw: still fetching https://paulgraham.com/essays.html (30s)\nrender error: client build failed: rendering https://paulgraham.com/essays.html timed", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home15", "run": 0, "ok": true, "seconds": 2.682, "error": null, "hits": 5, "nfacts": 5, "tokens": 7765}
+{"arm": "webclaw-render", "mode": "url", "id": "home16", "run": 0, "ok": true, "seconds": 2.594, "error": null, "hits": 4, "nfacts": 5, "tokens": 3093}
+{"arm": "webclaw-render", "mode": "url", "id": "home17", "run": 0, "ok": true, "seconds": 2.217, "error": null, "hits": 5, "nfacts": 5, "tokens": 1635}
+{"arm": "webclaw-render", "mode": "url", "id": "news02", "run": 1, "ok": true, "seconds": 1.89, "error": null, "hits": 2, "nfacts": 2, "tokens": 2068}
+{"arm": "webclaw-render", "mode": "url", "id": "news03", "run": 1, "ok": true, "seconds": 1.864, "error": null, "hits": 2, "nfacts": 2, "tokens": 1461}
+{"arm": "webclaw-render", "mode": "url", "id": "news04", "run": 1, "ok": true, "seconds": 1.879, "error": null, "hits": 2, "nfacts": 2, "tokens": 1404}
+{"arm": "webclaw-render", "mode": "url", "id": "news06", "run": 1, "ok": true, "seconds": 1.813, "error": null, "hits": 2, "nfacts": 2, "tokens": 1510}
+{"arm": "webclaw-render", "mode": "url", "id": "news07", "run": 1, "ok": true, "seconds": 2.103, "error": null, "hits": 2, "nfacts": 2, "tokens": 3532}
+{"arm": "webclaw-render", "mode": "url", "id": "shop01", "run": 1, "ok": true, "seconds": 2.361, "error": null, "hits": 2, "nfacts": 2, "tokens": 630}
+{"arm": "webclaw-render", "mode": "url", "id": "shop02", "run": 1, "ok": true, "seconds": 2.23, "error": null, "hits": 2, "nfacts": 2, "tokens": 565}
+{"arm": "webclaw-render", "mode": "url", "id": "shop03", "run": 1, "ok": true, "seconds": 2.251, "error": null, "hits": 2, "nfacts": 2, "tokens": 547}
+{"arm": "webclaw-render", "mode": "url", "id": "shop04", "run": 1, "ok": true, "seconds": 2.286, "error": null, "hits": 2, "nfacts": 2, "tokens": 1012}
+{"arm": "webclaw-render", "mode": "url", "id": "shop05", "run": 1, "ok": true, "seconds": 2.275, "error": null, "hits": 2, "nfacts": 2, "tokens": 1104}
+{"arm": "webclaw-render", "mode": "url", "id": "shop06", "run": 1, "ok": true, "seconds": 2.309, "error": null, "hits": 2, "nfacts": 2, "tokens": 864}
+{"arm": "webclaw-render", "mode": "url", "id": "shop07", "run": 1, "ok": true, "seconds": 2.26, "error": null, "hits": 2, "nfacts": 2, "tokens": 1169}
+{"arm": "webclaw-render", "mode": "url", "id": "shop08", "run": 1, "ok": true, "seconds": 2.272, "error": null, "hits": 2, "nfacts": 2, "tokens": 1993}
+{"arm": "webclaw-render", "mode": "url", "id": "shop09", "run": 1, "ok": true, "seconds": 2.219, "error": null, "hits": 2, "nfacts": 2, "tokens": 1432}
+{"arm": "webclaw-render", "mode": "url", "id": "docs01", "run": 1, "ok": true, "seconds": 1.559, "error": null, "hits": 2, "nfacts": 2, "tokens": 2538}
+{"arm": "webclaw-render", "mode": "url", "id": "docs02", "run": 1, "ok": true, "seconds": 1.539, "error": null, "hits": 2, "nfacts": 2, "tokens": 6738}
+{"arm": "webclaw-render", "mode": "url", "id": "docs03", "run": 1, "ok": true, "seconds": 1.506, "error": null, "hits": 2, "nfacts": 2, "tokens": 8238}
+{"arm": "webclaw-render", "mode": "url", "id": "docs04", "run": 1, "ok": true, "seconds": 1.462, "error": null, "hits": 2, "nfacts": 2, "tokens": 7311}
+{"arm": "webclaw-render", "mode": "url", "id": "docs05", "run": 1, "ok": true, "seconds": 1.705, "error": null, "hits": 2, "nfacts": 2, "tokens": 6178}
+{"arm": "webclaw-render", "mode": "url", "id": "docs06", "run": 1, "ok": true, "seconds": 1.68, "error": null, "hits": 2, "nfacts": 2, "tokens": 7548}
+{"arm": "webclaw-render", "mode": "url", "id": "docs07", "run": 1, "ok": true, "seconds": 2.146, "error": null, "hits": 2, "nfacts": 2, "tokens": 25174}
+{"arm": "webclaw-render", "mode": "url", "id": "docs08", "run": 1, "ok": true, "seconds": 2.62, "error": null, "hits": 2, "nfacts": 2, "tokens": 5922}
+{"arm": "webclaw-render", "mode": "url", "id": "docs09", "run": 1, "ok": true, "seconds": 1.577, "error": null, "hits": 2, "nfacts": 2, "tokens": 5698}
+{"arm": "webclaw-render", "mode": "url", "id": "spa01", "run": 1, "ok": true, "seconds": 2.349, "error": null, "hits": 2, "nfacts": 2, "tokens": 358}
+{"arm": "webclaw-render", "mode": "url", "id": "spa02", "run": 1, "ok": true, "seconds": 2.24, "error": null, "hits": 2, "nfacts": 2, "tokens": 773}
+{"arm": "webclaw-render", "mode": "url", "id": "spa03", "run": 1, "ok": true, "seconds": 2.162, "error": null, "hits": 2, "nfacts": 2, "tokens": 405}
+{"arm": "webclaw-render", "mode": "url", "id": "spa04", "run": 1, "ok": true, "seconds": 2.356, "error": null, "hits": 2, "nfacts": 2, "tokens": 323}
+{"arm": "webclaw-render", "mode": "url", "id": "spa05", "run": 1, "ok": true, "seconds": 1.842, "error": null, "hits": 1, "nfacts": 2, "tokens": 75}
+{"arm": "webclaw-render", "mode": "url", "id": "spa06", "run": 1, "ok": true, "seconds": 1.833, "error": null, "hits": 1, "nfacts": 2, "tokens": 104}
+{"arm": "webclaw-render", "mode": "url", "id": "spa07", "run": 1, "ok": true, "seconds": 1.948, "error": null, "hits": 0, "nfacts": 2, "tokens": 46}
+{"arm": "webclaw-render", "mode": "url", "id": "spa08", "run": 1, "ok": true, "seconds": 2.203, "error": null, "hits": 2, "nfacts": 2, "tokens": 4399}
+{"arm": "webclaw-render", "mode": "url", "id": "spa09", "run": 1, "ok": true, "seconds": 2.008, "error": null, "hits": 2, "nfacts": 2, "tokens": 264}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf01", "run": 1, "ok": false, "seconds": 1.655, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf02", "run": 1, "ok": false, "seconds": 1.679, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf03", "run": 1, "ok": false, "seconds": 1.676, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf04", "run": 1, "ok": false, "seconds": 1.695, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf05", "run": 1, "ok": false, "seconds": 1.692, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf06", "run": 1, "ok": false, "seconds": 1.695, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf07", "run": 1, "ok": false, "seconds": 1.666, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf08", "run": 1, "ok": false, "seconds": 1.673, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf09", "run": 1, "ok": false, "seconds": 1.692, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "lang01", "run": 1, "ok": true, "seconds": 2.019, "error": null, "hits": 2, "nfacts": 2, "tokens": 84028}
+{"arm": "webclaw-render", "mode": "url", "id": "lang02", "run": 1, "ok": true, "seconds": 1.985, "error": null, "hits": 2, "nfacts": 2, "tokens": 71314}
+{"arm": "webclaw-render", "mode": "url", "id": "lang03", "run": 1, "ok": true, "seconds": 2.294, "error": null, "hits": 2, "nfacts": 2, "tokens": 128709}
+{"arm": "webclaw-render", "mode": "url", "id": "lang04", "run": 1, "ok": true, "seconds": 2.103, "error": null, "hits": 2, "nfacts": 2, "tokens": 66159}
+{"arm": "webclaw-render", "mode": "url", "id": "lang05", "run": 1, "ok": true, "seconds": 1.948, "error": null, "hits": 2, "nfacts": 2, "tokens": 61528}
+{"arm": "webclaw-render", "mode": "url", "id": "lang06", "run": 1, "ok": true, "seconds": 1.917, "error": null, "hits": 2, "nfacts": 2, "tokens": 55951}
+{"arm": "webclaw-render", "mode": "url", "id": "lang07", "run": 1, "ok": true, "seconds": 1.942, "error": null, "hits": 2, "nfacts": 2, "tokens": 92567}
+{"arm": "webclaw-render", "mode": "url", "id": "lang08", "run": 1, "ok": true, "seconds": 2.121, "error": null, "hits": 2, "nfacts": 2, "tokens": 119975}
+{"arm": "webclaw-render", "mode": "url", "id": "lang09", "run": 1, "ok": true, "seconds": 2.038, "error": null, "hits": 2, "nfacts": 2, "tokens": 73964}
+{"arm": "webclaw-render", "mode": "url", "id": "news10", "run": 1, "ok": true, "seconds": 2.176, "error": null, "hits": 2, "nfacts": 2, "tokens": 4581}
+{"arm": "webclaw-render", "mode": "url", "id": "news11", "run": 1, "ok": true, "seconds": 1.868, "error": null, "hits": 2, "nfacts": 2, "tokens": 5743}
+{"arm": "webclaw-render", "mode": "url", "id": "news12", "run": 1, "ok": true, "seconds": 1.891, "error": null, "hits": 2, "nfacts": 2, "tokens": 4682}
+{"arm": "webclaw-render", "mode": "url", "id": "news13", "run": 1, "ok": true, "seconds": 1.86, "error": null, "hits": 2, "nfacts": 2, "tokens": 3975}
+{"arm": "webclaw-render", "mode": "url", "id": "article01", "run": 1, "ok": true, "seconds": 2.158, "error": null, "hits": 2, "nfacts": 2, "tokens": 1815}
+{"arm": "webclaw-render", "mode": "url", "id": "article02", "run": 1, "ok": true, "seconds": 2.242, "error": null, "hits": 2, "nfacts": 2, "tokens": 1803}
+{"arm": "webclaw-render", "mode": "url", "id": "article03", "run": 1, "ok": true, "seconds": 2.154, "error": null, "hits": 2, "nfacts": 2, "tokens": 1787}
+{"arm": "webclaw-render", "mode": "url", "id": "article04", "run": 1, "ok": false, "seconds": 1.797, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "article05", "run": 1, "ok": false, "seconds": 1.831, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "article06", "run": 1, "ok": false, "seconds": 1.85, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home00", "run": 1, "ok": true, "seconds": 2.397, "error": null, "hits": 3, "nfacts": 5, "tokens": 1144}
+{"arm": "webclaw-render", "mode": "url", "id": "home01", "run": 1, "ok": true, "seconds": 1.916, "error": null, "hits": 1, "nfacts": 5, "tokens": 1314}
+{"arm": "webclaw-render", "mode": "url", "id": "home02", "run": 1, "ok": true, "seconds": 2.191, "error": null, "hits": 2, "nfacts": 5, "tokens": 791}
+{"arm": "webclaw-render", "mode": "url", "id": "home03", "run": 1, "ok": true, "seconds": 1.98, "error": null, "hits": 3, "nfacts": 5, "tokens": 911}
+{"arm": "webclaw-render", "mode": "url", "id": "home04", "run": 1, "ok": true, "seconds": 2.474, "error": null, "hits": 5, "nfacts": 5, "tokens": 3636}
+{"arm": "webclaw-render", "mode": "url", "id": "home05", "run": 1, "ok": true, "seconds": 1.912, "error": null, "hits": 5, "nfacts": 5, "tokens": 2385}
+{"arm": "webclaw-render", "mode": "url", "id": "home06", "run": 1, "ok": true, "seconds": 2.045, "error": null, "hits": 3, "nfacts": 5, "tokens": 1512}
+{"arm": "webclaw-render", "mode": "url", "id": "home07", "run": 1, "ok": true, "seconds": 1.416, "error": null, "hits": 4, "nfacts": 5, "tokens": 842}
+{"arm": "webclaw-render", "mode": "url", "id": "home08", "run": 1, "ok": true, "seconds": 1.775, "error": null, "hits": 5, "nfacts": 5, "tokens": 3331}
+{"arm": "webclaw-render", "mode": "url", "id": "home09", "run": 1, "ok": true, "seconds": 1.598, "error": null, "hits": 4, "nfacts": 5, "tokens": 728}
+{"arm": "webclaw-render", "mode": "url", "id": "home10", "run": 1, "ok": true, "seconds": 1.727, "error": null, "hits": 4, "nfacts": 5, "tokens": 891}
+{"arm": "webclaw-render", "mode": "url", "id": "home11", "run": 1, "ok": true, "seconds": 1.872, "error": null, "hits": 5, "nfacts": 5, "tokens": 1442}
+{"arm": "webclaw-render", "mode": "url", "id": "home12", "run": 1, "ok": true, "seconds": 1.797, "error": null, "hits": 5, "nfacts": 5, "tokens": 50103}
+{"arm": "webclaw-render", "mode": "url", "id": "home13", "run": 1, "ok": false, "seconds": 1.723, "error": "RuntimeError: the target returned HTTP 404 instead of a successful page", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home14", "run": 1, "ok": false, "seconds": 36.283, "error": "RuntimeError: # webclaw: still fetching https://paulgraham.com/essays.html (10s)\n# webclaw: still fetching https://paulgraham.com/essays.html (20s)\n# webclaw: still fetching https://paulgraham.com/essays.html (30s)\nrender error: client build failed: rendering https://paulgraham.com/essays.html timed", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home15", "run": 1, "ok": true, "seconds": 3.083, "error": null, "hits": 5, "nfacts": 5, "tokens": 7765}
+{"arm": "webclaw-render", "mode": "url", "id": "home16", "run": 1, "ok": true, "seconds": 2.567, "error": null, "hits": 4, "nfacts": 5, "tokens": 3460}
+{"arm": "webclaw-render", "mode": "url", "id": "home17", "run": 1, "ok": true, "seconds": 2.472, "error": null, "hits": 5, "nfacts": 5, "tokens": 1635}
+{"arm": "webclaw-render", "mode": "url", "id": "news02", "run": 2, "ok": true, "seconds": 1.851, "error": null, "hits": 2, "nfacts": 2, "tokens": 2068}
+{"arm": "webclaw-render", "mode": "url", "id": "news03", "run": 2, "ok": true, "seconds": 1.823, "error": null, "hits": 2, "nfacts": 2, "tokens": 1461}
+{"arm": "webclaw-render", "mode": "url", "id": "news04", "run": 2, "ok": true, "seconds": 1.834, "error": null, "hits": 2, "nfacts": 2, "tokens": 1404}
+{"arm": "webclaw-render", "mode": "url", "id": "news06", "run": 2, "ok": true, "seconds": 1.881, "error": null, "hits": 2, "nfacts": 2, "tokens": 1510}
+{"arm": "webclaw-render", "mode": "url", "id": "news07", "run": 2, "ok": true, "seconds": 1.861, "error": null, "hits": 2, "nfacts": 2, "tokens": 3532}
+{"arm": "webclaw-render", "mode": "url", "id": "shop01", "run": 2, "ok": true, "seconds": 2.224, "error": null, "hits": 2, "nfacts": 2, "tokens": 630}
+{"arm": "webclaw-render", "mode": "url", "id": "shop02", "run": 2, "ok": true, "seconds": 2.207, "error": null, "hits": 2, "nfacts": 2, "tokens": 565}
+{"arm": "webclaw-render", "mode": "url", "id": "shop03", "run": 2, "ok": true, "seconds": 2.231, "error": null, "hits": 2, "nfacts": 2, "tokens": 547}
+{"arm": "webclaw-render", "mode": "url", "id": "shop04", "run": 2, "ok": true, "seconds": 2.199, "error": null, "hits": 2, "nfacts": 2, "tokens": 1012}
+{"arm": "webclaw-render", "mode": "url", "id": "shop05", "run": 2, "ok": true, "seconds": 2.268, "error": null, "hits": 2, "nfacts": 2, "tokens": 1104}
+{"arm": "webclaw-render", "mode": "url", "id": "shop06", "run": 2, "ok": true, "seconds": 2.365, "error": null, "hits": 2, "nfacts": 2, "tokens": 864}
+{"arm": "webclaw-render", "mode": "url", "id": "shop07", "run": 2, "ok": true, "seconds": 2.281, "error": null, "hits": 2, "nfacts": 2, "tokens": 1169}
+{"arm": "webclaw-render", "mode": "url", "id": "shop08", "run": 2, "ok": true, "seconds": 2.307, "error": null, "hits": 2, "nfacts": 2, "tokens": 1993}
+{"arm": "webclaw-render", "mode": "url", "id": "shop09", "run": 2, "ok": true, "seconds": 2.195, "error": null, "hits": 2, "nfacts": 2, "tokens": 1432}
+{"arm": "webclaw-render", "mode": "url", "id": "docs01", "run": 2, "ok": true, "seconds": 1.535, "error": null, "hits": 2, "nfacts": 2, "tokens": 2538}
+{"arm": "webclaw-render", "mode": "url", "id": "docs02", "run": 2, "ok": true, "seconds": 1.497, "error": null, "hits": 2, "nfacts": 2, "tokens": 6738}
+{"arm": "webclaw-render", "mode": "url", "id": "docs03", "run": 2, "ok": true, "seconds": 1.46, "error": null, "hits": 2, "nfacts": 2, "tokens": 8238}
+{"arm": "webclaw-render", "mode": "url", "id": "docs04", "run": 2, "ok": true, "seconds": 1.452, "error": null, "hits": 2, "nfacts": 2, "tokens": 7311}
+{"arm": "webclaw-render", "mode": "url", "id": "docs05", "run": 2, "ok": true, "seconds": 1.573, "error": null, "hits": 2, "nfacts": 2, "tokens": 6178}
+{"arm": "webclaw-render", "mode": "url", "id": "docs06", "run": 2, "ok": true, "seconds": 1.64, "error": null, "hits": 2, "nfacts": 2, "tokens": 7548}
+{"arm": "webclaw-render", "mode": "url", "id": "docs07", "run": 2, "ok": true, "seconds": 2.051, "error": null, "hits": 2, "nfacts": 2, "tokens": 25174}
+{"arm": "webclaw-render", "mode": "url", "id": "docs08", "run": 2, "ok": true, "seconds": 1.843, "error": null, "hits": 2, "nfacts": 2, "tokens": 5922}
+{"arm": "webclaw-render", "mode": "url", "id": "docs09", "run": 2, "ok": true, "seconds": 1.529, "error": null, "hits": 2, "nfacts": 2, "tokens": 5698}
+{"arm": "webclaw-render", "mode": "url", "id": "spa01", "run": 2, "ok": true, "seconds": 2.28, "error": null, "hits": 2, "nfacts": 2, "tokens": 358}
+{"arm": "webclaw-render", "mode": "url", "id": "spa02", "run": 2, "ok": true, "seconds": 2.15, "error": null, "hits": 2, "nfacts": 2, "tokens": 773}
+{"arm": "webclaw-render", "mode": "url", "id": "spa03", "run": 2, "ok": true, "seconds": 2.284, "error": null, "hits": 2, "nfacts": 2, "tokens": 405}
+{"arm": "webclaw-render", "mode": "url", "id": "spa04", "run": 2, "ok": true, "seconds": 2.231, "error": null, "hits": 2, "nfacts": 2, "tokens": 323}
+{"arm": "webclaw-render", "mode": "url", "id": "spa05", "run": 2, "ok": true, "seconds": 1.733, "error": null, "hits": 1, "nfacts": 2, "tokens": 75}
+{"arm": "webclaw-render", "mode": "url", "id": "spa06", "run": 2, "ok": true, "seconds": 1.805, "error": null, "hits": 1, "nfacts": 2, "tokens": 104}
+{"arm": "webclaw-render", "mode": "url", "id": "spa07", "run": 2, "ok": true, "seconds": 1.801, "error": null, "hits": 0, "nfacts": 2, "tokens": 46}
+{"arm": "webclaw-render", "mode": "url", "id": "spa08", "run": 2, "ok": true, "seconds": 2.399, "error": null, "hits": 2, "nfacts": 2, "tokens": 4399}
+{"arm": "webclaw-render", "mode": "url", "id": "spa09", "run": 2, "ok": true, "seconds": 2.104, "error": null, "hits": 2, "nfacts": 2, "tokens": 264}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf01", "run": 2, "ok": false, "seconds": 1.669, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf02", "run": 2, "ok": false, "seconds": 1.674, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf03", "run": 2, "ok": false, "seconds": 1.648, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf04", "run": 2, "ok": false, "seconds": 1.649, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf05", "run": 2, "ok": false, "seconds": 1.653, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf06", "run": 2, "ok": false, "seconds": 1.663, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf07", "run": 2, "ok": false, "seconds": 1.649, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf08", "run": 2, "ok": false, "seconds": 1.651, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "pdf09", "run": 2, "ok": false, "seconds": 1.653, "error": "RuntimeError: The target returned no readable page content.", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "lang01", "run": 2, "ok": true, "seconds": 2.219, "error": null, "hits": 2, "nfacts": 2, "tokens": 84028}
+{"arm": "webclaw-render", "mode": "url", "id": "lang02", "run": 2, "ok": true, "seconds": 2.021, "error": null, "hits": 2, "nfacts": 2, "tokens": 71314}
+{"arm": "webclaw-render", "mode": "url", "id": "lang03", "run": 2, "ok": true, "seconds": 2.273, "error": null, "hits": 2, "nfacts": 2, "tokens": 128709}
+{"arm": "webclaw-render", "mode": "url", "id": "lang04", "run": 2, "ok": true, "seconds": 1.932, "error": null, "hits": 2, "nfacts": 2, "tokens": 66159}
+{"arm": "webclaw-render", "mode": "url", "id": "lang05", "run": 2, "ok": true, "seconds": 1.894, "error": null, "hits": 2, "nfacts": 2, "tokens": 61528}
+{"arm": "webclaw-render", "mode": "url", "id": "lang06", "run": 2, "ok": true, "seconds": 1.79, "error": null, "hits": 2, "nfacts": 2, "tokens": 55951}
+{"arm": "webclaw-render", "mode": "url", "id": "lang07", "run": 2, "ok": true, "seconds": 2.563, "error": null, "hits": 2, "nfacts": 2, "tokens": 92567}
+{"arm": "webclaw-render", "mode": "url", "id": "lang08", "run": 2, "ok": true, "seconds": 2.098, "error": null, "hits": 2, "nfacts": 2, "tokens": 119981}
+{"arm": "webclaw-render", "mode": "url", "id": "lang09", "run": 2, "ok": true, "seconds": 1.997, "error": null, "hits": 2, "nfacts": 2, "tokens": 73964}
+{"arm": "webclaw-render", "mode": "url", "id": "news10", "run": 2, "ok": true, "seconds": 2.114, "error": null, "hits": 2, "nfacts": 2, "tokens": 4581}
+{"arm": "webclaw-render", "mode": "url", "id": "news11", "run": 2, "ok": true, "seconds": 1.841, "error": null, "hits": 2, "nfacts": 2, "tokens": 5743}
+{"arm": "webclaw-render", "mode": "url", "id": "news12", "run": 2, "ok": true, "seconds": 1.809, "error": null, "hits": 2, "nfacts": 2, "tokens": 4682}
+{"arm": "webclaw-render", "mode": "url", "id": "news13", "run": 2, "ok": true, "seconds": 1.809, "error": null, "hits": 2, "nfacts": 2, "tokens": 3975}
+{"arm": "webclaw-render", "mode": "url", "id": "article01", "run": 2, "ok": true, "seconds": 2.206, "error": null, "hits": 2, "nfacts": 2, "tokens": 1815}
+{"arm": "webclaw-render", "mode": "url", "id": "article02", "run": 2, "ok": true, "seconds": 2.395, "error": null, "hits": 2, "nfacts": 2, "tokens": 1803}
+{"arm": "webclaw-render", "mode": "url", "id": "article03", "run": 2, "ok": true, "seconds": 2.185, "error": null, "hits": 2, "nfacts": 2, "tokens": 1787}
+{"arm": "webclaw-render", "mode": "url", "id": "article04", "run": 2, "ok": false, "seconds": 1.839, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "article05", "run": 2, "ok": false, "seconds": 1.839, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "article06", "run": 2, "ok": false, "seconds": 1.799, "error": "RuntimeError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home00", "run": 2, "ok": true, "seconds": 2.395, "error": null, "hits": 3, "nfacts": 5, "tokens": 1144}
+{"arm": "webclaw-render", "mode": "url", "id": "home01", "run": 2, "ok": true, "seconds": 2.201, "error": null, "hits": 1, "nfacts": 5, "tokens": 1314}
+{"arm": "webclaw-render", "mode": "url", "id": "home02", "run": 2, "ok": true, "seconds": 2.33, "error": null, "hits": 2, "nfacts": 5, "tokens": 791}
+{"arm": "webclaw-render", "mode": "url", "id": "home03", "run": 2, "ok": true, "seconds": 1.863, "error": null, "hits": 3, "nfacts": 5, "tokens": 911}
+{"arm": "webclaw-render", "mode": "url", "id": "home04", "run": 2, "ok": true, "seconds": 2.532, "error": null, "hits": 5, "nfacts": 5, "tokens": 3636}
+{"arm": "webclaw-render", "mode": "url", "id": "home05", "run": 2, "ok": true, "seconds": 1.892, "error": null, "hits": 5, "nfacts": 5, "tokens": 2385}
+{"arm": "webclaw-render", "mode": "url", "id": "home06", "run": 2, "ok": true, "seconds": 2.033, "error": null, "hits": 3, "nfacts": 5, "tokens": 1512}
+{"arm": "webclaw-render", "mode": "url", "id": "home07", "run": 2, "ok": true, "seconds": 1.453, "error": null, "hits": 4, "nfacts": 5, "tokens": 842}
+{"arm": "webclaw-render", "mode": "url", "id": "home08", "run": 2, "ok": true, "seconds": 1.597, "error": null, "hits": 5, "nfacts": 5, "tokens": 3331}
+{"arm": "webclaw-render", "mode": "url", "id": "home09", "run": 2, "ok": true, "seconds": 1.576, "error": null, "hits": 4, "nfacts": 5, "tokens": 728}
+{"arm": "webclaw-render", "mode": "url", "id": "home10", "run": 2, "ok": true, "seconds": 1.748, "error": null, "hits": 4, "nfacts": 5, "tokens": 891}
+{"arm": "webclaw-render", "mode": "url", "id": "home11", "run": 2, "ok": true, "seconds": 2.225, "error": null, "hits": 5, "nfacts": 5, "tokens": 1442}
+{"arm": "webclaw-render", "mode": "url", "id": "home12", "run": 2, "ok": true, "seconds": 1.865, "error": null, "hits": 5, "nfacts": 5, "tokens": 50103}
+{"arm": "webclaw-render", "mode": "url", "id": "home13", "run": 2, "ok": false, "seconds": 1.753, "error": "RuntimeError: the target returned HTTP 404 instead of a successful page", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home14", "run": 2, "ok": false, "seconds": 34.968, "error": "RuntimeError: # webclaw: still fetching https://paulgraham.com/essays.html (10s)\n# webclaw: still fetching https://paulgraham.com/essays.html (20s)\n# webclaw: still fetching https://paulgraham.com/essays.html (30s)\nrender error: client build failed: rendering https://paulgraham.com/essays.html timed", "hits": 0, "nfacts": 5, "tokens": 0}
+{"arm": "webclaw-render", "mode": "url", "id": "home15", "run": 2, "ok": true, "seconds": 2.604, "error": null, "hits": 5, "nfacts": 5, "tokens": 7765}
+{"arm": "webclaw-render", "mode": "url", "id": "home16", "run": 2, "ok": true, "seconds": 2.679, "error": null, "hits": 4, "nfacts": 5, "tokens": 3460}
+{"arm": "webclaw-render", "mode": "url", "id": "home17", "run": 2, "ok": true, "seconds": 2.387, "error": null, "hits": 5, "nfacts": 5, "tokens": 1635}

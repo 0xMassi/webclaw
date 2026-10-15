@@ -72,6 +72,9 @@ pub struct MapOptions {
     /// List URLs best match first for this question, judged by the words of
     /// their paths. Words most of the site's paths share count for little.
     pub query: Option<String>,
+    /// Time allowed for the whole Common Crawl lookup. When it runs out, the
+    /// URLs read so far are kept. Default 120 seconds.
+    pub index_budget: Duration,
 }
 
 impl Default for MapOptions {
@@ -89,6 +92,7 @@ impl Default for MapOptions {
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             query: None,
+            index_budget: Duration::from_secs(120),
         }
     }
 }
@@ -266,9 +270,10 @@ pub struct IndexLookup {
 /// answer the busy index gives (400, 429 or 5xx), an answer cut short, or a
 /// failed request is retried twice, after two and five seconds. One request
 /// can take 20 seconds or more, so give `client` a generous
-/// [`FetchConfig::total_timeout`]. When the index cannot be read, the result
-/// carries the URLs read until then and the reason; a site it holds nothing
-/// for is an empty list.
+/// [`FetchConfig::total_timeout`]. The whole lookup stops after
+/// [`MapOptions::index_budget`]. When the index cannot be read in time, the
+/// result carries the URLs read until then and the reason; a site it holds
+/// nothing for is an empty list.
 pub async fn common_crawl_urls(
     client: &FetchClient,
     base_url: &str,
@@ -280,12 +285,21 @@ pub async fn common_crawl_urls(
             error: Some(format!("{base_url} is not a URL with a host")),
         };
     };
-    let (query, pages) = match index_query(client, &host, opts).await {
-        Ok(found) => found,
-        Err(e) => {
+    let started = tokio::time::Instant::now();
+    let budget = opts.index_budget;
+    let (query, pages) = match tokio::time::timeout(budget, index_query(client, &host, opts)).await
+    {
+        Ok(Ok(found)) => found,
+        Ok(Err(e)) => {
             return IndexLookup {
                 urls: Vec::new(),
                 error: Some(describe(e)),
+            };
+        }
+        Err(_) => {
+            return IndexLookup {
+                urls: Vec::new(),
+                error: Some(out_of_time(budget)),
             };
         }
     };
@@ -299,6 +313,8 @@ pub async fn common_crawl_urls(
             }
         },
         IndexUrls::new(host, opts),
+        started,
+        budget,
     )
     .await
 }
@@ -340,7 +356,13 @@ async fn index_query(
     Ok((query, pages))
 }
 
-async fn gather<F, Fut>(pages: usize, mut fetch: F, mut urls: IndexUrls<'_>) -> IndexLookup
+async fn gather<F, Fut>(
+    pages: usize,
+    mut fetch: F,
+    mut urls: IndexUrls<'_>,
+    started: tokio::time::Instant,
+    budget: Duration,
+) -> IndexLookup
 where
     F: FnMut(usize) -> Fut,
     Fut: std::future::Future<Output = Result<Option<String>, FetchError>>,
@@ -350,11 +372,16 @@ where
         if urls.full() {
             break;
         }
-        match fetch(page).await {
-            Ok(Some(body)) => urls.add_lines(&body),
-            Ok(None) => {}
-            Err(e) => {
+        let left = budget.saturating_sub(started.elapsed());
+        match tokio::time::timeout(left, fetch(page)).await {
+            Ok(Ok(Some(body))) => urls.add_lines(&body),
+            Ok(Ok(None)) => {}
+            Ok(Err(e)) => {
                 error = Some(describe(e));
+                break;
+            }
+            Err(_) => {
+                error = Some(out_of_time(budget));
                 break;
             }
         }
@@ -363,6 +390,10 @@ where
         urls: urls.list,
         error,
     }
+}
+
+fn out_of_time(budget: Duration) -> String {
+    format!("the index did not finish within {budget:?}")
 }
 
 fn describe(error: FetchError) -> String {
@@ -806,6 +837,8 @@ mod tests {
                 })
             },
             IndexUrls::new("example.com".into(), &opts),
+            tokio::time::Instant::now(),
+            Duration::from_secs(60),
         )
         .await;
         assert_eq!(
@@ -827,10 +860,35 @@ mod tests {
                 }
             },
             IndexUrls::new("example.com".into(), &opts),
+            tokio::time::Instant::now(),
+            Duration::from_secs(60),
         )
         .await;
         assert_eq!(found.urls, vec!["https://example.com/a"]);
         assert_eq!(found.error.as_deref(), Some("the index answered HTTP 504"));
+    }
+
+    #[tokio::test]
+    async fn the_lookup_stops_at_its_deadline_with_what_it_read() {
+        let opts = MapOptions::default();
+        let found = gather(
+            3,
+            |page| async move {
+                if page > 0 {
+                    tokio::time::sleep(Duration::from_secs(3600)).await;
+                }
+                Ok(Some(index_lines(&["https://example.com/a"])))
+            },
+            IndexUrls::new("example.com".into(), &opts),
+            tokio::time::Instant::now(),
+            Duration::from_millis(200),
+        )
+        .await;
+        assert_eq!(found.urls, vec!["https://example.com/a"]);
+        assert_eq!(
+            found.error.as_deref(),
+            Some("the index did not finish within 200ms")
+        );
     }
 
     #[test]

@@ -259,7 +259,7 @@ pub struct CrawlParams {
 pub struct MapParams {
     /// Base URL to discover sitemaps from (e.g. `<https://example.com>`)
     pub url: String,
-    /// Where to look, comma-separated: "sitemap" (default) and "cc", the public Common Crawl index of the HTML pages it captured on the site, e.g. "sitemap,cc". The index is often slow (10 to 60 seconds)
+    /// Where to look, comma-separated: "sitemap" (default) and "cc", the public Common Crawl index of the HTML pages it captured on the site, e.g. "sitemap,cc". The index is often slow: a lookup takes 10 to 60 seconds and gives up after 2 minutes, keeping the URLs read until then
     pub source: Option<String>,
     /// Return at most this many URLs
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]

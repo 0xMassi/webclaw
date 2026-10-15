@@ -270,6 +270,9 @@ pub struct BatchParams {
     /// Number of concurrent requests (default: 5)
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub concurrency: Option<usize>,
+    /// Move link and image URLs out of the markdown into a numbered References list after each page: `[text](url)` becomes `text[^1]` and a URL used twice on a page keeps one number. Numbers keep counting from page to page. Works with the markdown format
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub citations: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -355,6 +358,17 @@ pub struct ListExtractorsParams {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crawl_scrape_and_batch_take_citations() {
+        for schema in [
+            serde_json::to_value(schemars::schema_for!(ScrapeParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(CrawlParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(BatchParams)).unwrap(),
+        ] {
+            assert!(schema["properties"]["citations"].is_object(), "{schema}");
+        }
+    }
 
     #[test]
     fn actions_publish_a_schema_for_every_step() {

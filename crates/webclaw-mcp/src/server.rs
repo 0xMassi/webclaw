@@ -973,19 +973,34 @@ impl WebclawMcp {
         if params.urls.len() > 100 {
             return Err("batch is limited to 100 URLs per request".into());
         }
-        // No up-front DNS pre-validation: it aborted the whole batch on a
-        // single unresolvable URL. The fetch layer applies the same SSRF
-        // guard (validate_public_http_url) per URL, so bad entries surface
-        // as individual per-URL errors below instead of failing the batch.
-
         let format = params.format.as_deref().unwrap_or("markdown");
+        let cite_links = citations(params.citations, format, false)?;
         let concurrency = params.concurrency.unwrap_or(5);
         let url_refs: Vec<&str> = params.urls.iter().map(String::as_str).collect();
 
-        let results = self
+        let mut results = self
             .fetch_client
             .fetch_and_extract_batch(&url_refs, concurrency)
             .await;
+        if cite_links {
+            results = tokio::task::spawn_blocking(move || {
+                let mut last = 0;
+                for r in &mut results {
+                    if let Ok(extraction) = r.result.as_mut() {
+                        let (markdown, high) = webclaw_core::to_citations_after(
+                            &extraction.content.markdown,
+                            Some(&r.url),
+                            last,
+                        );
+                        extraction.content.markdown = markdown;
+                        last = high;
+                    }
+                }
+                results
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
 
         let mut output = format!("Extracted {} URLs:\n\n", results.len());
 

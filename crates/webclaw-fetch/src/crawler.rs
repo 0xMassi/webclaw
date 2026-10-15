@@ -217,6 +217,11 @@ pub struct CrawlState {
     /// ignores them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
+    /// In a query crawl, the best page rating so far and the pages finished
+    /// since, so a resume with [`CrawlConfig::stop_when_answered`] stops
+    /// where the crawl would have stopped without the interruption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_relevance: Option<(f64, usize)>,
 }
 
 /// Recursive crawler that wraps a shared [`FetchClient`].
@@ -378,6 +383,7 @@ impl Crawler {
                 max_depth,
                 scores: HashMap::new(),
                 query: None,
+                best_relevance: None,
             },
         )
     }
@@ -520,6 +526,7 @@ impl Crawler {
         };
 
         let resumed_pages = resume_state.as_ref().map_or(0, |s| s.completed_pages);
+        let mut quiet = Quiet::default();
         let mut visited: HashSet<String>;
         let mut frontier = Frontier {
             evict: self.ask.is_some(),
@@ -529,6 +536,9 @@ impl Crawler {
             visited = state.visited.iter().map(|k| dedup_key(k)).collect();
             let query = self.ask.as_ref().map(|a| a.query.as_str());
             let scores = if query.is_some() && state.query.as_deref() == query {
+                if let Some((best, since)) = state.best_relevance {
+                    quiet = Quiet { best, since };
+                }
                 state.scores
             } else {
                 if state.query.is_some() {
@@ -604,7 +614,6 @@ impl Crawler {
         let mut dirty = false;
         let mut redirect_hops: HashMap<String, usize> = HashMap::new();
         let mut same_page_redirects: HashSet<String> = HashSet::new();
-        let mut quiet = Quiet::default();
         let mut answered = false;
 
         loop {
@@ -705,6 +714,7 @@ impl Crawler {
                             &frontier,
                             &in_flight_urls,
                             resumed_pages + completed,
+                            &quiet,
                         );
                     }
                     last_checkpoint = Instant::now();
@@ -854,6 +864,7 @@ impl Crawler {
                     &frontier,
                     &in_flight_urls,
                     resumed_pages + completed,
+                    &quiet,
                 );
                 last_checkpoint = Instant::now();
                 dirty = false;
@@ -870,6 +881,7 @@ impl Crawler {
                 &frontier,
                 &in_flight_urls,
                 resumed_pages + completed,
+                &quiet,
             );
         }
 
@@ -894,6 +906,7 @@ impl Crawler {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_checkpoint(
         &self,
         path: &Path,
@@ -902,6 +915,7 @@ impl Crawler {
         frontier: &Frontier,
         in_flight: &HashMap<String, (usize, f64)>,
         completed_pages: usize,
+        quiet: &Quiet,
     ) {
         let in_flight_keys: HashSet<String> = in_flight.keys().map(|u| dedup_key(u)).collect();
         let mut scores: HashMap<String, f64> = HashMap::new();
@@ -926,6 +940,7 @@ impl Crawler {
             max_depth: self.config.max_depth,
             scores,
             query: self.ask.as_ref().map(|a| a.query.clone()),
+            best_relevance: self.ask.as_ref().map(|_| (quiet.best, quiet.since)),
         };
         if let Err(e) = Self::write_state(path, &state) {
             warn!(error = %e, "checkpoint failed");
@@ -1685,6 +1700,7 @@ mod tests {
             &frontier,
             &in_flight,
             7,
+            &Quiet::default(),
         );
         let state = Crawler::load_state(&path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
@@ -1818,6 +1834,46 @@ mod tests {
             .await
     }
 
+    #[tokio::test]
+    async fn a_resumed_crawl_stops_where_the_uninterrupted_one_would() {
+        let dir = std::env::temp_dir().join(format!("webclaw-answered-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = dir.join("state.json");
+        let config = |cancel: Option<Arc<AtomicBool>>| CrawlConfig {
+            max_depth: 1,
+            concurrency: 1,
+            delay: Duration::ZERO,
+            respect_robots: false,
+            query: Some("banana bread recipe".into()),
+            stop_when_answered: true,
+            checkpoint: Some(state.clone()),
+            cancel_flag: cancel,
+            ..Default::default()
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let fetched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let first = Crawler::new("https://example.com/", config(Some(stop)))
+            .unwrap()
+            .run("https://example.com/", None, move |url| {
+                if fetched.fetch_add(1, Ordering::SeqCst) + 1 == 5 {
+                    flag.store(true, Ordering::Release);
+                }
+                async move { library(&url) }
+            })
+            .await;
+        let saved = Crawler::load_state(&state).unwrap();
+        let second = Crawler::new("https://example.com/", config(None))
+            .unwrap()
+            .run("https://example.com/", Some(saved), |url| async move {
+                library(&url)
+            })
+            .await;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(first.total, 5);
+        assert_eq!(first.total + second.total, 10);
+    }
+
     #[test]
     fn stop_when_answered_is_refused_without_a_question() {
         let config = |query: Option<&str>| CrawlConfig {
@@ -1910,6 +1966,7 @@ mod tests {
             &frontier,
             &HashMap::new(),
             1,
+            &Quiet::default(),
         );
         let state = Crawler::load_state(&path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
@@ -2200,6 +2257,7 @@ mod tests {
             max_depth: 2,
             scores: HashMap::new(),
             query: None,
+            best_relevance: None,
         };
         Crawler::new(
             "http://example.com/",
@@ -2327,6 +2385,7 @@ mod tests {
             max_depth: 2,
             scores: HashMap::new(),
             query: None,
+            best_relevance: None,
         };
         let result = crawler
             .crawl_with_fetcher("https://example.com/", Some(resume), move |url| {
@@ -2847,6 +2906,7 @@ mod tests {
             max_depth: 1,
             scores: HashMap::new(),
             query: None,
+            best_relevance: None,
         };
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let recorded = calls.clone();

@@ -505,7 +505,9 @@ async fn run_script(page: &Page, code: &str, room: usize) -> Result<Value, Strin
         .map_err(|e| e.to_string())?;
     let object = match page.evaluate_expression(as_is).await {
         Err(CdpError::JavascriptException(e))
-            if exception_text(&e).contains("Illegal return statement") =>
+            if e.exception.as_ref().and_then(|x| x.class_name.as_deref())
+                == Some("SyntaxError")
+                && exception_text(&e).contains("Illegal return statement") =>
         {
             return capped(format!("(async () => {{\n{code}\n}})")).await;
         }
@@ -1242,5 +1244,24 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         );
         let error = big.unwrap_err().to_string();
         assert!(error.contains("characters left"), "{error}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_runtime_error_named_like_a_syntax_error_does_not_rerun_the_step() {
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let thrown = render_feed(
+            &renderer,
+            FEED,
+            r##"[{"type": "executeJavascript", "code": "globalThis.cnt = (globalThis.cnt || 0) + 1; if (globalThis.cnt === 1) throw new Error('Illegal return statement'); globalThis.cnt"}]"##,
+            Duration::from_secs(20),
+        )
+        .await;
+        renderer.close().await;
+        let error = thrown.unwrap_err().to_string();
+        assert!(
+            error.contains("action 1 (executeJavascript): Error: Illegal return statement"),
+            "{error}"
+        );
     }
 }

@@ -775,7 +775,7 @@ fn render_pool(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Render
     use webclaw_fetch::render::{BrowserSource, RenderPool};
     let source = match &cli.cdp_url {
         Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
-        None => BrowserSource::launch_for(config, cli.browser_profile.clone()),
+        None => BrowserSource::launch_for(config).with_profile(cli.browser_profile.clone()),
     };
     RenderPool::new(source, std::time::Duration::from_secs(cli.timeout))
 }

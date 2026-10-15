@@ -1001,10 +1001,7 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
     #[ignore = "launches Chrome and needs public DNS"]
     async fn a_script_may_run_longer_than_thirty_seconds_within_the_budget() {
         let pool = crate::render::RenderPool::new(
-            crate::render::BrowserSource::Launch {
-                proxy: None,
-                profile: None,
-            },
+            crate::render::BrowserSource::Launch { proxy: None },
             Duration::from_secs(60),
         );
         let headers = http::HeaderMap::new();
@@ -1072,10 +1069,7 @@ document.getElementById("q").addEventListener("keydown", e => { if (e.key === "E
         renderer.close().await;
         assert!(done.is_err(), "the wait should still be running: {done:?}");
         let pool = crate::render::RenderPool::new(
-            crate::render::BrowserSource::Launch {
-                proxy: None,
-                profile: None,
-            },
+            crate::render::BrowserSource::Launch { proxy: None },
             Duration::MAX,
         );
         let headers = http::HeaderMap::new();

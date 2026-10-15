@@ -703,11 +703,13 @@ impl Renderer {
 /// Where a [`RenderPool`] gets its browser.
 #[derive(Debug, Clone)]
 pub enum BrowserSource {
-    /// Launch a local headless Chrome; see [`Renderer::launch`], or with a
-    /// `profile` directory [`Renderer::launch_with_profile`].
-    Launch {
+    /// Launch a local headless Chrome; see [`Renderer::launch`].
+    Launch { proxy: Option<String> },
+    /// Launch a local headless Chrome on the persistent profile in `dir`;
+    /// see [`Renderer::launch_with_profile`].
+    Profile {
         proxy: Option<String>,
-        profile: Option<std::path::PathBuf>,
+        dir: std::path::PathBuf,
     },
     /// Use a browser already running at this DevTools endpoint; see [`Renderer::connect`].
     Connect(String),
@@ -715,14 +717,22 @@ pub enum BrowserSource {
 
 impl BrowserSource {
     /// Launch a local Chrome behind `config.proxy`, or behind one proxy
-    /// picked at random from `config.proxy_pool`, on the persistent
-    /// `profile` directory when there is one.
-    pub fn launch_for(config: &crate::FetchConfig, profile: Option<std::path::PathBuf>) -> Self {
+    /// picked at random from `config.proxy_pool`.
+    pub fn launch_for(config: &crate::FetchConfig) -> Self {
         let proxy = config
             .proxy
             .clone()
             .or_else(|| config.proxy_pool.choose(&mut rand::thread_rng()).cloned());
-        Self::Launch { proxy, profile }
+        Self::Launch { proxy }
+    }
+
+    /// The same launch on the persistent profile in `dir`, when there is
+    /// one. A browser to connect to is left as it is.
+    pub fn with_profile(self, dir: Option<std::path::PathBuf>) -> Self {
+        match (self, dir) {
+            (Self::Launch { proxy }, Some(dir)) => Self::Profile { proxy, dir },
+            (source, _) => source,
+        }
     }
 }
 
@@ -888,17 +898,13 @@ impl RenderPool {
                     .saturating_add(COMMAND_TIMEOUT)
                     .min(Duration::from_secs(86_400));
                 let started = match &self.source {
-                    BrowserSource::Launch {
-                        proxy,
-                        profile: Some(dir),
-                    } => {
+                    BrowserSource::Launch { proxy } => {
+                        Renderer::launch_timed(proxy.as_deref(), &[], commands).await
+                    }
+                    BrowserSource::Profile { proxy, dir } => {
                         Renderer::launch_in(proxy.as_deref(), &[], dir.clone(), true, commands)
                             .await
                     }
-                    BrowserSource::Launch {
-                        proxy,
-                        profile: None,
-                    } => Renderer::launch_timed(proxy.as_deref(), &[], commands).await,
                     BrowserSource::Connect(endpoint) => {
                         Renderer::connect_timed(endpoint, commands).await
                     }
@@ -995,13 +1001,7 @@ impl RenderPool {
 
     /// Whether this pool launches Chrome on a persistent profile.
     pub fn persistent(&self) -> bool {
-        matches!(
-            self.source,
-            BrowserSource::Launch {
-                profile: Some(_),
-                ..
-            }
-        )
+        matches!(self.source, BrowserSource::Profile { .. })
     }
 
     /// With a persistent profile, load `url` in the browser, which sends the
@@ -2156,10 +2156,7 @@ mod tests {
 
     fn pool() -> super::RenderPool {
         super::RenderPool::new(
-            super::BrowserSource::Launch {
-                proxy: None,
-                profile: None,
-            },
+            super::BrowserSource::Launch { proxy: None },
             std::time::Duration::from_secs(1),
         )
     }
@@ -2202,10 +2199,7 @@ mod tests {
     async fn blocked_renders_leave_the_host_verdict_alone() {
         let config = super::RenderConfig {
             pool: Arc::new(super::RenderPool::new(
-                super::BrowserSource::Launch {
-                    proxy: None,
-                    profile: None,
-                },
+                super::BrowserSource::Launch { proxy: None },
                 std::time::Duration::from_secs(20),
             )),
             always: false,
@@ -2318,17 +2312,25 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            super::BrowserSource::launch_for(&config, None),
-            super::BrowserSource::Launch { proxy: Some(p), profile: None } if p == "http://pool.example:8080"
+            super::BrowserSource::launch_for(&config),
+            super::BrowserSource::Launch { proxy: Some(p) } if p == "http://pool.example:8080"
+        ));
+        assert!(matches!(
+            super::BrowserSource::launch_for(&config).with_profile(Some("/p".into())),
+            super::BrowserSource::Profile { proxy: Some(p), dir } if p == "http://pool.example:8080" && dir == std::path::Path::new("/p")
+        ));
+        assert!(matches!(
+            super::BrowserSource::Connect("ws://x".into()).with_profile(Some("/p".into())),
+            super::BrowserSource::Connect(_)
         ));
     }
 
     #[tokio::test]
     async fn a_profile_pool_passes_through_what_is_not_a_web_page() {
         let profile = super::RenderPool::new(
-            super::BrowserSource::Launch {
+            super::BrowserSource::Profile {
                 proxy: None,
-                profile: Some("/nonexistent/webclaw-profile".into()),
+                dir: "/nonexistent/webclaw-profile".into(),
             },
             std::time::Duration::from_secs(1),
         );

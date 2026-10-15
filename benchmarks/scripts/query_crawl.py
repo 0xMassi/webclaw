@@ -32,9 +32,10 @@ SITES = {
     "py-zh": ("https://docs.python.org/zh-cn/3/", "/zh-cn/3/"),
 }
 SETS = {"tuned": "query-crawl.jsonl", "held-out": "query-crawl-held.jsonl", "intl": "query-crawl-intl.jsonl"}
-ARMS = {"webclaw-bfs": ("base", False), "webclaw-query": ("base", True), "scrapling-bfs": ("scrapling", False),
-        "crawl4ai-bfs": ("crawl4ai", False), "crawl4ai-best-first": ("crawl4ai", True),
-        "crawl4ai-adaptive": ("crawl4ai", True)}
+ARMS = {"webclaw-bfs": ("base", False), "webclaw-query": ("base", True), "webclaw-query-stop": ("base", True),
+        "scrapling-bfs": ("scrapling", False), "crawl4ai-bfs": ("crawl4ai", False),
+        "crawl4ai-best-first": ("crawl4ai", True), "crawl4ai-adaptive": ("crawl4ai", True),
+        "crawl4ai-adaptive-docs": ("crawl4ai", True)}
 BUDGET, DEPTH, CONCURRENCY, CUTS = 50, 5, 4, (10, 25, 50)
 TOP = 3
 
@@ -142,10 +143,11 @@ def write_summary(label, rows, arms, sets):
             site_rows = [r for r in set_rows if r["site"] == site]
             if site_rows:
                 lines += ["", f"### {name}: {site}", ""] + table(site_rows, arms)
-    previews = [r["previews"] for r in rows if r["arm"] == "crawl4ai-adaptive"]
-    if previews:
-        lines += ["", f"crawl4ai-adaptive also requested the `<head>` of up to {statistics.median(previews):.0f} "
-                  "linked pages per question (median) to preview them, on top of the pages above."]
+    for arm in ("crawl4ai-adaptive", "crawl4ai-adaptive-docs"):
+        previews = [r["previews"] for r in rows if r["arm"] == arm]
+        if previews:
+            lines += ["", f"{arm} also requested the `<head>` of up to {statistics.median(previews):.0f} "
+                      "linked pages per question (median) to preview them, on top of the pages above."]
     (ROOT / "results" / label / "query-crawl-summary.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 

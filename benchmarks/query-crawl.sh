@@ -17,3 +17,4 @@ export WEBCLAW_BIN=$(cd "$bins" && pwd)/webclaw
 
 source ./envs.sh
 .work/venv-base/bin/python scripts/query_crawl.py "$label"
+case ",${QC_ARMS:-webclaw-query}," in *,webclaw-query,*) .work/venv-base/bin/python scripts/query_crawl_stop.py "$label" ;; esac

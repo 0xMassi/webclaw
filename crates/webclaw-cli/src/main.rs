@@ -392,7 +392,7 @@ struct Cli {
     /// Save the rendered page as MHTML to this file (- for stdout): one file
     /// with the page and the images, styles and frames it loaded, which a
     /// browser opens offline. Needs the `browser` feature
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "save_pdf", "paper", "landscape", "print_background", "scale", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "save_pdf", "paper", "landscape", "print_background", "scale", "full_page", "capture_types", "capture_credentials", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
     save_mhtml: Option<PathBuf>,
 
     /// Also keep every HTTP response webclaw fetches, with its request, in
@@ -402,7 +402,7 @@ struct Cli {
     /// what it fetched, and a FILE that exists is added to, each run starting
     /// with its own warcinfo record. Pages a browser renders are not in it:
     /// use --save-mhtml for those
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["cache", "cloud", "stdin", "file", "screenshot", "save_pdf", "save_mhtml", "capture_network"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["cache", "cloud", "stdin", "file", "screenshot", "save_pdf", "save_mhtml", "capture_network", "full_page", "paper", "landscape", "print_background", "scale", "capture_types", "capture_credentials"])]
     warc: Option<PathBuf>,
 
     /// With --save-pdf, the paper size
@@ -4282,8 +4282,24 @@ mod tests {
             &["--save-pdf", "a.pdf"],
             &["--save-mhtml", "a.mhtml"],
             &["--capture-network"],
+            &["--full-page"],
+            &["--paper", "a4"],
+            &["--landscape"],
+            &["--print-background"],
+            &["--scale", "0.5"],
+            &["--capture-types", "xhr"],
+            &["--capture-credentials"],
         ] {
             assert!(parse(refused).is_err(), "{refused:?}");
+        }
+        for refused in [
+            &["--full-page"][..],
+            &["--capture-types", "xhr"],
+            &["--capture-credentials"],
+        ] {
+            let mut args = vec!["webclaw", "https://example.com", "--save-mhtml", "a.mhtml"];
+            args.extend_from_slice(refused);
+            assert!(Cli::try_parse_from(args).is_err(), "{refused:?}");
         }
     }
 

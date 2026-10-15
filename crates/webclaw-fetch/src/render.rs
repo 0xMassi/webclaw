@@ -388,25 +388,35 @@ fn is_credential(name: &str) -> bool {
 }
 
 fn redact_query(url: &str) -> String {
-    let Ok(mut parsed) = Url::parse(url) else {
-        return url.to_string();
+    let (rest, fragment) = match url.split_once('#') {
+        Some((rest, fragment)) => (rest, Some(fragment)),
+        None => (url, None),
     };
-    if !parsed.query_pairs().any(|(name, _)| is_credential(&name)) {
-        return url.to_string();
+    let (base, query) = match rest.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (rest, None),
+    };
+    let mut out = base.to_string();
+    if let Some(query) = query {
+        out.push('?');
+        out.push_str(&redact_pairs(query));
     }
-    let pairs: Vec<(String, String)> = parsed
-        .query_pairs()
-        .map(|(name, value)| {
-            let value = if is_credential(&name) {
-                "REDACTED".to_string()
-            } else {
-                value.into_owned()
-            };
-            (name.into_owned(), value)
+    if let Some(fragment) = fragment {
+        out.push('#');
+        out.push_str(&redact_pairs(fragment));
+    }
+    out
+}
+
+fn redact_pairs(pairs: &str) -> String {
+    pairs
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((name, _)) if is_credential(&percent_decode(name)) => format!("{name}=REDACTED"),
+            _ => pair.to_string(),
         })
-        .collect();
-    parsed.query_pairs_mut().clear().extend_pairs(pairs);
-    parsed.into()
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 fn char_floor(text: &str, at: usize) -> usize {
@@ -3877,6 +3887,22 @@ mod tests {
         assert_eq!(
             all["Referer"],
             "https://a.example/page?access_token=PAGE_SECRET&q=1"
+        );
+    }
+
+    #[test]
+    fn redaction_leaves_the_rest_of_the_url_as_it_was() {
+        assert_eq!(
+            super::redact_query("https://a.example/s?q=a%20b&token=T1&x=%7E~#frag"),
+            "https://a.example/s?q=a%20b&token=REDACTED&x=%7E~#frag"
+        );
+        assert_eq!(
+            super::redact_query("https://a.example/cb#access_token=T2&state=s%20t&expires_in=3600"),
+            "https://a.example/cb#access_token=REDACTED&state=s%20t&expires_in=3600"
+        );
+        assert_eq!(
+            super::redact_query("https://a.example/s?Access%5FToken=T3"),
+            "https://a.example/s?Access%5FToken=REDACTED"
         );
     }
 }

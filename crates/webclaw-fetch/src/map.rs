@@ -299,17 +299,39 @@ pub async fn common_crawl_urls(
         .unwrap_or(1) as usize;
 
     let mut urls = IndexUrls::new(host, opts);
+    read_pages(
+        pages,
+        |page| {
+            let url = format!("{query}&page={page}");
+            async move {
+                tokio::time::sleep(INDEX_PAUSE).await;
+                index_get(client, &url).await
+            }
+        },
+        &mut urls,
+    )
+    .await?;
+    Ok(urls.list)
+}
+
+async fn read_pages<F, Fut>(
+    pages: usize,
+    mut fetch: F,
+    urls: &mut IndexUrls<'_>,
+) -> Result<(), FetchError>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: std::future::Future<Output = Result<Option<String>, FetchError>>,
+{
     for page in 0..pages.min(MAX_INDEX_PAGES) {
         if urls.full() {
             break;
         }
-        tokio::time::sleep(INDEX_PAUSE).await;
-        let Some(body) = index_get(client, &format!("{query}&page={page}")).await? else {
-            break;
-        };
-        urls.add_lines(&body);
+        if let Some(body) = fetch(page).await? {
+            urls.add_lines(&body);
+        }
     }
-    Ok(urls.list)
+    Ok(())
 }
 
 struct IndexUrls<'a> {
@@ -730,6 +752,29 @@ mod tests {
         assert!(!busy(404, b"{\"message\": \"No Captures found\"}"));
         assert!(busy(400, b"{\"message\": \"Page 1 invalid\"}"));
         assert!(!busy(403, b"forbidden"));
+    }
+
+    #[tokio::test]
+    async fn a_page_without_matching_captures_does_not_end_the_paging() {
+        let opts = MapOptions::default();
+        let mut urls = IndexUrls::new("example.com".into(), &opts);
+        read_pages(
+            3,
+            |page| async move {
+                Ok(match page {
+                    0 => Some(index_lines(&["https://example.com/a"])),
+                    1 => None,
+                    _ => Some(index_lines(&["https://example.com/c"])),
+                })
+            },
+            &mut urls,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            urls.list,
+            vec!["https://example.com/a", "https://example.com/c"]
+        );
     }
 
     #[test]

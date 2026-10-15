@@ -16,7 +16,8 @@
 //!    pages, the visited set, and the frontier it queued but never fetched.
 //!
 //! URLs keep that order, each once, compared without scheme, `www.`,
-//! fragment or trailing slash. A crawl ([`Crawler`]) keeps a page's `www.`
+//! fragment, trailing slash or tracking parameters (`utm_*`, `ref`,
+//! `fbclid`, `gclid`), which index URLs also lose in the output. A crawl ([`Crawler`]) keeps a page's `www.`
 //! and bare-host URLs apart; a map lists one of them. Like the crawl, the
 //! fallback follows `http` links to the seed's host on the seed's scheme.
 //! Only the sitemap layer carries metadata.
@@ -491,6 +492,7 @@ impl<'a> IndexUrls<'a> {
             return;
         }
         url.set_fragment(None);
+        let url = without_tracking(&url);
         let Some(key) = site_key(url.as_str()) else {
             return;
         };
@@ -602,9 +604,28 @@ fn bare_entry(url: String) -> SitemapEntry {
 }
 
 fn site_key(raw: &str) -> Option<String> {
-    let norm = crawler::normalize(&Url::parse(raw).ok()?);
+    let norm = crawler::normalize(&without_tracking(&Url::parse(raw).ok()?));
     let rest = norm.split_once("://")?.1;
     Some(rest.strip_prefix("www.").unwrap_or(rest).to_string())
+}
+
+fn without_tracking(url: &Url) -> Url {
+    let tracking = |key: &str| key.starts_with("utm_") || matches!(key, "ref" | "fbclid" | "gclid");
+    let mut clean = url.clone();
+    if !url.query_pairs().any(|(key, _)| tracking(&key)) {
+        return clean;
+    }
+    let kept: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(key, _)| !tracking(key))
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    if kept.is_empty() {
+        clean.set_query(None);
+    } else {
+        clean.query_pairs_mut().clear().extend_pairs(kept);
+    }
+    clean
 }
 
 fn append_crawled(
@@ -1015,6 +1036,34 @@ mod tests {
         assert_eq!(config.include_patterns, vec!["/docs/**"]);
         assert_eq!(config.exclude_patterns, vec!["/docs/old/*"]);
         assert_eq!(config.max_pages, Some(150));
+    }
+
+    #[test]
+    fn tracking_parameters_do_not_make_a_new_url() {
+        assert_eq!(
+            site_key("https://example.com/p?utm_source=x&id=2&ref=feed"),
+            site_key("https://example.com/p?id=2")
+        );
+        assert_eq!(
+            site_key("https://example.com/p?fbclid=1&gclid=2"),
+            site_key("https://example.com/p")
+        );
+        assert_ne!(
+            site_key("https://example.com/p?page=2"),
+            site_key("https://example.com/p")
+        );
+
+        let opts = MapOptions::default();
+        let mut urls = fresh(&opts);
+        urls.add_lines(&index_lines(&[
+            "https://example.com/a?utm_source=news",
+            "https://example.com/a",
+            "https://example.com/b?gclid=1&id=3",
+        ]));
+        assert_eq!(
+            urls.list,
+            vec!["https://example.com/a", "https://example.com/b?id=3"]
+        );
     }
 
     #[test]

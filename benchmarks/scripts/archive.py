@@ -73,10 +73,7 @@ def reference(label):
 
 async def load_offline(path):
     from playwright.async_api import async_playwright
-    attempts = []
-
     async def gate(route):
-        attempts.append(route.request.url)
         await (route.continue_() if route.request.url.startswith("file:") else route.abort())
 
     async with async_playwright() as p:
@@ -88,7 +85,7 @@ async def load_offline(path):
         await page.wait_for_timeout(500)
         seen = await page.evaluate(MEASURE)
         await browser.close()
-    return seen, [u for u in attempts if not u.startswith("file:")]
+    return seen
 
 
 def score_mhtml(line, ref):
@@ -100,7 +97,7 @@ def score_mhtml(line, ref):
     try:
         if b"multipart/related" not in data[:2000]:
             raise ValueError("not an MHTML file")
-        seen, network = asyncio.run(load_offline(path))
+        seen = asyncio.run(load_offline(path))
     except Exception as e:
         path.unlink()
         return {**got, "ok": False, "error": got["error"] or f"unreadable MHTML: {str(e)[-200:]}"}
@@ -109,7 +106,7 @@ def score_mhtml(line, ref):
     want, found = live["words"], words(seen["text"])
     return {**got, "ok": bool(found), "kb": len(data) / 1024,
             "recall": sum(w in found for w in want) / len(want) if want else None,
-            "images": seen["images"], "live_images": live["images"], "network": len(network)}
+            "images": seen["images"], "live_images": live["images"]}
 
 
 def run_mhtml(arm, mode, ref):
@@ -212,6 +209,10 @@ def validate_warc(path):
             digests += 1
             responses.append((fields["warc-target-uri"], int(head.split(b" ")[1]), len(payload)))
     response_ids = {f["warc-record-id"] for f, _ in records if f.get("warc-type") == "response"}
+    info_ids = {f["warc-record-id"] for f, _ in records if f.get("warc-type") == "warcinfo"}
+    for fields, _ in records:
+        if fields.get("warc-type") != "warcinfo" and fields.get("warc-warcinfo-id") not in info_ids:
+            problems.append("record not tied to a warcinfo record")
     for fields, _ in records:
         if fields.get("warc-type") == "request" and fields.get("warc-concurrent-to") not in response_ids:
             problems.append("request record not tied to a response")
@@ -283,7 +284,6 @@ def main(label):
                    "kb": statistics.median([p["kb"] for p in ok] or [0]),
                    "recall": statistics.mean(recalls) if recalls else 0,
                    "images": sum(p["images"] for p in ok), "live_images": sum(p["live_images"] for p in ok),
-                   "network": sum(p["network"] for p in ok),
                    "errors": [p["error"] for p in got if not p["ok"]][:3]}
             rows.append(row)
             print(json.dumps(row), flush=True)
@@ -305,13 +305,12 @@ def main(label):
              "it at 1280x720 after the load event, network idle (at most 10 s) and 1 s, measured once at the "
              "start. `recall` is the share of the live page's distinct visible words (4+ letters, from "
              "`innerText`) that the offline copy shows. `images` counts loaded `<img>` elements offline against "
-             "live, summed over pages. `requests` counts network requests the offline copy tried; they were "
-             "all refused.", "",
-             "| tool | mode | ok | ms (median) | ms (p95) | KB (median) | recall | images offline / live | requests |",
-             "|---|---|---:|---:|---:|---:|---:|---:|---:|"]
+             "live, summed over pages.", "",
+             "| tool | mode | ok | ms (median) | ms (p95) | KB (median) | recall | images offline / live |",
+             "|---|---|---:|---:|---:|---:|---:|---:|"]
     for r in rows:
         lines.append(f"| {r['arm']} | {r['mode']} | {r['ok']}/{r['files']} | {r['ms']:.0f} | {r['p95_ms']:.0f} | "
-                     f"{r['kb']:.0f} | {r['recall']:.3f} | {r['images']} / {r['live_images']} | {r['network']} |")
+                     f"{r['kb']:.0f} | {r['recall']:.3f} | {r['images']} / {r['live_images']} |")
     lines.append("")
     lines += [f"{arm}: {why}." for arm, why in UNSUPPORTED_MHTML.items()]
     lines += ["", "Cold run, per page: KB, recall, images offline / live:", "",
@@ -331,8 +330,8 @@ def main(label):
                   "written for this benchmark (Python standard library only): every gzip member holds one "
                   "record, the first record is `warcinfo`, every record has a unique `urn:uuid` id, a UTC date "
                   "and a matching `Content-Length`, every block digest and every response payload digest "
-                  "(SHA-1, base32) matches, each response starts with an HTTP status line, and each request "
-                  "record points at its response. `ok` also needs a non-empty 2xx response for the page. "
+                  "(SHA-1, base32) matches, each response starts with an HTTP status line, each request "
+                  "record points at its response, and every record points at a `warcinfo` record. `ok` also needs a non-empty 2xx response for the page. "
                   "`ms without` is the same command without `--warc`, run just before.", "",
                   "| page | ok | ms | ms without | KB | records | digests checked |", "|---|---|---:|---:|---:|---:|---:|"]
         for w in warc:

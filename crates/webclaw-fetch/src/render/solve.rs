@@ -1,5 +1,6 @@
 //! Getting a rendered page past a Cloudflare challenge.
 
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use chromiumoxide::Page;
@@ -14,7 +15,7 @@ enum Challenge {
     Widget,
 }
 
-const WIDGET_PATIENCE: Duration = Duration::from_secs(15);
+const WIDGET_PATIENCE: Duration = Duration::from_secs(10);
 const WIDGET_SHOWS_WITHIN: Duration = Duration::from_secs(3);
 const SHOWN_FOR: Duration = Duration::from_millis(1200);
 const RECLICK_AFTER: Duration = Duration::from_secs(6);
@@ -27,10 +28,15 @@ fn challenge(html: &str) -> Option<Challenge> {
             Challenge::Checkbox
         });
     }
-    (crate::cloud::contains_ignore_case(html, "challenges.cloudflare.com/turnstile")
-        && !has_token(html))
-    .then_some(Challenge::Widget)
+    (WIDGET.is_match(html) && !has_token(html)).then_some(Challenge::Widget)
 }
+
+static WIDGET: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r#"(?is)<script\b[^>]*\bsrc\s*=\s*["']?[^"'>\s]*challenges\.cloudflare\.com/turnstile/|<[a-z][a-z0-9-]*\b[^>]*\bclass\s*=\s*["'](?:[^"']*\s)?cf-turnstile(?:\s[^"']*)?["']"#,
+    )
+    .expect("a valid pattern")
+});
 
 fn has_token(html: &str) -> bool {
     ["\"cf-turnstile-response\"", "\"g-recaptcha-response\""]
@@ -46,13 +52,37 @@ fn has_token(html: &str) -> bool {
         })
 }
 
-/// Wait until `page` is no longer a Cloudflare challenge page, clicking the
-/// challenge's checkbox when one shows. A Turnstile widget embedded in the
-/// page gets clicked too, but the page is left as it is when no widget shows
-/// within 3 seconds or none gives a token within 15. Fails when a challenge
-/// page is still shown at `deadline`.
-pub(crate) async fn solve(page: &Page, deadline: Instant) -> Result<(), String> {
-    let mut widget: Option<(Instant, bool)> = None;
+/// One render's attempt at a Cloudflare challenge, run once the page loads
+/// and again once it settles.
+pub(crate) struct Solver {
+    deadline: Instant,
+    widget: Option<(Instant, bool)>,
+}
+
+impl Solver {
+    pub(crate) fn new(deadline: Instant) -> Self {
+        Self {
+            deadline,
+            widget: None,
+        }
+    }
+
+    /// Wait until `page` is no longer a Cloudflare challenge page, clicking
+    /// the challenge's checkbox when one shows. A Turnstile widget embedded
+    /// in the page gets clicked too, but the page is left as it is when no
+    /// widget shows within 3 seconds, or none gives a token within 10 over
+    /// the whole render, or the deadline passes. Fails when a challenge page
+    /// is still shown at the deadline.
+    pub(crate) async fn run(&mut self, page: &Page) -> Result<(), String> {
+        solve(page, self.deadline, &mut self.widget).await
+    }
+}
+
+async fn solve(
+    page: &Page,
+    deadline: Instant,
+    widget: &mut Option<(Instant, bool)>,
+) -> Result<(), String> {
     let mut shown: Option<Instant> = None;
     let mut clicked: Option<Instant> = None;
     loop {
@@ -66,7 +96,10 @@ pub(crate) async fn solve(page: &Page, deadline: Instant) -> Result<(), String> 
             }
         };
         let now = Instant::now();
-        if now >= deadline && kind != Challenge::Widget {
+        if now >= deadline {
+            if kind == Challenge::Widget {
+                return Ok(());
+            }
             return Err("the Cloudflare challenge was still shown when the time ran out".into());
         }
         let point = match kind {
@@ -80,8 +113,6 @@ pub(crate) async fn solve(page: &Page, deadline: Instant) -> Result<(), String> 
             if waited >= WIDGET_PATIENCE || (!*seen && waited >= WIDGET_SHOWS_WITHIN) {
                 return Ok(());
             }
-        } else {
-            widget = None;
         }
         if let Some(point) = point
             && clicked.is_none_or(|at| at.elapsed() >= RECLICK_AFTER)
@@ -168,5 +199,17 @@ mod tests {
         let recaptcha = r#"<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?compat=recaptcha"></script><input type="hidden" value="0.token" name="g-recaptcha-response">"#;
         assert_eq!(challenge(recaptcha), None);
         assert_eq!(challenge("<html><body><p>hello</p></body></html>"), None);
+    }
+
+    #[test]
+    fn only_a_real_widget_counts_not_a_page_that_names_it() {
+        let docs = r#"<html><body><p>Load <code>https://challenges.cloudflare.com/turnstile/v0/api.js</code> and add a <code>cf-turnstile</code> div.</p></body></html>"#;
+        assert_eq!(challenge(docs), None);
+        let script = r#"<html><head><script async src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"></script></head><body></body></html>"#;
+        assert_eq!(challenge(script), Some(Challenge::Widget));
+        let element = r#"<html><body><form><div class="form-row cf-turnstile" data-sitekey="1x"></div></form></body></html>"#;
+        assert_eq!(challenge(element), Some(Challenge::Widget));
+        let lookalike = r#"<html><body><div class="cf-turnstile-wrapper"></div></body></html>"#;
+        assert_eq!(challenge(lookalike), None);
     }
 }

@@ -672,13 +672,13 @@ impl Renderer {
             .saturating_mul(if actions.is_empty() { 1 } else { 2 });
         let deadline = Instant::now()
             + (options.timeout - options.timeout / 4).min(Duration::from_secs(86_400));
-        let solved = async |page: &chromiumoxide::Page| {
-            if !options.solve {
-                return Ok(());
-            }
-            solve::solve(page, deadline)
+        let mut solver = options.solve.then(|| solve::Solver::new(deadline));
+        let mut solved = async |page: &chromiumoxide::Page| match solver.as_mut() {
+            Some(solver) => solver
+                .run(page)
                 .await
-                .map_err(|e| FetchError::Build(format!("rendering {url}: {e}")))
+                .map_err(|e| FetchError::Build(format!("rendering {url}: {e}"))),
+            None => Ok(()),
         };
         let outcome = tokio::time::timeout(limit, async {
             page.goto(url.as_str()).await.map_err(browser_error)?;
@@ -2435,6 +2435,40 @@ mod tests {
         let solved = solved.expect("render succeeds");
         assert!(solved.html.contains("the real page"), "{}", solved.html);
         assert_eq!(clearance, None);
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_widget_that_never_gives_a_token_costs_one_wait_per_render() {
+        let proxy = challenge_proxy().await;
+        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        let widget = r#"<html><body><p>Sign up for the newsletter.</p><div class="cf-turnstile"><iframe src="http://example.net:8080/cdn-cgi/challenge-platform/fixture" width="300" height="65" style="border: 0"></iframe></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body></html>"#;
+        let started = std::time::Instant::now();
+        let rendered = renderer
+            .render(
+                "http://example.com:8080/signup",
+                Some(Prefetched {
+                    html: widget,
+                    headers: &http::HeaderMap::new(),
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(40),
+                    solve: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        let took = started.elapsed();
+        renderer.close().await;
+        assert!(
+            rendered
+                .expect("the page is returned")
+                .html
+                .contains("newsletter")
+        );
+        assert!(took < std::time::Duration::from_secs(14), "{took:?}");
     }
 
     #[tokio::test]

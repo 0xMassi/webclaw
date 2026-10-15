@@ -892,6 +892,21 @@ fn browser_source(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::Bro
     }
 }
 
+fn check_warc(cli: &Cli) -> Result<(), String> {
+    if cli.warc.is_none() {
+        return Ok(());
+    }
+    if cli.command.is_some() {
+        return Err(
+            "--warc does not reach the subcommands; run the fetch, crawl or map without one".into(),
+        );
+    }
+    if cli.render == RenderMode::Always || cli.actions.is_some() || cli.scroll.is_some() {
+        return Err("--warc keeps the HTTP responses webclaw fetches, and --render always, --actions and --scroll load the page in the browser instead; save a rendered page with --save-mhtml".into());
+    }
+    Ok(())
+}
+
 fn warc_archive(path: &Path) -> webclaw_fetch::warc::Archive {
     static ARCHIVE: std::sync::OnceLock<webclaw_fetch::warc::Archive> = std::sync::OnceLock::new();
     ARCHIVE
@@ -3603,6 +3618,11 @@ async fn run() {
 
     let mut cli = Cli::parse();
     init_logging(cli.verbose);
+    if let Err(e) = check_warc(&cli) {
+        eprintln!("error: {e}");
+        exit(1);
+    }
+
     if cli.browser_profile.is_some() && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
         eprintln!(
             "error: --browser-profile needs the browser: a build with the `browser` feature, and --render auto or always"
@@ -3783,15 +3803,6 @@ async fn run() {
     backfill_single_file_url(&mut cli.urls, &entries);
     if let Err(e) = check_chunk_format(&cli) {
         eprintln!("error: {e}");
-        exit(1);
-    }
-
-    if cli.warc.is_some()
-        && (cli.render == RenderMode::Always || cli.actions.is_some() || cli.scroll.is_some())
-    {
-        eprintln!(
-            "error: --warc keeps the HTTP responses webclaw fetches, and --render always, --actions and --scroll load the page in the browser instead; save a rendered page with --save-mhtml"
-        );
         exit(1);
     }
 
@@ -4190,6 +4201,35 @@ mod tests {
         assert!(saved.is_err());
         assert_eq!(kept, "earlier PDF");
         assert_eq!(leftovers, 1);
+    }
+
+    #[test]
+    fn warc_refuses_what_never_goes_over_http() {
+        let check = |args: &[&str]| check_warc(&Cli::try_parse_from(args).unwrap());
+        assert!(check(&["webclaw", "https://example.com", "--warc", "a.warc"]).is_ok());
+        assert!(
+            check(&[
+                "webclaw",
+                "https://example.com",
+                "--warc",
+                "a.warc",
+                "--render",
+                "always"
+            ])
+            .is_err()
+        );
+        assert!(check(&["webclaw", "--warc", "a.warc", "extractors"]).is_err());
+        assert!(
+            check(&[
+                "webclaw",
+                "--warc",
+                "a.warc",
+                "vertical",
+                "github_repo",
+                "https://github.com/a/b"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

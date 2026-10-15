@@ -202,10 +202,10 @@ pub struct SelectParams {
 pub struct ScreenshotParams {
     /// URL to capture
     pub url: String,
-    /// For images, capture the whole scrollable page instead of the 1280x720 viewport (default: false). A PDF always holds the whole page
+    /// For images, capture the whole scrollable page instead of the 1280x720 viewport (default: false). A PDF or MHTML file always holds the whole page
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub full_page: Option<bool>,
-    /// "png" (default) or "jpeg", which is smaller, for an image, or "pdf" to print the whole page to a PDF instead
+    /// "png" (default) or "jpeg", which is smaller, for an image, "pdf" to print the whole page to a PDF instead, or "mhtml" to save it as one MHTML file with its images and styles, which a browser opens offline
     pub format: Option<String>,
     /// With format "pdf": "letter" (default) or "a4"
     pub paper: Option<String>,

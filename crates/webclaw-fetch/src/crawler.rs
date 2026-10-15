@@ -893,7 +893,7 @@ impl Crawler {
         };
         let now = Instant::now();
         let earliest = now + base;
-        let origin = parsed.origin().ascii_serialization();
+        let origin = as_https(&parsed).origin().ascii_serialization();
         let start = next_start
             .get(&origin)
             .map_or(earliest, |slot| (*slot).max(earliest));
@@ -2103,6 +2103,32 @@ mod tests {
         })
         .await;
         assert_eq!(*calls.lock().unwrap(), vec!["http://example.com/b"]);
+    }
+
+    #[tokio::test]
+    async fn crawl_delay_spaces_http_and_https_on_one_host_together() {
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                delay: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for origin in ["https://example.com", "http://example.com"] {
+            crawler.preload_robots(
+                origin,
+                RobotsRules::parse("User-agent: *\nCrawl-delay: 2\n", USER_AGENT_TOKEN),
+            );
+        }
+        let mut slots = HashMap::new();
+        crawler
+            .start_delay("http://example.com/a", &mut slots)
+            .await;
+        let second = crawler
+            .start_delay("https://example.com/b", &mut slots)
+            .await;
+        assert!(second > Duration::from_millis(1900), "{second:?}");
     }
 
     #[tokio::test]

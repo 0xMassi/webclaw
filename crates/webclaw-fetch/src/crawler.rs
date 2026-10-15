@@ -662,7 +662,10 @@ impl Crawler {
             }
             let checkpoint = self.config.checkpoint.as_ref().filter(|_| dirty);
             let checkpoint_at = last_checkpoint + CHECKPOINT_INTERVAL;
-            let wake_at = wake.unwrap_or(checkpoint_at);
+            let mut wake_at = wake.unwrap_or(checkpoint_at);
+            if self.config.cancel_flag.is_some() {
+                wake_at = wake_at.min(Instant::now() + CANCEL_POLL);
+            }
             let next = tokio::select! {
                 next = in_flight.next(), if !in_flight.is_empty() => next,
                 () = tokio::time::sleep_until(wake_at.into()), if wake.is_some() => continue,
@@ -990,6 +993,8 @@ impl Crawler {
 const MAX_CRAWL_DELAY: Duration = Duration::from_secs(30);
 // ponytail: the dispatcher looks this far into the frontier for a host that may start now; a host queued deeper behind a paced one waits its turn, keep a queue per host if that matters.
 const PACING_SCAN: usize = 256;
+// ponytail: a crawl waiting for a host checks its cancel flag this often; wake it through a Notify if 100 ms is too slow.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
 // ponytail: a fixed 1s interval rewrites the whole visited set each time; space it out by size if crawls past ~100k pages make it costly.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -2541,6 +2546,46 @@ mod tests {
             Some("https://a.test/1")
         );
         assert!(frontier.pop(0, |_| true).is_none());
+    }
+
+    #[tokio::test]
+    async fn cancelling_while_a_host_waits_stops_at_once_and_saves_state() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state.json");
+        let crawler = Crawler::new(
+            "https://example.com/",
+            CrawlConfig {
+                cancel_flag: Some(stopped.clone()),
+                checkpoint: Some(state.clone()),
+                max_depth: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            RobotsRules::parse("User-agent: *\nCrawl-delay: 30\n", USER_AGENT_TOKEN),
+        );
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            stopped.store(true, Ordering::Release);
+        });
+        let started = Instant::now();
+        let crawl = crawler.crawl_with_fetcher("https://example.com/", None, |url| async move {
+            webclaw_core::extract_with_options(
+                "<main><h1>Seed</h1><p>Links to wait for.</p><a href='/a'>A</a><a href='/b'>B</a></main>",
+                Some(&url),
+                &Default::default(),
+            )
+            .map_err(|e| e.to_string())
+        });
+        tokio::time::timeout(Duration::from_secs(5), crawl)
+            .await
+            .expect("the crawl kept waiting after it was cancelled");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let saved = Crawler::load_state(&state).expect("no state saved");
+        assert!(!saved.frontier.is_empty(), "{saved:?}");
     }
 
     type Hits = Arc<std::sync::Mutex<Vec<(String, String, Instant)>>>;

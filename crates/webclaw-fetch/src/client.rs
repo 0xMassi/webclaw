@@ -755,12 +755,14 @@ impl FetchClient {
         let mut hops = 0;
         loop {
             let attempt = crate::transfer::Attempt::new(url.as_str(), client.proxy.as_deref());
-            let resp = client
+            let mut req = client
                 .get(url.as_str())
                 .default_headers(false)
-                .headers(headers.clone())
-                .send()
-                .await?;
+                .headers(headers.clone());
+            if let Some(max) = self.redirects {
+                req = req.redirect(crate::tls::stop_at_redirect(hops < max));
+            }
+            let resp = req.send().await?;
             let response = Response::from_wreq(resp, attempt).await?;
             (archive.0)(&crate::warc::Exchange {
                 url: &response.url,
@@ -780,11 +782,6 @@ impl FetchClient {
                 return Ok(response);
             };
             hops += 1;
-            if Some(hops) > self.redirects {
-                return Err(FetchError::Build(format!(
-                    "too many redirects fetching {url}"
-                )));
-            }
             let next = crate::url_security::validate_public_http_url(next.as_str()).await?;
             if next.origin() != url.origin() {
                 for name in [
@@ -1590,6 +1587,46 @@ mod tests {
         assert!(wire[1].contains("cookie: session=1\r\n"));
         assert!(!wire[2].contains("cookie:"), "{}", wire[2]);
         assert!(wire[2].contains("referer: http://example.com/b\r\n"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn too_many_redirects_fail_the_same_way_with_an_archive() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut outcomes = Vec::new();
+        for archive in [None, Some(crate::warc::Archive(Arc::new(|_| {})))] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let proxy = format!("http://{}", listener.local_addr().unwrap());
+            let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counted = hits.clone();
+            tokio::spawn(async move {
+                while let Ok((mut socket, _)) = listener.accept().await {
+                    let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let mut buffer = [0; 4096];
+                    let _ = socket.read(&mut buffer).await;
+                    let reply = format!(
+                        "HTTP/1.1 302 Found\r\nLocation: /r{n}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                }
+            });
+            let client = FetchClient::new(FetchConfig {
+                proxy: Some(proxy),
+                max_redirects: 2,
+                archive,
+                ..Default::default()
+            })
+            .unwrap();
+            let error = client.fetch("http://example.com/start").await.unwrap_err();
+            let redirect = matches!(&error, FetchError::Request(e) if e.is_redirect());
+            outcomes.push((
+                redirect,
+                error.to_string().contains("too many redirects"),
+                hits.load(std::sync::atomic::Ordering::SeqCst),
+            ));
+        }
+        assert_eq!(outcomes[0], (true, true, 6), "{outcomes:?}");
+        assert_eq!(outcomes[1], outcomes[0]);
     }
 
     fn cached_config(proxy: String, dir: &std::path::Path) -> FetchConfig {

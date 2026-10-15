@@ -602,6 +602,20 @@ fn redact_proxy_url(raw: &str) -> String {
     }
 }
 
+pub(crate) fn stop_at_redirect(more: bool) -> wreq::redirect::Policy {
+    wreq::redirect::Policy::custom(move |attempt| {
+        if !more {
+            return attempt.error("too many redirects");
+        }
+        attempt.pending(|attempt| async move {
+            match crate::url_security::validate_public_http_url(&attempt.uri.to_string()).await {
+                Ok(_) => attempt.stop(),
+                Err(e) => attempt.error(e.to_string()),
+            }
+        })
+    })
+}
+
 fn ssrf_safe_redirect_policy(
     follow_redirects: bool,
     max_redirects: usize,

@@ -571,18 +571,18 @@ pub async fn smart_fetch(
     if fetch_result.status >= 400
         || blocked(&fetch_result.html, &fetch_result.headers, widgets_block)
     {
-        let solved = if is_cloudflare_challenge(&fetch_result.html, &fetch_result.headers) {
-            client.render_if_needed(&fetch_result, 0).await
-        } else {
-            None
-        };
-        match solved {
-            Some(solved)
+        match client.solve_challenge(&fetch_result).await {
+            Some(Ok(solved))
                 if solved.status < 400
                     && !is_cloudflare_challenge(&solved.html, &solved.headers) =>
             {
                 fetch_result = solved;
                 rendered_already = true;
+            }
+            Some(Err(e)) if cloud.is_none() => {
+                return Err(format!(
+                    "could not get past the Cloudflare challenge on {url}: {e}"
+                ));
             }
             _ => {
                 info!(url, "bot protection detected, falling back to cloud API");
@@ -1069,13 +1069,14 @@ mod tests {
             Ok(page)
         }
 
-        async fn render_if_needed(
+        async fn solve_challenge(
             &self,
             fetched: &crate::client::FetchResult,
-            _http_words: usize,
-        ) -> Option<crate::client::FetchResult> {
-            assert!(is_cloudflare_challenge(&fetched.html, &fetched.headers));
-            StaticPage("<html><body><main><h1>Prices</h1><p>The solved page lists every plan with its monthly price, the projects it includes and the support that comes with it.</p></main></body></html>").fetch(&fetched.url).await.ok()
+        ) -> Option<Result<crate::client::FetchResult, crate::error::FetchError>> {
+            if !is_cloudflare_challenge(&fetched.html, &fetched.headers) {
+                return None;
+            }
+            Some(StaticPage("<html><body><main><h1>Prices</h1><p>The solved page lists every plan with its monthly price, the projects it includes and the support that comes with it.</p></main></body></html>").fetch(&fetched.url).await)
         }
     }
 

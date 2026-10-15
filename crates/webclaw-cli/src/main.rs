@@ -216,8 +216,9 @@ struct Cli {
     /// Get past Cloudflare challenge pages in a local Chrome: render a page
     /// that comes back as one, wait for it to clear or click its checkbox,
     /// and read the page it leads to. Later pages of that site are fetched
-    /// with the clearance cookie it got. With --render always, a Turnstile checkbox
-    /// in the page is clicked too. Needs a build with the `browser` feature
+    /// with the clearance cookie it got. A Turnstile checkbox in any page
+    /// that gets rendered is clicked too. Needs a build with the `browser`
+    /// feature
     #[arg(long, conflicts_with = "screenshot")]
     solve: bool,
 

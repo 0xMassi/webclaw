@@ -722,11 +722,19 @@ impl FetchClient {
         FetchResult,
         Result<webclaw_core::ExtractionResult, FetchError>,
     ) {
+        if let Some(solved) = self.solve_challenge(&fetched).await {
+            return match solved {
+                Ok(page) => {
+                    let extracted = self.extract(&page, options);
+                    (page, extracted)
+                }
+                Err(e) => (fetched, Err(e)),
+            };
+        }
         let extracted = self.extract(&fetched, options);
         let words = match &extracted {
             Ok(result) => result.metadata.word_count,
             Err(FetchError::Content(_)) => 0,
-            Err(FetchError::UpstreamStatus(_)) if self.solves(&fetched) => 0,
             Err(_) => return (fetched, extracted),
         };
         let Some(rendered) = self.render_if_needed(&fetched, words).await else {
@@ -741,10 +749,24 @@ impl FetchClient {
         }
     }
 
-    fn solves(&self, fetched: &FetchResult) -> bool {
-        crate::fetcher::Fetcher::solves_challenges(self)
-            && fetched.document_bytes.is_none()
-            && crate::cloud::is_cloudflare_challenge(&fetched.html, &fetched.headers)
+    /// Get past the Cloudflare challenge that `fetched` is, when
+    /// `FetchConfig::render` solves challenges: `None` when it does not or
+    /// `fetched` is no challenge, and the render's error when the challenge
+    /// stays.
+    pub async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        if fetched.document_bytes.is_some()
+            || !crate::cloud::is_cloudflare_challenge(&fetched.html, &fetched.headers)
+        {
+            return None;
+        }
+        #[cfg(feature = "browser")]
+        if let Some(render) = self.render.as_ref().filter(|render| render.solve) {
+            return Some(render.pool.solve(fetched, render, &self.headers).await);
+        }
+        None
     }
 
     /// Render `fetched` with `FetchConfig::render` when it is set and the
@@ -971,6 +993,13 @@ impl crate::fetcher::Fetcher for FetchClient {
         http_words: usize,
     ) -> Option<FetchResult> {
         FetchClient::render_if_needed(self, fetched, http_words).await
+    }
+
+    async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        FetchClient::solve_challenge(self, fetched).await
     }
 
     fn solves_challenges(&self) -> bool {

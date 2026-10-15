@@ -144,7 +144,7 @@ pub struct ScrapeParams {
     pub wait_for: Option<String>,
     /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none"
     pub block: Option<String>,
-    /// Get past a Cloudflare challenge page in the local Chrome: wait for it to clear or click its checkbox, then read the page it leads to. With render "always", a Turnstile checkbox in the page is clicked too
+    /// Get past a Cloudflare challenge page in the local Chrome: wait for it to clear or click its checkbox, then read the page it leads to. A Turnstile checkbox in any page that gets rendered is clicked too
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub solve: Option<bool>,
     /// A question: keep only the parts of the page that answer it, under their headings

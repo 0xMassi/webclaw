@@ -84,9 +84,19 @@ pub trait Fetcher: Send + Sync {
         None
     }
 
-    /// Whether [`Self::render_if_needed`] gets past Cloudflare challenges,
-    /// so that a page holding a Turnstile widget is content to read rather
-    /// than a block to escalate.
+    /// Get past the Cloudflare challenge that `fetched` is, in a browser:
+    /// `None` when this fetcher does not solve challenges or `fetched` is no
+    /// challenge, and the error when the challenge stays.
+    async fn solve_challenge(
+        &self,
+        _fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        None
+    }
+
+    /// Whether this fetcher solves Cloudflare challenges, so that a page
+    /// holding a Turnstile widget is content to read rather than a block to
+    /// escalate.
     fn solves_challenges(&self) -> bool {
         false
     }
@@ -122,6 +132,13 @@ impl<T: Fetcher + ?Sized> Fetcher for &T {
         (**self).render_if_needed(fetched, http_words).await
     }
 
+    async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        (**self).solve_challenge(fetched).await
+    }
+
     fn solves_challenges(&self) -> bool {
         (**self).solves_challenges()
     }
@@ -151,6 +168,13 @@ impl<T: Fetcher + ?Sized> Fetcher for std::sync::Arc<T> {
         http_words: usize,
     ) -> Option<FetchResult> {
         (**self).render_if_needed(fetched, http_words).await
+    }
+
+    async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        (**self).solve_challenge(fetched).await
     }
 
     fn solves_challenges(&self) -> bool {

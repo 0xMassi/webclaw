@@ -48,9 +48,11 @@ pub struct RenderOptions {
     pub block: Block,
     /// Get past a Cloudflare challenge page: wait for one that clears on its
     /// own, click the checkbox of one that asks for it, then read the page it
-    /// leads to. A Turnstile widget embedded in the page is clicked as well.
-    /// The render fails when the challenge is still shown after three
-    /// quarters of `timeout`, leaving the rest for the page it leads to.
+    /// leads to. The render fails when the challenge is still shown after
+    /// three quarters of `timeout`, leaving the rest for the page it leads
+    /// to. A Turnstile widget embedded in any page rendered this way is
+    /// clicked as well, and the page is read as it is when the widget shows
+    /// no token within 10 seconds.
     /// `headers` then go on the page's other requests to its origin but not
     /// on its documents, since rewriting a document request fails the
     /// challenge. Cloudflare rejects a browser that calls itself
@@ -1050,11 +1052,30 @@ impl RenderPool {
         })
     }
 
+    /// Render `fetched`, a Cloudflare challenge page, from a fresh request
+    /// and get past the challenge; see [`RenderOptions::solve`]. The error
+    /// says why when the challenge is still there.
+    pub async fn solve(
+        &self,
+        fetched: &FetchResult,
+        config: &RenderConfig,
+        headers: &[(String, String)],
+    ) -> Result<FetchResult, FetchError> {
+        self.render(
+            &fetched.url,
+            None,
+            config.wait_for.as_deref(),
+            headers,
+            config.block,
+            true,
+        )
+        .await
+    }
+
     /// Render `fetched` when `config` asks for it and the page seems to need
     /// a browser, handing the browser the HTTP response so the document is
-    /// not requested twice. With `config.solve`, a Cloudflare challenge page
-    /// is rendered too, from a fresh request. `http_words` is the word count
-    /// extracted from it over HTTP. A failed render is logged and gives `None`. Only renders
+    /// not requested twice. `http_words` is the word count extracted from it
+    /// over HTTP. A failed render is logged and gives `None`. Only renders
     /// that block nothing count toward the per-host verdict, since a blocked
     /// render can come back with less text than the site really has.
     pub async fn render_if_needed(
@@ -1064,8 +1085,7 @@ impl RenderPool {
         config: &RenderConfig,
         headers: &[(String, String)],
     ) -> Option<FetchResult> {
-        let challenged = config.solve && is_challenge(fetched);
-        if !challenged && !self.wants(fetched, http_words, config.always) {
+        if !self.wants(fetched, http_words, config.always) {
             return None;
         }
         let prefetched = Prefetched {
@@ -1075,7 +1095,7 @@ impl RenderPool {
         let rendered = self
             .render(
                 &fetched.url,
-                (!challenged).then_some(prefetched),
+                Some(prefetched),
                 config.wait_for.as_deref(),
                 headers,
                 config.block,
@@ -1131,13 +1151,6 @@ impl RenderPool {
             renderer.close().await;
         }
     }
-}
-
-/// Whether `fetched` is a Cloudflare challenge page, which
-/// [`RenderConfig::solve`] renders whatever its status.
-pub fn is_challenge(fetched: &FetchResult) -> bool {
-    fetched.document_bytes.is_none()
-        && crate::cloud::is_cloudflare_challenge(&fetched.html, &fetched.headers)
 }
 
 async fn keep_public(
@@ -2243,26 +2256,6 @@ mod tests {
     }
 
     #[test]
-    fn solving_renders_challenge_pages_whatever_their_status() {
-        let challenge = r#"<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt = {cType: 'managed'};</script></body></html>"#;
-        assert!(super::is_challenge(&page(
-            "https://a.test/",
-            challenge,
-            403
-        )));
-        let mut mitigated = page("https://a.test/", "<html></html>", 403);
-        mitigated
-            .headers
-            .insert("cf-mitigated", "challenge".parse().unwrap());
-        assert!(super::is_challenge(&mitigated));
-        assert!(!super::is_challenge(&page(
-            "https://a.test/",
-            "<html><body><p>Forbidden</p></body></html>",
-            403
-        )));
-    }
-
-    #[test]
     fn a_clearance_goes_only_where_its_cookie_would() {
         let kept = super::Clearance {
             domain: ".example.com".into(),
@@ -2344,6 +2337,11 @@ mod tests {
                         ("200 OK", CHECKBOX.to_string())
                     } else if target.contains("example.net") {
                         ("404 Not Found", String::new())
+                    } else if target.contains("stuck") {
+                        (
+                            "403 Forbidden",
+                            CHALLENGE.replace("challenge-platform/fixture", "gone"),
+                        )
                     } else if passed {
                         (
                             "200 OK",
@@ -2469,6 +2467,43 @@ mod tests {
                 .contains("newsletter")
         );
         assert!(took < std::time::Duration::from_secs(14), "{took:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_failed_solve_is_the_error_a_fetch_reports() {
+        let proxy = challenge_proxy().await;
+        let config = crate::FetchConfig {
+            proxy: Some(proxy.clone()),
+            render: Some(super::RenderConfig {
+                pool: Arc::new(super::RenderPool::new(
+                    super::BrowserSource::Launch {
+                        proxy: Some(proxy),
+                        solve: true,
+                    },
+                    std::time::Duration::from_secs(8),
+                )),
+                always: false,
+                wait_for: None,
+                block: crate::Block::default(),
+                solve: true,
+            }),
+            ..Default::default()
+        };
+        let client = crate::FetchClient::new(config.clone()).expect("client");
+        let fetched = client
+            .fetch("http://example.com:8080/stuck")
+            .await
+            .expect("the challenge comes back");
+        assert_eq!(fetched.status, 403);
+        let (_, extracted) = client
+            .extract_page(fetched, &webclaw_core::ExtractionOptions::default())
+            .await;
+        if let Some(render) = &config.render {
+            render.pool.close().await;
+        }
+        let error = extracted.expect_err("the solve fails").to_string();
+        assert!(error.contains("challenge was still shown"), "{error}");
     }
 
     #[tokio::test]

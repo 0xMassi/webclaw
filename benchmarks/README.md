@@ -50,6 +50,16 @@ It freezes 50 books.toscrape.com catalogue pages into `.work/select-corpus/`, as
 
 It freezes 43 list pages into `.work/similar-corpus/`: 23 pages the widening rule was developed on (books, quotes, Hacker News, GitHub trending, Wikipedia lists, shop category pages, news indexes) and 20 held-out pages picked and scored by a separate review (package indexes, docs, forums, job boards, tables, European and Asian news sites), reported apart so the result is not scored only on the pages it was tuned on. A hand-written CSS selector per page picks the ground-truth items. Each tool searches for the second item's text, then asks for every element like the one it found, and again starting from the first ground-truth item. It scores precision and recall against the ground truth, checks that webclaw's suggested selector picks the same elements again, and times the run. Crawl4AI has no equivalent (its schema generator needs an LLM call), so its row says so. Results land in `results/<label>/similar-summary.md`.
 
+### Selectors after a site redesign
+
+```bash
+./benchmarks/adaptive.sh       # how often an old CSS selector breaks, and whether Scrapling's adaptive relocation finds the element again
+```
+
+It freezes 21 public pages twice from the Wayback Machine, years apart (mostly mid-2019 and mid-2025), into `.work/adaptive-corpus/`: Hacker News, Wikipedia articles, GitHub repo and profile pages, PyPI, Python docs, Stack Overflow, IMDb, Goodreads, arXiv, MDN, Steam, Adafruit, rustdoc, npm, lib.rs, Rotten Tomatoes, W3Schools, python.org and Amazon. Each of the 60 fields in `adaptive-cases.json` has a CSS selector written on the old page and a hand-checked selector for the same field on the new page. An answer is right when its first element has the tag, attributes and text of that field's element. The arms are the old selector alone, the old selector with an exact text search for the saved text when it picks nothing, Scrapling's `auto_save=True` then `adaptive=True`, and Scrapling's `relocate()` on its own, with a sweep of its score threshold. Crawl4AI has no equivalent, so its row says so. Results land in `results/<label>/adaptive-summary.md`.
+
+On the 2026-10-15 run the old selector broke on 26 of 60 fields (22 match nothing, 4 match a different element) across 13 of 21 pages. On those 26 fields the text search fallback gets 6 right and 8 wrong; Scrapling's adaptive mode gets 7 right and 16 wrong, and no score threshold separates its right answers from its wrong ones (wrong picks score up to 94, right ones as low as 40). 16 of the 26 drifted fields changed their text as well as their markup. webclaw has no relocation mode because this run did not show one that beats the plain fallback.
+
 ### Data tables
 
 ```bash

@@ -2188,6 +2188,44 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "launches Chrome and needs public DNS"]
+    async fn cookies_are_saved_when_the_profile_opens() {
+        let profile = tempfile::tempdir().unwrap();
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Profile {
+                proxy: None,
+                dir: profile.path().into(),
+                solve: false,
+            },
+            std::time::Duration::from_secs(20),
+        );
+        pool.save_cookies("https://example.com/", "opened=5");
+        pool.open().await.expect("the profile opens");
+        pool.close().await;
+        let reader = r#"<html><body><p id="c"></p><script>document.getElementById("c").textContent = "cookies:" + document.cookie + ":end";</script></body></html>"#;
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch_with_profile(None, profile.path())
+            .await
+            .expect("Chrome launches");
+        let read = renderer
+            .render(
+                "https://example.com/",
+                Some(Prefetched {
+                    html: reader,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(20),
+                    ..Default::default()
+                },
+            )
+            .await;
+        renderer.close().await;
+        let read = read.expect("render succeeds").html;
+        assert!(read.contains("cookies:opened=5:end"), "{read}");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
     async fn a_profile_always_opens_its_default_profile() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("profile");

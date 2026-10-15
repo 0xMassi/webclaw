@@ -1184,7 +1184,7 @@ fn page_key(url: &Url) -> String {
     normalize(&as_https(url))
 }
 
-fn as_https(url: &Url) -> Url {
+pub(crate) fn as_https(url: &Url) -> Url {
     let mut url = url.clone();
     if url.scheme() == "http" {
         let _ = url.set_scheme("https");

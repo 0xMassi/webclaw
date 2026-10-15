@@ -16,7 +16,10 @@
 //!    pages, the visited set, and the frontier it queued but never fetched.
 //!
 //! URLs keep that order, each once, compared without scheme, `www.`,
-//! fragment or trailing slash. Only the sitemap layer carries metadata.
+//! fragment or trailing slash. A crawl ([`Crawler`]) keeps a page's `www.`
+//! and bare-host URLs apart; a map lists one of them. Like the crawl, the
+//! fallback follows `http` links to the seed's host on the seed's scheme.
+//! Only the sitemap layer carries metadata.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -604,13 +607,20 @@ fn append_crawled(
     discovered: impl IntoIterator<Item = String>,
     base_origin: &str,
 ) {
+    let Ok(seed) = Url::parse(base_origin) else {
+        return;
+    };
+    let scope = crawler::origin_key(&crawler::as_https(&seed));
     for raw in discovered {
-        let Ok(parsed) = Url::parse(&raw) else {
+        let Ok(mut parsed) = Url::parse(&raw) else {
             continue;
         };
-        if crawler::origin_key(&parsed) != base_origin {
+        if !matches!(parsed.scheme(), "http" | "https")
+            || crawler::origin_key(&crawler::as_https(&parsed)) != scope
+        {
             continue;
         }
+        let _ = parsed.set_scheme(seed.scheme());
         let norm = crawler::normalize(&parsed);
         if site_key(&norm).is_some_and(|key| seen.insert(key)) {
             entries.push(bare_entry(norm));
@@ -705,6 +715,29 @@ mod tests {
 
         let urls: Vec<&str> = entries.iter().map(|e| e.url.as_str()).collect();
         assert_eq!(urls, vec!["https://example.com/keep"]);
+    }
+
+    #[test]
+    fn append_follows_http_links_on_the_seed_scheme_like_the_crawl() {
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+
+        append_crawled(
+            &mut entries,
+            &mut seen,
+            vec![
+                "http://example.com/x".to_string(),
+                "http://www.example.com/y".to_string(),
+                "https://example.com/x/".to_string(),
+            ],
+            &origin_of("https://example.com"),
+        );
+
+        let urls: Vec<&str> = entries.iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            vec!["https://example.com/x", "https://www.example.com/y"]
+        );
     }
 
     #[test]

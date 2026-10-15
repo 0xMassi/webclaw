@@ -98,7 +98,11 @@ impl Refs {
                     } else {
                         self.rewrite(text, true)
                     };
-                    out.push_str(&self.cite(text, url, image));
+                    let cited = self.cite(text, url, image);
+                    out.push_str(&cited);
+                    if cited.ends_with(']') && b.get(end + 1) == Some(&b'(') {
+                        out.push('\\');
+                    }
                     i = end + 1;
                     copied = i;
                 }
@@ -283,6 +287,15 @@ mod tests {
         assert_eq!(
             to_citations(md, None),
             "a[^1]\n\n~~~~\n[b](https://b.com)\n~~~\n~~~~\n\n## References\n\n[^1]: https://a.com"
+        );
+    }
+
+    #[test]
+    fn paren_after_a_mark_is_escaped() {
+        let md = "[docs](https://d.com)(PDF), ![i](https://i.com/i.png)(x), [[1]](#n)(y)";
+        assert_eq!(
+            to_citations(md, None),
+            "docs[^1]\\(PDF), ![i][^2]\\(x), [1]\\(y)\n\n## References\n\n[^1]: https://d.com\n[^2]: https://i.com/i.png"
         );
     }
 

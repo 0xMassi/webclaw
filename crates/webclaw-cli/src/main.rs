@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 use webclaw_core::{
     ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options,
-    to_citations, to_citations_after, to_llm_text,
+    to_citations_after, to_llm_text,
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
@@ -1955,17 +1955,6 @@ fn cite_pages<'a>(pages: impl IntoIterator<Item = &'a mut ExtractionResult>, tog
 
 fn printed_together(cli: &Cli) -> bool {
     matches!(cli.format, OutputFormat::Markdown) && cli.output_dir.is_none()
-}
-
-fn cite_cloud(resp: &mut serde_json::Value, url: Option<&str>) {
-    if let Some(serde_json::Value::String(md)) = resp.get_mut("markdown") {
-        *md = to_citations(md, url);
-    }
-    if let Some(serde_json::Value::String(md)) =
-        resp.get_mut("content").and_then(|c| c.get_mut("markdown"))
-    {
-        *md = to_citations(md, url);
-    }
 }
 
 fn chunk_page(
@@ -3999,7 +3988,7 @@ async fn run() {
             }
             if cli.citations {
                 let url = cli.urls.first().map(|u| normalize_url(u));
-                cite_cloud(&mut resp, url.as_deref());
+                webclaw_fetch::cloud::cite_cloud_response(&mut resp, url.as_deref());
             }
             if let Some(sizes) = chunk_sizes(&cli) {
                 let url = cli.urls.first().map(|u| normalize_url(u));

@@ -734,6 +734,15 @@ impl WebclawMcp {
                 if let Some(ref query) = params.query {
                     webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
                 }
+                if cite_links {
+                    let url = params.url.clone();
+                    resp = tokio::task::spawn_blocking(move || {
+                        webclaw_fetch::cloud::cite_cloud_response(&mut resp, Some(&url));
+                        resp
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
+                }
                 if let Some((size, overlap)) = sizes {
                     let markdown = resp
                         .get("markdown")
@@ -756,13 +765,6 @@ impl WebclawMcp {
 
                 if content.is_empty() {
                     Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
-                } else if cite_links && format == "markdown" {
-                    let (content, url) = (content.to_string(), params.url.clone());
-                    tokio::task::spawn_blocking(move || {
-                        webclaw_core::to_citations(&content, Some(&url))
-                    })
-                    .await
-                    .map_err(|e| e.to_string())
                 } else {
                     Ok(content.to_string())
                 }

@@ -412,6 +412,17 @@ pub fn focus_cloud_response(resp: &mut Value, query: &str) {
     }
 }
 
+/// Rewrite the markdown of a hosted API response with numbered link
+/// citations, as [`webclaw_core::to_citations`] does for a local page.
+pub fn cite_cloud_response(resp: &mut Value, page_url: Option<&str>) {
+    if let Some(Value::String(text)) = resp.get_mut("markdown") {
+        *text = webclaw_core::to_citations(text, page_url);
+    }
+    if let Some(Value::String(text)) = resp.get_mut("content").and_then(|c| c.get_mut("markdown")) {
+        *text = webclaw_core::to_citations(text, page_url);
+    }
+}
+
 /// True when a fetched response body is a bot-protection challenge or
 /// block page rather than the content the caller asked for. Conservative:
 /// it fires on patterns that mark the whole page as a challenge, and on a
@@ -987,6 +998,20 @@ mod tests {
             assert!(
                 text.contains("Cargo") && !text.contains("Graydon"),
                 "{text}"
+            );
+        }
+        assert_eq!(resp["url"], "https://x");
+    }
+
+    #[test]
+    fn cloud_responses_are_cited_too() {
+        let page = "See [docs](https://d.com).";
+        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "url": "https://x"});
+        cite_cloud_response(&mut resp, Some("https://x"));
+        for text in [&resp["markdown"], &resp["content"]["markdown"]] {
+            assert_eq!(
+                text.as_str().unwrap(),
+                "See docs[^1].\n\n## References\n\n[^1]: https://d.com"
             );
         }
         assert_eq!(resp["url"], "https://x");

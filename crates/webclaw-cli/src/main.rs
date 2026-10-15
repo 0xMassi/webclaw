@@ -2659,12 +2659,12 @@ async fn run_map(cli: &Cli) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     if let Some(e) = &site.index_error {
         let why = format!(
-            "the Common Crawl index could not be read ({e}); it is often busy, try again later or raise --timeout"
+            "the Common Crawl lookup stopped early ({e}); the index is often busy, try again later"
         );
-        if !opts.sitemap {
+        if site.entries.is_empty() {
             return Err(why);
         }
-        eprintln!("warning: {why}");
+        eprintln!("warning: {why}; listing the URLs found until then");
     }
     let entries = site.entries;
 

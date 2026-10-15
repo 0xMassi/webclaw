@@ -990,12 +990,12 @@ impl WebclawMcp {
             .await
             .map_err(|e| e.to_string())?;
         let note = match site.index_error {
-            Some(e) if !opts.sitemap => {
-                return Err(format!("The Common Crawl index could not be read: {e}"));
+            Some(e) if site.entries.is_empty() => {
+                return Err(format!("The Common Crawl lookup stopped early: {e}"));
             }
-            Some(e) => {
-                format!("The Common Crawl index could not be read ({e}); sitemap URLs only.\n\n")
-            }
+            Some(e) => format!(
+                "The Common Crawl lookup stopped early ({e}); listing the URLs found until then.\n\n"
+            ),
             None => String::new(),
         };
 

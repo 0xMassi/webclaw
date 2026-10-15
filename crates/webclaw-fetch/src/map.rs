@@ -130,9 +130,10 @@ pub struct SiteMap {
     /// Sitemap URLs first, then Common Crawl URLs, then crawl-found URLs,
     /// each once, or best match first with [`MapOptions::query`].
     pub entries: Vec<SitemapEntry>,
-    /// Why the Common Crawl lookup failed, when it was asked for and did.
-    /// The other sources' URLs are still in `entries`.
-    pub index_error: Option<FetchError>,
+    /// Why the Common Crawl lookup stopped early, when it was asked for and
+    /// did. `entries` still holds the other sources' URLs and the index URLs
+    /// read before.
+    pub index_error: Option<String>,
 }
 
 /// Discover URLs for a site using the layered strategy described in the module
@@ -158,16 +159,13 @@ pub async fn map_site(
 
     let mut index_error = None;
     if opts.common_crawl {
-        match common_crawl_urls(client, base_url, opts).await {
-            Ok(urls) => {
-                for url in urls {
-                    if site_key(&url).is_some_and(|key| seen.insert(key)) {
-                        entries.push(bare_entry(url));
-                    }
-                }
+        let found = common_crawl_urls(client, base_url, opts).await;
+        for url in found.urls {
+            if site_key(&url).is_some_and(|key| seen.insert(key)) {
+                entries.push(bare_entry(url));
             }
-            Err(e) => index_error = Some(e),
         }
+        index_error = found.error;
     }
 
     if opts.crawl_fallback && entries.len() < opts.min_sitemap_urls {
@@ -244,29 +242,72 @@ async fn crawl_fallback(
     append_crawled(entries, seen, discovered, &base_origin);
 }
 
+/// What [`common_crawl_urls`] read.
+#[derive(Debug, Default)]
+pub struct IndexLookup {
+    /// The URLs read, in index order.
+    pub urls: Vec<String>,
+    /// Why the lookup stopped early, when it did. `urls` keeps what was read
+    /// before.
+    pub error: Option<String>,
+}
+
 /// Lists the URLs the latest Common Crawl index holds for `base_url`'s host,
 /// with or without `www.` (other subdomains are other sites), each once.
 ///
 /// Applies `opts`' path prefix (also narrowing the index query), include and
 /// exclude globs, and [`MapOptions::html_only`]. Stops at
 /// [`MapOptions::max_urls`] (unless a [`MapOptions::query`] will rank the
-/// URLs first) or after ten index pages of about 15,000 captures each. Where a page was captured over both schemes, the `https` URL is kept.
+/// URLs first) or after ten index pages of about 15,000 captures each. Where
+/// a page was captured over both schemes, the `https` URL is kept.
 ///
 /// The index is a free public service and often slow: requests go one at a
 /// time, a second apart, and bypass the client's response cache. An error
 /// answer the busy index gives (400, 429 or 5xx), an answer cut short, or a
-/// failed request is retried twice, after two and five seconds. One request can take 20 seconds or
-/// more, so give `client` a generous [`FetchConfig::total_timeout`]. Errors
-/// when the index cannot be read; a site it holds nothing for is an empty
-/// list.
+/// failed request is retried twice, after two and five seconds. One request
+/// can take 20 seconds or more, so give `client` a generous
+/// [`FetchConfig::total_timeout`]. When the index cannot be read, the result
+/// carries the URLs read until then and the reason; a site it holds nothing
+/// for is an empty list.
 pub async fn common_crawl_urls(
     client: &FetchClient,
     base_url: &str,
     opts: &MapOptions,
-) -> Result<Vec<String>, FetchError> {
-    let base =
-        Url::parse(base_url).map_err(|e| FetchError::InvalidUrl(format!("{base_url}: {e}")))?;
-    let host = bare_host(&base).ok_or_else(|| FetchError::InvalidUrl(base_url.to_string()))?;
+) -> IndexLookup {
+    let Some(host) = Url::parse(base_url).ok().as_ref().and_then(bare_host) else {
+        return IndexLookup {
+            urls: Vec::new(),
+            error: Some(format!("{base_url} is not a URL with a host")),
+        };
+    };
+    let (query, pages) = match index_query(client, &host, opts).await {
+        Ok(found) => found,
+        Err(e) => {
+            return IndexLookup {
+                urls: Vec::new(),
+                error: Some(describe(e)),
+            };
+        }
+    };
+    gather(
+        pages,
+        |page| {
+            let url = format!("{query}&page={page}");
+            async move {
+                tokio::time::sleep(INDEX_PAUSE).await;
+                index_get(client, &url).await
+            }
+        },
+        IndexUrls::new(host, opts),
+    )
+    .await
+}
+
+async fn index_query(
+    client: &FetchClient,
+    host: &str,
+    opts: &MapOptions,
+) -> Result<(Url, usize), FetchError> {
     let collections = index_get(client, COLLECTIONS_URL)
         .await?
         .unwrap_or_default();
@@ -290,48 +331,46 @@ pub async fn common_crawl_urls(
             .append_pair("filter", "=status:200")
             .append_pair("filter", "=mime:text/html");
     }
-
     tokio::time::sleep(INDEX_PAUSE).await;
     let pages = index_get(client, &format!("{query}&showNumPages=true"))
         .await?
         .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
         .and_then(|v| v["pages"].as_u64())
         .unwrap_or(1) as usize;
-
-    let mut urls = IndexUrls::new(host, opts);
-    read_pages(
-        pages,
-        |page| {
-            let url = format!("{query}&page={page}");
-            async move {
-                tokio::time::sleep(INDEX_PAUSE).await;
-                index_get(client, &url).await
-            }
-        },
-        &mut urls,
-    )
-    .await?;
-    Ok(urls.list)
+    Ok((query, pages))
 }
 
-async fn read_pages<F, Fut>(
-    pages: usize,
-    mut fetch: F,
-    urls: &mut IndexUrls<'_>,
-) -> Result<(), FetchError>
+async fn gather<F, Fut>(pages: usize, mut fetch: F, mut urls: IndexUrls<'_>) -> IndexLookup
 where
     F: FnMut(usize) -> Fut,
     Fut: std::future::Future<Output = Result<Option<String>, FetchError>>,
 {
+    let mut error = None;
     for page in 0..pages.min(MAX_INDEX_PAGES) {
         if urls.full() {
             break;
         }
-        if let Some(body) = fetch(page).await? {
-            urls.add_lines(&body);
+        match fetch(page).await {
+            Ok(Some(body)) => urls.add_lines(&body),
+            Ok(None) => {}
+            Err(e) => {
+                error = Some(describe(e));
+                break;
+            }
         }
     }
-    Ok(())
+    IndexLookup {
+        urls: urls.list,
+        error,
+    }
+}
+
+fn describe(error: FetchError) -> String {
+    match error {
+        FetchError::UpstreamStatus(status) => format!("the index answered HTTP {status}"),
+        FetchError::BodyDecode(reason) => reason,
+        other => other.to_string(),
+    }
 }
 
 struct IndexUrls<'a> {
@@ -757,8 +796,7 @@ mod tests {
     #[tokio::test]
     async fn a_page_without_matching_captures_does_not_end_the_paging() {
         let opts = MapOptions::default();
-        let mut urls = IndexUrls::new("example.com".into(), &opts);
-        read_pages(
+        let found = gather(
             3,
             |page| async move {
                 Ok(match page {
@@ -767,14 +805,32 @@ mod tests {
                     _ => Some(index_lines(&["https://example.com/c"])),
                 })
             },
-            &mut urls,
+            IndexUrls::new("example.com".into(), &opts),
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(
-            urls.list,
+            found.urls,
             vec!["https://example.com/a", "https://example.com/c"]
         );
+        assert!(found.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn urls_read_before_a_failed_page_are_kept() {
+        let opts = MapOptions::default();
+        let found = gather(
+            3,
+            |page| async move {
+                match page {
+                    0 => Ok(Some(index_lines(&["https://example.com/a"]))),
+                    _ => Err(FetchError::UpstreamStatus(504)),
+                }
+            },
+            IndexUrls::new("example.com".into(), &opts),
+        )
+        .await;
+        assert_eq!(found.urls, vec!["https://example.com/a"]);
+        assert_eq!(found.error.as_deref(), Some("the index answered HTTP 504"));
     }
 
     #[test]
@@ -844,13 +900,14 @@ mod tests {
             ..FetchConfig::default()
         })
         .unwrap();
-        let urls = common_crawl_urls(
+        let found = common_crawl_urls(
             &client,
             "https://quotes.toscrape.com/",
             &MapOptions::default(),
         )
-        .await
-        .unwrap();
+        .await;
+        assert_eq!(found.error, None);
+        let urls = found.urls;
         assert!(urls.len() >= 5, "{urls:?}");
         assert!(urls.iter().all(|u| u.contains("quotes.toscrape.com/")));
     }

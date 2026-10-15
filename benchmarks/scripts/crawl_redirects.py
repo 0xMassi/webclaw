@@ -6,7 +6,7 @@ followed to its final URL, that robots.txt allows before and after the redirect.
 tried again on the seed's scheme. An arm finds a page when it
 returns content for that final URL, or for a link that redirects to it.
 """
-import json, os, re, statistics, subprocess, sys, time, urllib.request
+import gzip, json, os, re, statistics, subprocess, sys, time, urllib.request
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -33,7 +33,10 @@ def key(url):
 def get(url):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=20) as r:
-        return r.geturl(), r.read().decode("utf-8", "replace")
+        body = r.read()
+        if body[:2] == b"\x1f\x8b":
+            body = gzip.decompress(body)
+        return r.geturl(), body.decode("utf-8", "replace")
 
 
 robots = {}

@@ -31,7 +31,7 @@ pub mod youtube;
 
 pub use brand::BrandIdentity;
 pub use chunk::{Chunk, chunk};
-pub use citations::to_citations;
+pub use citations::{to_citations, to_citations_after};
 pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;

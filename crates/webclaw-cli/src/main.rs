@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 use webclaw_core::{
     ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options,
-    to_citations, to_llm_text,
+    to_citations, to_citations_after, to_llm_text,
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
@@ -1941,9 +1941,20 @@ fn check_markdown_flags(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
-fn cite(result: &mut ExtractionResult) {
-    result.content.markdown =
-        to_citations(&result.content.markdown, result.metadata.url.as_deref());
+fn cite_pages<'a>(pages: impl IntoIterator<Item = &'a mut ExtractionResult>, together: bool) {
+    let mut last = 0;
+    for page in pages {
+        let (markdown, high) =
+            to_citations_after(&page.content.markdown, page.metadata.url.as_deref(), last);
+        page.content.markdown = markdown;
+        if together {
+            last = high;
+        }
+    }
+}
+
+fn printed_together(cli: &Cli) -> bool {
+    matches!(cli.format, OutputFormat::Markdown) && cli.output_dir.is_none()
 }
 
 fn cite_cloud(resp: &mut serde_json::Value, url: Option<&str>) {
@@ -2349,7 +2360,7 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 (Some(_), None) => {}
                 (None, Some(_)) if citations => {
                     let mut page = page.clone();
-                    page.extraction.iter_mut().for_each(cite);
+                    cite_pages(page.extraction.iter_mut(), false);
                     println!(
                         "{}",
                         serde_json::to_string(&page).expect("serialization failed")
@@ -2433,19 +2444,21 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
 
     let crawler = Crawler::new(url, config).map_err(|e| format!("crawler error: {e}"))?;
     let mut result = crawler.crawl(url, resume_state).await;
-    if cli.citations {
-        result
-            .pages
-            .iter_mut()
-            .filter_map(|p| p.extraction.as_mut())
-            .for_each(cite);
-    }
     if cli.query.is_some() {
         result.pages.sort_by(|a, b| {
             b.relevance
                 .unwrap_or(0.0)
                 .total_cmp(&a.relevance.unwrap_or(0.0))
         });
+    }
+    if cli.citations {
+        cite_pages(
+            result
+                .pages
+                .iter_mut()
+                .filter_map(|p| p.extraction.as_mut()),
+            printed_together(cli),
+        );
     }
 
     drop(crawler);
@@ -2657,10 +2670,10 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
         .fetch_and_extract_batch_with_options(&urls, cli.concurrency, &options)
         .await;
     if cli.citations {
-        results
-            .iter_mut()
-            .filter_map(|r| r.result.as_mut().ok())
-            .for_each(cite);
+        cite_pages(
+            results.iter_mut().filter_map(|r| r.result.as_mut().ok()),
+            printed_together(cli),
+        );
     }
     close_browser(&config).await;
 
@@ -3937,7 +3950,7 @@ async fn run() {
                 webclaw_core::focus_extraction(&mut result, query);
             }
             if cli.citations {
-                cite(&mut result);
+                cite_pages([&mut *result], false);
             }
             if let Some(ref dir) = cli.output_dir {
                 let url = cli
@@ -4285,6 +4298,22 @@ mod tests {
         ];
         backfill_single_file_url(&mut urls, &entries);
         assert!(urls.is_empty());
+    }
+
+    #[test]
+    fn citations_continue_across_pages_printed_together() {
+        let pages = || {
+            vec![
+                empty_result(None, None, "[a](https://a.com)"),
+                empty_result(None, None, "[b](https://b.com)"),
+            ]
+        };
+        let mut together = pages();
+        cite_pages(together.iter_mut(), true);
+        assert!(together[1].content.markdown.starts_with("b[^2]"));
+        let mut apart = pages();
+        cite_pages(apart.iter_mut(), false);
+        assert!(apart[1].content.markdown.starts_with("b[^1]"));
     }
 
     fn empty_result(title: Option<&str>, url: Option<&str>, markdown: &str) -> ExtractionResult {

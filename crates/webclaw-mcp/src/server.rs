@@ -827,6 +827,7 @@ impl WebclawMcp {
             result.total, result.ok, result.errors, result.skipped_by_robots, result.elapsed_secs
         );
 
+        let mut last_citation = 0;
         for page in &result.pages {
             match page.relevance {
                 Some(r) => output.push_str(&format!(
@@ -840,7 +841,13 @@ impl WebclawMcp {
                     "llm" => webclaw_core::to_llm_text(extraction, Some(&page.url)),
                     "text" => extraction.content.plain_text.clone(),
                     _ if cite_links => {
-                        webclaw_core::to_citations(&extraction.content.markdown, Some(&page.url))
+                        let (markdown, high) = webclaw_core::to_citations_after(
+                            &extraction.content.markdown,
+                            Some(&page.url),
+                            last_citation,
+                        );
+                        last_citation = high;
+                        markdown
                     }
                     _ => extraction.content.markdown.clone(),
                 };

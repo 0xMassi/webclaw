@@ -16,13 +16,24 @@ use url::Url;
 /// code are never rewritten. With nothing to cite, no References list is
 /// added.
 pub fn to_citations(markdown: &str, page_url: Option<&str>) -> String {
+    to_citations_after(markdown, page_url, 0).0
+}
+
+/// Like [`to_citations`], with numbers starting above `after` as well.
+///
+/// Returns the text and the highest number in play: its own marks, the
+/// page's footnotes and `after`. Pass that number to the next page when
+/// several pages are printed one after the other, so their marks never
+/// share a number.
+pub fn to_citations_after(markdown: &str, page_url: Option<&str>, after: usize) -> (String, usize) {
     let (lines, open_fence) = split_code(markdown);
     let base = lines
         .iter()
         .filter(|(_, prose)| *prose)
         .map(|(line, _)| highest_footnote(line))
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .max(after);
     let mut refs = Refs {
         page: page_url.and_then(|u| Url::parse(u).ok()).map(|mut u| {
             u.set_fragment(None);
@@ -41,7 +52,7 @@ pub fn to_citations(markdown: &str, page_url: Option<&str>) -> String {
         }
     }
     if refs.urls.is_empty() {
-        return out;
+        return (out, base);
     }
     out.truncate(out.trim_end().len());
     if let Some((c, n)) = open_fence {
@@ -52,7 +63,7 @@ pub fn to_citations(markdown: &str, page_url: Option<&str>) -> String {
     for (i, url) in refs.urls.iter().enumerate() {
         out.push_str(&format!("\n[^{}]: {url}", base + i + 1));
     }
-    out
+    (out, base + refs.urls.len())
 }
 
 type Fence = (u8, usize);
@@ -298,7 +309,29 @@ fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::to_citations;
+    use super::{to_citations, to_citations_after};
+
+    #[test]
+    fn pages_printed_together_continue_the_numbers() {
+        let (first, last) = to_citations_after("[a](https://a.com)", None, 0);
+        assert_eq!(
+            (first.as_str(), last),
+            ("a[^1]\n\n## References\n\n[^1]: https://a.com", 1)
+        );
+        let (second, last) =
+            to_citations_after("x[^4] [b](https://b.com) [a](https://a.com)", None, last);
+        assert_eq!(
+            (second.as_str(), last),
+            (
+                "x[^4] b[^5] a[^6]\n\n## References\n\n[^5]: https://b.com\n[^6]: https://a.com",
+                6
+            )
+        );
+        assert_eq!(
+            to_citations_after("no links", None, 6),
+            ("no links".to_string(), 6)
+        );
+    }
 
     #[test]
     fn numbers_links_by_first_appearance_and_dedups() {

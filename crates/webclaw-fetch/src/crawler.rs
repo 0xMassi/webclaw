@@ -949,12 +949,7 @@ impl Crawler {
             return None;
         }
 
-        const SKIP_EXTENSIONS: &[&str] = &[
-            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js",
-            ".zip", ".tar", ".gz", ".xml", ".rss", ".mp3", ".mp4", ".avi", ".mov", ".woff",
-            ".woff2", ".ttf", ".eot",
-        ];
-        if SKIP_EXTENSIONS.iter().any(|ext| path.ends_with(ext)) {
+        if !is_page_path(path) {
             return None;
         }
 
@@ -1255,6 +1250,15 @@ pub(crate) fn validate_glob(pat: &str) -> Result<(), FetchError> {
         )));
     }
     Ok(())
+}
+
+pub(crate) fn is_page_path(path: &str) -> bool {
+    const SKIP_EXTENSIONS: &[&str] = &[
+        ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js", ".zip",
+        ".tar", ".gz", ".xml", ".rss", ".mp3", ".mp4", ".avi", ".mov", ".woff", ".woff2", ".ttf",
+        ".eot",
+    ];
+    !SKIP_EXTENSIONS.iter().any(|ext| path.ends_with(ext))
 }
 
 pub(crate) fn path_allowed(

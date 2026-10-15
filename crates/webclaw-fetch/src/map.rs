@@ -681,6 +681,7 @@ fn append_crawled(
         };
         if !matches!(parsed.scheme(), "http" | "https")
             || crawler::origin_key(&crawler::as_https(&parsed)) != scope
+            || !crawler::is_page_path(parsed.path())
         {
             continue;
         }
@@ -802,6 +803,26 @@ mod tests {
             urls,
             vec!["https://example.com/x", "https://www.example.com/y"]
         );
+    }
+
+    #[test]
+    fn append_skips_files_the_crawl_would_not_fetch() {
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+
+        append_crawled(
+            &mut entries,
+            &mut seen,
+            vec![
+                "https://example.com/dl/go1.25.linux-amd64.tar.gz".to_string(),
+                "https://example.com/logo.png".to_string(),
+                "https://example.com/dl/".to_string(),
+            ],
+            &origin_of("https://example.com"),
+        );
+
+        let urls: Vec<&str> = entries.iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(urls, vec!["https://example.com/dl"]);
     }
 
     #[test]

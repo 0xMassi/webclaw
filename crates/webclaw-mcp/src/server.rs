@@ -158,6 +158,24 @@ fn parse_actions(
     }
 }
 
+fn citations(on: Option<bool>, format: &str, chunk: bool) -> Result<bool, String> {
+    let on = on.unwrap_or(false);
+    if on && (chunk || matches!(format, "llm" | "text")) {
+        return Err(
+            "citations rewrites the markdown: use the markdown or json format, without chunk"
+                .into(),
+        );
+    }
+    Ok(on)
+}
+
+fn cite(extraction: &mut webclaw_core::ExtractionResult) {
+    extraction.content.markdown = webclaw_core::to_citations(
+        &extraction.content.markdown,
+        extraction.metadata.url.as_deref(),
+    );
+}
+
 fn format_page(extraction: webclaw_core::ExtractionResult, format: &str, url: &str) -> String {
     match format {
         "llm" => webclaw_core::to_llm_text(&extraction, Some(url)),
@@ -498,6 +516,9 @@ impl WebclawMcp {
         if let Some(ref query) = params.query {
             webclaw_core::focus_extraction(&mut extraction, query);
         }
+        if params.citations == Some(true) {
+            cite(&mut extraction);
+        }
         if let Some((size, overlap)) = sizes {
             let (url, markdown) = (params.url.clone(), extraction.content.markdown);
             return tokio::task::spawn_blocking(move || {
@@ -604,6 +625,7 @@ impl WebclawMcp {
         validate_url(&params.url).await?;
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
+        let cite_links = citations(params.citations, format, sizes.is_some())?;
         let browser = parse_browser(params.browser.as_deref())?;
         #[cfg(feature = "browser")]
         if let (Some(render), Some(cookies)) = (
@@ -688,6 +710,9 @@ impl WebclawMcp {
                 if let Some(ref query) = params.query {
                     webclaw_core::focus_extraction(&mut extraction, query);
                 }
+                if cite_links {
+                    cite(&mut extraction);
+                }
                 if let Some((size, overlap)) = sizes {
                     let (url, markdown) = (params.url.clone(), extraction.content.markdown);
                     return tokio::task::spawn_blocking(move || {
@@ -723,8 +748,9 @@ impl WebclawMcp {
                     .unwrap_or("");
 
                 if content.is_empty() {
-                    // Return full JSON if no content in the expected format
                     Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
+                } else if cite_links && format == "markdown" {
+                    Ok(webclaw_core::to_citations(content, Some(&params.url)))
                 } else {
                     Ok(content.to_string())
                 }
@@ -755,6 +781,7 @@ impl WebclawMcp {
         }
 
         let format = params.format.as_deref().unwrap_or("markdown");
+        let cite_links = citations(params.citations, format, sizes.is_some())?;
 
         let mut fetch = self.fetch_config.clone();
         apply_render(&mut fetch, None, None, params.block.as_deref(), None)?;
@@ -812,6 +839,9 @@ impl WebclawMcp {
                 let content = match format {
                     "llm" => webclaw_core::to_llm_text(extraction, Some(&page.url)),
                     "text" => extraction.content.plain_text.clone(),
+                    _ if cite_links => {
+                        webclaw_core::to_citations(&extraction.content.markdown, Some(&page.url))
+                    }
                     _ => extraction.content.markdown.clone(),
                 };
                 output.push_str(&content);

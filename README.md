@@ -269,6 +269,14 @@ webclaw https://quotes.toscrape.com --crawl --depth 1 --chunk 512 --chunk-overla
 
 `--chunk` prints the page as chunks for a search index or a RAG pipeline, one JSON object per line (one JSON array with `-f json`): `url`, `index`, `heading_path` (the headings in effect where the chunk starts, outermost first), `tokens` and the chunk's markdown `text`. Chunks are built from whole paragraphs, lists, tables and code blocks and stay under about the given number of tokens. A block too big for one chunk is cut at line breaks, then at sentence ends, then between words, and text with no spaces between characters: a code block is reopened in each piece and a table repeats its header row. Token counts are estimates made without a tokenizer. On the benchmark pages (prose, docs, code, tables and nine languages), for nine chunks in ten cl100k counted 0.77 to 1.12 times the estimate and o200k 0.72 to 0.97 times; 4.5% of chunks came out above the size asked for in cl100k tokens, and 0.5% in o200k tokens. `--chunk-overlap` repeats up to that many tokens from the end of each chunk at the start of the next. With several URLs or `--crawl`, each page is chunked on its own. The MCP `scrape` tool takes `chunk` and `chunk_overlap` and returns the chunks as a JSON array; `crawl` takes them too and returns an object with the crawl counts, the pages that failed and the chunks.
 
+### Links as numbered citations
+
+```bash
+webclaw https://en.wikipedia.org/wiki/Web_scraping --citations
+```
+
+`--citations` moves every link and image URL out of the markdown into a numbered References list at the end, written as markdown footnotes: `[Data scraping](https://...)` becomes `Data scraping[^1]`, an image becomes `![alt][^2]`, and the list ends the page with `[^1]: https://...`. Numbers follow the order in which URLs first appear, and a URL used twice keeps its first number, so an agent can cite `[^1]` and look the URL up when it needs it. Links to a spot on the same page (`#section`) keep their text and lose the URL. Code blocks and inline code are left as they are. On the 69 benchmark pages fetched live, the body before the References list came out at about half the tokens of the plain markdown and the whole output, list included, at 10.7% fewer tokens, with the same golden facts; a page with few links that each appear once can come out a little longer. It works with `-f markdown` and with the markdown inside `-f json` and `jsonl`, for one URL, several or `--crawl`. The MCP `scrape` and `crawl` tools take `citations: true`, and `webclaw_core::to_citations` does the same for any markdown.
+
 ### Reuse fetched pages
 
 ```bash

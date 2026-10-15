@@ -155,6 +155,9 @@ pub struct ScrapeParams {
     /// With `chunk`, start each chunk with up to this many tokens from the end of the one before (at most half the chunk size)
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub chunk_overlap: Option<usize>,
+    /// Move link and image URLs out of the markdown into a numbered References list at the end: `[text](url)` becomes `text[^1]` and a URL used twice keeps one number. Works with the markdown format and the markdown inside "json", not with chunk
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub citations: Option<bool>,
     /// Steps to run in the local browser once the page has loaded, before it is read. The page is always rendered when this is set. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error
     #[schemars(schema_with = "actions_schema")]
     pub actions: Option<Vec<serde_json::Value>>,
@@ -247,6 +250,9 @@ pub struct CrawlParams {
     /// With `chunk`, start each chunk with up to this many tokens from the end of the one before (at most half the chunk size)
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub chunk_overlap: Option<usize>,
+    /// Move link and image URLs out of the markdown into a numbered References list at the end: `[text](url)` becomes `text[^1]` and a URL used twice keeps one number. Works with the markdown format, not with chunk
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub citations: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

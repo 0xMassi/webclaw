@@ -969,12 +969,10 @@ impl WebclawMcp {
         if params.limit == Some(0) {
             return Err("limit must be at least 1".into());
         }
-        let mut opts = webclaw_fetch::MapOptions {
-            crawl_fallback: false,
-            max_urls: params.limit,
-            query: params.query.clone(),
-            ..Default::default()
-        };
+        let mut opts = webclaw_fetch::MapOptions::default();
+        opts.crawl_fallback = false;
+        opts.max_urls = params.limit;
+        opts.query = params.query.clone();
         if let Some(list) = &params.source {
             opts.set_sources(list)?;
         }

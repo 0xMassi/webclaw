@@ -39,7 +39,23 @@ const INDEX_RETRY_PAUSES: [Duration; 2] = [Duration::from_secs(2), Duration::fro
 const MAX_INDEX_PAGES: usize = 10;
 
 /// Tuning knobs for [`map_site`] and [`discover_urls`].
+///
+/// New options get added over time, so build it from
+/// [`MapOptions::default`] and set the fields you need:
+///
+/// ```
+/// let mut opts = webclaw_fetch::MapOptions::default();
+/// opts.max_urls = Some(100);
+/// ```
+///
+/// ```compile_fail
+/// let opts = webclaw_fetch::MapOptions {
+///     max_urls: Some(100),
+///     ..Default::default()
+/// };
+/// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MapOptions {
     /// Hard cap on pages the fallback crawl will fetch. The crawl surfaces far
     /// more URLs than this via the unfetched frontier, so a small number still

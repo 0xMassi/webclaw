@@ -2629,16 +2629,14 @@ async fn run_map(cli: &Cli) -> Result<(), String> {
         .map(|u| normalize_url(u))?;
     let url = url.as_str();
 
-    let mut opts = webclaw_fetch::MapOptions {
-        crawl_fallback: !cli.no_map_crawl,
-        max_urls: cli.map_limit,
-        html_only: !cli.map_all_captures,
-        path_prefix: cli.path_prefix.clone(),
-        include_patterns: path_globs(cli.include_paths.as_deref()),
-        exclude_patterns: path_globs(cli.exclude_paths.as_deref()),
-        query: cli.query.clone(),
-        ..Default::default()
-    };
+    let mut opts = webclaw_fetch::MapOptions::default();
+    opts.crawl_fallback = !cli.no_map_crawl;
+    opts.max_urls = cli.map_limit;
+    opts.html_only = !cli.map_all_captures;
+    opts.path_prefix = cli.path_prefix.clone();
+    opts.include_patterns = path_globs(cli.include_paths.as_deref());
+    opts.exclude_patterns = path_globs(cli.exclude_paths.as_deref());
+    opts.query = cli.query.clone();
     if let Some(pages) = cli.map_pages {
         opts.max_crawl_pages = pages;
     }

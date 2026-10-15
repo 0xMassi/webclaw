@@ -158,7 +158,40 @@ pub struct Renderer {
     proxy_login: Option<(String, String)>,
     check_documents: bool,
     agent: String,
-    clearances: Mutex<Vec<(String, String, String)>>,
+    clearances: Mutex<Vec<Clearance>>,
+}
+
+const CLEARANCE_COOKIES: &[&str] = &["cf_clearance"];
+
+#[derive(Debug, Clone, PartialEq)]
+struct Clearance {
+    domain: String,
+    path: String,
+    secure: bool,
+    expires: Option<f64>,
+    name: String,
+    value: String,
+}
+
+impl Clearance {
+    fn applies_to(&self, url: &Url, now: f64) -> bool {
+        let Some(host) = url.host_str() else {
+            return false;
+        };
+        let path = url.path();
+        cookie_domain_matches(&self.domain, host)
+            && (path == self.path
+                || (path.starts_with(&self.path)
+                    && (self.path.ends_with('/') || path[self.path.len()..].starts_with('/'))))
+            && (!self.secure || url.scheme() == "https")
+            && self.expires.is_none_or(|at| at > now)
+    }
+}
+
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 impl Renderer {
@@ -496,6 +529,7 @@ impl Renderer {
     ) -> Result<Visited<T>, FetchError> {
         let target = crate::url_security::validate_public_http_url(url).await?;
         let url = target.to_string();
+        let private = context.is_some();
         let mut blank = CreateTargetParams::new("about:blank");
         blank.browser_context_id = context;
         let page = self.browser.new_page(blank).await.map_err(browser_error)?;
@@ -661,7 +695,7 @@ impl Renderer {
                         })?;
                 }
             }
-            if options.solve {
+            if options.solve && !private {
                 self.keep_clearance(&page, &final_url).await;
             }
             Ok::<_, FetchError>((value, final_url, scripts))
@@ -695,22 +729,23 @@ impl Renderer {
         })
     }
 
-    /// The cookies for `url` that renders with [`RenderOptions::solve`] kept
-    /// once they got past a Cloudflare challenge, as a `Cookie` header value,
-    /// and the User-Agent the browser sent. Cloudflare accepts them from
-    /// another client only with that User-Agent and from the same IP address.
+    /// The Cloudflare clearance cookie for `url` that a render with
+    /// [`RenderOptions::solve`] got from getting past a challenge, as a
+    /// `Cookie` header value, and the User-Agent the browser sent.
+    /// Cloudflare accepts it from another client only with that User-Agent
+    /// and from the same IP address. Only `cf_clearance` is kept, under its
+    /// domain, path, `Secure` flag and expiry, and never from a render that
+    /// sent its own `Cookie` header.
     pub fn clearance(&self, url: &str) -> Option<(String, String)> {
-        let host = host(url)?;
+        let url = Url::parse(url).ok()?;
+        let now = unix_now();
         let jar = self.clearances.lock().ok()?;
         let cookies: Vec<String> = jar
             .iter()
-            .filter(|(domain, _, _)| cookie_domain_matches(domain, &host))
-            .map(|(_, name, value)| format!("{name}={value}"))
+            .filter(|c| c.applies_to(&url, now))
+            .map(|c| format!("{}={}", c.name, c.value))
             .collect();
-        cookies
-            .iter()
-            .any(|c| c.starts_with("cf_clearance="))
-            .then(|| (cookies.join("; "), self.agent.clone()))
+        (!cookies.is_empty()).then(|| (cookies.join("; "), self.agent.clone()))
     }
 
     async fn keep_clearance(&self, page: &chromiumoxide::Page, url: &str) {
@@ -720,15 +755,26 @@ impl Renderer {
         let Ok(cookies) = page.execute(params).await else {
             return;
         };
-        let cookies = cookies.result.cookies;
-        if !cookies.iter().any(|c| c.name == "cf_clearance") {
+        let now = unix_now();
+        let Ok(mut jar) = self.clearances.lock() else {
             return;
-        }
-        if let Ok(mut jar) = self.clearances.lock() {
-            for cookie in cookies {
-                jar.retain(|(domain, name, _)| *domain != cookie.domain || *name != cookie.name);
-                jar.push((cookie.domain, cookie.name, cookie.value));
+        };
+        jar.retain(|c| c.expires.is_none_or(|at| at > now));
+        for cookie in cookies.result.cookies {
+            if !CLEARANCE_COOKIES.contains(&cookie.name.as_str()) {
+                continue;
             }
+            jar.retain(|c| {
+                c.domain != cookie.domain || c.path != cookie.path || c.name != cookie.name
+            });
+            jar.push(Clearance {
+                domain: cookie.domain,
+                path: cookie.path,
+                secure: cookie.secure,
+                expires: (!cookie.session && cookie.expires > 0.0).then_some(cookie.expires),
+                name: cookie.name,
+                value: cookie.value,
+            });
         }
     }
 
@@ -809,8 +855,9 @@ pub struct RenderConfig {
     /// Screenshots load everything.
     pub block: Block,
     /// Render a page that comes back as a Cloudflare challenge and get past
-    /// it; see [`RenderOptions::solve`]. Later requests to that host over
-    /// HTTP then send the cookies the browser got, with its User-Agent.
+    /// it; see [`RenderOptions::solve`]. Later requests to that site over
+    /// HTTP then send the clearance cookie the browser got, with its
+    /// User-Agent; see [`Renderer::clearance`].
     pub solve: bool,
 }
 
@@ -2196,6 +2243,26 @@ mod tests {
     }
 
     #[test]
+    fn a_clearance_goes_only_where_its_cookie_would() {
+        let kept = super::Clearance {
+            domain: ".example.com".into(),
+            path: "/shop".into(),
+            secure: true,
+            expires: Some(2_000.0),
+            name: "cf_clearance".into(),
+            value: "x".into(),
+        };
+        let url = |u: &str| url::Url::parse(u).unwrap();
+        assert!(kept.applies_to(&url("https://www.example.com/shop"), 1_000.0));
+        assert!(kept.applies_to(&url("https://example.com/shop/item"), 1_000.0));
+        assert!(!kept.applies_to(&url("https://example.com/shopping"), 1_000.0));
+        assert!(!kept.applies_to(&url("https://example.com/"), 1_000.0));
+        assert!(!kept.applies_to(&url("http://example.com/shop"), 1_000.0));
+        assert!(!kept.applies_to(&url("https://example.com/shop"), 3_000.0));
+        assert!(!kept.applies_to(&url("https://example.org/shop"), 1_000.0));
+    }
+
+    #[test]
     fn clearance_cookies_go_only_to_hosts_their_domain_covers() {
         use super::cookie_domain_matches;
         assert!(cookie_domain_matches(".example.com", "example.com"));
@@ -2225,6 +2292,11 @@ mod tests {
                         l.to_ascii_lowercase().starts_with("cookie:")
                             && l.contains("cf_clearance=fixture")
                     });
+                    let set_cookie = if passed && !target.contains("example.net") {
+                        "Set-Cookie: visitor=anon; Path=/\r\n"
+                    } else {
+                        ""
+                    };
                     let (status, body) = if target.contains("challenge-platform") {
                         ("200 OK", CHECKBOX.to_string())
                     } else if target.contains("example.net") {
@@ -2238,7 +2310,7 @@ mod tests {
                         ("403 Forbidden", CHALLENGE.to_string())
                     };
                     let response = format!(
-                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\n{set_cookie}Cache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     let _ = socket.write_all(response.as_bytes()).await;
@@ -2294,6 +2366,32 @@ mod tests {
         let unsolved = unsolved.expect("a render without solve still returns the page");
         assert_eq!(unsolved.status, 403);
         assert!(unsolved.html.contains("Just a moment"));
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome and needs public DNS"]
+    async fn a_callers_own_cookies_never_reach_the_shared_clearance() {
+        let proxy = challenge_proxy().await;
+        let renderer = Renderer::launch_as_chrome(Some(&proxy))
+            .await
+            .expect("Chrome launches");
+        let solved = renderer
+            .render(
+                "http://example.com:8080/page",
+                None,
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(30),
+                    solve: true,
+                    headers: vec![("Cookie".into(), "session=secretA".into())],
+                    ..Default::default()
+                },
+            )
+            .await;
+        let clearance = renderer.clearance("http://example.com:8080/other");
+        renderer.close().await;
+        let solved = solved.expect("render succeeds");
+        assert!(solved.html.contains("the real page"), "{}", solved.html);
+        assert_eq!(clearance, None);
     }
 
     #[tokio::test]

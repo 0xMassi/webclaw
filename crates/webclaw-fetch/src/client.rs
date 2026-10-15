@@ -546,7 +546,18 @@ impl FetchClient {
         if let Some(render) = self.render.as_ref().filter(|render| render.solve)
             && let Some((cookies, agent)) = render.pool.clearance(url).await
         {
-            debug!(url, "sending the cookies from a solved challenge");
+            debug!(url, "sending the clearance from a solved challenge");
+            let own = self
+                .headers
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .chain(extra.iter().copied())
+                .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+                .map(|(_, value)| value);
+            let cookies = own
+                .chain(std::iter::once(cookies.as_str()))
+                .collect::<Vec<_>>()
+                .join("; ");
             req = req.header("cookie", cookies).header("user-agent", agent);
         }
         let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());

@@ -46,6 +46,6 @@ A second process on a profile while the first still has it open.
 
 | tool | second process | message |
 | --- | --- | --- |
-| webclaw | refused | ime error: client build failed: client build failed: the browser profile DIR is in use by another browser (its lock names HOST-PID), and a profile takes one browser at a time |
+| webclaw | refused | es one browser at a time error: client build failed: the browser profile DIR is in use by another browser (its lock names HOST-PID), and a profile takes one browser at a time |
 | scrapling | refused | ill force kill> - [pid=65441] exception while trying to kill process: Error: kill EPERM - [pid=65441] <process did exit: exitCode=21, signal=null> - [pid=65441] starting temporary directories cleanup - [pid=65441] finished temporary directo |
 | crawl4ai | ran on the profile in use |  |

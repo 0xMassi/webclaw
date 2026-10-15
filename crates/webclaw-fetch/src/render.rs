@@ -1967,7 +1967,10 @@ impl RenderPool {
                             renderer.clearances = self.clearances.clone();
                             renderer
                         })
-                        .map_err(|e| e.to_string()),
+                        .map_err(|e| match e {
+                            FetchError::Build(message) => message,
+                            e => e.to_string(),
+                        }),
                 );
             }
         }
@@ -4113,6 +4116,21 @@ mod tests {
             .expect_err("a profile that cannot be opened fails the page")
             .to_string();
         assert!(failed.contains("/nonexistent/webclaw-profile"), "{failed}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_launch_is_reported_with_one_prefix() {
+        let pool = super::RenderPool::new(
+            super::BrowserSource::Launch {
+                proxy: Some("not a proxy url".into()),
+                solve: false,
+            },
+            std::time::Duration::from_secs(1),
+        );
+        for _ in 0..2 {
+            let error = pool.open().await.expect_err("the launch fails").to_string();
+            assert_eq!(error, "client build failed: invalid proxy for the browser");
+        }
     }
 
     #[test]

@@ -239,6 +239,13 @@ impl Renderer {
         command_timeout: Duration,
     ) -> Result<Self, FetchError> {
         let renderer = Self::launch_timed(proxy, &[], command_timeout).await?;
+        if renderer.agent.is_empty() {
+            renderer.close().await;
+            return Err(FetchError::Build(
+                "the browser did not tell its User-Agent, so it cannot present itself as Chrome"
+                    .into(),
+            ));
+        }
         if !renderer.agent.contains("HeadlessChrome") {
             return Ok(renderer);
         }
@@ -2253,6 +2260,37 @@ mod tests {
     fn proxy_credentials_are_percent_decoded() {
         assert_eq!(super::percent_decode("p%40ss%3Aword"), "p@ss:word");
         assert_eq!(super::percent_decode("plain"), "plain");
+    }
+
+    #[test]
+    fn solving_needs_a_chrome_profile() {
+        let config = |browser| crate::FetchConfig {
+            browser,
+            render: Some(super::RenderConfig {
+                pool: Arc::new(pool()),
+                always: false,
+                wait_for: None,
+                block: crate::Block::default(),
+                solve: true,
+            }),
+            ..Default::default()
+        };
+        use crate::BrowserProfile;
+        for ok in [
+            BrowserProfile::Chrome,
+            BrowserProfile::ChromeMacos,
+            BrowserProfile::Edge,
+        ] {
+            assert!(crate::FetchClient::new(config(ok)).is_ok());
+        }
+        for refused in [
+            BrowserProfile::Firefox,
+            BrowserProfile::Safari,
+            BrowserProfile::SafariIos,
+            BrowserProfile::Random,
+        ] {
+            assert!(crate::FetchClient::new(config(refused)).is_err());
+        }
     }
 
     #[test]

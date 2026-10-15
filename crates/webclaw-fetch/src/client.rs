@@ -366,6 +366,17 @@ impl FetchClient {
 
     /// Build a new client from config.
     pub fn new(config: FetchConfig) -> Result<Self, FetchError> {
+        #[cfg(feature = "browser")]
+        if config.render.as_ref().is_some_and(|render| render.solve)
+            && !matches!(
+                config.browser,
+                BrowserProfile::Chrome | BrowserProfile::ChromeMacos | BrowserProfile::Edge
+            )
+        {
+            return Err(FetchError::Build(
+                "solving Cloudflare challenges sends Chrome's User-Agent over HTTP, so it needs the chrome, chrome-macos or edge browser profile".into(),
+            ));
+        }
         let variants = collect_variants(&config.browser);
         let pdf_mode = config.pdf_mode.clone();
 

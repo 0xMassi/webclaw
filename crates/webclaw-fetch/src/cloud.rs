@@ -584,6 +584,14 @@ pub async fn smart_fetch(
                     "could not get past the Cloudflare challenge on {url}: {e}"
                 ));
             }
+            None if cloud.is_none()
+                && is_cloudflare_challenge(&fetch_result.html, &fetch_result.headers) =>
+            {
+                return Err(format!(
+                    "{url} answered with a Cloudflare challenge: pass solve: true to get past it \
+                     in the local browser, or set WEBCLAW_API_KEY for the cloud API"
+                ));
+            }
             _ => {
                 info!(url, "bot protection detected, falling back to cloud API");
                 return cloud_scrape_fallback(
@@ -1157,6 +1165,26 @@ mod tests {
         );
         assert!(run(false, SIGNUP).await.is_err());
         assert!(run(true, SIGNUP_BEHIND_DATADOME).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_challenge_without_solving_says_how_to_solve_it() {
+        let challenge = StaticPage(
+            "<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt = {cType: 'managed'};</script></body></html>",
+        );
+        let error = smart_fetch(
+            &challenge,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .err()
+        .expect("a challenge cannot be read");
+        assert!(error.contains("solve: true"), "{error}");
     }
 
     #[test]

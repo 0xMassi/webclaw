@@ -7,11 +7,12 @@ deleting that directory) measures again, so numbers from an older build never ca
 run first; then every index arm of both tools runs in one stretch, site by site, alternating which tool goes first,
 with a minute between index arms (URL_SEEDING_INDEX_GAP seconds). An index arm that reports an error (the index
 answered 5xx, cut its answer short or dropped the connection) runs again up to three times, two minutes apart, so
-an index outage is not scored as a tool result; what still fails is listed with its error. A seeded sample of each arm's URLs is fetched once to check it answers 200 with HTML; those checks
+an index outage is not scored as a tool result, and before each index arm the run waits until the index answers
+collinfo.json (checking every two minutes); what still fails is listed with its error. A seeded sample of each arm's URLs is fetched once to check it answers 200 with HTML; those checks
 are kept in .work/url-seeding-out/live.json. Runs in the Scrapling venv for curl_cffi, which some sites (Hacker News)
 need before they answer a script at all.
 """
-import json, os, random, subprocess, sys, time
+import json, os, random, subprocess, sys, time, urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -57,6 +58,21 @@ REFUSED = {0, 403, 419, 429, 503}
 ARM_TIMEOUT = 300
 INDEX_GAP = int(os.environ.get("URL_SEEDING_INDEX_GAP", "60"))
 INDEX_TRIES, INDEX_RETRY = 3, 120
+COLLECTIONS = "https://index.commoncrawl.org/collinfo.json"
+
+
+def wait_for_index():
+    waited = 0
+    while True:
+        try:
+            with urllib.request.urlopen(COLLECTIONS, timeout=30) as r:
+                if r.status == 200 and b"cdx-api" in r.read():
+                    return waited
+        except Exception as e:
+            print(f"the index does not answer ({e!r:.100}); checking again in {INDEX_RETRY}s",
+                  file=sys.stderr, flush=True)
+        time.sleep(INDEX_RETRY)
+        waited += INDEX_RETRY
 
 
 def key(url):
@@ -110,10 +126,14 @@ def discover(run):
         path = run / site / f"{arm}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
+            waited = 0
             for attempt in range(1, INDEX_TRIES + 1):
+                if arm in INDEX_ARMS:
+                    waited += wait_for_index()
                 print(f"{site} {arm} ...", file=sys.stderr, flush=True)
                 result = run_webclaw(arm, site) if arm in WEBCLAW else run_other(arm, site, path)
                 result["attempts"] = attempt
+                result["index_wait"] = waited
                 if arm not in INDEX_ARMS:
                     break
                 time.sleep(INDEX_GAP)
@@ -220,7 +240,7 @@ def score(found, samples, cache):
                          "est_live": round(len(scoped) * live_share) if checked else 0,
                          "union_share": len(scoped) / len(union) if union else 0,
                          "seconds": result["seconds"], "error": result.get("error"),
-                         "attempts": result.get("attempts", 1)})
+                         "attempts": result.get("attempts", 1), "index_wait": result.get("index_wait", 0)})
     return rows
 
 
@@ -274,6 +294,10 @@ def summary(label, rows, query_rows):
         lines += ["", "Errors (an index arm that failed is run again up to "
                   f"{INDEX_TRIES} times, {INDEX_RETRY} s apart; the last error is kept):", ""]
         lines += [f"- {r['site']} {r['arm']}, {r['attempts']} tries: {r['error']}" for r in errors]
+    waited = sum(r["index_wait"] for r in rows)
+    if waited:
+        lines += ["", f"Before index arms the run waited {waited // 60} minutes in all for the index to answer "
+                  "`collinfo.json` again."]
     retried = [r for r in rows if r["attempts"] > 1 and not r["error"]]
     if retried:
         lines += ["", "Index arms that succeeded only on a later try:", ""]

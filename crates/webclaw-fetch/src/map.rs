@@ -12,7 +12,7 @@
 //!    every page of the site that Common Crawl captured in its latest crawl,
 //!    linked or not.
 //! 3. If the sitemaps are thin (`< min_sitemap_urls`) and the fallback is on,
-//!    a *bounded* same-origin crawl harvests every URL it touches: fetched
+//!    a same-origin crawl bounded in pages and in time harvests every URL it touches: fetched
 //!    pages, the visited set, and the frontier it queued but never fetched.
 //!
 //! URLs keep that order, each once, compared without scheme, `www.`,
@@ -23,12 +23,14 @@
 //! Only the sitemap layer carries metadata.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use url::Url;
 
 use crate::client::{FetchClient, FetchConfig};
-use crate::crawler::{self, CrawlConfig, Crawler};
+use crate::crawler::{self, CrawlConfig, CrawlResult, Crawler, PageResult};
 use crate::error::FetchError;
 use crate::sitemap::{self, SitemapEntry};
 
@@ -93,6 +95,11 @@ pub struct MapOptions {
     /// List URLs best match first for this question, judged by the words of
     /// their paths. Words most of the site's paths share count for little.
     pub query: Option<String>,
+    /// Time allowed for the fallback crawl. When it runs out, the links of
+    /// the pages fetched so far are kept. A site whose robots.txt asks for a
+    /// long `Crawl-delay` gets only a few pages in that time. Default 120
+    /// seconds.
+    pub crawl_budget: Duration,
     /// Time allowed for the whole Common Crawl lookup. When it runs out, the
     /// URLs read so far are kept. Default 120 seconds.
     pub index_budget: Duration,
@@ -114,6 +121,7 @@ impl Default for MapOptions {
             exclude_patterns: Vec::new(),
             query: None,
             index_budget: Duration::from_secs(120),
+            crawl_budget: Duration::from_secs(120),
         }
     }
 }
@@ -247,31 +255,76 @@ async fn crawl_fallback(
     let Some(base_origin) = Url::parse(base_url).ok().map(|u| crawler::origin_key(&u)) else {
         return;
     };
-    let Ok(crawler) = Crawler::new(base_url, fallback_config(opts)) else {
+    let Some((crawler, stream)) = fallback_crawler(base_url, opts) else {
         return;
     };
-    let result = crawler.crawl(base_url, None).await;
+    let discovered = harvest_within(opts.crawl_budget, stream, crawler.crawl(base_url, None)).await;
+    append_crawled(entries, seen, discovered, &base_origin);
+}
 
-    let mut discovered: Vec<String> = Vec::new();
-    for p in &result.pages {
-        discovered.push(p.url.clone());
-        if let Some(ex) = p.extraction.as_ref() {
-            let page_base = Url::parse(&p.url).ok();
-            for link in &ex.content.links {
-                let abs = match &page_base {
-                    Some(b) => b.join(&link.href).ok(),
-                    None => Url::parse(&link.href).ok(),
-                };
-                if let Some(u) = abs {
-                    discovered.push(u.to_string());
+struct CrawlStream {
+    pages: tokio::sync::broadcast::Receiver<PageResult>,
+    cancel: Arc<AtomicBool>,
+}
+
+fn fallback_crawler(base_url: &str, opts: &MapOptions) -> Option<(Crawler, CrawlStream)> {
+    let (tx, pages) = tokio::sync::broadcast::channel(4096);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut config = fallback_config(opts);
+    config.progress_tx = Some(tx);
+    config.cancel_flag = Some(Arc::clone(&cancel));
+    let crawler = Crawler::new(base_url, config).ok()?;
+    Some((crawler, CrawlStream { pages, cancel }))
+}
+
+async fn harvest_within(
+    budget: Duration,
+    mut stream: CrawlStream,
+    crawl: impl std::future::Future<Output = CrawlResult>,
+) -> Vec<String> {
+    let mut found = Vec::new();
+    let deadline = tokio::time::sleep(budget);
+    tokio::pin!(crawl, deadline);
+    let finished = loop {
+        tokio::select! {
+            result = &mut crawl => break Some(result),
+            page = stream.pages.recv() => {
+                if let Ok(page) = page {
+                    page_links(&page, &mut found);
                 }
             }
+            () = &mut deadline => break None,
+        }
+    };
+    stream.cancel.store(true, Ordering::Relaxed);
+    while let Ok(page) = stream.pages.try_recv() {
+        page_links(&page, &mut found);
+    }
+    if let Some(result) = finished {
+        for page in &result.pages {
+            page_links(page, &mut found);
+        }
+        found.extend(result.visited);
+        found.extend(result.remaining_frontier.into_iter().map(|(url, _)| url));
+    }
+    found
+}
+
+fn page_links(page: &PageResult, found: &mut Vec<String>) {
+    found.push(page.url.clone());
+    let Some(extraction) = page.extraction.as_ref() else {
+        return;
+    };
+    let base = Url::parse(&page.url).ok();
+    for link in &extraction.content.links {
+        let joined = match &base {
+            Some(b) => b.join(&link.href).ok(),
+            None => Url::parse(&link.href).ok(),
+        };
+        if let Some(url) = joined {
+            found.push(url.to_string());
         }
     }
-    discovered.extend(result.visited);
-    discovered.extend(result.remaining_frontier.into_iter().map(|(url, _)| url));
-
-    append_crawled(entries, seen, discovered, &base_origin);
 }
 
 fn wants_crawl(opts: &MapOptions, sitemap_urls: usize) -> bool {
@@ -1161,6 +1214,48 @@ mod tests {
             ..MapOptions::default()
         };
         assert!(!wants_crawl(&off, 0));
+    }
+
+    #[tokio::test]
+    async fn the_fallback_crawl_stops_at_its_budget_with_the_links_it_found() {
+        let opts = MapOptions {
+            crawl_budget: Duration::from_millis(500),
+            ..MapOptions::default()
+        };
+        let (crawler, stream) = fallback_crawler("https://example.com/", &opts).unwrap();
+        crawler.preload_robots(
+            "https://example.com",
+            crate::robots::RobotsRules::parse(
+                "User-agent: *\nCrawl-delay: 3600\n",
+                crate::robots::USER_AGENT_TOKEN,
+            ),
+        );
+        let crawl = crawler.crawl_with_fetcher("https://example.com/", None, |url| async move {
+            let html = "<main><h1>Front</h1><p>Front page of the fixture site.</p>\
+                <a href='/item?id=1'>One</a><a href='/item?id=2'>Two</a></main>";
+            webclaw_core::extract_with_options(html, Some(&url), &Default::default())
+                .map_err(|e| e.to_string())
+        });
+        let started = std::time::Instant::now();
+        let found = tokio::time::timeout(
+            Duration::from_secs(10),
+            harvest_within(opts.crawl_budget, stream, crawl),
+        )
+        .await
+        .expect("the crawl ignored its budget");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(
+            found.contains(&"https://example.com/item?id=1".to_string()),
+            "{found:?}"
+        );
+        assert!(
+            found.contains(&"https://example.com/item?id=2".to_string()),
+            "{found:?}"
+        );
     }
 
     #[test]

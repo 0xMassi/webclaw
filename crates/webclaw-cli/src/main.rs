@@ -3738,9 +3738,7 @@ async fn run() {
         exit(1);
     }
     #[cfg(all(unix, feature = "browser"))]
-    if cli.browser_profile.is_some() {
-        webclaw_fetch::render::close_profiles_on_terminate();
-    }
+    webclaw_fetch::render::close_profiles_on_terminate();
     #[cfg(feature = "browser")]
     if cli.browser_profile.is_some()
         && let Some(render) = build_fetch_config(&cli).render

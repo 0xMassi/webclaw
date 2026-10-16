@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+[ -f "${2:-}" ] && set -- "$1" "$(dirname "$2")" "${@:3}"
 if [ -n "${2:-}" ]; then
   [ -d "$2" ] || { echo "no bins dir at $2" >&2; exit 1; }
   set -- "$1" "$(cd "$2" && pwd)" "${@:3}"

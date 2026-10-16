@@ -29,8 +29,10 @@ What the numbers say:
 
 ```bash
 ./benchmarks/run.sh            # builds webclaw, installs the other tools, runs everything
-./benchmarks/run.sh my-run ./path/to/webclaw 3
+./benchmarks/run.sh my-run ./path/to/bins 3
 ```
+
+Every script here takes the same first two arguments: a label for the results directory, then the directory holding the `webclaw` and `webclaw-mcp` binaries to test (default: build them into `target/release`). A path to the `webclaw` binary works too and stands for its directory. `python.sh` takes a wheel instead.
 
 You need [`uv`](https://docs.astral.sh/uv/) and a Rust toolchain. The script installs each tool into its own pinned environment under `benchmarks/.work/`, so nothing touches your system Python. The first run also saves each page's HTML into `.work/corpus/` for the html-mode comparison. That HTML belongs to the sites, so it never leaves your machine.
 

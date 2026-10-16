@@ -184,6 +184,18 @@ impl Question {
         }
     }
 
+    /// How many of the question's words appear in `text` as whole words,
+    /// not only as the start of a longer one ("auto" in "auto", not in
+    /// "autovacuum").
+    pub fn exact_words(&self, text: &str) -> u32 {
+        terms(text)
+            .iter()
+            .fold(0, |mask, word| {
+                mask | self.exact.get(word).copied().unwrap_or(0)
+            })
+            .count_ones()
+    }
+
     fn mask(&self, text: &str) -> u32 {
         let mut mask = 0;
         for word in terms(text) {
@@ -407,6 +419,14 @@ mod tests {
     use super::focus;
 
     const PAGE: &str = "# Rust\n\nRust is a language.\n\n## History\n\nGraydon Hoare began Rust in 2006 as a personal project.\n\nMozilla sponsored it from 2009.\n\n## Tooling\n\nCargo is the package manager.\n\n```\nfn main() {\n\n    println!(\"hi\");\n}\n```\n";
+
+    #[test]
+    fn exact_words_skip_words_a_question_word_only_starts() {
+        let q = super::Question::new("auto vacuum").unwrap();
+        assert_eq!(q.exact_words("/docs/auto-vacuum.html"), 2);
+        assert_eq!(q.exact_words("/docs/autovacuum.html"), 0);
+        assert_eq!(q.exact_words("/docs/auto.html"), 1);
+    }
 
     #[test]
     fn keeps_the_matching_block_with_its_heading_and_the_title() {

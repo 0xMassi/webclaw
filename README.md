@@ -435,6 +435,27 @@ Add `--stop-when-answered` to end the crawl before the budget once the answer lo
 
 The scoring matches words, so it works best on English questions; questions in other languages reach their page later (Japanese, French, Spanish and Chinese questions in the benchmark: 3 of 16 by page 10 and a median of 18 pages, against 33 of 48 and 6 pages for English questions on sites the weights were not tuned on). Only the first 32 distinct words of a question count.
 
+### List a site's URLs
+
+```bash
+webclaw https://docs.python.org/3/ --map
+webclaw https://docs.python.org/3/ --map --map-source sitemap,cc --path-prefix /3/library \
+  --query "cancel an asyncio task" --map-limit 20
+```
+
+`--map` lists a site's URLs without extracting them: one per line, or a JSON array with `-f json`. It reads the sitemaps the site's robots.txt declares (or the usual sitemap paths), and when they hold fewer than 200 URLs it adds the links found by a short crawl (`--map-pages`, `--no-map-crawl` to turn it off). Each page is listed once: URLs that differ only by `http`/`https`, `www.`, a trailing slash, a fragment or a tracking parameter (`utm_*`, `ref`, `fbclid`, `gclid`) count as one. A `--crawl` keeps the `www.` and bare-host URLs of a page apart.
+
+`--map-source sitemap,cc` also asks the public [Common Crawl](https://commoncrawl.org) index for the pages of the site it captured in its latest crawl, which finds pages that no sitemap lists and no crawl reaches in a few pages. `--map-source cc` asks the index alone. Only pages on the site's own host (with or without `www.`) that answered 200 with HTML are kept, without their tracking parameters; `--map-all-captures` keeps redirects, errors and other files too. When the sitemap already gives `--map-limit` URLs and there is no `--query`, the index is not asked.
+
+The index is a free shared service, so webclaw sends it one request at a time, a second apart, retries a busy answer twice, and gives the whole lookup 2 minutes. It often takes 10 to 60 seconds and is sometimes down; when it stops answering, webclaw warns and lists the URLs it found until then, and fails only when it found none. Keep in mind:
+
+- It reads at most ten pages of index results (about 150,000 captures). The index sorts by URL, so on a big site that is an alphabetical slice of it, not a sample, and `--query` ranks only that slice.
+- One crawl does not capture every page. A small site may have only a few dozen captures in the latest collection, and a page you know exists may be missing.
+
+`--path-prefix`, `--include-paths` and `--exclude-paths` filter the list as they filter a crawl, and the fallback crawl spends its pages inside them. `--query` lists the URLs best match first by the words in their paths, weighting words that few of the site's paths share, and putting whole-word matches ahead of longer words a query word only starts ("auto" in `auto.html` before `autovacuum.html`). It reads no page, so it only helps when the URL names the topic: "cancel an asyncio task" puts `asyncio-task.html` first among the docs.python.org URLs. `--map-limit` keeps the first N, after the ranking. The MCP `map` tool takes `source`, `limit` and `query`.
+
+On 10 sites in our benchmark (docs, news, shops and blogs, half of them without a sitemap), `--map-source sitemap,cc` found 44,122 URLs on the sites' own hosts against 17,026 for plain `--map`, and 96% of a sample answered 200 with HTML. On the day we measured, the index failed on 4 of the 10 sites even so. See [benchmarks](benchmarks/README.md#url-discovery).
+
 ### Workflow examples
 
 - [HTML to Markdown for RAG](examples/html-to-markdown-rag/)
@@ -541,7 +562,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | `select` | Pick values or records from a page with CSS selectors or XPath, its data tables, elements found by text, or every element like an example, as JSON | Yes |
 | `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG, print it to PDF, or save it as one MHTML file | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages, most relevant first with a `query` | Yes |
-| `map` | Discover URLs without extracting every page | Yes |
+| `map` | Discover URLs from sitemaps and the Common Crawl index without extracting every page | Yes |
 | `batch` | Scrape multiple URLs in parallel | Yes |
 | `extract` | Convert page content into structured data | Yes, with local or configured LLM |
 | `summarize` | Summarize a page | Yes, with local or configured LLM |

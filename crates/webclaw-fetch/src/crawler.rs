@@ -999,38 +999,17 @@ impl Crawler {
             }
         }
 
-        if let Some(ref prefix) = self.config.path_prefix
-            && !parsed.path().starts_with(prefix.as_str())
-        {
-            return None;
-        }
-
         let path = parsed.path();
-        if !self.config.include_patterns.is_empty()
-            && !self
-                .config
-                .include_patterns
-                .iter()
-                .any(|pat| glob_match(pat, path))
-        {
+        if !path_allowed(
+            path,
+            self.config.path_prefix.as_deref(),
+            &self.config.include_patterns,
+            &self.config.exclude_patterns,
+        ) {
             return None;
         }
 
-        if self
-            .config
-            .exclude_patterns
-            .iter()
-            .any(|pat| glob_match(pat, path))
-        {
-            return None;
-        }
-
-        const SKIP_EXTENSIONS: &[&str] = &[
-            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js",
-            ".zip", ".tar", ".gz", ".xml", ".rss", ".mp3", ".mp4", ".avi", ".mov", ".woff",
-            ".woff2", ".ttf", ".eot",
-        ];
-        if SKIP_EXTENSIONS.iter().any(|ext| path.ends_with(ext)) {
+        if !is_page_path(path) {
             return None;
         }
 
@@ -1316,7 +1295,7 @@ fn page_key(url: &Url) -> String {
     normalize(&as_https(url))
 }
 
-fn as_https(url: &Url) -> Url {
+pub(crate) fn as_https(url: &Url) -> Url {
     let mut url = url.clone();
     if url.scheme() == "http" {
         let _ = url.set_scheme("https");
@@ -1365,7 +1344,7 @@ const MAX_GLOB_LEN: usize = 1024;
 /// Validate a user-supplied glob pattern before it hits the matcher.
 /// Rejects patterns that would drive `glob_match_inner` into pathological
 /// backtracking (too many `**`, excessive length).
-fn validate_glob(pat: &str) -> Result<(), FetchError> {
+pub(crate) fn validate_glob(pat: &str) -> Result<(), FetchError> {
     if pat.len() > MAX_GLOB_LEN {
         return Err(FetchError::Build(format!(
             "glob pattern exceeds {MAX_GLOB_LEN} chars ({} given)",
@@ -1393,6 +1372,27 @@ fn validate_glob(pat: &str) -> Result<(), FetchError> {
         )));
     }
     Ok(())
+}
+
+pub(crate) fn is_page_path(path: &str) -> bool {
+    const SKIP_EXTENSIONS: &[&str] = &[
+        ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js", ".zip",
+        ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".xml", ".rss", ".mp3", ".mp4",
+        ".avi", ".mov", ".woff", ".woff2", ".ttf", ".eot", ".msi", ".pkg", ".exe", ".dmg", ".deb",
+        ".rpm", ".apk", ".iso",
+    ];
+    !SKIP_EXTENSIONS.iter().any(|ext| path.ends_with(ext))
+}
+
+pub(crate) fn path_allowed(
+    path: &str,
+    prefix: Option<&str>,
+    include: &[String],
+    exclude: &[String],
+) -> bool {
+    prefix.is_none_or(|p| path.starts_with(p))
+        && (include.is_empty() || include.iter().any(|pat| glob_match(pat, path)))
+        && !exclude.iter().any(|pat| glob_match(pat, path))
 }
 
 /// Simple glob matching for URL paths. Supports:

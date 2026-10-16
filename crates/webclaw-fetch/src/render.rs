@@ -18,7 +18,8 @@ use chromiumoxide::cdp::browser_protocol::network::{
     EventResponseReceived, GetCookiesParams, GetResponseBodyParams, ResourceType, SetCookieParams,
 };
 use chromiumoxide::cdp::browser_protocol::page::{
-    CaptureScreenshotFormat, PrintToPdfParams, PrintToPdfTransferMode,
+    CaptureScreenshotFormat, CaptureSnapshotFormat, CaptureSnapshotParams, PrintToPdfParams,
+    PrintToPdfTransferMode,
 };
 use chromiumoxide::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams,
@@ -529,6 +530,19 @@ impl Default for PdfOptions {
 #[derive(Debug, Clone)]
 pub struct Pdf {
     /// Size of the PDF in bytes.
+    pub bytes: u64,
+    /// HTTP status of the page's document.
+    pub status: u16,
+    /// The page's URL after redirects.
+    pub url: String,
+}
+
+/// A rendered page saved as MHTML: one file with the page and the images,
+/// styles and frames it loaded, which a browser opens offline. The file
+/// itself went to the writer the capture was given.
+#[derive(Debug, Clone)]
+pub struct Mhtml {
+    /// Size of the file in bytes.
     pub bytes: u64,
     /// HTTP status of the page's document.
     pub status: u16,
@@ -1190,20 +1204,69 @@ impl Renderer {
                 async move |page| Ok(copy_pdf(page, params, out).await),
             )
             .await
-            .map_err(|e| match e {
-                FetchError::Build(message) if message.ends_with(" timed out") => {
-                    FetchError::Build(format!(
-                        "{message}: the render timeout covers loading the page, its actions and printing it"
-                    ))
-                }
-                e => e,
-            })?;
+            .map_err(|e| timeout_covers(e, "printing it"))?;
         let printed = Pdf {
             bytes: visited.value.map_err(FetchError::Build)?,
             status: visited.status,
             url: visited.url,
         };
         Ok((printed, visited.scripts))
+    }
+
+    /// Render `url` like [`Renderer::screenshot`] and save it as MHTML into
+    /// `out`, with the images, styles and frames it loaded. Chrome hands the
+    /// whole file over at once; it is written in chunks, so a writer that
+    /// fails, say past a size limit, fails the capture.
+    pub async fn mhtml(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<Mhtml, FetchError> {
+        Ok(self.mhtml_actions(url, options, &[], out).await?.0)
+    }
+
+    /// [`Renderer::mhtml`] after `actions`, as [`Renderer::render_actions`] runs them.
+    pub async fn mhtml_actions(
+        &self,
+        url: &str,
+        options: &RenderOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Mhtml, Vec<serde_json::Value>), FetchError> {
+        self.save(url, None, options, actions, out).await
+    }
+
+    async fn save(
+        &self,
+        url: &str,
+        prefetched: Option<Prefetched<'_>>,
+        options: &RenderOptions,
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Mhtml, Vec<serde_json::Value>), FetchError> {
+        let visited = self
+            .visit(
+                url,
+                prefetched,
+                &RenderOptions {
+                    block: Block::default(),
+                    ..options.clone()
+                },
+                actions,
+                None,
+                Some(SCREENSHOT_VIEWPORT),
+                None,
+                async move |page| Ok(copy_mhtml(page, out).await),
+            )
+            .await
+            .map_err(|e| timeout_covers(e, "saving it"))?;
+        let saved = Mhtml {
+            bytes: visited.value.map_err(FetchError::Build)?,
+            status: visited.status,
+            url: visited.url,
+        };
+        Ok((saved, visited.scripts))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1940,6 +2003,45 @@ impl RenderPool {
             .await
     }
 
+    /// Save `url` as MHTML; see [`Renderer::mhtml`].
+    pub async fn mhtml(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<Mhtml, FetchError> {
+        Ok(self
+            .mhtml_actions(url, wait_for, headers, &[], out)
+            .await?
+            .0)
+    }
+
+    /// Save `url` as MHTML after `actions`; see [`Renderer::mhtml_actions`].
+    pub async fn mhtml_actions(
+        &self,
+        url: &str,
+        wait_for: Option<&str>,
+        headers: &[(String, String)],
+        actions: &[Action],
+        out: &mut (dyn std::io::Write + Send),
+    ) -> Result<(Mhtml, Vec<serde_json::Value>), FetchError> {
+        let _tab = self
+            .tabs
+            .acquire()
+            .await
+            .map_err(|_| FetchError::Build("browser closed".into()))?;
+        let renderer = self.renderer().await?;
+        renderer
+            .mhtml_actions(
+                url,
+                &self.options(wait_for, headers, Block::default()),
+                actions,
+                out,
+            )
+            .await
+    }
+
     fn options(
         &self,
         wait_for: Option<&str>,
@@ -2504,6 +2606,32 @@ async fn copy_pdf(
     };
     let _ = page.execute(CloseParams::new(handle)).await;
     copied
+}
+
+async fn copy_mhtml(
+    page: &chromiumoxide::Page,
+    out: &mut (dyn std::io::Write + Send),
+) -> Result<u64, String> {
+    let params = CaptureSnapshotParams::builder()
+        .format(CaptureSnapshotFormat::Mhtml)
+        .build();
+    let saved = page.execute(params).await.map_err(|e| e.to_string())?;
+    for chunk in saved.result.data.as_bytes().chunks(1 << 20) {
+        out.write_all(chunk)
+            .map_err(|e| format!("writing the MHTML failed: {e}"))?;
+    }
+    Ok(saved.result.data.len() as u64)
+}
+
+fn timeout_covers(e: FetchError, last: &str) -> FetchError {
+    match e {
+        FetchError::Build(message) if message.ends_with(" timed out") => {
+            FetchError::Build(format!(
+                "{message}: the render timeout covers loading the page, its actions and {last}"
+            ))
+        }
+        e => e,
+    }
 }
 
 fn browser_error(e: impl std::fmt::Display) -> FetchError {
@@ -3763,6 +3891,84 @@ mod tests {
         assert!(
             slow.to_string()
                 .contains("the render timeout covers loading the page"),
+            "{slow}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "launches Chrome"]
+    async fn a_rendered_page_saves_to_mhtml_with_its_text_and_styles() {
+        let html = r#"<html><head><style>h1 { color: rgb(1, 2, 3) }</style></head><body><h1>Quarterly harvest report</h1><p id="late"></p><button id="more" onclick="document.getElementById('extra').textContent = 'Turnips added by a click'">more</button><p id="extra"></p><iframe srcdoc="<p>Beets inside a frame</p>"></iframe><script>document.getElementById("late").textContent = "Pumpkins grown by script";</script></body></html>"#;
+        let actions = super::parse_actions(
+            r##"[{"type": "click", "selector": "#more"}, {"type": "executeJavascript", "code": "document.title = 'harvest'"}]"##,
+        )
+        .unwrap();
+        let headers = http::HeaderMap::new();
+        let renderer = Renderer::launch(None).await.expect("Chrome launches");
+        let options = RenderOptions {
+            timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        };
+        let save = async |out: &mut (dyn std::io::Write + Send)| {
+            renderer
+                .save(
+                    "https://example.com/",
+                    Some(Prefetched {
+                        html,
+                        headers: &headers,
+                    }),
+                    &options,
+                    &actions,
+                    out,
+                )
+                .await
+        };
+        let mut data = Vec::new();
+        let saved = save(&mut data).await;
+        let mut full = std::io::Cursor::new([0u8; 100]);
+        let refused = save(&mut full).await;
+        let slow = renderer
+            .save(
+                "https://example.com/",
+                Some(Prefetched {
+                    html,
+                    headers: &headers,
+                }),
+                &RenderOptions {
+                    timeout: std::time::Duration::from_secs(1),
+                    wait_for: Some("#never".into()),
+                    ..Default::default()
+                },
+                &[],
+                &mut Vec::new(),
+            )
+            .await;
+        renderer.close().await;
+        let (saved, js_results) = saved.expect("MHTML saves");
+        assert_eq!(js_results, [serde_json::json!("harvest")]);
+        assert_eq!(saved.bytes, data.len() as u64);
+        assert_eq!(saved.url, "https://example.com/");
+        let text = String::from_utf8(data).unwrap().replace("=\r\n", "");
+        assert!(text.contains("Content-Type: multipart/related"), "{text}");
+        assert!(text.contains("Snapshot-Content-Location: https://example.com/"));
+        for part in [
+            "Quarterly harvest report",
+            "Pumpkins grown by script",
+            "Turnips added by a click",
+            "Beets inside a frame",
+            "rgb(1, 2, 3)",
+        ] {
+            assert!(text.contains(part), "{part} missing from {text}");
+        }
+        let refused = refused.expect_err("a full writer stops the save");
+        assert!(
+            refused.to_string().contains("writing the MHTML failed"),
+            "{refused}"
+        );
+        let slow = slow.expect_err("a page that never settles times out");
+        assert!(
+            slow.to_string()
+                .contains("the render timeout covers loading the page, its actions and saving it"),
             "{slow}"
         );
     }

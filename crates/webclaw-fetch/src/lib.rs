@@ -27,6 +27,7 @@ pub mod sitemap;
 pub mod tls;
 pub mod transfer;
 pub mod url_security;
+pub mod warc;
 mod xml;
 
 pub use block::Block;

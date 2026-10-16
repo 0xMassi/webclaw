@@ -70,6 +70,14 @@ pub struct FetchConfig {
     /// their owner only on Unix. Only the HTTP response is kept: rendering a
     /// cached page in the browser still loads its scripts over the network.
     pub cache: Option<std::path::PathBuf>,
+    /// Hand every HTTP response the client receives, with the request that
+    /// asked for it, to this callback, for example to keep them in a WARC
+    /// file with [`crate::warc::Writer`]. With `follow_redirects`, the client
+    /// then follows redirects itself, so every hop is passed, under the same
+    /// rules: each target is checked, and credentials stay on their origin.
+    /// Responses answered from `cache` are not passed, nor pages a browser
+    /// loads.
+    pub archive: Option<crate::warc::Archive>,
     /// Render pages that need JavaScript in a browser after fetching them
     /// over HTTP, keeping whichever extraction has more text. `None` never renders.
     #[cfg(feature = "browser")]
@@ -89,6 +97,7 @@ impl Default for FetchConfig {
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
             pdf_mode: PdfMode::default(),
             cache: None,
+            archive: None,
             #[cfg(feature = "browser")]
             render: None,
         }
@@ -163,6 +172,8 @@ pub struct BatchExtractResult {
 struct Response {
     status: u16,
     url: String,
+    version: http::Version,
+    ip: Option<std::net::IpAddr>,
     headers: http::HeaderMap,
     /// Owned as `Vec<u8>` rather than `Bytes` so `into_text` can hand the
     /// allocation straight to `String` instead of copying it (see `into_text`).
@@ -214,6 +225,8 @@ impl Response {
         }
         let status = resp.status().as_u16();
         let url = resp.uri().to_string();
+        let version = resp.version();
+        let ip = resp.remote_addr().map(|addr| addr.ip());
         let headers = resp.headers().clone();
 
         // wreq 6.0.0-rc.29 dropped `Response::chunk()`. Stream post-decompression
@@ -236,6 +249,8 @@ impl Response {
         Ok(Self {
             status,
             url,
+            version,
+            ip,
             headers,
             body: buf,
         })
@@ -287,6 +302,7 @@ impl Response {
 struct ObservedClient {
     client: wreq::Client,
     proxy: Option<String>,
+    sends: Option<http::HeaderMap>,
 }
 impl std::ops::Deref for ObservedClient {
     type Target = wreq::Client;
@@ -325,6 +341,8 @@ pub struct FetchClient {
     /// Ceiling on one complete `fetch`. See [`FetchConfig::total_timeout`].
     total_timeout: Option<Duration>,
     cache: Option<crate::cache::ResponseCache>,
+    archive: Option<crate::warc::Archive>,
+    redirects: Option<u32>,
     #[cfg(feature = "browser")]
     render: Option<crate::render::RenderConfig>,
     #[cfg(feature = "browser")]
@@ -391,12 +409,16 @@ impl FetchClient {
                         config.timeout,
                         &config.headers,
                         config.proxy.as_deref(),
-                        config.follow_redirects,
+                        config.follow_redirects && config.archive.is_none(),
                         config.max_redirects,
                     )
                     .map(|client| ObservedClient {
                         client,
                         proxy: config.proxy.as_deref().and_then(crate::transfer::authority),
+                        sends: config
+                            .archive
+                            .as_ref()
+                            .map(|_| crate::tls::request_headers(v, &config.headers)),
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -421,12 +443,16 @@ impl FetchClient {
                         config.timeout,
                         &config.headers,
                         Some(proxy),
-                        config.follow_redirects,
+                        config.follow_redirects && config.archive.is_none(),
                         config.max_redirects,
                     )
                     .map(|client| ObservedClient {
                         client,
                         proxy: crate::transfer::authority(proxy),
+                        sends: config
+                            .archive
+                            .as_ref()
+                            .map(|_| crate::tls::request_headers(v, &config.headers)),
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -459,6 +485,9 @@ impl FetchClient {
             cloud: None,
             total_timeout: config.total_timeout,
             cache,
+            archive: config.archive.clone(),
+            redirects: (config.follow_redirects && config.archive.is_some())
+                .then_some(config.max_redirects),
             #[cfg(feature = "browser")]
             render: config.render.clone(),
             #[cfg(feature = "browser")]
@@ -553,31 +582,31 @@ impl FetchClient {
         let start = Instant::now();
         let client = self.pick_client(url);
 
-        let mut req = client.get(url);
-        for (k, v) in extra {
-            req = req.header(*k, *v);
-        }
+        let sent: Vec<(&str, String)> = extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
         #[cfg(feature = "browser")]
-        if let Some(render) = self.render.as_ref().filter(|render| render.solve)
-            && let Some((cookies, agent)) = render.pool.clearance(url)
-        {
-            debug!(url, "sending the clearance from a solved challenge");
-            let own = self
-                .headers
-                .iter()
-                .map(|(name, value)| (name.as_str(), value.as_str()))
-                .chain(extra.iter().copied())
-                .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
-                .map(|(_, value)| value);
-            let cookies = own
-                .chain(std::iter::once(cookies.as_str()))
-                .collect::<Vec<_>>()
-                .join("; ");
-            req = req.header("cookie", cookies).header("user-agent", agent);
-        }
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = req.send().await?;
-        let response = Response::from_wreq(resp, attempt).await?;
+        let sent = {
+            let mut sent = sent;
+            if let Some(render) = self.render.as_ref().filter(|render| render.solve)
+                && let Some((cookies, agent)) = render.pool.clearance(url)
+            {
+                debug!(url, "sending the clearance from a solved challenge");
+                let own = self
+                    .headers
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str()))
+                    .chain(extra.iter().copied())
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+                    .map(|(_, value)| value);
+                let cookies = own
+                    .chain(std::iter::once(cookies.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                sent.push(("cookie", cookies));
+                sent.push(("user-agent", agent));
+            }
+            sent
+        };
+        let response = self.send(client, url, &sent).await?;
         response_to_result(response, start)
     }
 
@@ -699,6 +728,86 @@ impl FetchClient {
         (wait < ceiling).then_some(wait)
     }
 
+    async fn send(
+        &self,
+        client: &ObservedClient,
+        url: &str,
+        sent: &[(&str, String)],
+    ) -> Result<Response, FetchError> {
+        let Some(archive) = &self.archive else {
+            let mut req = client.get(url);
+            for (k, v) in sent {
+                req = req.header(*k, v.as_str());
+            }
+            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
+            return Response::from_wreq(req.send().await?, attempt).await;
+        };
+        let mut headers = client.sends.clone().unwrap_or_default();
+        for (name, value) in sent {
+            if let (Ok(name), Ok(value)) = (
+                http::header::HeaderName::from_bytes(name.as_bytes()),
+                http::header::HeaderValue::from_str(value),
+            ) {
+                headers.insert(name, value);
+            }
+        }
+        let mut url = url::Url::parse(url).map_err(|_| FetchError::InvalidUrl(url.into()))?;
+        let mut hops = 0;
+        loop {
+            let attempt = crate::transfer::Attempt::new(url.as_str(), client.proxy.as_deref());
+            let mut req = client
+                .get(url.as_str())
+                .default_headers(false)
+                .headers(headers.clone());
+            if let Some(max) = self.redirects {
+                req = req.redirect(crate::tls::stop_at_redirect(hops < max));
+            }
+            let resp = req.send().await?;
+            let response = Response::from_wreq(resp, attempt).await?;
+            (archive.0)(&crate::warc::Exchange {
+                url: &response.url,
+                request_headers: &headers,
+                status: response.status,
+                version: response.version,
+                headers: &response.headers,
+                body: &response.body,
+                ip: response.ip,
+            });
+            let next = self
+                .redirects
+                .filter(|_| matches!(response.status, 301 | 302 | 303 | 307 | 308))
+                .and_then(|_| response.headers.get(http::header::LOCATION)?.to_str().ok())
+                .and_then(|location| url.join(location).ok());
+            let Some(next) = next else {
+                return Ok(response);
+            };
+            hops += 1;
+            let next = crate::url_security::validate_public_http_url(next.as_str()).await?;
+            if next.origin() != url.origin() {
+                for name in [
+                    http::header::AUTHORIZATION,
+                    http::header::COOKIE,
+                    http::header::HeaderName::from_static("cookie2"),
+                    http::header::PROXY_AUTHORIZATION,
+                    http::header::WWW_AUTHENTICATE,
+                ] {
+                    headers.remove(name);
+                }
+            }
+            headers.remove(http::header::REFERER);
+            if !(url.scheme() == "https" && next.scheme() == "http") {
+                let mut referer = url.clone();
+                let _ = referer.set_username("");
+                let _ = referer.set_password(None);
+                referer.set_fragment(None);
+                if let Ok(value) = http::HeaderValue::from_str(referer.as_str()) {
+                    headers.insert(http::header::REFERER, value);
+                }
+            }
+            url = next;
+        }
+    }
+
     /// Fetch a URL and return the raw, undecoded response body as bytes.
     ///
     /// Unlike [`fetch`](Self::fetch), this does **not** run the body through
@@ -717,9 +826,7 @@ impl FetchClient {
             let parsed_url = crate::url_security::validate_public_http_url(url).await?;
             let url = parsed_url.as_str();
             let client = self.pick_client(url);
-            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-            let resp = client.get(url).send().await?;
-            let response = Response::from_wreq(resp, attempt).await?;
+            let response = self.send(client, url, &[]).await?;
             Ok((response.status(), response.into_body()))
         })
         .await
@@ -1355,6 +1462,173 @@ mod tests {
         (proxy, hits)
     }
 
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn an_archive_gets_each_response_decoded_with_the_request_headers() {
+        use std::io::Write as _;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            gz.write_all(b"<p>caf\xe9</p>").unwrap();
+            let body = gz.finish().unwrap();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=latin1\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            socket.write_all(&body).await.unwrap();
+        });
+        type Seen = (String, u16, http::HeaderMap, http::HeaderMap, Vec<u8>);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Seen>::new()));
+        let sink = seen.clone();
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::from([("X-Configured".to_string(), "yes".to_string())]),
+            archive: Some(crate::warc::Archive(Arc::new(move |exchange| {
+                sink.lock().unwrap().push((
+                    exchange.url.to_string(),
+                    exchange.status,
+                    exchange.request_headers.clone(),
+                    exchange.headers.clone(),
+                    exchange.body.to_vec(),
+                ));
+            }))),
+            ..Default::default()
+        })
+        .unwrap();
+        client
+            .fetch_with_headers("http://example.com/archived", &[("X-Request", "also")])
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        let (url, status, sent, headers, body) = &seen[0];
+        assert_eq!(url, "http://example.com/archived");
+        assert_eq!(*status, 200);
+        assert_eq!(body, b"<p>caf\xe9</p>");
+        assert!(headers.get("content-encoding").is_none());
+        assert!(headers.get("content-length").is_none());
+        assert_eq!(headers["content-type"], "text/html; charset=latin1");
+        assert_eq!(sent["x-configured"], "yes");
+        assert_eq!(sent["x-request"], "also");
+        assert!(sent["user-agent"].to_str().unwrap().contains("Chrome/"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn an_archive_gets_every_redirect_hop_and_cookies_stay_on_their_origin() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let wire = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for reply in [
+                "HTTP/1.1 301 Moved Permanently\r\nLocation: /b\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 302 Found\r\nLocation: http://example.org/c\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 9\r\nConnection: close\r\n\r\n<p>c</p>\n",
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = Vec::new();
+                while !buffer.ends_with(b"\r\n\r\n") {
+                    let mut chunk = [0; 4096];
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert!(n > 0);
+                    buffer.extend_from_slice(&chunk[..n]);
+                }
+                requests.push(String::from_utf8(buffer).unwrap().to_ascii_lowercase());
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        type Hop = (String, u16, http::HeaderMap);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Hop>::new()));
+        let sink = seen.clone();
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::new(),
+            archive: Some(crate::warc::Archive(Arc::new(move |exchange| {
+                sink.lock().unwrap().push((
+                    exchange.url.to_string(),
+                    exchange.status,
+                    exchange.request_headers.clone(),
+                ));
+            }))),
+            ..Default::default()
+        })
+        .unwrap();
+        let page = client
+            .fetch_with_headers("http://example.com/a", &[("Cookie", "session=1")])
+            .await
+            .unwrap();
+        let wire = wire.await.unwrap();
+        assert_eq!(page.url, "http://example.org/c");
+        assert_eq!(page.html, "<p>c</p>\n");
+        let seen = seen.lock().unwrap();
+        let hops: Vec<_> = seen
+            .iter()
+            .map(|(url, status, _)| (url.as_str(), *status))
+            .collect();
+        assert_eq!(
+            hops,
+            [
+                ("http://example.com/a", 301),
+                ("http://example.com/b", 302),
+                ("http://example.org/c", 200)
+            ]
+        );
+        assert_eq!(seen[1].2["cookie"], "session=1");
+        assert!(seen[2].2.get("cookie").is_none());
+        assert_eq!(seen[2].2["referer"], "http://example.com/b");
+        assert!(wire[1].contains("cookie: session=1\r\n"));
+        assert!(!wire[2].contains("cookie:"), "{}", wire[2]);
+        assert!(wire[2].contains("referer: http://example.com/b\r\n"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn too_many_redirects_fail_the_same_way_with_an_archive() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut outcomes = Vec::new();
+        for archive in [None, Some(crate::warc::Archive(Arc::new(|_| {})))] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let proxy = format!("http://{}", listener.local_addr().unwrap());
+            let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counted = hits.clone();
+            tokio::spawn(async move {
+                while let Ok((mut socket, _)) = listener.accept().await {
+                    let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let mut buffer = [0; 4096];
+                    let _ = socket.read(&mut buffer).await;
+                    let reply = format!(
+                        "HTTP/1.1 302 Found\r\nLocation: /r{n}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                }
+            });
+            let client = FetchClient::new(FetchConfig {
+                proxy: Some(proxy),
+                max_redirects: 2,
+                archive,
+                ..Default::default()
+            })
+            .unwrap();
+            let error = client.fetch("http://example.com/start").await.unwrap_err();
+            let redirect = matches!(&error, FetchError::Request(e) if e.is_redirect());
+            outcomes.push((
+                redirect,
+                error.to_string().contains("too many redirects"),
+                hits.load(std::sync::atomic::Ordering::SeqCst),
+            ));
+        }
+        assert_eq!(outcomes[0], (true, true, 6), "{outcomes:?}");
+        assert_eq!(outcomes[1], outcomes[0]);
+    }
+
     fn cached_config(proxy: String, dir: &std::path::Path) -> FetchConfig {
         FetchConfig {
             proxy: Some(proxy),
@@ -1483,6 +1757,8 @@ mod tests {
         Response {
             status: 200,
             url: "https://example.com/".to_string(),
+            version: http::Version::HTTP_11,
+            ip: None,
             headers: http::HeaderMap::new(),
             body,
         }

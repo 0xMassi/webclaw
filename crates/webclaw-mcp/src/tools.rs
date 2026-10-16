@@ -202,10 +202,10 @@ pub struct SelectParams {
 pub struct ScreenshotParams {
     /// URL to capture
     pub url: String,
-    /// For images, capture the whole scrollable page instead of the 1280x720 viewport (default: false). A PDF always holds the whole page
+    /// For images, capture the whole scrollable page instead of the 1280x720 viewport (default: false). A PDF or MHTML file always holds the whole page
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub full_page: Option<bool>,
-    /// "png" (default) or "jpeg", which is smaller, for an image, or "pdf" to print the whole page to a PDF instead
+    /// "png" (default) or "jpeg", which is smaller, for an image, "pdf" to print the whole page to a PDF instead, or "mhtml" to save it as one MHTML file with its images and styles, which a browser opens offline
     pub format: Option<String>,
     /// With format "pdf": "letter" (default) or "a4"
     pub paper: Option<String>,
@@ -244,6 +244,9 @@ pub struct CrawlParams {
     pub block: Option<String>,
     /// A question, up to 1000 characters: follow the links most likely to answer it first, keep only the parts of each page that answer it, and list pages best match first
     pub query: Option<String>,
+    /// With `query`, stop once a page rated at least 0.8 has been found and the next 8 pages rated no higher, instead of always crawling up to max_pages
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub stop_when_answered: Option<bool>,
     /// Return chunks for retrieval instead: one JSON object with the crawl counts (total, ok, errors, skipped_by_robots), the failed pages with their error, and the chunks of every page, each under about this many tokens with its page url, index, heading_path, tokens and markdown text
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub chunk: Option<usize>,

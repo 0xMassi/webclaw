@@ -217,18 +217,20 @@ const MCP_CAPTURE_BYTES: usize = 1_000_000;
 const RESEARCH_MAX_POLLS: u32 = 200;
 
 #[cfg(feature = "browser")]
-const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
+const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
 
 #[cfg(feature = "browser")]
-struct Capped(Vec<u8>);
+struct Capped(Vec<u8>, &'static str);
 
 #[cfg(feature = "browser")]
 impl std::io::Write for Capped {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.0.len() + buf.len() > MAX_PDF_BYTES {
+        if self.0.len() + buf.len() > MAX_FILE_BYTES {
             return Err(std::io::Error::other(format!(
-                "the PDF is over the {} MiB this tool returns; save it with the webclaw CLI's --save-pdf instead",
-                MAX_PDF_BYTES >> 20
+                "the {} is over the {} MiB this tool returns; save it with the webclaw CLI's --save-{} instead",
+                self.1,
+                MAX_FILE_BYTES >> 20,
+                self.1.to_lowercase()
             )));
         }
         self.0.extend_from_slice(buf);
@@ -240,10 +242,33 @@ impl std::io::Write for Capped {
     }
 }
 
+#[cfg(feature = "browser")]
+fn file_result(
+    data: Vec<u8>,
+    mime: &str,
+    url: String,
+    js_results: &[serde_json::Value],
+) -> CallToolResult {
+    let mut content = vec![
+        rmcp::model::ContentBlock::resource(
+            rmcp::model::ResourceContents::blob(webclaw_fetch::render::base64(&data), url.clone())
+                .with_mime_type(mime),
+        ),
+        rmcp::model::ContentBlock::text(url),
+    ];
+    if !js_results.is_empty() {
+        content.push(rmcp::model::ContentBlock::text(
+            serde_json::to_string_pretty(js_results).unwrap_or_default(),
+        ));
+    }
+    CallToolResult::success(content)
+}
+
 #[derive(Debug, PartialEq)]
 enum Capture {
     Image { full_page: bool, jpeg: bool },
     Pdf { a4: bool, print_background: bool },
+    Mhtml,
 }
 
 fn capture(params: &ScreenshotParams) -> Result<Capture, String> {
@@ -269,9 +294,18 @@ fn capture(params: &ScreenshotParams) -> Result<Capture, String> {
                 print_background: params.print_background.unwrap_or(false),
             });
         }
+        Some("mhtml") => {
+            if full_page {
+                return Err("full_page is for images: MHTML always holds the whole page".into());
+            }
+            if params.paper.is_some() || params.print_background.is_some() {
+                return Err("paper and print_background are for format \"pdf\"".into());
+            }
+            return Ok(Capture::Mhtml);
+        }
         Some(other) => {
             return Err(format!(
-                "format must be \"png\", \"jpeg\" or \"pdf\", got \"{other}\""
+                "format must be \"png\", \"jpeg\", \"pdf\" or \"mhtml\", got \"{other}\""
             ));
         }
     };
@@ -381,7 +415,7 @@ impl WebclawMcp {
                 if a4 {
                     pdf.paper = webclaw_fetch::render::Paper::A4;
                 }
-                let mut data = Capped(Vec::new());
+                let mut data = Capped(Vec::new(), "PDF");
                 let (printed, js_results) = render
                     .pool
                     .pdf_actions(url, wait_for, &[], pdf, &actions, &mut data)
@@ -389,22 +423,27 @@ impl WebclawMcp {
                     .map_err(|e| format!("PDF failed: {e}"))?;
                 webclaw_fetch::FetchError::check_status(printed.status)
                     .map_err(|e| e.to_string())?;
-                let mut content = vec![
-                    rmcp::model::ContentBlock::resource(
-                        rmcp::model::ResourceContents::blob(
-                            webclaw_fetch::render::base64(&data.0),
-                            printed.url.clone(),
-                        )
-                        .with_mime_type("application/pdf"),
-                    ),
-                    rmcp::model::ContentBlock::text(printed.url),
-                ];
-                if !js_results.is_empty() {
-                    content.push(rmcp::model::ContentBlock::text(
-                        serde_json::to_string_pretty(&js_results).unwrap_or_default(),
-                    ));
-                }
-                return Ok(CallToolResult::success(content));
+                return Ok(file_result(
+                    data.0,
+                    "application/pdf",
+                    printed.url,
+                    &js_results,
+                ));
+            }
+            Capture::Mhtml => {
+                let mut data = Capped(Vec::new(), "MHTML");
+                let (saved, js_results) = render
+                    .pool
+                    .mhtml_actions(url, wait_for, &[], &actions, &mut data)
+                    .await
+                    .map_err(|e| format!("MHTML failed: {e}"))?;
+                webclaw_fetch::FetchError::check_status(saved.status).map_err(|e| e.to_string())?;
+                return Ok(file_result(
+                    data.0,
+                    "multipart/related",
+                    saved.url,
+                    &js_results,
+                ));
             }
         };
         let (shot, js_results) = render
@@ -822,6 +861,7 @@ impl WebclawMcp {
             use_sitemap: params.use_sitemap.unwrap_or(false),
             respect_robots: !params.ignore_robots.unwrap_or(false),
             query: params.query.clone(),
+            stop_when_answered: params.stop_when_answered.unwrap_or(false),
             ..Default::default()
         };
 
@@ -936,7 +976,7 @@ impl WebclawMcp {
         .map_err(|e| e.to_string())?
     }
 
-    /// Capture a web page in the local Chrome after its scripts ran, as an image or a PDF. Images (PNG, or JPEG with `format`) show the 1280x720 viewport, or the whole page with `full_page`. With format "pdf" the whole page is printed to a Letter or A4 PDF and returned as an application/pdf resource of up to 10 MiB. Also returns the final URL, and with `actions` the values of their executeJavascript steps.
+    /// Capture a web page in the local Chrome after its scripts ran, as an image, a PDF or an MHTML archive. Images (PNG, or JPEG with `format`) show the 1280x720 viewport, or the whole page with `full_page`. With format "pdf" the whole page is printed to a Letter or A4 PDF and returned as an application/pdf resource of up to 10 MiB. With format "mhtml" the page is saved with the images, styles and frames it loaded as one file a browser opens offline, returned as a multipart/related resource of up to 10 MiB. Also returns the final URL, and with `actions` the values of their executeJavascript steps.
     #[tool]
     async fn screenshot(
         &self,
@@ -1801,6 +1841,10 @@ mod tests {
             })
         );
         assert_eq!(
+            capture(serde_json::json!({"format": "mhtml"})),
+            Ok(Capture::Mhtml)
+        );
+        assert_eq!(
             capture(serde_json::json!({"format": "jpeg", "full_page": true})),
             Ok(Capture::Image {
                 full_page: true,
@@ -1813,6 +1857,9 @@ mod tests {
             serde_json::json!({"paper": "a4"}),
             serde_json::json!({"format": "png", "print_background": true}),
             serde_json::json!({"format": "gif"}),
+            serde_json::json!({"format": "mhtml", "full_page": true}),
+            serde_json::json!({"format": "mhtml", "paper": "a4"}),
+            serde_json::json!({"format": "mhtml", "print_background": true}),
         ] {
             assert!(capture(refused.clone()).is_err(), "{refused}");
         }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+[ -f "${2:-}" ] && set -- "$1" "$(dirname "$2")" "${@:3}"
 [ -n "${2:-}" ] && set -- "$1" "$(cd "$2" && pwd)" "${@:3}"
 [ -n "${3:-}" ] && set -- "$1" "$2" "$(cd "$3" && pwd)" "${@:4}"
 cd "$(dirname "$0")"

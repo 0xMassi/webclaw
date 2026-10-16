@@ -5,8 +5,9 @@ Each arm lists one site's URLs once. Its output is kept in .work/url-seeding-out
 reused by a rerun with the same label, which then only rescores and never queries the index again; a new label (or
 deleting that directory) measures again, so numbers from an older build never carry over. The arms without the index
 run first; then every index arm of both tools runs in one stretch, site by site, alternating which tool goes first,
-with a minute between index arms (URL_SEEDING_INDEX_GAP seconds): in faster runs the index began refusing
-connections from the benchmark machine partway through. A seeded sample of each arm's URLs is fetched once to check it answers 200 with HTML; those checks
+with a minute between index arms (URL_SEEDING_INDEX_GAP seconds). An index arm that reports an error (the index
+answered 5xx, cut its answer short or dropped the connection) runs again up to three times, two minutes apart, so
+an index outage is not scored as a tool result; what still fails is listed with its error. A seeded sample of each arm's URLs is fetched once to check it answers 200 with HTML; those checks
 are kept in .work/url-seeding-out/live.json. Runs in the Scrapling venv for curl_cffi, which some sites (Hacker News)
 need before they answer a script at all.
 """
@@ -55,6 +56,7 @@ SAMPLE = 20
 REFUSED = {0, 403, 419, 429, 503}
 ARM_TIMEOUT = 300
 INDEX_GAP = int(os.environ.get("URL_SEEDING_INDEX_GAP", "60"))
+INDEX_TRIES, INDEX_RETRY = 3, 120
 
 
 def key(url):
@@ -108,11 +110,19 @@ def discover(run):
         path = run / site / f"{arm}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            print(f"{site} {arm} ...", file=sys.stderr, flush=True)
-            result = run_webclaw(arm, site) if arm in WEBCLAW else run_other(arm, site, path)
-            path.write_text(json.dumps(result))
-            if arm in INDEX_ARMS:
+            for attempt in range(1, INDEX_TRIES + 1):
+                print(f"{site} {arm} ...", file=sys.stderr, flush=True)
+                result = run_webclaw(arm, site) if arm in WEBCLAW else run_other(arm, site, path)
+                result["attempts"] = attempt
+                if arm not in INDEX_ARMS:
+                    break
                 time.sleep(INDEX_GAP)
+                if not result.get("error") or attempt == INDEX_TRIES:
+                    break
+                print(f"{site} {arm}: the index failed ({result['error'][:100]}), again in {INDEX_RETRY}s",
+                      file=sys.stderr, flush=True)
+                time.sleep(INDEX_RETRY)
+            path.write_text(json.dumps(result))
         found[site, arm] = json.loads(path.read_text())
     return found
 
@@ -209,7 +219,8 @@ def score(found, samples, cache):
                          "redirected": sum(c["redirected"] for c in checked),
                          "est_live": round(len(scoped) * live_share) if checked else 0,
                          "union_share": len(scoped) / len(union) if union else 0,
-                         "seconds": result["seconds"], "error": result.get("error")})
+                         "seconds": result["seconds"], "error": result.get("error"),
+                         "attempts": result.get("attempts", 1)})
     return rows
 
 
@@ -260,7 +271,13 @@ def summary(label, rows, query_rows):
             f"{next(r for r in rows if r['site'] == site and r['arm'] == arm)['seconds']:.1f}" for arm in arms) + " |")
     errors = [r for r in rows if r["error"]]
     if errors:
-        lines += ["", "Errors:", ""] + [f"- {r['site']} {r['arm']}: {r['error']}" for r in errors]
+        lines += ["", "Errors (an index arm that failed is run again up to "
+                  f"{INDEX_TRIES} times, {INDEX_RETRY} s apart; the last error is kept):", ""]
+        lines += [f"- {r['site']} {r['arm']}, {r['attempts']} tries: {r['error']}" for r in errors]
+    retried = [r for r in rows if r["attempts"] > 1 and not r["error"]]
+    if retried:
+        lines += ["", "Index arms that succeeded only on a later try:", ""]
+        lines += [f"- {r['site']} {r['arm']}: try {r['attempts']}" for r in retried]
     lines += ["", "Rank of the page that answers a question in `webclaw --map --map-source sitemap,cc`, without "
               "`--query` (the arm above) and with it (a second run, so the index may answer differently; Crawl4AI "
               "ranks by a query only after fetching the `<head>` of every URL, so it has no row here):", "",

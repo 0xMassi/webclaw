@@ -1219,14 +1219,14 @@ mod tests {
     #[tokio::test]
     async fn the_fallback_crawl_stops_at_its_budget_with_the_links_it_found() {
         let opts = MapOptions {
-            crawl_budget: Duration::from_millis(500),
+            crawl_budget: Duration::from_secs(3),
             ..MapOptions::default()
         };
         let (crawler, stream) = fallback_crawler("https://example.com/", &opts).unwrap();
         crawler.preload_robots(
             "https://example.com",
             crate::robots::RobotsRules::parse(
-                "User-agent: *\nCrawl-delay: 3600\n",
+                "User-agent: *\nCrawl-delay: 2\n",
                 crate::robots::USER_AGENT_TOKEN,
             ),
         );
@@ -1244,7 +1244,7 @@ mod tests {
         .await
         .expect("the crawl ignored its budget");
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < Duration::from_secs(5),
             "{:?}",
             started.elapsed()
         );

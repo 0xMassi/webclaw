@@ -562,7 +562,7 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | `select` | Pick values or records from a page with CSS selectors or XPath, its data tables, elements found by text, or every element like an example, as JSON | Yes |
 | `screenshot` | Capture a page's viewport or the whole page as PNG or JPEG, print it to PDF, or save it as one MHTML file | Yes, with a `browser` build |
 | `crawl` | Follow same-origin links and extract discovered pages, most relevant first with a `query` | Yes |
-| `map` | Discover URLs from sitemaps and the Common Crawl index without extracting every page | Yes |
+| `map` | Discover URLs from sitemaps, a short crawl and the Common Crawl index without extracting every page | Yes |
 | `batch` | Scrape multiple URLs in parallel | Yes |
 | `extract` | Convert page content into structured data | Yes, with local or configured LLM |
 | `summarize` | Summarize a page | Yes, with local or configured LLM |

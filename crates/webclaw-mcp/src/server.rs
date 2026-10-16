@@ -208,6 +208,7 @@ async fn validate_url(url: &str) -> Result<(), String> {
 const LOCAL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CRAWL_QUERY_CHARS: usize = 1000;
 const INDEX_BUDGET: Duration = Duration::from_secs(60);
+const MAP_CRAWL_BUDGET: Duration = Duration::from_secs(45);
 #[cfg(feature = "browser")]
 const MCP_BODY_BYTES: usize = 100_000;
 #[cfg(feature = "browser")]
@@ -993,7 +994,7 @@ impl WebclawMcp {
         .await
     }
 
-    /// Discover URLs from a website's sitemaps (robots.txt + sitemap.xml), and with `source` "sitemap,cc" or "cc" from the public Common Crawl index too, which also finds pages no sitemap lists.
+    /// Discover URLs from a website's sitemaps (robots.txt + sitemap.xml), adding the links a short crawl of the site finds when the sitemaps list fewer than 200 URLs, and with `source` "sitemap,cc" or "cc" from the public Common Crawl index too, which also finds pages no sitemap lists.
     #[tool]
     async fn map(&self, Parameters(params): Parameters<MapParams>) -> Result<String, String> {
         validate_url(&params.url).await?;
@@ -1010,7 +1011,7 @@ impl WebclawMcp {
             return Err("limit must be at least 1".into());
         }
         let mut opts = webclaw_fetch::MapOptions::default();
-        opts.crawl_fallback = false;
+        opts.crawl_budget = MAP_CRAWL_BUDGET;
         opts.max_urls = params.limit;
         opts.query = params.query.clone();
         if let Some(list) = &params.source {

@@ -122,7 +122,8 @@ def main(label):
         cells = []
         for arm in per_page:
             p = per_page[arm].get(url, {})
-            cells.append(f"{p['pages']} p, {p['kb']:.0f} KB, {p['recall']:.2f}" if p.get("ok") else "fail")
+            recall = "-" if p.get("recall") is None else f"{p['recall']:.2f}"
+            cells.append(f"{p['pages']} p, {p['kb']:.0f} KB, {recall}" if p.get("ok") else "fail")
         lines.append(f"| {url} | {len(ref[url])} | " + " | ".join(cells) + " |")
     (res / "pdf-summary.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))

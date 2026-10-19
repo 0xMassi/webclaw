@@ -36,6 +36,9 @@ hits = wc.find_text("https://books.toscrape.com", "£51.77")        # [{"selecto
 like = wc.similar("https://books.toscrape.com", text="£51.77")     # {"selector", "matches"}
 
 for page in wc.crawl("https://quotes.toscrape.com", max_pages=10):
+    if page["error"]:
+        print(page["url"], "failed:", page["error"])
+        continue
     print(page["url"], page["extraction"]["metadata"]["word_count"])
 
 urls = wc.map("https://www.rust-lang.org")

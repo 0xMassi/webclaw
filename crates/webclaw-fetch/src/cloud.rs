@@ -579,9 +579,8 @@ pub async fn smart_fetch(
 
     let mut rendered_already = false;
     let widgets_block = !client.solves_challenges();
-    if fetch_result.status >= 400
-        || blocked(&fetch_result.html, &fetch_result.headers, widgets_block)
-    {
+    let is_blocked = blocked(&fetch_result.html, &fetch_result.headers, widgets_block);
+    if fetch_result.status >= 400 || is_blocked {
         match client.solve_challenge(&fetch_result).await {
             Some(Ok(solved))
                 if solved.status < 400
@@ -608,6 +607,11 @@ pub async fn smart_fetch(
                     "{url} answered with a Cloudflare challenge: pass solve: true to get past it \
                      in the local browser, or set WEBCLAW_API_KEY for the cloud API"
                 ));
+            }
+            None if cloud.is_none() && !is_blocked => {
+                return Err(
+                    crate::error::FetchError::UpstreamStatus(fetch_result.status).to_string(),
+                );
             }
             _ => {
                 info!(url, "bot protection detected, falling back to cloud API");
@@ -1239,6 +1243,27 @@ mod tests {
         .expect("the page is never reached");
         assert!(
             error.contains("did not reach the page") && error.contains("403"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_error_page_without_a_cloud_key_reports_its_status() {
+        let missing = BlockedPage("<html><body><h1>Not found</h1></body></html>");
+        let error = smart_fetch(
+            &missing,
+            None,
+            "https://example.com/nope",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .err()
+        .expect("an error page is not content");
+        assert!(
+            error.contains("HTTP 403") && !error.contains("antibot"),
             "{error}"
         );
     }

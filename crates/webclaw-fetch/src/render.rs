@@ -5096,12 +5096,20 @@ mod tests {
         std::fs::write(
             &path,
             format!(
-                "#!/bin/sh\nif [ \"$1\" = --version ]; then {on_version}; exit 0; fi\nexec \"{}\" \"$@\"\n",
+                "#!/bin/sh\nif [ \"$1\" = --probe ]; then exit 0; fi\nif [ \"$1\" = --version ]; then {on_version}; exit 0; fi\nexec \"{}\" \"$@\"\n",
                 real.display()
             ),
         )
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for _ in 0..100 {
+            match std::process::Command::new(&path).arg("--probe").status() {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(20))
+                }
+                _ => break,
+            }
+        }
         path
     }
 

@@ -67,11 +67,12 @@ def robots_judge(site):
     try:
         r = subprocess.run([os.environ["WEBCLAW_BIN"], f"{origin}/robots.txt", "--raw-html"],
                            capture_output=True, text=True, timeout=FETCH_TIMEOUT)
-        lines = r.stdout.splitlines() if r.returncode == 0 else []
     except subprocess.TimeoutExpired:
-        lines = []
+        return None
+    if r.returncode and not re.search(r"HTTP 4\d\d", r.stderr):
+        return None
     judge = RobotFileParser()
-    judge.parse(lines)
+    judge.parse(r.stdout.splitlines() if r.returncode == 0 else [])
     return judge
 
 
@@ -96,11 +97,16 @@ def expected_items(site):
     return items
 
 
+def disallowed(rs):
+    counts = [r["disallowed"] for r in rs]
+    return "-" if None in counts else max(counts)
+
+
 def score(row, out, judge, items):
     pages = json.loads(out.read_text())["pages"] if out.exists() else []
     urls = [norm(p["url"]) for p in pages]
     row.update(pages=len(pages), ok=sum(p["ok"] for p in pages), duplicates=len(urls) - len(set(urls)),
-               disallowed=sum(p["ok"] and not judge.can_fetch("*", p["url"]) for p in pages))
+               disallowed=None if judge is None else sum(p["ok"] and not judge.can_fetch("*", p["url"]) for p in pages))
     if items:
         text = letters(" ".join(p.get("markdown", "") for p in pages))
         row.update(found=sum(item in text for item in items), expected=len(items))
@@ -146,7 +152,7 @@ def main(label, rounds):
             found = f"{med('found'):.0f}/{rs[0]['expected']}" if "found" in rs[0] else "-"
             lines.append(f"| {site['name']} | {arm} | {len(rs)} | {med('ok'):.0f} | {found} | {med('seconds'):.1f} | "
                          f"{med('ok') / max(med('seconds'), 0.01):.1f} | {med('peak_mb'):.0f} | "
-                         f"{med('duplicates'):.0f} | {max(r['disallowed'] for r in rs)} |")
+                         f"{med('duplicates'):.0f} | {disallowed(rs)} |")
     if not rescore:
         lines += resume_test(label)
     (res / "crawl-summary.md").write_text("\n".join(lines) + "\n")

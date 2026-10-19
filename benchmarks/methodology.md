@@ -23,7 +23,7 @@ You need `uv` installed, and Chrome for the rendering arms. Without a binary arg
 | `crawl4ai-raw` | `AsyncWebCrawler.arun(url)` with `DefaultMarkdownGenerator()`, `raw_markdown` |
 | `crawl4ai-fit` | same crawl with `DefaultMarkdownGenerator(content_filter=PruningContentFilter())`, `fit_markdown` |
 
-Versions are pinned in `run.sh` and recorded in each run's `versions.txt`. Every tool runs with default options plus the flags above. Nobody tunes per site.
+Versions are pinned in `envs.sh` and recorded in each run's `versions.txt`. Every tool runs with default options plus the flags above. Nobody tunes per site.
 
 ## Two modes
 

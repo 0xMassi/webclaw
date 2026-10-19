@@ -118,6 +118,9 @@ def run(arm, args, timeout):
     sampler.start()
     try:
         out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
     finally:
         if proc.poll() is None:
             proc.kill()

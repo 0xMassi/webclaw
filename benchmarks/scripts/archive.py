@@ -255,7 +255,11 @@ def run_warc():
     crawled = re.search(r"Crawled (\d+) pages \((\d+) ok", r.stderr)
     crawl = {"url": seed, "ms": ms, "ok": False, "pages": int(crawled.group(2)) if crawled else 0}
     if r.returncode == 0 and file.exists():
-        check = validate_warc(file)
+        try:
+            check = validate_warc(file)
+        except Exception as e:
+            crawl["error"] = f"unreadable WARC: {e}"
+            return rows, crawl
         targets = {u for u, s, _ in check["responses"] if s < 400}
         crawl.update(kb=file.stat().st_size / 1024, records=check["records"], digests=check["digests"],
                      responses=len(check["responses"]), page_responses=len(targets),

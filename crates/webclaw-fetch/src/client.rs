@@ -601,6 +601,9 @@ impl FetchClient {
                     .chain(std::iter::once(cookies.as_str()))
                     .collect::<Vec<_>>()
                     .join("; ");
+                sent.retain(|(name, _)| {
+                    !name.eq_ignore_ascii_case("cookie") && !name.eq_ignore_ascii_case("user-agent")
+                });
                 sent.push(("cookie", cookies));
                 sent.push(("user-agent", agent));
             }

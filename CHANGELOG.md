@@ -13,9 +13,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Screenshots, PDFs and MHTML.** `--screenshot FILE` (PNG or JPEG, `--full-page`), `--save-pdf FILE` (`--paper`, `--landscape`, `--print-background`, `--scale`) and `--save-mhtml FILE`. The new MCP `screenshot` tool returns images, and PDF or MHTML with `format`.
 - **Network capture.** `--capture-network[=PATTERN]` returns the XHR and fetch responses a rendered page loads, so you get the JSON an app reads from its API. Credential headers and query parameters are redacted unless you pass `--capture-credentials`. MCP: `capture_network` on `scrape`.
 - **Persistent browser profile.** `--browser-profile DIR` (MCP: `WEBCLAW_BROWSER_PROFILE`) keeps cookies, local storage and IndexedDB between runs, so a login made once holds. A profile in use by another browser is refused with the owner named.
-- **Cloudflare challenges in the local browser.** `--solve` (MCP: `solve` on `scrape`) gets past challenge pages and embedded Turnstile widgets, then lets later HTTP requests to the same site reuse the clearance.
+- **Cloudflare challenge pages in the local browser.** `--solve` (MCP: `solve` on `scrape`) loads pages that first show a Cloudflare challenge. The README covers how it works and its limits.
 - **Resource blocking while rendering.** `--block images,fonts,media` (MCP: `block` on `scrape` and `crawl`).
-- **Every Chrome webclaw launches presents itself as regular Chrome**, without the "Headless" marker.
+- **Local renders use your Chrome's own User-Agent.**
 - **CSS selectors and XPath.** `--select` and `--xpath` pick values from a page, and `--field NAME=SELECTOR` builds one JSON record per match. The new MCP `select` tool does the same. Both run without an LLM.
 - **Data tables as JSON.** `--tables` returns each data table as `{caption, headers, rows}`, with spanning cells laid out like a browser does and layout tables skipped. MCP: `tables` on `select`.
 - **Find by text, and find similar.** `--find-text`, `--find-regex` and `--similar`: give one example element and get every element like it, plus a CSS selector that picks them all. MCP: `text`, `regex` and `similar` on `select`.

@@ -30,6 +30,10 @@ def norm(url):
     return f"{u.scheme}://{u.netloc.lower()}{u.path.rstrip('/') or '/'}{'?' + u.query if u.query else ''}"
 
 
+ARM_TIMEOUT = 1800
+FETCH_TIMEOUT = 120
+
+
 def run_arm(arm, site, out):
     py = str(WORK / f"venv-{ARM_VENV[arm]}" / "bin/python")
     cmd = [py, str(ROOT / "scripts/crawl_arms.py"), arm, site["seed"], str(site["max_pages"]),
@@ -38,7 +42,15 @@ def run_arm(arm, site, out):
     out.unlink(missing_ok=True)
     proc = psutil.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     peak = 0
+    deadline = start + ARM_TIMEOUT
     while proc.poll() is None:
+        if time.time() > deadline:
+            for p in proc.children(recursive=True) + [proc]:
+                try:
+                    p.kill()
+                except psutil.Error:
+                    pass
+            sys.exit(f"{arm} crawl of {site['name']} ran past {ARM_TIMEOUT} s")
         try:
             tree = [proc] + proc.children(recursive=True)
             peak = max(peak, sum(p.memory_info().rss for p in tree if p.is_running()))
@@ -52,10 +64,14 @@ def run_arm(arm, site, out):
 
 def robots_judge(site):
     origin = f"https://{urlparse(site['seed']).netloc}"
-    r = subprocess.run([os.environ["WEBCLAW_BIN"], f"{origin}/robots.txt", "--raw-html"],
-                       capture_output=True, text=True)
+    try:
+        r = subprocess.run([os.environ["WEBCLAW_BIN"], f"{origin}/robots.txt", "--raw-html"],
+                           capture_output=True, text=True, timeout=FETCH_TIMEOUT)
+        lines = r.stdout.splitlines() if r.returncode == 0 else []
+    except subprocess.TimeoutExpired:
+        lines = []
     judge = RobotFileParser()
-    judge.parse(r.stdout.splitlines() if r.returncode == 0 else [])
+    judge.parse(lines)
     return judge
 
 
@@ -68,7 +84,11 @@ def expected_items(site):
         return []
     items = []
     for url in site["expect"]:
-        r = subprocess.run([os.environ["WEBCLAW_BIN"], url, "--raw-html"], capture_output=True, text=True)
+        try:
+            r = subprocess.run([os.environ["WEBCLAW_BIN"], url, "--raw-html"], capture_output=True, text=True,
+                               timeout=FETCH_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            sys.exit(f"no reference items from {url} (timed out); not scoring an incomplete set")
         found = [letters(json.loads(f'"{t}"'))[:60] for t in re.findall(r'"text": "((?:[^"\\]|\\.)*)"', r.stdout)]
         if r.returncode or not found:
             sys.exit(f"no reference items from {url} (exit {r.returncode}); not scoring an incomplete set")

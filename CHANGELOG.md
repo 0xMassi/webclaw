@@ -5,6 +5,56 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-19
+
+### Added
+- **Local JavaScript rendering.** Built with the `browser` feature (`cargo build --release --features browser`), webclaw renders pages in your local Chrome when the HTTP response has no content yet. `--render auto|always|never`, `--wait-for <css>` and `--cdp-url` for a browser that is already running. Rendering works in single pages, batches, crawls and the MCP `scrape`, `crawl` and `batch` tools, with one shared browser per run. `webclaw --version` shows `+browser` when the feature is built in. The prebuilt release binaries are built without it.
+- **Page actions.** `--actions` (JSON inline or `@FILE`) runs ordered steps in the rendered page before webclaw reads it: `click`, `type`, `press`, `scroll`, `wait`, `waitForSelector` and `executeJavascript`, whose values come back as `js_results`. `click` and `scroll` take `repeat` for "load more" buttons and infinite scroll, and `--scroll` scrolls to the end. The MCP `scrape` and `screenshot` tools take the same `actions`.
+- **Screenshots, PDFs and MHTML.** `--screenshot FILE` (PNG or JPEG, `--full-page`), `--save-pdf FILE` (`--paper`, `--landscape`, `--print-background`, `--scale`) and `--save-mhtml FILE`. The new MCP `screenshot` tool returns images, and PDF or MHTML with `format`.
+- **Network capture.** `--capture-network[=PATTERN]` returns the XHR and fetch responses a rendered page loads, so you get the JSON an app reads from its API. Credential headers and query parameters are redacted unless you pass `--capture-credentials`. MCP: `capture_network` on `scrape`.
+- **Persistent browser profile.** `--browser-profile DIR` (MCP: `WEBCLAW_BROWSER_PROFILE`) keeps cookies, local storage and IndexedDB between runs, so a login made once holds. A profile in use by another browser is refused with the owner named.
+- **Cloudflare challenges in the local browser.** `--solve` (MCP: `solve` on `scrape`) gets past challenge pages and embedded Turnstile widgets, then lets later HTTP requests to the same site reuse the clearance.
+- **Resource blocking while rendering.** `--block images,fonts,media` (MCP: `block` on `scrape` and `crawl`).
+- **Every Chrome webclaw launches presents itself as regular Chrome**, without the "Headless" marker.
+- **CSS selectors and XPath.** `--select` and `--xpath` pick values from a page, and `--field NAME=SELECTOR` builds one JSON record per match. The new MCP `select` tool does the same. Both run without an LLM.
+- **Data tables as JSON.** `--tables` returns each data table as `{caption, headers, rows}`, with spanning cells laid out like a browser does and layout tables skipped. MCP: `tables` on `select`.
+- **Find by text, and find similar.** `--find-text`, `--find-regex` and `--similar`: give one example element and get every element like it, plus a CSS selector that picks them all. MCP: `text`, `regex` and `similar` on `select`.
+- **Keep only what answers a question.** `--query "..."` returns the paragraphs that answer it under their headings instead of the whole page. MCP: `query` on `scrape`.
+- **Question-guided crawls.** `--crawl --query "..."` fetches the links most likely to answer first and lists pages best match first, each with a `relevance`. `--stop-when-answered` ends the crawl once the answer looks found. MCP: `query` and `stop_when_answered` on `crawl`.
+- **Chunks for retrieval.** `--chunk TOKENS` and `--chunk-overlap TOKENS` split pages into chunks that keep sentences, tables and code blocks whole, each with its heading path and a token estimate. MCP: `chunk` and `chunk_overlap` on `scrape` and `crawl`.
+- **Markdown with numbered link citations.** `--citations` moves inline links into a numbered list at the end of the page. MCP: `citations` on `scrape`, `crawl` and `batch`.
+- **WARC archives.** `--warc FILE` records the HTTP responses of one page, several, or a whole crawl in the format web archives use.
+- **Opt-in disk cache.** `--cache` stores fetched pages in `WEBCLAW_CACHE_DIR` or `~/.cache/webclaw`, so a rerun answers from disk.
+- **MCP over HTTP.** `webclaw-mcp --http [ADDR]` serves the tools to several agents or another machine. It requires a bearer token from `WEBCLAW_MCP_TOKEN` unless started with `--no-auth`.
+- **Every browser profile by name.** `--browser` (MCP: `browser` on `scrape`) accepts `chrome`, `chrome-macos`, `firefox`, `safari`, `safari-ios`, `edge` and `random`.
+- **More sources and filters for `--map`.** `--map-source sitemap,cc` adds URLs from the public Common Crawl index, and `--path-prefix`, `--include-paths`, `--exclude-paths` and `--query` now apply to `--map`. MCP: `source`, `limit` and `query` on `map`.
+- **Crash-safe crawls.** `-f jsonl` streams one JSON object per page as it finishes, and `--crawl-state` checkpoints about once a second, so a killed crawl resumes where it stopped and keeps its page budget.
+- **A Python package that bundles the CLI** in `python/`, built with maturin. It is not published yet.
+- **Reproducible benchmarks.** Each script in `benchmarks/` reruns one comparison against open-source tools with a single command.
+
+### Changed
+- **Crawls respect robots.txt by default.** Disallowed URLs are skipped, redirects are checked again, and `Crawl-delay` spaces requests to its host. Opt out with `--ignore-robots` (MCP and the OSS server: `ignore_robots`). Results report `skipped_by_robots`.
+- **`--delay` spaces requests per host.** It is the shortest time between two requests to the same host, shared by all crawl workers. Before, each worker slept on its own, so `--concurrency 4 --delay 500` still sent about six requests a second.
+- **The crawler reaches more pages.** It runs a pool of workers instead of one depth level at a time, and follows links from the whole page, navigation included, not only from the extracted content.
+- **Text a browser never shows is dropped.** `<template>`, the `hidden` attribute and inline `display:none` or `visibility:hidden` no longer reach the output, which keeps hidden prompt-injection text away from agents. Tab panels and `aria-hidden` content stay.
+- **Every scrape retries the same way.** A 429 or 5xx response gets a second attempt that honors `Retry-After` when it fits the time budget, and the CLI prints a warning when it retries.
+- **`--raw-html` exits 1 on HTTP errors.** It still prints the body.
+- **The MCP server refuses an unknown browser name** instead of using Chrome, and lists the valid names.
+- **`--screenshot` and `--save-pdf` refuse output flags they would ignore**, such as `-f`, `--query` and `--output-dir`.
+- **The MCP server has 14 tools** with the new `select` and `screenshot`. The `webclaw-mcp` release binary grows from 23.9 MB to 26.6 MB.
+
+### Fixed
+- **The desktop Safari profile works again.** It refused every HTTP/2 response, and `random` picked it one time in five.
+- **SOCKS proxies are refused with a clear message.** They were advertised but never connected.
+- **Crawls keep pages whose links redirect to the same page** with a trailing slash added or the scheme changed. They were dropped while robots.txt was respected.
+- **The MCP `map` tool finds URLs on sites without a sitemap**, with a short crawl as the CLI does. It returned 0 URLs.
+- **The MCP `crawl` tool honors `WEBCLAW_PROXY`.**
+- **Pages nested tens of thousands of elements deep no longer crash extraction.**
+
+### Security
+- **Rendered pages cannot reach private addresses.** Every request of every page, frame and worker, redirects and WebSockets included, goes through the same public-address check as the HTTP client.
+- **Stopping the CLI or the MCP server closes its browser.** SIGTERM from a process manager or container runtime shuts down every Chrome webclaw launched and deletes its temporary profile.
+
 ## [0.6.24] - 2026-09-18
 
 ### Fixed

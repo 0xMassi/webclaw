@@ -910,4 +910,4 @@ Thanks to everyone improving webclaw through issues, examples, docs, bug reports
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[AGPL-3.0-only](LICENSE)

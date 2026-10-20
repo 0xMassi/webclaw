@@ -163,4 +163,4 @@ Download from [GitHub Releases](https://github.com/0xMassi/webclaw/releases) for
 
 ## License
 
-AGPL-3.0
+AGPL-3.0-only

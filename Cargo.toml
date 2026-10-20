@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.7.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 repository = "https://github.com/0xMassi/webclaw"
 
 [workspace.dependencies]

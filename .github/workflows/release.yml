@@ -377,7 +377,7 @@ jobs:
           class Webclaw < Formula
             desc "The fastest web scraper for AI agents. 67% fewer tokens. Sub-ms extraction."
             homepage "https://webclaw.io"
-            license "AGPL-3.0"
+            license "AGPL-3.0-only"
             version "${RELEASE_TAG#v}"
 
             on_macos do

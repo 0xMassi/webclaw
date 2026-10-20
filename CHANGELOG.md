@@ -33,6 +33,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Reproducible benchmarks.** Each script in `benchmarks/` reruns one comparison against open-source tools with a single command.
 
 ### Changed
+- **Package metadata names the licence `AGPL-3.0-only`**, the current SPDX identifier. `AGPL-3.0` was retired and meant the same; the licence itself is unchanged.
 - **Crawls respect robots.txt by default.** Disallowed URLs are skipped, redirects are checked again, and `Crawl-delay` spaces requests to its host. Opt out with `--ignore-robots` (MCP and the OSS server: `ignore_robots`). Results report `skipped_by_robots`.
 - **`--delay` spaces requests per host.** It is the shortest time between two requests to the same host, shared by all crawl workers. Before, each worker slept on its own, so `--concurrency 4 --delay 500` still sent about six requests a second.
 - **The crawler reaches more pages.** It runs a pool of workers instead of one depth level at a time, and follows links from the whole page, navigation included, not only from the extracted content.

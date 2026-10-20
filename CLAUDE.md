@@ -137,7 +137,7 @@ CI (`.github/workflows/ci.yml`, with `RUSTFLAGS=--cfg reqwest_unstable`) runs fo
 
 ## Repo Layout & Packaging
 
-Workspace is version **0.7.0** (single source of truth: `[workspace.package] version` in the root `Cargo.toml`; all crates inherit it), edition **2024**, license **AGPL-3.0** (matters for the public-OSS scrubbing rules). No crate declares `rust-version`, so MSRV is implicit — edition 2024 floors it at Rust 1.85+; CI pins `dtolnay/rust-toolchain@stable`.
+Workspace is version **0.7.0** (single source of truth: `[workspace.package] version` in the root `Cargo.toml`; all crates inherit it), edition **2024**, license **AGPL-3.0-only** (matters for the public-OSS scrubbing rules). No crate declares `rust-version`, so MSRV is implicit — edition 2024 floors it at Rust 1.85+; CI pins `dtolnay/rust-toolchain@stable`.
 
 Artifacts outside `crates/` that need separate attention:
 - `packages/create-webclaw/` — `npx create-webclaw` Node scaffolder that installs/configures the MCP server for AI agents (Claude, Cursor, Windsurf, ...). Versioned independently (own `package.json`) — bump it separately when MCP setup changes.

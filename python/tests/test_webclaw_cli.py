@@ -1,0 +1,351 @@
+import importlib.metadata
+import os
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+import warnings
+from pathlib import Path
+from unittest import mock
+
+import webclaw_cli as wc
+
+SHOP = """<html><head><title>Shop</title></head><body><main>
+<h1>Garden tools</h1>
+<p>Our garden tools are forged from carbon steel and sharpened by hand in the workshop.</p>
+<ul>
+<li class="item"><a href="/a">Spade</a> <span class="price">12</span></li>
+<li class="item"><a href="/b">Rake</a> <span class="price">9</span></li>
+<li class="item"><a href="/c">Hoe</a> <span class="price">7</span></li>
+</ul>
+<table><caption>Prices</caption><tr><th>Tool</th><th>Price</th></tr>
+<tr><td>Spade</td><td>12</td></tr><tr><td>Rake</td><td>9</td></tr></table>
+</main></body></html>"""
+
+
+def fake_binary(directory: str, code: str) -> str:
+    path = Path(directory, "webclaw")
+    path.write_text(f"#!{sys.executable}\nimport json, os, sys, time\n{code}\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+class Offline(unittest.TestCase):
+    def test_binary_runs(self):
+        out = subprocess.run([wc.binary_path(), "--version"], capture_output=True, text=True, check=True)
+        self.assertTrue(out.stdout.startswith("webclaw "))
+
+    def test_binary_is_the_packaged_one(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"PATH": d}):
+            Path(d, "webclaw").write_text("#!/bin/sh\necho fake\n")
+            Path(d, "webclaw").chmod(0o755)
+            wc.binary_path.cache_clear()
+            path = wc.binary_path()
+        recorded = {str(Path(f.locate()).resolve()) for f in importlib.metadata.files("webclaw-cli") or []}
+        self.assertIn(path, recorded)
+
+    def test_scrape_formats(self):
+        self.assertIn("# Garden tools", wc.scrape(SHOP))
+        self.assertIn("carbon steel", wc.scrape(SHOP, "text"))
+        self.assertIn("Garden tools", wc.scrape(SHOP, "llm"))
+        result = wc.scrape(SHOP, "json")
+        self.assertEqual(result["metadata"]["title"], "Shop")
+        self.assertIn("Garden tools", result["content"]["markdown"])
+
+    def test_scrape_options(self):
+        out = wc.scrape(SHOP, exclude_selectors=["ul", "table"])
+        self.assertIn("carbon steel", out)
+        self.assertNotIn("Spade", out)
+        self.assertNotIn("| Spade |", wc.scrape(SHOP, exclude_selectors="table"))
+        with self.assertRaises(ValueError):
+            wc.scrape(SHOP, include_selectors=["p:is(.a, .b)"])
+
+    def test_select(self):
+        self.assertEqual(wc.select(SHOP, css=".item a"), ["Spade", "Rake", "Hoe"])
+        self.assertEqual(wc.select(SHOP, xpath="//li/span/text()"), ["12", "9", "7"])
+        self.assertEqual(wc.select(SHOP, css=".item a::attr(href)"), ["/a", "/b", "/c"])
+        records = wc.select(SHOP, css=".item", fields={"name": "a", "price": ".price"})
+        self.assertEqual(records[0], {"name": "Spade", "price": "12"})
+
+    def test_tables(self):
+        found = wc.tables(SHOP)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["caption"], "Prices")
+        self.assertEqual(found[0]["headers"], ["Tool", "Price"])
+        self.assertEqual(found[0]["rows"], [["Spade", "12"], ["Rake", "9"]])
+
+    def test_find_text_and_similar(self):
+        found = wc.find_text(SHOP, "rake")
+        self.assertEqual([f["text"] for f in found], ["Rake", "Rake"])
+        self.assertEqual(wc.select(SHOP, css=found[0]["selector"]), ["Rake"])
+        self.assertEqual(wc.find_text(SHOP, "rake", case_sensitive=True), [])
+        self.assertEqual([f["text"] for f in wc.find_text(SHOP, r"^\d+$", regex=True)], ["12", "9", "7", "12", "9"])
+        like = wc.similar(SHOP, text="Rake")
+        self.assertEqual([m["text"] for m in like["matches"]], ["Spade", "Rake", "Hoe"])
+        records = wc.similar(SHOP, css=".item", fields={"price": ".price"})
+        self.assertEqual([r["price"] for r in records["records"]], ["12", "9", "7"])
+
+    def test_error_carries_stderr_and_code(self):
+        with self.assertRaises(wc.WebclawError) as cm:
+            wc.select(SHOP, css="[[[")
+        self.assertEqual(cm.exception.returncode, 1)
+        self.assertIn(str(cm.exception), cm.exception.stderr)
+        self.assertNotIn("error: ", str(cm.exception))
+        self.assertIsNone(cm.exception.status_code)
+
+    def test_error_is_the_error_line(self):
+        with self.assertRaises(wc.WebclawError) as cm:
+            wc.find_text(SHOP, "x", regex=True, exact=True)
+        self.assertEqual(cm.exception.returncode, 2)
+        self.assertIn("--exact", str(cm.exception))
+
+    def test_html_or_url(self):
+        self.assertEqual(wc.select("  \n<!doctype html><p>a</p>", css="p"), ["a"])
+        self.assertEqual(wc.select("<br/><p>b</p>", css="p"), ["b"])
+        with self.assertRaises(wc.WebclawError) as cm:
+            wc.scrape("<https://example.com>")
+        self.assertIn("url", str(cm.exception).lower())
+
+    def test_target_is_never_a_flag(self):
+        with self.assertRaises(wc.WebclawError):
+            wc.scrape("--version")
+
+    def test_option_flags(self):
+        flags = wc._options({"proxy": "http://p:1", "browser": "firefox", "headers": {"X-A": "1"},
+                             "cookies": {"a": "1", "b": "2"}, "timeout": 5, "render": "never", "cache": True})
+        self.assertEqual(flags, ["--proxy=http://p:1", "--browser=firefox", "--header=X-A: 1",
+                                 "--cookie=a=1; b=2", "--timeout=5", "--render=never", "--cache"])
+        self.assertEqual(wc._options({"cookies": "c=3"}), ["--cookie=c=3"])
+
+    def test_star_import_keeps_builtin_map(self):
+        names = {}
+        exec("from webclaw_cli import *", names)
+        self.assertNotIn("map", names)
+        self.assertIn("crawl", names)
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_crawl_keeps_pages_when_some_fail(self):
+        ok = {"url": "https://a/", "depth": 0, "extraction": {}, "error": None}
+        bad = {"url": "https://a/x", "depth": 1, "extraction": None, "error": "HTTP 404"}
+        with tempfile.TemporaryDirectory() as d:
+            some = fake_binary(d, f"print(json.dumps({ok!r}))\nprint(json.dumps({bad!r}))\n"
+                                  "print('error: crawl finished with 1 errors', file=sys.stderr)\nsys.exit(1)")
+            with mock.patch.object(wc, "binary_path", return_value=some):
+                self.assertEqual([p["url"] for p in wc.crawl("https://a/")], ["https://a/", "https://a/x"])
+            every = fake_binary(d, f"print(json.dumps({bad!r}))\nsys.exit(1)")
+            with mock.patch.object(wc, "binary_path", return_value=every), self.assertRaises(wc.WebclawError):
+                list(wc.crawl("https://a/"))
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_warnings_and_no_color(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = fake_binary(d, "print(os.environ.get('NO_COLOR'))\n"
+                                  "print('\\x1b[33mwarning:\\x1b[0m No content extracted from x', file=sys.stderr)")
+            with mock.patch.object(wc, "binary_path", return_value=fake):
+                with self.assertWarnsRegex(wc.WebclawWarning, "^No content extracted from x$"):
+                    self.assertEqual(wc.scrape("https://a/"), "1\n")
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_repeated_log_warnings_collapse(self):
+        log = ("for i in range(3): print(f'\\x1b[2m2026-10-14T19:39:41.0{i}Z\\x1b[0m \\x1b[33m WARN\\x1b[0m "
+               "webclaw_fetch::crawler: frontier full, dropping links cap=500', file=sys.stderr)")
+        with tempfile.TemporaryDirectory() as d:
+            fake = fake_binary(d, log)
+            with mock.patch.object(wc, "binary_path", return_value=fake), warnings.catch_warnings(record=True) as seen:
+                warnings.simplefilter("default")
+                wc.scrape("https://a/")
+        self.assertEqual([str(w.message) for w in seen], ["frontier full, dropping links cap=500"])
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_kill_runs_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = wc._spawn([fake_binary(d, "time.sleep(30)")], False, subprocess.DEVNULL)
+            with mock.patch.object(wc, "_kill_group", wraps=wc._kill_group) as group:
+                threads = [threading.Thread(target=wc._kill, args=(proc,)) for _ in range(4)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+                wc._kill(proc)
+            proc.stdout.close()
+        self.assertEqual(group.call_count, 1)
+        self.assertIsNotNone(proc.returncode)
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_crawl_flags(self):
+        with tempfile.TemporaryDirectory() as d:
+            echo = fake_binary(d, "print(json.dumps({'url': ' '.join(sys.argv[1:]), 'error': None}))")
+            with mock.patch.object(wc, "binary_path", return_value=echo):
+                [page] = wc.crawl("https://a/", include_patterns=["/a/*", "/b/*"], use_sitemap=True, query="q")
+        self.assertEqual(page["url"].split(), ["--crawl", "--format=jsonl", "--max-pages=50", "--depth=2",
+                                               "--query=q", "--include-paths=/a/*,/b/*", "--sitemap", "--",
+                                               "https://a/"])
+
+    @unittest.skipIf(sys.platform == "win32", "fake binary is a script")
+    def test_time_limit(self):
+        with tempfile.TemporaryDirectory() as d:
+            slow = fake_binary(d, "print(json.dumps({'url': 'https://a/', 'error': None}), flush=True)\ntime.sleep(30)")
+            with mock.patch.object(wc, "binary_path", return_value=slow):
+                start = time.monotonic()
+                with self.assertRaises(TimeoutError):
+                    wc.scrape("https://a/", time_limit=0.5)
+                with self.assertRaises(TimeoutError):
+                    list(wc.crawl("https://a/", time_limit=0.5))
+                self.assertLess(time.monotonic() - start, 5)
+
+    def test_bad_arguments(self):
+        with self.assertRaises(TypeError):
+            wc.scrape(SHOP, proxies="x")
+        with self.assertRaises(TypeError):
+            wc.crawl("https://example.com/", proxies="x")
+        with self.assertRaises(ValueError):
+            wc.select(SHOP, css="a", xpath="//a")
+        with self.assertRaises(ValueError):
+            wc.similar(SHOP)
+        with self.assertRaises(ValueError):
+            wc.select(SHOP, css="li", fields={"a=b": "a"})
+        for bad in ({"X-A": "1\r\nInjected: 1"}, {"Bad Name": "1"}, {"": "1"}):
+            with self.assertRaises(ValueError):
+                wc.scrape(SHOP, headers=bad)
+        with self.assertRaises(ValueError):
+            wc.scrape(SHOP, cookies={"a": "1; b=2"})
+
+
+class ChromeWatch:
+    """Records the Chrome processes that webclaw binaries started by this test process run."""
+
+    def __enter__(self):
+        self.binaries, self.chromes, self.done = set(), set(), threading.Event()
+        self.thread = threading.Thread(target=self.watch)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.done.set()
+        self.thread.join()
+
+    def watch(self):
+        while not self.done.is_set():
+            rows = [line.split(None, 2) for line in ps().splitlines() if line.strip()]
+            self.binaries |= {pid for pid, ppid, _ in rows if ppid == str(os.getpid())}
+            self.chromes |= {pid for pid, _, cmd in rows
+                             if any(f"webclaw-chrome-{b}-" in cmd for b in self.binaries)}
+            time.sleep(0.1)
+
+    def left(self):
+        alive = {line.split(None, 2)[0] for line in ps().splitlines() if line.strip()}
+        profiles = [p for b in self.binaries for p in Path(tempfile.gettempdir()).glob(f"webclaw-chrome-{b}-*")]
+        return (self.chromes & alive) | {p.name for p in profiles}
+
+
+def ps() -> str:
+    return subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True).stdout
+
+
+@unittest.skipUnless(os.environ.get("WEBCLAW_REAL_SITES"), "set WEBCLAW_REAL_SITES=1 to run against public sites")
+class RealSites(unittest.TestCase):
+    def test_scrape(self):
+        self.assertIn("documentation examples", wc.scrape("https://example.com/"))
+        self.assertEqual(wc.scrape("https://example.com/", "json")["metadata"]["title"], "Example Domain")
+
+    def test_http_error(self):
+        with self.assertRaises(wc.WebclawError) as cm:
+            wc.scrape("https://books.toscrape.com/no-such-page")
+        self.assertIn("404", str(cm.exception))
+        self.assertEqual(cm.exception.status_code, 404)
+
+    def test_headers_and_cookies(self):
+        out = wc.scrape("https://httpbin.org/headers", "text", headers={"X-Test": "yes-please"},
+                        cookies={"a": "1", "b": "2"})
+        self.assertIn("yes-please", out)
+        self.assertIn("a=1; b=2", out)
+
+    def test_cache(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"WEBCLAW_CACHE_DIR": d}):
+            first = wc.scrape("https://example.com/", cache=True)
+            self.assertTrue(any(Path(d).rglob("*")))
+            self.assertEqual(wc.scrape("https://example.com/", cache=True), first)
+
+    def test_select(self):
+        titles = wc.select("https://books.toscrape.com/", css="h3 a::attr(title)")
+        self.assertEqual(len(titles), 20)
+        self.assertIn("A Light in the Attic", titles)
+
+    def test_tables(self):
+        found = wc.tables("https://en.wikipedia.org/wiki/List_of_countries_by_population_(United_Nations)")
+        self.assertTrue(any(len(t["rows"]) > 100 for t in found))
+
+    def test_crawl(self):
+        pages = list(wc.crawl("https://quotes.toscrape.com/", max_pages=3, max_depth=1))
+        self.assertEqual(len(pages), 3)
+        self.assertTrue(all(p["extraction"]["content"]["markdown"] for p in pages))
+
+    def test_crawl_with_query(self):
+        pages = list(wc.crawl("https://quotes.toscrape.com/", max_pages=5, query="Albert Einstein"))
+        self.assertEqual(len(pages), 5)
+        self.assertTrue(all(0 <= p["relevance"] <= 1 for p in pages))
+        self.assertTrue(any(p["relevance"] > 0 for p in pages))
+
+    def test_crawl_stops_with_the_loop(self):
+        pages = wc.crawl("https://quotes.toscrape.com/", max_pages=50)
+        self.assertEqual(next(pages)["url"], "https://quotes.toscrape.com/")
+        pages.close()
+
+    @unittest.skipIf(sys.platform == "win32", "uses ps")
+    def test_stopping_a_rendering_crawl_stops_chrome(self):
+        with ChromeWatch() as watch:
+            pages = wc.crawl("https://quotes.toscrape.com/js/", max_pages=30)
+            next(pages)
+            pages.close()
+            time.sleep(0.5)
+        self.assertTrue(watch.chromes)
+        self.assertEqual(watch.left(), set())
+
+    @unittest.skipIf(sys.platform == "win32", "uses SIGALRM")
+    def test_interrupting_a_call_stops_chrome(self):
+        def interrupt(*_):
+            raise KeyboardInterrupt
+
+        old = signal.signal(signal.SIGALRM, interrupt)
+        signal.setitimer(signal.ITIMER_REAL, 4)
+        try:
+            with ChromeWatch() as watch, self.assertRaises(KeyboardInterrupt):
+                wc.scrape("https://httpbin.org/delay/10", render="always", timeout=30)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, old)
+        self.assertTrue(watch.chromes)
+        self.assertEqual(watch.left(), set())
+
+    @unittest.skipIf(sys.platform == "win32", "uses ps")
+    def test_time_limit_stops_chrome(self):
+        with ChromeWatch() as watch, self.assertRaises(TimeoutError):
+            wc.scrape("https://httpbin.org/delay/10", render="always", time_limit=4)
+        self.assertTrue(watch.chromes)
+        self.assertEqual(watch.left(), set())
+
+    def test_crawl_error(self):
+        with self.assertRaises(wc.WebclawError):
+            list(wc.crawl("https://no-such-host.invalid/"))
+
+    def test_map(self):
+        urls = wc.map("https://www.rust-lang.org/", limit=10)
+        self.assertEqual(len(urls), 10)
+        self.assertTrue(all("rust-lang.org/" in u for u in urls))
+
+    def test_render(self):
+        self.assertIn("Albert Einstein", wc.scrape("https://quotes.toscrape.com/js/", render="always"))
+
+    def test_screenshot(self):
+        with tempfile.TemporaryDirectory() as d:
+            png = wc.screenshot("https://example.com/", Path(d) / "shot.png")
+            self.assertEqual(png.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+            jpg = wc.screenshot("https://example.com/", os.path.join(d, "shot.jpg"), full_page=True)
+            self.assertEqual(jpg.read_bytes()[:2], b"\xff\xd8")
+
+
+if __name__ == "__main__":
+    unittest.main()

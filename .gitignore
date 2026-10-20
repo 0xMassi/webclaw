@@ -17,3 +17,8 @@ research-*.json
 # packages/create-webclaw/). They are OAuth/API tokens — never commit them.
 .mcpregistry_*_token
 .lasso/
+
+# Benchmark tool envs, frozen third-party HTML and raw outputs. Never commit the corpus.
+benchmarks/.work/
+
+__pycache__/

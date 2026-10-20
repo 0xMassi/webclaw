@@ -1,8 +1,11 @@
 //! Cloud API fallback client for api.webclaw.io.
 //!
 //! When local fetch hits bot protection or a JS-only SPA, callers can
-//! fall back to the hosted API which runs the full antibot / CDP
-//! pipeline. This module is the shared home for that flow: previously
+//! fall back to the hosted API. A Cloudflare challenge can also be solved
+//! locally, in a browser this crate launches (see
+//! `render::RenderOptions::solve` with the `browser` feature); [`smart_fetch`]
+//! tries that first when the client is set up for it. This module is the
+//! shared home for that flow: previously
 //! duplicated between `webclaw-mcp/src/cloud.rs` and
 //! `webclaw-cli/src/cloud.rs`.
 //!
@@ -16,7 +19,7 @@
 //!   challenge-page signatures) so these live in OSS without leaking
 //!   any moat.
 //! - [`smart_fetch`] — try-local-then-escalate flow returning an
-//!   [`ExtractionResult`] or raw cloud JSON. Kept on the original
+//!   [`webclaw_core::ExtractionResult`] or raw cloud JSON. Kept on the original
 //!   `Result<_, String>` signature so the existing MCP / CLI call
 //!   sites work unchanged.
 //! - [`smart_fetch_html`] — new convenience for the vertical-extractor
@@ -24,7 +27,7 @@
 //!   parser on it. Returns the typed [`CloudError`] so extractors can
 //!   emit precise "upgrade your plan" / "invalid key" messages.
 //!
-//! ## Cloud response shape and [`synthesize_html`]
+//! ## Cloud response shape and `synthesize_html`
 //!
 //! `api.webclaw.io/v1/scrape` deliberately does **not** return a
 //! `html` field even when `formats=["html"]` is requested. By design
@@ -392,137 +395,153 @@ async fn parse_cloud_response(resp: reqwest::Response) -> Result<Value, CloudErr
 // Detection
 // ---------------------------------------------------------------------------
 
-/// True when a fetched response body is actually a bot-protection
-/// challenge page rather than the content the caller asked for.
-///
-/// Conservative — only fires on patterns that indicate the *entire*
-/// page is a challenge, not embedded CAPTCHAs on a real content page.
+/// Apply [`webclaw_core::focus()`] to the text fields of a cloud scrape
+/// response: `markdown`, `llm`, `text` and `plain_text`, at the top level
+/// and under `content`.
+pub fn focus_cloud_response(resp: &mut Value, query: &str) {
+    fn focus_fields(object: &mut Value, query: &str) {
+        for key in ["markdown", "llm", "text", "plain_text"] {
+            if let Some(Value::String(text)) = object.get_mut(key) {
+                *text = webclaw_core::focus(text, query);
+            }
+        }
+    }
+    focus_fields(resp, query);
+    if let Some(content) = resp.get_mut("content") {
+        focus_fields(content, query);
+    }
+}
+
+/// Rewrite the markdown of a hosted API response with numbered link
+/// citations, as [`webclaw_core::to_citations`] does for a local page.
+pub fn cite_cloud_response(resp: &mut Value, page_url: Option<&str>) {
+    if let Some(Value::String(text)) = resp.get_mut("markdown") {
+        *text = webclaw_core::to_citations(text, page_url);
+    }
+    if let Some(Value::String(text)) = resp.get_mut("content").and_then(|c| c.get_mut("markdown")) {
+        *text = webclaw_core::to_citations(text, page_url);
+    }
+}
+
+/// True when a fetched response body is a bot-protection challenge or
+/// block page rather than the content the caller asked for. Conservative:
+/// it fires on patterns that mark the whole page as a challenge, and on a
+/// Turnstile widget only when the page is small.
 pub fn is_bot_protected(html: &str, headers: &HeaderMap) -> bool {
+    blocked(html, headers, true)
+}
+
+fn blocked(html: &str, headers: &HeaderMap, widgets_block: bool) -> bool {
     let html_lower = html.to_lowercase();
-
-    // Cloudflare challenge page. `_cf_chl_opt` is the challenge options blob;
-    // the real interstitial loads
-    // `/cdn-cgi/challenge-platform/h/{b,g}/orchestrate/chl_page/v1?ray=…`.
-    //
-    // The orchestrate script must be matched as ONE contiguous path, and it
-    // has to include the `h/{b,g}` segment. Every looser form flags healthy
-    // pages:
-    //   - `challenge-platform` and `challenge-platform/h/` both match the
-    //     benign JS-detection beacon Cloudflare injects into ordinary 200
-    //     responses, served under `/cdn-cgi/challenge-platform/scripts/jsd/
-    //     main.js` AND `/cdn-cgi/challenge-platform/h/g/scripts/jsd/<hash>/
-    //     main.js`.
-    //   - `/orchestrate/` alone is an ordinary word in API paths — real pages
-    //     on github.com, pypi.org and IBM's watsonx docs all contain it.
-    //   - even `/cdn-cgi/challenge-platform/` AND `/orchestrate/` as separate
-    //     substrings co-occur on a Cloudflare-fronted docs site that links to
-    //     `/docs/orchestrate/…`, which is what a workflow-tool site looks like.
-    // Matching the endpoint name instead (`orchestrate/chl_page`) is too
-    // narrow the other way: `orchestrate/jsch/v1` (JS challenge) and
-    // `orchestrate/managed/v1` (managed challenge) are equally real. Keying
-    // on the `h/{b,g}/orchestrate/` prefix covers every variant while still
-    // rejecting the beacon, which always sits under `/scripts/`.
-    if html_lower.contains("_cf_chl_opt")
-        || html_lower.contains("challenge-platform/h/b/orchestrate/")
-        || html_lower.contains("challenge-platform/h/g/orchestrate/")
-    {
+    if is_cloudflare_challenge(&html_lower, headers) || headers.get("cf-mitigated").is_some() {
         return true;
     }
-
-    // `cf-mitigated` is set only when Cloudflare actually mitigated the
-    // request, so unlike `cf-ray` (present on every proxied response) it is
-    // conclusive on its own. Catches terminal block pages (1020 "Access
-    // denied" / "Sorry, you have been blocked"), which carry neither the
-    // challenge blob nor the orchestrate script.
-    if headers.get("cf-mitigated").is_some() {
-        return true;
-    }
-
-    // Cloudflare "Just a moment" / "Checking your browser" interstitial.
     if (html_lower.contains("just a moment") || html_lower.contains("checking your browser"))
         && html_lower.contains("cf-spinner")
     {
         return true;
     }
-
-    // Cloudflare Turnstile. Only counts when the page is small —
-    // legitimate pages embed Turnstile for signup forms etc.
-    if (html_lower.contains("cf-turnstile")
-        || html_lower.contains("challenges.cloudflare.com/turnstile"))
+    if widgets_block
+        && (html_lower.contains("cf-turnstile")
+            || html_lower.contains("challenges.cloudflare.com/turnstile"))
         && html.len() < 100_000
     {
         return true;
     }
-
-    // DataDome.
     if html_lower.contains("geo.captcha-delivery.com")
         || html_lower.contains("captcha-delivery.com/captcha")
     {
         return true;
     }
-
-    // AWS WAF.
     if html_lower.contains("awswaf-captcha") || html_lower.contains("aws-waf-client-browser") {
         return true;
     }
-
-    // AWS WAF "Verifying your connection" interstitial (used by Trustpilot).
-    // Distinct from the captcha-branded path above: the challenge page is
-    // a tiny HTML shell with an `interstitial-spinner` div and no content.
-    // Gating on html.len() keeps false-positives off long pages that
-    // happen to mention the phrase in an unrelated context.
     if html_lower.contains("interstitial-spinner")
         && html_lower.contains("verifying your connection")
         && html.len() < 10_000
     {
         return true;
     }
-
-    // hCaptcha *blocking* page (not just an embedded widget).
     if html_lower.contains("hcaptcha.com")
         && html_lower.contains("h-captcha")
         && html.len() < 50_000
     {
         return true;
     }
-
-    // Cloudflare via response headers + challenge body.
     let has_cf_headers = headers.get("cf-ray").is_some() || headers.get("cf-mitigated").is_some();
-    if has_cf_headers
+    has_cf_headers
         && (html_lower.contains("just a moment") || html_lower.contains("checking your browser"))
-    {
-        return true;
-    }
-
-    false
 }
 
-/// True when a page likely needs JS rendering — a large HTML document
-/// with almost no extractable text + an SPA framework signature.
+/// Whether a response is a Cloudflare challenge page: its body carries the
+/// challenge options blob (`_cf_chl_opt`) or loads the challenge's
+/// orchestrate script, or Cloudflare marked it with `cf-mitigated:
+/// challenge`. The script path must include its `h/b` or `h/g` segment:
+/// the JS-detection beacon Cloudflare adds to ordinary pages sits under
+/// `challenge-platform/scripts/` or `challenge-platform/h/g/scripts/`, and
+/// `/orchestrate/` alone is a common word in API paths.
+pub fn is_cloudflare_challenge(html: &str, headers: &HeaderMap) -> bool {
+    contains_ignore_case(html, "_cf_chl_opt")
+        || contains_ignore_case(html, "challenge-platform/h/b/orchestrate/")
+        || contains_ignore_case(html, "challenge-platform/h/g/orchestrate/")
+        || headers
+            .get("cf-mitigated")
+            .is_some_and(|value| value == "challenge")
+}
+
+/// Whether a page fetched over HTTP probably needs a browser to show its
+/// content: it loads scripts, and it has almost no text (under 50 extracted
+/// words and under 50 visible words in the whole body, so a thin page with a
+/// full menu is left alone), or little text (under 200 words) next to an
+/// empty app root (`<div id="root"></div>`) or a `<noscript>` asking for
+/// JavaScript. Bundle names alone never count, so server-rendered pages that
+/// also ship scripts are left alone.
 pub fn needs_js_rendering(word_count: usize, html: &str) -> bool {
-    let has_scripts = html.contains("<script");
-
-    // Tier 1: almost no extractable text from a large-ish page.
-    if word_count < 50 && html.len() > 5_000 && has_scripts {
-        return true;
+    if !contains_ignore_case(html, "<script") {
+        return false;
     }
+    (word_count < 50 && webclaw_core::quality::visible_word_count(html) < 50)
+        || (word_count < 200 && (has_empty_app_root(html) || noscript_asks_for_js(html)))
+}
 
-    // Tier 2: SPA framework markers + low content-to-HTML ratio.
-    if word_count < 800 && html.len() > 50_000 && has_scripts {
-        let html_lower = html.to_lowercase();
-        let has_spa_marker = html_lower.contains("react-app")
-            || html_lower.contains("id=\"__next\"")
-            || html_lower.contains("id=\"root\"")
-            || html_lower.contains("id=\"app\"")
-            || html_lower.contains("__next_data__")
-            || html_lower.contains("nuxt")
-            || html_lower.contains("ng-app");
-        if has_spa_marker {
-            return true;
-        }
-    }
+pub(crate) fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+}
 
-    false
+fn has_empty_app_root(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    [
+        "id=\"root\"",
+        "id=\"app\"",
+        "id=\"__next\"",
+        "id=\"__nuxt\"",
+        "id=\"___gatsby\"",
+        "id='root'",
+        "id='app'",
+    ]
+    .iter()
+    .any(|marker| {
+        lower.match_indices(marker).any(|(at, _)| {
+            lower[at..]
+                .split_once('>')
+                .is_some_and(|(_, inner)| inner.trim_start().starts_with("</"))
+        })
+    })
+}
+
+fn noscript_asks_for_js(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    lower.match_indices("<noscript").any(|(at, _)| {
+        let block: String = lower[at..].chars().take(2_000).collect();
+        let block = block.split("</noscript>").next().unwrap_or(&block);
+        block.contains("javascript")
+            && ["enable", "require", "turn on", "need", "must"]
+                .iter()
+                .any(|verb| block.contains(verb))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -553,22 +572,60 @@ pub async fn smart_fetch(
     only_main_content: bool,
     formats: &[&str],
 ) -> Result<SmartFetchResult, String> {
-    let fetch_result = tokio::time::timeout(Duration::from_secs(30), client.fetch(url))
+    let mut fetch_result = tokio::time::timeout(Duration::from_secs(30), client.fetch(url))
         .await
         .map_err(|_| format!("Fetch timed out after 30s for {url}"))?
         .map_err(|e| format!("Fetch failed: {e}"))?;
 
-    if fetch_result.status >= 400 || is_bot_protected(&fetch_result.html, &fetch_result.headers) {
-        info!(url, "bot protection detected, falling back to cloud API");
-        return cloud_scrape_fallback(
-            cloud,
-            url,
-            include_selectors,
-            exclude_selectors,
-            only_main_content,
-            formats,
-        )
-        .await;
+    let mut rendered_already = false;
+    let widgets_block = !client.solves_challenges();
+    let is_blocked = blocked(&fetch_result.html, &fetch_result.headers, widgets_block);
+    if fetch_result.status >= 400 || is_blocked {
+        match client.solve_challenge(&fetch_result).await {
+            Some(Ok(solved))
+                if solved.status < 400
+                    && !is_cloudflare_challenge(&solved.html, &solved.headers) =>
+            {
+                fetch_result = solved;
+                rendered_already = true;
+            }
+            Some(Ok(page)) if cloud.is_none() => {
+                return Err(format!(
+                    "solving the Cloudflare challenge on {url} did not reach the page: it ended on HTTP {}",
+                    page.status
+                ));
+            }
+            Some(Err(e)) if cloud.is_none() => {
+                return Err(format!(
+                    "could not get past the Cloudflare challenge on {url}: {e}"
+                ));
+            }
+            None if cloud.is_none()
+                && is_cloudflare_challenge(&fetch_result.html, &fetch_result.headers) =>
+            {
+                return Err(format!(
+                    "{url} answered with a Cloudflare challenge: pass solve: true to get past it \
+                     in the local browser, or set WEBCLAW_API_KEY for the cloud API"
+                ));
+            }
+            None if cloud.is_none() && !is_blocked => {
+                return Err(
+                    crate::error::FetchError::UpstreamStatus(fetch_result.status).to_string(),
+                );
+            }
+            _ => {
+                info!(url, "bot protection detected, falling back to cloud API");
+                return cloud_scrape_fallback(
+                    cloud,
+                    url,
+                    include_selectors,
+                    exclude_selectors,
+                    only_main_content,
+                    formats,
+                )
+                .await;
+            }
+        }
     }
 
     let options = webclaw_core::ExtractionOptions {
@@ -577,20 +634,37 @@ pub async fn smart_fetch(
         only_main_content,
         include_raw_html: false,
     };
-    let extraction =
+    let mut extraction =
         webclaw_core::extract_with_options(&fetch_result.html, Some(&fetch_result.url), &options)
             .map_err(|e| format!("Extraction failed: {e}"))?;
+    let whole_page =
+        include_selectors.is_empty() && exclude_selectors.is_empty() && !only_main_content;
+    let page_words = if whole_page {
+        extraction.metadata.word_count
+    } else {
+        webclaw_core::extract(&fetch_result.html, Some(&fetch_result.url))
+            .map_or(0, |e| e.metadata.word_count)
+    };
+    if !rendered_already
+        && let Some(rendered) = client.render_if_needed(&fetch_result, page_words).await
+        && let Ok(better) =
+            webclaw_core::extract_with_options(&rendered.html, Some(&rendered.url), &options)
+        && better.metadata.word_count > extraction.metadata.word_count
+    {
+        extraction = better;
+        fetch_result = rendered;
+    }
 
     let issue = webclaw_core::quality::content_issue(&extraction).filter(|issue| {
         *issue != webclaw_core::quality::ContentIssue::Empty
             || !webclaw_core::quality::allows_empty_content(&fetch_result.html, &options)
     });
-    if issue.is_some()
-        || (include_selectors.is_empty()
-            && exclude_selectors.is_empty()
-            && !only_main_content
-            && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html))
-    {
+    let looks_unrendered =
+        whole_page && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html);
+    if issue.is_none() && looks_unrendered && cloud.is_none() {
+        return Ok(SmartFetchResult::Local(Box::new(extraction)));
+    }
+    if issue.is_some() || looks_unrendered {
         info!(
             url,
             word_count = extraction.metadata.word_count,
@@ -899,6 +973,372 @@ mod tests {
             "<script>x</script>".repeat(500)
         );
         assert!(needs_js_rendering(10, &html));
+    }
+
+    #[test]
+    fn needs_js_rendering_flags_small_app_shells() {
+        let todo = r#"<html><head><title>TodoMVC</title></head><body><section class="todoapp"></section><script src="app.js"></script></body></html>"#;
+        assert!(needs_js_rendering(0, todo));
+        let noscript = format!(
+            "<html><body><noscript>You need to enable JavaScript to run this app.</noscript><p>{}</p><script src=\"/main.js\"></script></body></html>",
+            "Menu item ".repeat(60)
+        );
+        assert!(needs_js_rendering(120, &noscript));
+        let accented = format!(
+            "<html><body><noscript>{} Please enable JavaScript.</noscript><p>{}</p><script></script></body></html>",
+            "è".repeat(1_500),
+            "parola ".repeat(80)
+        );
+        assert!(needs_js_rendering(80, &accented));
+    }
+
+    #[test]
+    fn cloud_responses_are_focused_too() {
+        let page = "# Rust\n\n## Tooling\n\nCargo builds it.\n\n## History\n\nGraydon began it.";
+        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "url": "https://x"});
+        focus_cloud_response(&mut resp, "tooling");
+        for text in [&resp["markdown"], &resp["content"]["markdown"]] {
+            let text = text.as_str().unwrap();
+            assert!(
+                text.contains("Cargo") && !text.contains("Graydon"),
+                "{text}"
+            );
+        }
+        assert_eq!(resp["url"], "https://x");
+    }
+
+    #[test]
+    fn cloud_responses_are_cited_too() {
+        let page = "See [docs](https://d.com).";
+        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "url": "https://x"});
+        cite_cloud_response(&mut resp, Some("https://x"));
+        for text in [&resp["markdown"], &resp["content"]["markdown"]] {
+            assert_eq!(
+                text.as_str().unwrap(),
+                "See docs[^1].\n\n## Links\n\n[^1]: https://d.com"
+            );
+        }
+        assert_eq!(resp["url"], "https://x");
+    }
+
+    struct StaticPage(&'static str);
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for StaticPage {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            Ok(crate::client::FetchResult {
+                html: self.0.to_string(),
+                document_bytes: None,
+                status: 200,
+                url: url.to_string(),
+                headers: http::HeaderMap::new(),
+                elapsed: std::time::Duration::ZERO,
+            })
+        }
+    }
+
+    struct ScriptBuiltPage;
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for ScriptBuiltPage {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            StaticPage("<html><body><h1>Search</h1><div id=\"results\"></div><script src=\"/app.js\"></script></body></html>").fetch(url).await
+        }
+
+        async fn render_if_needed(
+            &self,
+            fetched: &crate::client::FetchResult,
+            _http_words: usize,
+        ) -> Option<crate::client::FetchResult> {
+            StaticPage("<html><body><h1>Search</h1><div id=\"results\"><p>First result about rendering pages that build their content with scripts.</p></div></body></html>").fetch(&fetched.url).await.ok()
+        }
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_renders_when_selectors_filter_the_page() {
+        let result = smart_fetch(
+            &ScriptBuiltPage,
+            None,
+            "https://example.com/search",
+            &["#results".to_string()],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .expect("local extraction should be returned");
+        assert!(
+            matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("First result"))
+        );
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_keeps_local_content_without_a_cloud_key() {
+        let page = StaticPage(
+            "<html><body><noscript>Please enable JavaScript.</noscript><main><h1>Plans</h1><p>Starter costs ten dollars a month and includes five projects with unlimited members and email support for every workspace on the plan.</p></main><script src=\"/app.js\"></script></body></html>",
+        );
+        let result = smart_fetch(
+            &page,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .expect("local extraction should be returned");
+        assert!(
+            matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("Starter costs"))
+        );
+    }
+
+    struct BlockedPage(&'static str);
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for BlockedPage {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            let mut page = StaticPage(self.0).fetch(url).await?;
+            page.status = 403;
+            Ok(page)
+        }
+
+        async fn solve_challenge(
+            &self,
+            fetched: &crate::client::FetchResult,
+        ) -> Option<Result<crate::client::FetchResult, crate::error::FetchError>> {
+            if !is_cloudflare_challenge(&fetched.html, &fetched.headers) {
+                return None;
+            }
+            Some(StaticPage("<html><body><main><h1>Prices</h1><p>The solved page lists every plan with its monthly price, the projects it includes and the support that comes with it.</p></main></body></html>").fetch(&fetched.url).await)
+        }
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_reads_the_page_behind_a_solved_challenge() {
+        let challenge = BlockedPage(
+            "<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt = {cType: 'managed'};</script></body></html>",
+        );
+        let result = smart_fetch(
+            &challenge,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .expect("the solved page is extracted");
+        assert!(
+            matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("monthly price"))
+        );
+        let other = BlockedPage(
+            "<html><body><script src=\"https://geo.captcha-delivery.com/captcha/\"></script></body></html>",
+        );
+        let blocked = smart_fetch(
+            &other,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await;
+        assert!(blocked.is_err());
+    }
+
+    const SIGNUP: &str = r#"<html><body><main><h1>Sign up</h1><p>Create an account to follow every plan, compare monthly prices and get support for all your projects.</p></main><div class="cf-turnstile"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body></html>"#;
+
+    const SIGNUP_BEHIND_DATADOME: &str = r#"<html><body><main><h1>Sign up</h1><p>Create an account to follow every plan, compare monthly prices and get support for all your projects.</p></main><div class="cf-turnstile"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script><script src="https://geo.captcha-delivery.com/captcha/"></script></body></html>"#;
+
+    struct WidgetPage {
+        solves: bool,
+        html: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for WidgetPage {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            StaticPage(self.html).fetch(url).await
+        }
+
+        fn solves_challenges(&self) -> bool {
+            self.solves
+        }
+    }
+
+    #[tokio::test]
+    async fn a_turnstile_widget_is_content_when_the_fetcher_solves() {
+        let run = |solves, html| async move {
+            smart_fetch(
+                &WidgetPage { solves, html },
+                None,
+                "https://example.com/signup",
+                &[],
+                &[],
+                false,
+                &["markdown"],
+            )
+            .await
+        };
+        assert!(
+            matches!(run(true, SIGNUP).await, Ok(SmartFetchResult::Local(e)) if e.content.markdown.contains("Create an account"))
+        );
+        assert!(run(false, SIGNUP).await.is_err());
+        assert!(run(true, SIGNUP_BEHIND_DATADOME).await.is_err());
+    }
+
+    struct StuckChallenge;
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for StuckChallenge {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            let mut page = StaticPage(
+                "<html><body><script>window._cf_chl_opt = {cType: 'managed'};</script></body></html>",
+            )
+            .fetch(url)
+            .await?;
+            page.status = 403;
+            Ok(page)
+        }
+
+        async fn solve_challenge(
+            &self,
+            fetched: &crate::client::FetchResult,
+        ) -> Option<Result<crate::client::FetchResult, crate::error::FetchError>> {
+            Some(Ok(fetched.clone()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_solve_that_ends_on_an_error_page_says_so() {
+        let error = smart_fetch(
+            &StuckChallenge,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .err()
+        .expect("the page is never reached");
+        assert!(
+            error.contains("did not reach the page") && error.contains("403"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_error_page_without_a_cloud_key_reports_its_status() {
+        let missing = BlockedPage("<html><body><h1>Not found</h1></body></html>");
+        let error = smart_fetch(
+            &missing,
+            None,
+            "https://example.com/nope",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .err()
+        .expect("an error page is not content");
+        assert!(
+            error.contains("HTTP 403") && !error.contains("antibot"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_challenge_without_solving_says_how_to_solve_it() {
+        let challenge = StaticPage(
+            "<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt = {cType: 'managed'};</script></body></html>",
+        );
+        let error = smart_fetch(
+            &challenge,
+            None,
+            "https://example.com/",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .err()
+        .expect("a challenge cannot be read");
+        assert!(error.contains("solve: true"), "{error}");
+    }
+
+    #[test]
+    fn cloudflare_challenges_are_told_from_other_blocks() {
+        let mut headers = HeaderMap::new();
+        assert!(is_cloudflare_challenge(
+            "<script>window._cf_chl_opt = {}</script>",
+            &headers
+        ));
+        assert!(!is_cloudflare_challenge(
+            r#"<script src="/cdn-cgi/challenge-platform/h/g/scripts/jsd/e4025c85ea63/main.js"></script>"#,
+            &headers
+        ));
+        headers.insert("cf-mitigated", "block".parse().unwrap());
+        assert!(!is_cloudflare_challenge("<html></html>", &headers));
+        headers.insert("cf-mitigated", "challenge".parse().unwrap());
+        assert!(is_cloudflare_challenge("<html></html>", &headers));
+    }
+
+    #[test]
+    fn needs_js_rendering_ignores_a_thin_page_with_a_full_menu() {
+        let thin = format!(
+            "<html><body><nav>{}</nav><p>One book in stock.</p><script src=\"/jquery.js\"></script></body></html>",
+            "<a href=\"/c\">Category</a> ".repeat(60)
+        );
+        assert!(!needs_js_rendering(4, &thin));
+    }
+
+    #[test]
+    fn needs_js_rendering_ignores_a_populated_app_root() {
+        let ssr = format!(
+            "<html><body><div id=\"app\"><main><h1>Docs</h1><p>{}</p></main></div><script src=\"/app.js\"></script></body></html>",
+            "short server rendered text ".repeat(30)
+        );
+        assert!(!needs_js_rendering(120, &ssr));
+        let empty = format!(
+            "<html><body><nav>{}</nav><div id=\"app\">\n  </div><script src=\"/app.js\"></script></body></html>",
+            "menu ".repeat(120)
+        );
+        assert!(needs_js_rendering(120, &empty));
+    }
+
+    #[test]
+    fn needs_js_rendering_leaves_server_rendered_pages_alone() {
+        let ssr = format!(
+            "<html><body><div id=\"__next\"><article>{}</article></div><script id=\"__NEXT_DATA__\">{{}}</script></body></html>",
+            "Server rendered text ".repeat(150)
+        );
+        assert!(!needs_js_rendering(450, &ssr));
+        assert!(!needs_js_rendering(
+            5,
+            "<html><body><p>Tiny static page.</p></body></html>"
+        ));
     }
 
     #[test]

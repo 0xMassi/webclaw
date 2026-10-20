@@ -1,4 +1,6 @@
 pub mod brand;
+pub mod chunk;
+pub mod citations;
 pub(crate) mod data_island;
 /// webclaw-core: Pure HTML content extraction engine for LLMs.
 ///
@@ -10,6 +12,8 @@ pub mod domain;
 pub mod endpoints;
 pub mod error;
 pub mod extractor;
+pub mod find;
+pub mod focus;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
 pub mod js_eval;
 pub mod llm;
@@ -18,18 +22,30 @@ pub mod metadata;
 pub(crate) mod noise;
 pub mod quality;
 pub mod reddit;
+pub mod select;
 pub mod structured_data;
+pub mod tables;
 pub mod types;
+pub mod xpath;
 pub mod youtube;
 
 pub use brand::BrandIdentity;
+pub use chunk::{Chunk, chunk};
+pub use citations::{to_citations, to_citations_after};
 pub use diff::{ChangeStatus, ContentDiff, MetadataChange};
 pub use domain::DomainType;
 pub use error::ExtractError;
+pub use find::{
+    FindError, FindExample, FoundElement, SimilarSet, TextMatch, find_similar, find_text,
+};
+pub use focus::{PageWords, Question, Relevance, focus, focus_extraction};
 pub use llm::to_llm_text;
+pub use select::{SelectError, select, select_records};
+pub use tables::{Table, tables};
 pub use types::{
     CodeBlock, Content, DomainData, ExtractionOptions, ExtractionResult, Image, Link, Metadata,
 };
+pub use xpath::{select_xpath, select_xpath_records};
 
 use scraper::Html;
 use url::Url;
@@ -161,7 +177,8 @@ fn extract_with_options_inner(
         });
     }
 
-    let doc = Html::parse_document(html);
+    let mut doc = Html::parse_document(html);
+    noise::strip_hidden(&mut doc);
 
     let base_url = url
         .map(|u| Url::parse(u).map_err(|_| ExtractError::InvalidUrl(u.to_string())))
@@ -250,9 +267,246 @@ fn extract_with_options_inner(
     })
 }
 
+/// Every link a reader can follow on the page, for crawlers: `<a href>`
+/// targets resolved against `base_url`, http(s) only, fragments removed,
+/// deduplicated, in document order. Links inside elements a browser does not
+/// render (`hidden`, `display:none`, `<template>`) are left out.
+pub fn page_links(html: &str, base_url: &str) -> Vec<String> {
+    let Ok(base) = Url::parse(base_url) else {
+        return Vec::new();
+    };
+    let mut doc = Html::parse_document(html);
+    noise::strip_hidden(&mut doc);
+    let mut seen = std::collections::HashSet::new();
+    doc.select(&ANCHORS)
+        .filter_map(|a| a.value().attr("href"))
+        .filter_map(|href| base.join(href.trim()).ok())
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .filter_map(|mut u| {
+            u.set_fragment(None);
+            let link = u.to_string();
+            seen.insert(link.clone()).then_some(link)
+        })
+        .collect()
+}
+
+static ANCHORS: std::sync::LazyLock<scraper::Selector> =
+    std::sync::LazyLock::new(|| scraper::Selector::parse("a[href]").unwrap());
+
+/// A link on a page with the words a reader sees on and around it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Anchor {
+    /// Absolute target without its fragment.
+    pub href: String,
+    /// The link text.
+    pub text: String,
+    /// The start of the paragraph, list item, table cell or heading that
+    /// holds the link.
+    pub context: String,
+}
+
+const ANCHOR_CONTEXT_CHARS: usize = 300;
+const ANCHOR_CONTEXT_LINKS: usize = 10_000;
+
+/// The links [`page_links`] would take, each with its text and surrounding
+/// words: one entry per distinct target, text and context, so a target
+/// linked from several places can come more than once. Past the first
+/// 10,000 `<a href>` of a page, each new target comes once, without text or
+/// context.
+pub fn page_anchors(html: &str, base_url: &str) -> Vec<Anchor> {
+    const BLOCKS: &[&str] = &[
+        "p",
+        "li",
+        "td",
+        "th",
+        "dd",
+        "dt",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "blockquote",
+        "figcaption",
+        "caption",
+        "summary",
+    ];
+    let Ok(base) = Url::parse(base_url) else {
+        return Vec::new();
+    };
+    let mut doc = Html::parse_document(html);
+    noise::strip_hidden(&mut doc);
+    let mut anchors = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut targets = std::collections::HashSet::new();
+    for (n, a) in doc.select(&ANCHORS).enumerate() {
+        let Some(mut url) = a
+            .value()
+            .attr("href")
+            .and_then(|href| base.join(href.trim()).ok())
+        else {
+            continue;
+        };
+        if !matches!(url.scheme(), "http" | "https") {
+            continue;
+        }
+        url.set_fragment(None);
+        let href = url.to_string();
+        if n >= ANCHOR_CONTEXT_LINKS {
+            if targets.insert(href.clone()) {
+                anchors.push(Anchor {
+                    href,
+                    ..Default::default()
+                });
+            }
+            continue;
+        }
+        targets.insert(href.clone());
+        let anchor = Anchor {
+            href,
+            text: squash(a.text()),
+            context: a
+                .ancestors()
+                .filter_map(scraper::ElementRef::wrap)
+                .find(|e| BLOCKS.contains(&e.value().name()))
+                .map(|e| {
+                    let mut words = String::new();
+                    block_words(*e, &mut words);
+                    words.trim_end().to_string()
+                })
+                .unwrap_or_default(),
+        };
+        if seen.insert(anchor.clone()) {
+            anchors.push(anchor);
+        }
+    }
+    anchors
+}
+
+fn block_words(node: ego_tree::NodeRef<'_, scraper::Node>, out: &mut String) {
+    for child in node.children() {
+        match child.value() {
+            _ if out.len() >= ANCHOR_CONTEXT_CHARS => return,
+            scraper::Node::Text(text) => push_words(out, text),
+            scraper::Node::Element(e) if matches!(e.name(), "ul" | "ol" | "dl" | "table") => {}
+            _ => block_words(child, out),
+        }
+    }
+}
+
+fn squash<'a>(text: impl Iterator<Item = &'a str>) -> String {
+    let mut out = String::new();
+    for piece in text {
+        push_words(&mut out, piece);
+    }
+    out.trim_end().to_string()
+}
+
+fn push_words(out: &mut String, text: &str) {
+    if text.starts_with(char::is_whitespace) && !out.is_empty() && !out.ends_with(' ') {
+        out.push(' ');
+    }
+    for (i, word) in text.split_whitespace().enumerate() {
+        if out.len() >= ANCHOR_CONTEXT_CHARS {
+            return;
+        }
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    if text.ends_with(char::is_whitespace) && !out.is_empty() && !out.ends_with(' ') {
+        out.push(' ');
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_links_takes_every_visible_anchor() {
+        let html = r##"<html><body><nav><a href="/login">Log in</a></nav>
+            <main><a href="docs/intro#top">Intro</a><a href="/login">Again</a>
+            <a href="mailto:a@b.c">Mail</a><a href="javascript:void(0)">JS</a>
+            <a href="https://other.test/x">Other</a></main>
+            <div style="display:none"><a href="/trap">Trap</a></div></body></html>"##;
+        assert_eq!(
+            page_links(html, "https://example.com/start/"),
+            vec![
+                "https://example.com/login",
+                "https://example.com/start/docs/intro",
+                "https://other.test/x",
+            ]
+        );
+    }
+
+    #[test]
+    fn page_anchors_carry_text_and_the_block_around_each_link() {
+        let html = r##"<html><body><nav><ul><li><a href="/tutorial/">Tutorial</a></li></ul></nav>
+            <main><p>Sorting is covered in the <a href="/howto/sorting.html#key">sorting guide</a>.</p>
+            <p>See also <a href="/tutorial/">the tutorial</a>.</p></main></body></html>"##;
+        let anchors = page_anchors(html, "https://example.com/");
+        let seen: Vec<(&str, &str, &str)> = anchors
+            .iter()
+            .map(|a| (a.href.as_str(), a.text.as_str(), a.context.as_str()))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("https://example.com/tutorial/", "Tutorial", "Tutorial"),
+                (
+                    "https://example.com/howto/sorting.html",
+                    "sorting guide",
+                    "Sorting is covered in the sorting guide."
+                ),
+                (
+                    "https://example.com/tutorial/",
+                    "the tutorial",
+                    "See also the tutorial."
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn repeated_identical_links_come_once() {
+        let html = format!("<p>{}</p>", "<a href='/x'>x</a>".repeat(20_000));
+        assert_eq!(page_anchors(&html, "https://example.com/").len(), 1);
+    }
+
+    #[test]
+    fn links_past_the_cap_keep_their_target_without_context() {
+        let links: String = (0..ANCHOR_CONTEXT_LINKS + 5)
+            .map(|k| format!("<li><a href='/p{k}'>Page {k}</a></li>"))
+            .collect();
+        let anchors = page_anchors(&format!("<ul>{links}</ul>"), "https://example.com/");
+        assert_eq!(anchors.len(), ANCHOR_CONTEXT_LINKS + 5);
+        assert_eq!(anchors[0].context, "Page 0");
+        let last = &anchors[ANCHOR_CONTEXT_LINKS + 4];
+        assert_eq!(
+            last.href,
+            format!("https://example.com/p{}", ANCHOR_CONTEXT_LINKS + 4)
+        );
+        assert!(last.text.is_empty() && last.context.is_empty());
+    }
+
+    #[test]
+    fn anchor_context_leaves_out_nested_lists() {
+        let html = "<ul><li><a href='/howto/'>HOWTOs</a> for common tasks<ul><li><a href='/howto/sorting'>Sorting</a></li></ul></li></ul>";
+        let anchors = page_anchors(html, "https://example.com/");
+        assert_eq!(anchors[0].context, "HOWTOs for common tasks");
+        assert_eq!(anchors[1].context, "Sorting");
+    }
+
+    #[test]
+    fn anchor_context_stops_near_its_cap() {
+        let long = "word ".repeat(400);
+        let html = format!("<p><a href='/a'>A</a> {long}</p>");
+        let anchors = page_anchors(&html, "https://example.com/");
+        assert!(anchors[0].context.len() < ANCHOR_CONTEXT_CHARS + 10);
+    }
 
     #[test]
     fn full_extraction_pipeline() {

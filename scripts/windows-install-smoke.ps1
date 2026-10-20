@@ -11,5 +11,5 @@ $fixture = Join-Path $env:RUNNER_TEMP 'webclaw-install-fixture.html'
 $result = & $Binary --file $fixture --format json | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0 -or $result.content.markdown -notmatch 'Windows installation check') { throw 'Local extraction failed' }
 $remote = & $Binary https://example.com --format json | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or $remote.content.markdown -notmatch 'Example Domain') { throw 'HTTPS extraction failed' }
+if ($LASTEXITCODE -ne 0 -or $remote.metadata.title -notmatch 'Example Domain') { throw 'HTTPS extraction failed' }
 Write-Output 'PASS: version, local HTML extraction, and HTTPS extraction'

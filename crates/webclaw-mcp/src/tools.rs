@@ -85,6 +85,40 @@ where
     }
 }
 
+fn actions_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let selector = schemars::json_schema!({"type": "string", "description": "CSS selector"});
+    let count = schemars::json_schema!({"type": "integer", "minimum": 0});
+    let step = |name: &str, required: &[&str], properties: serde_json::Value| {
+        let mut properties = properties;
+        properties["type"] = serde_json::json!({"const": name});
+        let required = [["type"].as_slice(), required].concat();
+        serde_json::json!({
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false
+        })
+    };
+    schemars::json_schema!({
+        "type": "array",
+        "items": {"oneOf": [
+            step("click", &["selector"], serde_json::json!({
+                "selector": selector, "nth": count, "all": {"type": "boolean"}, "repeat": count})),
+            step("type", &["selector", "value"], serde_json::json!({
+                "selector": selector, "value": {"type": "string"}})),
+            step("press", &["key"], serde_json::json!({
+                "key": {"type": "string", "description": "Enter, Tab, ArrowDown, ..."}})),
+            step("scroll", &[], serde_json::json!({
+                "direction": {"enum": ["down", "up"]}, "amount": count,
+                "selector": selector, "repeat": count})),
+            step("wait", &["milliseconds"], serde_json::json!({"milliseconds": count})),
+            step("waitForSelector", &["selector"], serde_json::json!({
+                "selector": selector, "timeout": count})),
+            step("executeJavascript", &["code"], serde_json::json!({"code": {"type": "string"}})),
+        ]}
+    })
+}
+
 // ── Parameter structs ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -100,10 +134,89 @@ pub struct ScrapeParams {
     /// If true, extract only the main content (article/main element)
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub only_main_content: Option<bool>,
-    /// Browser profile: "chrome" (default), "firefox", or "random"
+    /// Browser profile: "chrome" (default), "chrome-macos", "firefox", "safari", "safari-ios", "edge", or "random"
     pub browser: Option<String>,
-    /// Cookies to send with the request (e.g. ["name=value", "session=abc123"])
+    /// Cookies to send with the request (e.g. ["name=value", "session=abc123"]). When the server keeps a browser profile (WEBCLAW_BROWSER_PROFILE), they are saved in it for this URL and sent on later calls too
     pub cookies: Option<Vec<String>>,
+    /// JavaScript rendering in a local Chrome: "auto" (default) renders pages whose content needs it, "always" renders every page that runs scripts, "never" skips it
+    pub render: Option<String>,
+    /// When rendering, also wait until an element matching this CSS selector exists
+    pub wait_for: Option<String>,
+    /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none"
+    pub block: Option<String>,
+    /// Get past a Cloudflare challenge page in the local Chrome: wait for it to clear or click its checkbox, then read the page it leads to. A Turnstile checkbox in any page that gets rendered is clicked too
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub solve: Option<bool>,
+    /// A question: keep only the parts of the page that answer it, under their headings
+    pub query: Option<String>,
+    /// Return the page as a JSON array of chunks for retrieval instead, each under about this many tokens, with url, index, heading_path, tokens and markdown text. Paragraphs, lists, tables and code blocks stay whole
+    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    pub chunk: Option<usize>,
+    /// With `chunk`, start each chunk with up to this many tokens from the end of the one before (at most half the chunk size)
+    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    pub chunk_overlap: Option<usize>,
+    /// Move link and image URLs out of the markdown into a numbered Links list at the end: `[text](url)` becomes `text[^1]` and a URL used twice keeps one number. Works with the markdown format and the markdown inside "json", not with chunk
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub citations: Option<bool>,
+    /// Steps to run in the local browser once the page has loaded, before it is read. The page is always rendered when this is set. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error
+    #[schemars(schema_with = "actions_schema")]
+    pub actions: Option<Vec<serde_json::Value>>,
+    /// Render the page and also return the responses it loaded whose URL matches this regular expression, "" for all: url, method, status, resource_type, mime_type, request_headers and the body of text responses (at most 100 responses, each body cut to 100 KB and all bodies together to 1 MB). Single-page apps load their data as JSON this way, often cleaner than the page. Runs after `actions`, so it also catches what they trigger
+    pub capture_network: Option<String>,
+    /// With `capture_network`, the resource types to keep: a comma list such as "xhr,fetch" (the default), "document", "script", or "all"
+    pub capture_types: Option<String>,
+    /// With `capture_network`, also keep request headers that carry credentials, such as Authorization or API keys (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub capture_credentials: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SelectParams {
+    /// URL to read
+    pub url: String,
+    /// CSS selector, optionally ending in "::text" (default), "::attr(NAME)" or "::html", e.g. "h3 a::attr(href)". Give exactly one of `selector`, `xpath`, `tables`, `text` and `regex`
+    pub selector: Option<String>,
+    /// XPath 1.0 expression instead of a CSS selector, e.g. "//h3/a/@title". Elements and text give their text, attributes their value
+    pub xpath: Option<String>,
+    /// Find the deepest elements whose visible text contains this, any case. Returns [{"selector", "text"}], each selector picking its element alone
+    pub text: Option<String>,
+    /// Like `text` with a regular expression, e.g. "^£\d+\.\d\d$"
+    pub regex: Option<String>,
+    /// With `text`, match the whole text instead of a part (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub exact: Option<bool>,
+    /// With `text` or `regex`, match letter case (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub case_sensitive: Option<bool>,
+    /// Use the first element `selector`, `xpath`, `text` or `regex` picks as an example and return every element like it with one CSS selector that picks them all: {"selector", "matches"}, or with `fields` {"selector", "records"} (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub similar: Option<bool>,
+    /// Return one object per match instead: field name to a selector run inside that match, e.g. {"title": "h3 a::attr(title)", "price": ".price_color"}, or with `xpath` an expression relative to the match, e.g. {"title": ".//h3/a/@title"}. With `similar` the fields are CSS
+    pub fields: Option<std::collections::BTreeMap<String, String>>,
+    /// Return the page's data tables instead, each as {"caption", "headers", "rows"} with rows of cell text; layout tables are skipped
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub tables: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScreenshotParams {
+    /// URL to capture
+    pub url: String,
+    /// For images, capture the whole scrollable page instead of the 1280x720 viewport (default: false). A PDF or MHTML file always holds the whole page
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub full_page: Option<bool>,
+    /// "png" (default) or "jpeg", which is smaller, for an image, "pdf" to print the whole page to a PDF instead, or "mhtml" to save it as one MHTML file with its images and styles, which a browser opens offline
+    pub format: Option<String>,
+    /// With format "pdf": "letter" (default) or "a4"
+    pub paper: Option<String>,
+    /// With format "pdf": keep background colors and images, which browsers leave out when printing (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub print_background: Option<bool>,
+    /// Also wait until an element matching this CSS selector exists before capturing
+    pub wait_for: Option<String>,
+    /// Steps to run in the local browser once the page has loaded, before it is captured. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error
+    #[schemars(schema_with = "actions_schema")]
+    pub actions: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -122,14 +235,40 @@ pub struct CrawlParams {
     /// Seed the frontier from sitemap discovery before crawling
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub use_sitemap: Option<bool>,
+    /// Crawl URLs that robots.txt disallows (default: false)
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub ignore_robots: Option<bool>,
     /// Output format for each page: "markdown" (default), "llm", "text"
     pub format: Option<String>,
+    /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none"
+    pub block: Option<String>,
+    /// A question, up to 1000 characters: follow the links most likely to answer it first, keep only the parts of each page that answer it, and list pages best match first
+    pub query: Option<String>,
+    /// With `query`, stop once a page rated at least 0.8 has been found and the next 8 pages rated no higher, instead of always crawling up to max_pages
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub stop_when_answered: Option<bool>,
+    /// Return chunks for retrieval instead: one JSON object with the crawl counts (total, ok, errors, skipped_by_robots), the failed pages with their error, and the chunks of every page, each under about this many tokens with its page url, index, heading_path, tokens and markdown text
+    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    pub chunk: Option<usize>,
+    /// With `chunk`, start each chunk with up to this many tokens from the end of the one before (at most half the chunk size)
+    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    pub chunk_overlap: Option<usize>,
+    /// Move link and image URLs out of the markdown into a numbered Links list at the end: `[text](url)` becomes `text[^1]` and a URL used twice keeps one number. Works with the markdown format, not with chunk
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub citations: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MapParams {
     /// Base URL to discover sitemaps from (e.g. `<https://example.com>`)
     pub url: String,
+    /// Where to look, comma-separated: "sitemap" (default, plus a short crawl of the site when the sitemaps list fewer than 200 URLs) and "cc", the public Common Crawl index of the HTML pages it captured on the site, e.g. "sitemap,cc". The index is often slow: a lookup takes 10 to 60 seconds and gives up after 2 minutes, keeping the URLs read until then
+    pub source: Option<String>,
+    /// Return at most this many URLs
+    #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
+    pub limit: Option<usize>,
+    /// A question, up to 1000 characters: list URLs best match first by the words in their paths
+    pub query: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -141,6 +280,9 @@ pub struct BatchParams {
     /// Number of concurrent requests (default: 5)
     #[serde(default, deserialize_with = "deser_opt_usize_or_str")]
     pub concurrency: Option<usize>,
+    /// Move link and image URLs out of the markdown into a numbered Links list after each page: `[text](url)` becomes `text[^1]` and a URL used twice on a page keeps one number. Numbers keep counting from page to page. Works with the markdown format
+    #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
+    pub citations: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -226,6 +368,60 @@ pub struct ListExtractorsParams {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crawl_scrape_and_batch_take_citations() {
+        for schema in [
+            serde_json::to_value(schemars::schema_for!(ScrapeParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(CrawlParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(BatchParams)).unwrap(),
+        ] {
+            assert!(schema["properties"]["citations"].is_object(), "{schema}");
+        }
+    }
+
+    #[test]
+    fn actions_publish_a_schema_for_every_step() {
+        for schema in [
+            serde_json::to_value(schemars::schema_for!(ScrapeParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(ScreenshotParams)).unwrap(),
+        ] {
+            let steps = schema["properties"]["actions"]["items"]["oneOf"]
+                .as_array()
+                .expect("one schema per step")
+                .iter()
+                .map(|s| {
+                    s["properties"]["type"]["const"]
+                        .as_str()
+                        .unwrap()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                steps,
+                [
+                    "click",
+                    "type",
+                    "press",
+                    "scroll",
+                    "wait",
+                    "waitForSelector",
+                    "executeJavascript"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_sizes_accept_numbers_and_numeric_strings() {
+        let v: ScrapeParams =
+            serde_json::from_str(r#"{"url":"https://x.com","chunk":"256","chunk_overlap":32}"#)
+                .unwrap();
+        assert_eq!((v.chunk, v.chunk_overlap), (Some(256), Some(32)));
+        let v: CrawlParams =
+            serde_json::from_str(r#"{"url":"https://x.com","chunk":512}"#).unwrap();
+        assert_eq!((v.chunk, v.chunk_overlap), (Some(512), None));
+    }
 
     // ── CrawlParams.depth (u32) ──────────────────────────────────────────────
 

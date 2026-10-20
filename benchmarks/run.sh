@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# Reproduce the webclaw benchmark.
-# Requires: python3, tiktoken, trafilatura. Optional: firecrawl-py + FIRECRAWL_API_KEY.
-
+# usage: ./run.sh [label] [bins-dir] [url-runs]
 set -euo pipefail
+[ -f "${2:-}" ] && set -- "$1" "$(dirname "$2")" "${@:3}"
+[ -n "${2:-}" ] && set -- "$1" "$(cd "$2" && pwd)" "${@:3}"
 cd "$(dirname "$0")"
 
-# Build webclaw if not present
-if [ ! -x "../target/release/webclaw" ]; then
-    echo "→ building webclaw..."
-    (cd .. && cargo build --release)
-fi
+label=${1:-$(date +%F)}
+bin=${2:-../target/release}/webclaw
+runs=${3:-3}
+unset WEBCLAW_API_KEY
 
-# Install python deps if missing
-missing=""
-python3 -c "import tiktoken"     2>/dev/null || missing+=" tiktoken"
-python3 -c "import trafilatura"  2>/dev/null || missing+=" trafilatura"
-if [ -n "${FIRECRAWL_API_KEY:-}" ]; then
-    python3 -c "import firecrawl" 2>/dev/null || missing+=" firecrawl-py"
+command -v uv >/dev/null || { echo "needs uv: https://docs.astral.sh/uv/getting-started/installation/" >&2; exit 1; }
+if [ "$bin" = ../target/release/webclaw ]; then
+  (cd .. && cargo build --release -p webclaw-cli --features browser)
 fi
-if [ -n "$missing" ]; then
-    echo "→ installing python deps:$missing"
-    python3 -m pip install --quiet $missing
-fi
+[ -x "$bin" ] || { echo "no webclaw binary at $bin" >&2; exit 1; }
+export WEBCLAW_BIN=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 
-# Run
-python3 scripts/bench.py
+source ./envs.sh
+
+.work/venv-base/bin/python scripts/run.py prepare
+rm -rf "results/$label/rows.jsonl" ".work/out/$label"
+.work/venv-base/bin/python scripts/run.py run "$label" "$runs"
+for v in base scrapling crawl4ai; do uv pip list -p ".work/venv-$v" 2>/dev/null; done \
+  | grep -iE '^(trafilatura|tiktoken|scrapling|curl.cffi|markdownify|crawl4ai|playwright) ' | awk '{print $1, $2}' | sort -u > "results/$label/versions.txt"
+.work/venv-base/bin/python scripts/run.py summary "$label"

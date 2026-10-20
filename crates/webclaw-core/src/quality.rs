@@ -26,6 +26,31 @@ impl ContentIssue {
     }
 }
 
+/// Words of text a browser would show in the page body before any script
+/// runs: text inside `script`, `style`, `noscript`, `template` and `svg`
+/// does not count.
+pub fn visible_word_count(html: &str) -> usize {
+    const HIDDEN: [&str; 5] = ["script", "style", "noscript", "template", "svg"];
+    let document = scraper::Html::parse_document(html);
+    let Some(body) = document
+        .select(&scraper::Selector::parse("body").expect("valid selector"))
+        .next()
+    else {
+        return 0;
+    };
+    body.descendants()
+        .filter_map(|node| node.value().as_text().map(|text| (node, text)))
+        .filter(|(node, _)| {
+            !node.ancestors().any(|a| {
+                a.value()
+                    .as_element()
+                    .is_some_and(|e| HIDDEN.contains(&e.name()))
+            })
+        })
+        .map(|(_, text)| text.split_whitespace().count())
+        .sum()
+}
+
 /// Empty output is intentional only when the caller selected a DOM scope.
 /// Main-content mode without a matching region falls back to automatic extraction.
 pub fn allows_empty_content(html: &str, options: &crate::ExtractionOptions) -> bool {
@@ -80,6 +105,12 @@ pub fn content_issue(result: &ExtractionResult) -> Option<ContentIssue> {
 mod tests {
     use super::*;
     use crate::extract;
+
+    #[test]
+    fn visible_words_skip_scripts_styles_and_noscript() {
+        let html = "<html><head><title>two words</title></head><body><p>one two</p><script>var a = 1;</script><style>p { color: red }</style><noscript>enable js</noscript><template>x y</template><svg><text>chart label</text></svg><div>three</div></body></html>";
+        assert_eq!(visible_word_count(html), 3);
+    }
 
     #[test]
     fn main_mode_only_permits_empty_when_a_region_exists() {

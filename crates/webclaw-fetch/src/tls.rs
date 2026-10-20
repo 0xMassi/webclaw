@@ -449,7 +449,6 @@ fn safari_h2() -> Http2Options {
     Http2Options::builder()
         .initial_window_size(2_097_152)
         .initial_connection_window_size(10_420_225)
-        .max_header_list_size(0)
         .header_table_size(4_096)
         .enable_push(false)
         .max_concurrent_streams(100u32)
@@ -490,17 +489,17 @@ fn build_headers(pairs: &[(&str, &str)]) -> http::HeaderMap {
     map
 }
 
-/// Build a wreq Client for a specific browser variant.
-pub fn build_client(
+pub(crate) fn request_headers(
     variant: BrowserVariant,
-    timeout: Duration,
     extra_headers: &std::collections::HashMap<String, String>,
-    proxy: Option<&str>,
-    follow_redirects: bool,
-    max_redirects: u32,
-) -> Result<Client, FetchError> {
-    // SafariIos26 builds its Emulation on top of wreq-util's base instead
-    // of from scratch. See `safari_ios_emulation` for why.
+) -> http::HeaderMap {
+    emulation(variant, extra_headers).headers
+}
+
+fn emulation(
+    variant: BrowserVariant,
+    extra_headers: &std::collections::HashMap<String, String>,
+) -> wreq::Emulation {
     let mut emulation = match variant {
         BrowserVariant::SafariIos26 => safari_ios_emulation(),
         other => {
@@ -520,7 +519,6 @@ pub fn build_client(
         }
     };
 
-    // Append extra headers after profile defaults.
     let hm = &mut emulation.headers;
     for (k, v) in extra_headers {
         if let (Ok(n), Ok(val)) = (
@@ -531,8 +529,20 @@ pub fn build_client(
         }
     }
 
+    emulation
+}
+
+/// Build a wreq Client for a specific browser variant.
+pub fn build_client(
+    variant: BrowserVariant,
+    timeout: Duration,
+    extra_headers: &std::collections::HashMap<String, String>,
+    proxy: Option<&str>,
+    follow_redirects: bool,
+    max_redirects: u32,
+) -> Result<Client, FetchError> {
     let mut builder = Client::builder()
-        .emulation(emulation)
+        .emulation(emulation(variant, extra_headers))
         .redirect(ssrf_safe_redirect_policy(
             follow_redirects,
             max_redirects as usize,
@@ -555,6 +565,12 @@ pub fn build_client(
         .tcp_keepalive(Duration::from_secs(60));
 
     if let Some(proxy_url) = proxy {
+        if proxy_url.to_ascii_lowercase().starts_with("socks") {
+            return Err(FetchError::Build(format!(
+                "SOCKS proxies are not supported, use an http:// or https:// proxy: {}",
+                redact_proxy_url(proxy_url)
+            )));
+        }
         let proxy = wreq::Proxy::all(proxy_url).map_err(|_| {
             FetchError::Build(format!("invalid proxy {}", redact_proxy_url(proxy_url)))
         })?;
@@ -586,6 +602,20 @@ fn redact_proxy_url(raw: &str) -> String {
     }
 }
 
+pub(crate) fn stop_at_redirect(more: bool) -> wreq::redirect::Policy {
+    wreq::redirect::Policy::custom(move |attempt| {
+        if !more {
+            return attempt.error("too many redirects");
+        }
+        attempt.pending(|attempt| async move {
+            match crate::url_security::validate_public_http_url(&attempt.uri.to_string()).await {
+                Ok(_) => attempt.stop(),
+                Err(e) => attempt.error(e.to_string()),
+            }
+        })
+    })
+}
+
 fn ssrf_safe_redirect_policy(
     follow_redirects: bool,
     max_redirects: usize,
@@ -612,6 +642,40 @@ fn ssrf_safe_redirect_policy(
 #[cfg(test)]
 mod tests {
     use super::redact_proxy_url;
+
+    #[test]
+    fn no_profile_refuses_every_response_header() {
+        let ios = super::safari_ios_emulation()
+            .http2_options
+            .expect("the iOS Safari profile sets HTTP/2 options");
+        for h2 in [
+            super::chrome_h2(),
+            super::firefox_h2(),
+            super::safari_h2(),
+            ios,
+        ] {
+            assert_ne!(h2.max_header_list_size, Some(0));
+        }
+    }
+
+    #[test]
+    fn rejects_socks_proxies_with_a_clear_error() {
+        for scheme in ["socks5", "socks5h", "socks4", "SOCKS5"] {
+            let err = super::build_client(
+                crate::browser::BrowserVariant::Chrome,
+                std::time::Duration::from_secs(5),
+                &Default::default(),
+                Some(&format!("{scheme}://user:pw@proxy.example.com:1080")),
+                true,
+                10,
+            )
+            .err()
+            .unwrap_or_else(|| panic!("{scheme} proxy was accepted"));
+            let msg = err.to_string();
+            assert!(msg.contains("SOCKS proxies are not supported"), "{msg}");
+            assert!(!msg.contains("pw@"), "credentials leaked: {msg}");
+        }
+    }
 
     #[test]
     fn redacts_userinfo_from_proxy_url() {

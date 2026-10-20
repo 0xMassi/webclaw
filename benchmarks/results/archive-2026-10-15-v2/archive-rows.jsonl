@@ -1,0 +1,15 @@
+{"arm": "webclaw", "mode": "cold", "files": 10, "ok": 10, "ms": 2335.8284163987264, "p95_ms": 2589.2363749444485, "kb": 196.03662109375, "recall": 1.0, "images": 79, "live_images": 80, "errors": []}
+{"arm": "crawl4ai", "mode": "cold", "files": 10, "ok": 10, "ms": 2867.628625012003, "p95_ms": 2979.836083948612, "kb": 223.19384765625, "recall": 0.9991150442477876, "images": 80, "live_images": 80, "errors": []}
+{"arm": "webclaw", "mode": "warm", "files": 20, "ok": 20, "ms": 970.2545420732349, "p95_ms": 1306.115916930139, "kb": 196.5966796875, "recall": 0.9977470694528101, "images": 158, "live_images": 160, "errors": []}
+{"arm": "crawl4ai", "mode": "warm", "files": 20, "ok": 20, "ms": 2378.960833651945, "p95_ms": 2893.330042017624, "kb": 223.19482421875, "recall": 0.9939111028741756, "images": 160, "live_images": 160, "errors": []}
+{"warc": {"url": "https://example.com/", "ms": 1613.7880000751466, "plain_ms": 1849.3587500415742, "ok": true, "kb": 1.9619140625, "records": 3, "digests": 4, "problems": []}}
+{"warc": {"url": "https://quotes.toscrape.com/js/", "ms": 2748.3672918751836, "plain_ms": 2828.7941250018775, "ok": true, "kb": 3.205078125, "records": 3, "digests": 4, "problems": []}}
+{"warc": {"url": "https://books.toscrape.com/", "ms": 528.1572081148624, "plain_ms": 548.1523750349879, "ok": true, "kb": 6.40234375, "records": 3, "digests": 4, "problems": []}}
+{"warc": {"url": "https://en.wikipedia.org/wiki/Web_scraping", "ms": 171.08199978247285, "plain_ms": 173.7702500540763, "ok": true, "kb": 49.34375, "records": 3, "digests": 4, "problems": []}}
+{"warc": {"url": "https://news.ycombinator.com/", "ms": 638.4632498957217, "plain_ms": 603.769209003076, "ok": true, "kb": 7.2236328125, "records": 3, "digests": 4, "problems": []}}
+{"warc": {"url": "https://www.rust-lang.org/", "ms": 175.4348750691861, "plain_ms": 144.44033289328218, "ok": true, "kb": 7.814453125, "records": 5, "digests": 7, "problems": []}}
+{"warc": {"url": "https://docs.python.org/3/library/asyncio.html", "ms": 93.25229213573039, "plain_ms": 94.57541699521244, "ok": true, "kb": 7.271484375, "records": 3, "digests": 4, "problems": []}}
+{"warc": {"url": "https://github.com/rust-lang/rust", "ms": 209.59075004793704, "plain_ms": 255.72191691026092, "ok": true, "kb": 51.6923828125, "records": 3, "digests": 4, "problems": []}}
+{"warc": {"url": "https://developer.mozilla.org/en-US/docs/Web/HTML", "ms": 99.36124994419515, "plain_ms": 106.67354194447398, "ok": true, "kb": 28.1611328125, "records": 3, "digests": 4, "problems": []}}
+{"warc": {"url": "https://www.bbc.com/news", "ms": 139.40749992616475, "plain_ms": 138.7340419460088, "ok": true, "kb": 66.26953125, "records": 3, "digests": 4, "problems": []}}
+{"crawl": {"url": "https://books.toscrape.com/", "ms": 2602.341459132731, "ok": true, "pages": 30, "kb": 165.7314453125, "records": 63, "digests": 94, "responses": 31, "page_responses": 30, "problems": []}}

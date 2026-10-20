@@ -1,0 +1,22 @@
+[
+ {
+  "name": "headers",
+  "url": "https://httpbin.org/headers",
+  "wait": 0
+ },
+ {
+  "name": "bot-check",
+  "url": "https://deviceandbrowserinfo.com/are_you_a_bot",
+  "wait": 5000
+ },
+ {
+  "name": "nasdaq",
+  "url": "https://www.nasdaq.com/market-activity/stocks/aapl",
+  "wait": 2000
+ },
+ {
+  "name": "bundlephobia",
+  "url": "https://bundlephobia.com/package/react",
+  "wait": 2000
+ }
+]

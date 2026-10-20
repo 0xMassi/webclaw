@@ -1,0 +1,382 @@
+{"arm": "webclaw", "version": "0.6.24", "install_s": 0.12, "download_mb": 13.0, "packages": 1, "venv_mb": 29.4, "post_s": 0.0, "other_mb": 0.0}
+{"arm": "scrapling-nobrowser", "version": "0.4.15", "install_s": 0.29, "download_mb": 95.7, "packages": 26, "venv_mb": 299.8, "post_s": 0.0, "other_mb": 0.0}
+{"arm": "scrapling", "version": "0.4.15", "install_s": 0.29, "download_mb": 95.7, "packages": 26, "venv_mb": 299.8, "post_s": 17.7, "other_mb": 577.7}
+{"arm": "crawl4ai", "version": "0.9.4", "install_s": 0.83, "download_mb": 170.0, "packages": 95, "venv_mb": 566.2, "post_s": 37.9, "other_mb": 1138.4}
+{"arm": "webclaw", "first_wall_s": 0.593, "first_setup_s": 0.011, "first_peak_mb": 46.5, "calls": 120, "ok": 109, "p50_s": 0.271, "p95_s": 0.741, "recall": 78.73563218390805, "steady_peak_mb": 92.4}
+{"arm": "scrapling", "first_wall_s": 0.736, "first_setup_s": 0.065, "first_peak_mb": 66.8, "calls": 120, "ok": 118, "p50_s": 0.272, "p95_s": 0.854, "recall": 83.9080459770115, "steady_peak_mb": 310.9}
+{"arm": "crawl4ai", "first_wall_s": 1.72, "first_setup_s": 0.465, "first_peak_mb": 650.3, "calls": 120, "ok": 113, "p50_s": 0.455, "p95_s": 1.06, "recall": 82.75862068965517, "steady_peak_mb": 1625.3}
+{"arm": "webclaw", "mode": "first", "import_s": 0.015, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.83, "ok": true, "error": null, "wall_s": 0.9, "peak_mb": 46.9, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "first", "import_s": 0.01, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 0.519, "ok": true, "error": null, "wall_s": 0.593, "peak_mb": 42.9, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "first", "import_s": 0.01, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 0.429, "ok": true, "error": null, "wall_s": 0.515, "peak_mb": 69.5, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "first", "import_s": 0.015, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 1.066, "ok": true, "error": null, "wall_s": 1.159, "peak_mb": 45.8, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "first", "import_s": 0.011, "url": "https://www.shopify.com", "call_s": 0.239, "ok": true, "error": null, "wall_s": 0.338, "peak_mb": 46.5, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.131, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-dart-mission-hits-asteroid-in-first-ever-planetary-defense-test/", "call_s": 0.125, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasa-confirms-dart-mission-impact-changed-asteroids-motion-in-space/", "call_s": 0.133, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-perseverance-rover-sends-sneak-peek-of-mars-landing/", "call_s": 0.114, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-ingenuity-mars-helicopter-succeeds-in-historic-first-flight/", "call_s": 0.121, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html", "call_s": 0.43, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html", "call_s": 0.4, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/soumission_998/index.html", "call_s": 0.422, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/sharp-objects_997/index.html", "call_s": 0.421, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/sapiens-a-brief-history-of-humankind_996/index.html", "call_s": 0.523, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-requiem-red_995/index.html", "call_s": 0.412, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-dirty-little-secrets-of-getting-your-dream-job_994/index.html", "call_s": 0.531, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 0.543, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-boys-in-the-boat-nine-americans-and-their-epic-quest-for-gold-at-the-1936-berlin-olympics_992/index.html", "call_s": 0.6, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html", "call_s": 0.142, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html", "call_s": 0.108, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/tutorial/datastructures.html", "call_s": 0.18, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/library/json.html", "call_s": 0.152, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise", "call_s": 0.171, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/table", "call_s": 0.193, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://go.dev/doc/effective_go", "call_s": 0.409, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.postgresql.org/docs/current/ddl-constraints.html", "call_s": 0.319, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://git-scm.com/docs/git-worktree", "call_s": 0.154, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://it.wikipedia.org/wiki/Roma", "call_s": 0.533, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 0.492, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://fr.wikipedia.org/wiki/Paris", "call_s": 0.995, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://de.wikipedia.org/wiki/Berlin", "call_s": 0.468, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://es.wikipedia.org/wiki/Madrid", "call_s": 0.387, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://pt.wikipedia.org/wiki/Lisboa", "call_s": 0.298, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://ja.wikipedia.org/wiki/\u6771\u4eac\u90fd", "call_s": 0.298, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://zh.wikipedia.org/wiki/\u5317\u4eac\u5e02", "call_s": 0.314, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://ar.wikipedia.org/wiki/\u0627\u0644\u0642\u0627\u0647\u0631\u0629", "call_s": 0.338, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/mars/facts/", "call_s": 0.14, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/venus/facts/", "call_s": 0.142, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/jupiter/facts/", "call_s": 0.127, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/saturn/facts/", "call_s": 0.131, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 0.737, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/b7fe0fe0-0463-4f55-9590-0a7d08d8fe66", "call_s": 0.141, "ok": false, "error": "WebclawError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/916eea1b-d483-49e1-9a70-53b4df8f9870", "call_s": 0.753, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.economist.com/finance-and-economics/2026/09/12/wanted-new-business-finance-and-economics-interns", "call_s": 0.168, "ok": false, "error": "WebclawError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.economist.com/science-and-technology/2026/09/11/top-mathematicians-are-outraged-by-openais-methods", "call_s": 0.138, "ok": false, "error": "WebclawError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.economist.com/business/2026/09/10/are-you-committed-to-your-company-or-your-team", "call_s": 0.177, "ok": false, "error": "WebclawError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://openai.com", "call_s": 0.372, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://vercel.com", "call_s": 0.227, "ok": true, "error": null, "hits": 1, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://anthropic.com", "call_s": 0.329, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.notion.com", "call_s": 0.28, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://stripe.com", "call_s": 0.605, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://tavily.com", "call_s": 0.529, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.shopify.com", "call_s": 0.235, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/", "call_s": 0.088, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://react.dev", "call_s": 0.228, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://tailwindcss.com/docs/installation", "call_s": 0.27, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://nextjs.org/docs", "call_s": 0.239, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://github.com", "call_s": 0.271, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)", "call_s": 0.409, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://simonwillison.net/2026/Mar/15/latent-reasoning/", "call_s": 0.407, "ok": false, "error": "WebclawError: the target returned HTTP 404 instead of a successful page", "hits": 0, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://paulgraham.com/essays.html", "call_s": 0.703, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://techcrunch.com", "call_s": 0.202, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.databricks.com", "call_s": 0.271, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 0, "url": "https://www.hashicorp.com", "call_s": 1.186, "ok": false, "error": "WebclawError: the target returned HTTP 429 instead of a successful page", "hits": 0, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.144, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-dart-mission-hits-asteroid-in-first-ever-planetary-defense-test/", "call_s": 0.125, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasa-confirms-dart-mission-impact-changed-asteroids-motion-in-space/", "call_s": 0.113, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-perseverance-rover-sends-sneak-peek-of-mars-landing/", "call_s": 0.125, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-ingenuity-mars-helicopter-succeeds-in-historic-first-flight/", "call_s": 0.126, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html", "call_s": 0.397, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html", "call_s": 0.406, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/soumission_998/index.html", "call_s": 0.417, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/sharp-objects_997/index.html", "call_s": 0.407, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/sapiens-a-brief-history-of-humankind_996/index.html", "call_s": 0.543, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-requiem-red_995/index.html", "call_s": 0.41, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-dirty-little-secrets-of-getting-your-dream-job_994/index.html", "call_s": 0.529, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 0.505, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-boys-in-the-boat-nine-americans-and-their-epic-quest-for-gold-at-the-1936-berlin-olympics_992/index.html", "call_s": 0.502, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html", "call_s": 0.108, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html", "call_s": 0.091, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/tutorial/datastructures.html", "call_s": 0.093, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/library/json.html", "call_s": 0.111, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise", "call_s": 0.113, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/table", "call_s": 0.154, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://go.dev/doc/effective_go", "call_s": 0.372, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.postgresql.org/docs/current/ddl-constraints.html", "call_s": 0.184, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://git-scm.com/docs/git-worktree", "call_s": 0.106, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://it.wikipedia.org/wiki/Roma", "call_s": 0.508, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 0.38, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://fr.wikipedia.org/wiki/Paris", "call_s": 0.534, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://de.wikipedia.org/wiki/Berlin", "call_s": 0.326, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://es.wikipedia.org/wiki/Madrid", "call_s": 2.13, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://pt.wikipedia.org/wiki/Lisboa", "call_s": 0.292, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://ja.wikipedia.org/wiki/\u6771\u4eac\u90fd", "call_s": 0.299, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://zh.wikipedia.org/wiki/\u5317\u4eac\u5e02", "call_s": 0.31, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://ar.wikipedia.org/wiki/\u0627\u0644\u0642\u0627\u0647\u0631\u0629", "call_s": 0.29, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/mars/facts/", "call_s": 0.122, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/venus/facts/", "call_s": 0.25, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/jupiter/facts/", "call_s": 0.237, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/saturn/facts/", "call_s": 0.209, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 0.741, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/b7fe0fe0-0463-4f55-9590-0a7d08d8fe66", "call_s": 0.66, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/916eea1b-d483-49e1-9a70-53b4df8f9870", "call_s": 0.799, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.economist.com/finance-and-economics/2026/09/12/wanted-new-business-finance-and-economics-interns", "call_s": 0.102, "ok": false, "error": "WebclawError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.economist.com/science-and-technology/2026/09/11/top-mathematicians-are-outraged-by-openais-methods", "call_s": 0.123, "ok": false, "error": "WebclawError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.economist.com/business/2026/09/10/are-you-committed-to-your-company-or-your-team", "call_s": 0.128, "ok": false, "error": "WebclawError: the target returned HTTP 403 instead of a successful page", "hits": 0, "nfacts": 2}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://openai.com", "call_s": 0.352, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://vercel.com", "call_s": 0.21, "ok": true, "error": null, "hits": 1, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://anthropic.com", "call_s": 0.256, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.notion.com", "call_s": 0.19, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://stripe.com", "call_s": 0.584, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://tavily.com", "call_s": 0.287, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.shopify.com", "call_s": 0.263, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/", "call_s": 0.094, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://react.dev", "call_s": 0.184, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://tailwindcss.com/docs/installation", "call_s": 0.191, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://nextjs.org/docs", "call_s": 0.25, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://github.com", "call_s": 0.231, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)", "call_s": 0.26, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://simonwillison.net/2026/Mar/15/latent-reasoning/", "call_s": 0.083, "ok": false, "error": "WebclawError: the target returned HTTP 404 instead of a successful page", "hits": 0, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://paulgraham.com/essays.html", "call_s": 0.558, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://techcrunch.com", "call_s": 0.153, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.databricks.com", "call_s": 0.272, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "webclaw", "mode": "steady", "round": 1, "url": "https://www.hashicorp.com", "call_s": 1.175, "ok": false, "error": "WebclawError: the target returned HTTP 429 instead of a successful page", "hits": 0, "nfacts": 5}
+{"arm": "scrapling", "mode": "first", "import_s": 0.831, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.199, "ok": true, "error": null, "wall_s": 1.092, "peak_mb": 83.4, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "first", "import_s": 0.065, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 0.554, "ok": true, "error": null, "wall_s": 0.689, "peak_mb": 57.7, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "first", "import_s": 0.065, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 0.585, "ok": true, "error": null, "wall_s": 0.736, "peak_mb": 150.3, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "first", "import_s": 0.065, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 3.645, "ok": false, "error": "CookieConflict: Multiple cookies exist with name=__cf_bm on router.ft.com and access.ft.com, add domain parameter to suppress this error.", "wall_s": 3.805, "peak_mb": 56.9, "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "first", "import_s": 0.071, "url": "https://www.shopify.com", "call_s": 0.354, "ok": true, "error": null, "wall_s": 0.49, "peak_mb": 66.8, "hits": 3, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.126, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-dart-mission-hits-asteroid-in-first-ever-planetary-defense-test/", "call_s": 0.115, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasa-confirms-dart-mission-impact-changed-asteroids-motion-in-space/", "call_s": 0.104, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-perseverance-rover-sends-sneak-peek-of-mars-landing/", "call_s": 0.113, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-ingenuity-mars-helicopter-succeeds-in-historic-first-flight/", "call_s": 0.111, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html", "call_s": 0.401, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html", "call_s": 0.382, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/soumission_998/index.html", "call_s": 0.38, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/sharp-objects_997/index.html", "call_s": 0.381, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/sapiens-a-brief-history-of-humankind_996/index.html", "call_s": 0.499, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-requiem-red_995/index.html", "call_s": 0.388, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-dirty-little-secrets-of-getting-your-dream-job_994/index.html", "call_s": 0.498, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 0.518, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-boys-in-the-boat-nine-americans-and-their-epic-quest-for-gold-at-the-1936-berlin-olympics_992/index.html", "call_s": 0.509, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html", "call_s": 0.073, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html", "call_s": 0.085, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/tutorial/datastructures.html", "call_s": 0.135, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/library/json.html", "call_s": 0.123, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise", "call_s": 0.096, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/table", "call_s": 0.159, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://go.dev/doc/effective_go", "call_s": 0.33, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.postgresql.org/docs/current/ddl-constraints.html", "call_s": 0.233, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://git-scm.com/docs/git-worktree", "call_s": 0.126, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://it.wikipedia.org/wiki/Roma", "call_s": 0.564, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 0.587, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://fr.wikipedia.org/wiki/Paris", "call_s": 0.913, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://de.wikipedia.org/wiki/Berlin", "call_s": 0.528, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://es.wikipedia.org/wiki/Madrid", "call_s": 0.473, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://pt.wikipedia.org/wiki/Lisboa", "call_s": 0.422, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://ja.wikipedia.org/wiki/\u6771\u4eac\u90fd", "call_s": 0.421, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://zh.wikipedia.org/wiki/\u5317\u4eac\u5e02", "call_s": 0.602, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://ar.wikipedia.org/wiki/\u0627\u0644\u0642\u0627\u0647\u0631\u0629", "call_s": 0.505, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/mars/facts/", "call_s": 0.105, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/venus/facts/", "call_s": 0.145, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/jupiter/facts/", "call_s": 0.138, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/saturn/facts/", "call_s": 0.109, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 3.676, "ok": false, "error": "CookieConflict: Multiple cookies exist with name=__cf_bm on router.ft.com and access.ft.com, add domain parameter to suppress this error.", "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/b7fe0fe0-0463-4f55-9590-0a7d08d8fe66", "call_s": 0.706, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/916eea1b-d483-49e1-9a70-53b4df8f9870", "call_s": 1.087, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.economist.com/finance-and-economics/2026/09/12/wanted-new-business-finance-and-economics-interns", "call_s": 0.101, "ok": true, "error": null, "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.economist.com/science-and-technology/2026/09/11/top-mathematicians-are-outraged-by-openais-methods", "call_s": 0.108, "ok": true, "error": null, "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.economist.com/business/2026/09/10/are-you-committed-to-your-company-or-your-team", "call_s": 0.105, "ok": true, "error": null, "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://openai.com", "call_s": 0.318, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://vercel.com", "call_s": 0.184, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://anthropic.com", "call_s": 0.323, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.notion.com", "call_s": 0.231, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://stripe.com", "call_s": 0.594, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://tavily.com", "call_s": 0.272, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.shopify.com", "call_s": 0.309, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/", "call_s": 0.062, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://react.dev", "call_s": 0.14, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://tailwindcss.com/docs/installation", "call_s": 0.184, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://nextjs.org/docs", "call_s": 0.227, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://github.com", "call_s": 0.251, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)", "call_s": 0.4, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://simonwillison.net/2026/Mar/15/latent-reasoning/", "call_s": 0.411, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://paulgraham.com/essays.html", "call_s": 0.557, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://techcrunch.com", "call_s": 0.167, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.databricks.com", "call_s": 0.28, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 0, "url": "https://www.hashicorp.com", "call_s": 0.839, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.14, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-dart-mission-hits-asteroid-in-first-ever-planetary-defense-test/", "call_s": 0.114, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasa-confirms-dart-mission-impact-changed-asteroids-motion-in-space/", "call_s": 0.13, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-perseverance-rover-sends-sneak-peek-of-mars-landing/", "call_s": 0.114, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-ingenuity-mars-helicopter-succeeds-in-historic-first-flight/", "call_s": 0.137, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html", "call_s": 0.384, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html", "call_s": 0.394, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/soumission_998/index.html", "call_s": 0.373, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/sharp-objects_997/index.html", "call_s": 0.514, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/sapiens-a-brief-history-of-humankind_996/index.html", "call_s": 0.517, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-requiem-red_995/index.html", "call_s": 0.52, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-dirty-little-secrets-of-getting-your-dream-job_994/index.html", "call_s": 0.502, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 0.543, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-boys-in-the-boat-nine-americans-and-their-epic-quest-for-gold-at-the-1936-berlin-olympics_992/index.html", "call_s": 0.505, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html", "call_s": 0.071, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html", "call_s": 0.082, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/tutorial/datastructures.html", "call_s": 0.146, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/library/json.html", "call_s": 0.115, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise", "call_s": 0.094, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/table", "call_s": 0.136, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://go.dev/doc/effective_go", "call_s": 0.373, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.postgresql.org/docs/current/ddl-constraints.html", "call_s": 0.272, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://git-scm.com/docs/git-worktree", "call_s": 0.12, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://it.wikipedia.org/wiki/Roma", "call_s": 0.584, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 0.599, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://fr.wikipedia.org/wiki/Paris", "call_s": 1.143, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://de.wikipedia.org/wiki/Berlin", "call_s": 0.546, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://es.wikipedia.org/wiki/Madrid", "call_s": 0.484, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://pt.wikipedia.org/wiki/Lisboa", "call_s": 0.4, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://ja.wikipedia.org/wiki/\u6771\u4eac\u90fd", "call_s": 1.095, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://zh.wikipedia.org/wiki/\u5317\u4eac\u5e02", "call_s": 0.612, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://ar.wikipedia.org/wiki/\u0627\u0644\u0642\u0627\u0647\u0631\u0629", "call_s": 0.494, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/mars/facts/", "call_s": 0.121, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/venus/facts/", "call_s": 0.136, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/jupiter/facts/", "call_s": 0.138, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/saturn/facts/", "call_s": 0.138, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 3.845, "ok": false, "error": "CookieConflict: Multiple cookies exist with name=__cf_bm on router.ft.com and access.ft.com, add domain parameter to suppress this error.", "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/b7fe0fe0-0463-4f55-9590-0a7d08d8fe66", "call_s": 0.742, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/916eea1b-d483-49e1-9a70-53b4df8f9870", "call_s": 0.708, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.economist.com/finance-and-economics/2026/09/12/wanted-new-business-finance-and-economics-interns", "call_s": 0.096, "ok": true, "error": null, "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.economist.com/science-and-technology/2026/09/11/top-mathematicians-are-outraged-by-openais-methods", "call_s": 0.111, "ok": true, "error": null, "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.economist.com/business/2026/09/10/are-you-committed-to-your-company-or-your-team", "call_s": 0.096, "ok": true, "error": null, "hits": 0, "nfacts": 2}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://openai.com", "call_s": 0.412, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://vercel.com", "call_s": 0.205, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://anthropic.com", "call_s": 0.24, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.notion.com", "call_s": 0.168, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://stripe.com", "call_s": 0.568, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://tavily.com", "call_s": 0.262, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.shopify.com", "call_s": 0.243, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/", "call_s": 0.082, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://react.dev", "call_s": 0.193, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://tailwindcss.com/docs/installation", "call_s": 0.178, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://nextjs.org/docs", "call_s": 0.165, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://github.com", "call_s": 0.244, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)", "call_s": 0.395, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://simonwillison.net/2026/Mar/15/latent-reasoning/", "call_s": 0.084, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://paulgraham.com/essays.html", "call_s": 0.512, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://techcrunch.com", "call_s": 0.175, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.databricks.com", "call_s": 0.267, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "scrapling", "mode": "steady", "round": 1, "url": "https://www.hashicorp.com", "call_s": 0.854, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "first", "import_s": 2.891, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.583, "ok": true, "error": null, "wall_s": 3.585, "peak_mb": 650.3, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "first", "import_s": 0.463, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 1.112, "ok": true, "error": null, "wall_s": 1.686, "peak_mb": 551.6, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "first", "import_s": 0.466, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 1.137, "ok": true, "error": null, "wall_s": 1.72, "peak_mb": 829.0, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "first", "import_s": 0.465, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 1.137, "ok": true, "error": null, "wall_s": 1.736, "peak_mb": 627.1, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "first", "import_s": 0.463, "url": "https://www.shopify.com", "call_s": 0.483, "ok": true, "error": null, "wall_s": 1.056, "peak_mb": 700.0, "hits": 2, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.34, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-dart-mission-hits-asteroid-in-first-ever-planetary-defense-test/", "call_s": 0.355, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasa-confirms-dart-mission-impact-changed-asteroids-motion-in-space/", "call_s": 0.34, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-perseverance-rover-sends-sneak-peek-of-mars-landing/", "call_s": 0.342, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.nasa.gov/news-release/nasas-ingenuity-mars-helicopter-succeeds-in-historic-first-flight/", "call_s": 0.354, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html", "call_s": 1.06, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html", "call_s": 0.309, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/soumission_998/index.html", "call_s": 0.311, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/sharp-objects_997/index.html", "call_s": 0.31, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/sapiens-a-brief-history-of-humankind_996/index.html", "call_s": 0.313, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-requiem-red_995/index.html", "call_s": 0.313, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-dirty-little-secrets-of-getting-your-dream-job_994/index.html", "call_s": 0.31, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 0.31, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://books.toscrape.com/catalogue/the-boys-in-the-boat-nine-americans-and-their-epic-quest-for-gold-at-the-1936-berlin-olympics_992/index.html", "call_s": 0.317, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html", "call_s": 0.317, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html", "call_s": 0.25, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/tutorial/datastructures.html", "call_s": 0.381, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/library/json.html", "call_s": 0.308, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise", "call_s": 0.404, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/table", "call_s": 0.392, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://go.dev/doc/effective_go", "call_s": 0.896, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.postgresql.org/docs/current/ddl-constraints.html", "call_s": 0.456, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://git-scm.com/docs/git-worktree", "call_s": 0.404, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://it.wikipedia.org/wiki/Roma", "call_s": 1.014, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 1.041, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://fr.wikipedia.org/wiki/Paris", "call_s": 1.491, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://de.wikipedia.org/wiki/Berlin", "call_s": 0.951, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://es.wikipedia.org/wiki/Madrid", "call_s": 0.907, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://pt.wikipedia.org/wiki/Lisboa", "call_s": 0.828, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://ja.wikipedia.org/wiki/\u6771\u4eac\u90fd", "call_s": 0.647, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://zh.wikipedia.org/wiki/\u5317\u4eac\u5e02", "call_s": 0.975, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://ar.wikipedia.org/wiki/\u0627\u0644\u0642\u0627\u0647\u0631\u0629", "call_s": 0.866, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/mars/facts/", "call_s": 0.485, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/venus/facts/", "call_s": 0.359, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/jupiter/facts/", "call_s": 0.343, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://science.nasa.gov/saturn/facts/", "call_s": 0.345, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 1.009, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/b7fe0fe0-0463-4f55-9590-0a7d08d8fe66", "call_s": 0.869, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.ft.com/content/916eea1b-d483-49e1-9a70-53b4df8f9870", "call_s": 0.758, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.economist.com/finance-and-economics/2026/09/12/wanted-new-business-finance-and-economics-interns", "call_s": 0.369, "ok": false, "error": "RuntimeError: Blocked by anti-bot protection: DataDome captcha", "hits": 0, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.economist.com/science-and-technology/2026/09/11/top-mathematicians-are-outraged-by-openais-methods", "call_s": 0.336, "ok": false, "error": "RuntimeError: Blocked by anti-bot protection: DataDome captcha", "hits": 0, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.economist.com/business/2026/09/10/are-you-committed-to-your-company-or-your-team", "call_s": 0.218, "ok": false, "error": "RuntimeError: Blocked by anti-bot protection: DataDome captcha", "hits": 0, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://openai.com", "call_s": 0.577, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://vercel.com", "call_s": 0.537, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://anthropic.com", "call_s": 0.764, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.notion.com", "call_s": 0.638, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://stripe.com", "call_s": 1.114, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://tavily.com", "call_s": 0.566, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.shopify.com", "call_s": 0.596, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://docs.python.org/3/", "call_s": 0.325, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://react.dev", "call_s": 0.618, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://tailwindcss.com/docs/installation", "call_s": 0.421, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://nextjs.org/docs", "call_s": 0.821, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://github.com", "call_s": 0.817, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)", "call_s": 0.777, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://simonwillison.net/2026/Mar/15/latent-reasoning/", "call_s": 0.321, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://paulgraham.com/essays.html", "call_s": 0.681, "ok": true, "error": null, "hits": 1, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://techcrunch.com", "call_s": 0.666, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.databricks.com", "call_s": 0.85, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 0, "url": "https://www.hashicorp.com", "call_s": 1.205, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "call_s": 0.593, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-dart-mission-hits-asteroid-in-first-ever-planetary-defense-test/", "call_s": 0.344, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasa-confirms-dart-mission-impact-changed-asteroids-motion-in-space/", "call_s": 0.344, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-perseverance-rover-sends-sneak-peek-of-mars-landing/", "call_s": 0.342, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.nasa.gov/news-release/nasas-ingenuity-mars-helicopter-succeeds-in-historic-first-flight/", "call_s": 0.35, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html", "call_s": 0.927, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html", "call_s": 0.313, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/soumission_998/index.html", "call_s": 0.307, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/sharp-objects_997/index.html", "call_s": 0.31, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/sapiens-a-brief-history-of-humankind_996/index.html", "call_s": 0.309, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-requiem-red_995/index.html", "call_s": 0.31, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-dirty-little-secrets-of-getting-your-dream-job_994/index.html", "call_s": 0.315, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "call_s": 0.309, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://books.toscrape.com/catalogue/the-boys-in-the-boat-nine-americans-and-their-epic-quest-for-gold-at-the-1936-berlin-olympics_992/index.html", "call_s": 0.314, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html", "call_s": 0.268, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html", "call_s": 0.252, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/tutorial/datastructures.html", "call_s": 0.296, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/library/json.html", "call_s": 0.302, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise", "call_s": 0.294, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/table", "call_s": 0.404, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://go.dev/doc/effective_go", "call_s": 0.871, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.postgresql.org/docs/current/ddl-constraints.html", "call_s": 0.456, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://git-scm.com/docs/git-worktree", "call_s": 0.401, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://it.wikipedia.org/wiki/Roma", "call_s": 1.122, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://it.wikipedia.org/wiki/Milano", "call_s": 1.024, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://fr.wikipedia.org/wiki/Paris", "call_s": 1.464, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://de.wikipedia.org/wiki/Berlin", "call_s": 0.867, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://es.wikipedia.org/wiki/Madrid", "call_s": 0.837, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://pt.wikipedia.org/wiki/Lisboa", "call_s": 0.633, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://ja.wikipedia.org/wiki/\u6771\u4eac\u90fd", "call_s": 0.742, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://zh.wikipedia.org/wiki/\u5317\u4eac\u5e02", "call_s": 0.968, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://ar.wikipedia.org/wiki/\u0627\u0644\u0642\u0627\u0647\u0631\u0629", "call_s": 0.868, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/mars/facts/", "call_s": 0.679, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/venus/facts/", "call_s": 0.435, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/jupiter/facts/", "call_s": 0.317, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://science.nasa.gov/saturn/facts/", "call_s": 0.338, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "call_s": 0.997, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/b7fe0fe0-0463-4f55-9590-0a7d08d8fe66", "call_s": 0.832, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.ft.com/content/916eea1b-d483-49e1-9a70-53b4df8f9870", "call_s": 0.908, "ok": true, "error": null, "hits": 2, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.economist.com/finance-and-economics/2026/09/12/wanted-new-business-finance-and-economics-interns", "call_s": 0.271, "ok": false, "error": "RuntimeError: Blocked by anti-bot protection: DataDome captcha", "hits": 0, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.economist.com/science-and-technology/2026/09/11/top-mathematicians-are-outraged-by-openais-methods", "call_s": 0.246, "ok": false, "error": "RuntimeError: Blocked by anti-bot protection: DataDome captcha", "hits": 0, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.economist.com/business/2026/09/10/are-you-committed-to-your-company-or-your-team", "call_s": 0.258, "ok": false, "error": "RuntimeError: Blocked by anti-bot protection: DataDome captcha", "hits": 0, "nfacts": 2}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://openai.com", "call_s": 0.271, "ok": false, "error": "RuntimeError: Blocked by anti-bot protection: Cloudflare JS challenge", "hits": 0, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://vercel.com", "call_s": 0.398, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://anthropic.com", "call_s": 0.574, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.notion.com", "call_s": 0.561, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://stripe.com", "call_s": 0.798, "ok": true, "error": null, "hits": 3, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://tavily.com", "call_s": 0.629, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.shopify.com", "call_s": 0.509, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://docs.python.org/3/", "call_s": 0.257, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://react.dev", "call_s": 0.462, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://tailwindcss.com/docs/installation", "call_s": 0.394, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://nextjs.org/docs", "call_s": 0.448, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://github.com", "call_s": 0.639, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)", "call_s": 0.765, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://simonwillison.net/2026/Mar/15/latent-reasoning/", "call_s": 0.251, "ok": true, "error": null, "hits": 2, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://paulgraham.com/essays.html", "call_s": 0.455, "ok": true, "error": null, "hits": 1, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://techcrunch.com", "call_s": 0.542, "ok": true, "error": null, "hits": 5, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.databricks.com", "call_s": 0.666, "ok": true, "error": null, "hits": 4, "nfacts": 5}
+{"arm": "crawl4ai", "mode": "steady", "round": 1, "url": "https://www.hashicorp.com", "call_s": 1.176, "ok": true, "error": null, "hits": 5, "nfacts": 5}

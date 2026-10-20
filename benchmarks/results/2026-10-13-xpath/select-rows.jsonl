@@ -1,0 +1,6 @@
+{"arm": "webclaw", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.2438507080078125, "start_seconds": 0.1817594999447465, "synthetic_ms": 88.74275217531249, "synthetic_values": 5000}
+{"arm": "scrapling", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.06633433303795755, "start_seconds": null, "synthetic_ms": 1.7002751934342086, "synthetic_values": 0}
+{"arm": "crawl4ai", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.5680172918364406, "start_seconds": null, "synthetic_ms": 18367.024724918883, "synthetic_values": 4999}
+{"arm": "webclaw-xpath", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.28141387505456805, "start_seconds": 0.1936941659078002, "synthetic_ms": 509.598312608432, "synthetic_values": 5000}
+{"arm": "scrapling-xpath", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.06053287489339709, "start_seconds": null, "synthetic_ms": 0.8717062650248408, "synthetic_values": 0}
+{"arm": "crawl4ai-xpath", "records": 1000, "expected": 1000, "correct": 1000, "seconds": 0.28047641715966165, "start_seconds": null, "synthetic_ms": 1.7122856341302395, "synthetic_values": 254}

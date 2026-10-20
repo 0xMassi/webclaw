@@ -1,0 +1,48 @@
+{"site": "nginx.org", "q": "How do I limit the number of requests per second from one client IP?", "answer": ["https://nginx.org/en/docs/http/ngx_http_limit_req_module.html"], "snippet": "limit_req_zone"}
+{"site": "nginx.org", "q": "How do I turn on gzip compression of responses?", "answer": ["https://nginx.org/en/docs/http/ngx_http_gzip_module.html"], "snippet": "gzip_types"}
+{"site": "nginx.org", "q": "How do I spread traffic across several backend servers?", "answer": ["https://nginx.org/en/docs/http/load_balancing.html", "https://nginx.org/en/docs/http/ngx_http_upstream_module.html"], "snippet": "least_conn"}
+{"site": "nginx.org", "q": "How do I configure HTTPS with my certificate and private key?", "answer": ["https://nginx.org/en/docs/http/configuring_https_servers.html", "https://nginx.org/en/docs/http/ngx_http_ssl_module.html"], "snippet": "ssl_certificate_key"}
+{"site": "nginx.org", "q": "How do I protect a location with a username and password?", "answer": ["https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html"], "snippet": "auth_basic_user_file"}
+{"site": "nginx.org", "q": "How do I add a Cache-Control header to responses?", "answer": ["https://nginx.org/en/docs/http/ngx_http_headers_module.html"], "snippet": "add_header"}
+{"site": "nginx.org", "q": "How do I redirect URLs that match a regular expression?", "answer": ["https://nginx.org/en/docs/http/ngx_http_rewrite_module.html"], "snippet": "rewrite"}
+{"site": "nginx.org", "q": "How does nginx decide which server block handles a request?", "answer": ["https://nginx.org/en/docs/http/request_processing.html"], "snippet": "server_name"}
+{"site": "nginx.org", "q": "How do I proxy WebSocket connections?", "answer": ["https://nginx.org/en/docs/http/websocket.html"], "snippet": "Upgrade"}
+{"site": "nginx.org", "q": "How do I define a custom format for access log lines?", "answer": ["https://nginx.org/en/docs/http/ngx_http_log_module.html"], "snippet": "log_format"}
+{"site": "nginx.org", "q": "How do I reload the configuration without dropping connections?", "answer": ["https://nginx.org/en/docs/control.html", "https://nginx.org/en/docs/beginners_guide.html"], "snippet": "reload"}
+{"site": "nginx.org", "q": "How do I deny access to a location for some client IP addresses?", "answer": ["https://nginx.org/en/docs/http/ngx_http_access_module.html"], "snippet": "deny"}
+{"site": "nodejs.org", "q": "How do I read a file one line at a time?", "answer": ["https://nodejs.org/api/readline.html"], "snippet": "createInterface"}
+{"site": "nodejs.org", "q": "How do I run a shell command and capture its output?", "answer": ["https://nodejs.org/api/child_process.html"], "snippet": "exec("}
+{"site": "nodejs.org", "q": "How do I compute a SHA-256 hash of a string?", "answer": ["https://nodejs.org/api/crypto.html"], "snippet": "createHash"}
+{"site": "nodejs.org", "q": "How do I run CPU-heavy JavaScript in parallel threads?", "answer": ["https://nodejs.org/api/worker_threads.html"], "snippet": "new Worker"}
+{"site": "nodejs.org", "q": "How do I start an HTTP server that answers requests?", "answer": ["https://nodejs.org/api/http.html"], "snippet": "createServer"}
+{"site": "nodejs.org", "q": "How do I compress data with gzip?", "answer": ["https://nodejs.org/api/zlib.html"], "snippet": "createGzip"}
+{"site": "nodejs.org", "q": "How do I parse command-line arguments into options?", "answer": ["https://nodejs.org/api/util.html"], "snippet": "parseArgs"}
+{"site": "nodejs.org", "q": "How do I get notified when files in a directory change?", "answer": ["https://nodejs.org/api/fs.html"], "snippet": "fs.watch"}
+{"site": "nodejs.org", "q": "How do I keep a value available across async calls in one request?", "answer": ["https://nodejs.org/api/async_context.html"], "snippet": "AsyncLocalStorage"}
+{"site": "nodejs.org", "q": "How do I write tests with the built-in test runner?", "answer": ["https://nodejs.org/api/test.html"], "snippet": "describe"}
+{"site": "nodejs.org", "q": "How do I resolve a hostname to an IP address?", "answer": ["https://nodejs.org/api/dns.html"], "snippet": "dns.lookup"}
+{"site": "nodejs.org", "q": "How do I emit and listen for custom events?", "answer": ["https://nodejs.org/api/events.html"], "snippet": "EventEmitter"}
+{"site": "doc.rust-lang.org", "q": "How do I share ownership of a value between threads?", "answer": ["https://doc.rust-lang.org/std/sync/struct.Arc.html"], "snippet": "Arc"}
+{"site": "doc.rust-lang.org", "q": "How do I read a whole file into a string?", "answer": ["https://doc.rust-lang.org/std/fs/fn.read_to_string.html", "https://doc.rust-lang.org/std/fs/index.html"], "snippet": "read_to_string"}
+{"site": "doc.rust-lang.org", "q": "How do I sort a vector with a custom comparison function?", "answer": ["https://doc.rust-lang.org/std/primitive.slice.html", "https://doc.rust-lang.org/std/vec/struct.Vec.html"], "snippet": "sort_by"}
+{"site": "doc.rust-lang.org", "q": "How do I spawn a thread and wait for it to finish?", "answer": ["https://doc.rust-lang.org/std/thread/fn.spawn.html", "https://doc.rust-lang.org/std/thread/index.html"], "snippet": "join"}
+{"site": "doc.rust-lang.org", "q": "How do I measure how much time an operation took?", "answer": ["https://doc.rust-lang.org/std/time/struct.Instant.html"], "snippet": "elapsed"}
+{"site": "doc.rust-lang.org", "q": "How do I run an external program and collect its output?", "answer": ["https://doc.rust-lang.org/std/process/struct.Command.html"], "snippet": "output"}
+{"site": "doc.rust-lang.org", "q": "How do I update a value in a hash map or insert it if missing?", "answer": ["https://doc.rust-lang.org/std/collections/struct.HashMap.html", "https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html"], "snippet": "or_insert"}
+{"site": "doc.rust-lang.org", "q": "How do I send values from one thread to another over a channel?", "answer": ["https://doc.rust-lang.org/std/sync/mpsc/index.html", "https://doc.rust-lang.org/std/sync/mpsc/fn.channel.html"], "snippet": "channel"}
+{"site": "doc.rust-lang.org", "q": "How do I read an environment variable?", "answer": ["https://doc.rust-lang.org/std/env/fn.var.html", "https://doc.rust-lang.org/std/env/index.html"], "snippet": "var"}
+{"site": "doc.rust-lang.org", "q": "How do I accept incoming TCP connections?", "answer": ["https://doc.rust-lang.org/std/net/struct.TcpListener.html"], "snippet": "incoming"}
+{"site": "doc.rust-lang.org", "q": "How do I make sure only one thread changes some data at a time?", "answer": ["https://doc.rust-lang.org/std/sync/struct.Mutex.html"], "snippet": "lock"}
+{"site": "doc.rust-lang.org", "q": "How do I parse a string into an integer?", "answer": ["https://doc.rust-lang.org/std/primitive.str.html", "https://doc.rust-lang.org/std/primitive.i32.html"], "snippet": "parse"}
+{"site": "git-scm.com", "q": "How do I undo my last commit but keep the changes in my files?", "answer": ["https://git-scm.com/docs/git-reset"], "snippet": "--soft"}
+{"site": "git-scm.com", "q": "How do I set aside uncommitted changes to work on something else?", "answer": ["https://git-scm.com/docs/git-stash"], "snippet": "stash"}
+{"site": "git-scm.com", "q": "How do I find the commit that introduced a bug by binary search?", "answer": ["https://git-scm.com/docs/git-bisect"], "snippet": "bisect"}
+{"site": "git-scm.com", "q": "How do I copy one commit from another branch onto mine?", "answer": ["https://git-scm.com/docs/git-cherry-pick"], "snippet": "cherry-pick"}
+{"site": "git-scm.com", "q": "How do I see who last changed each line of a file?", "answer": ["https://git-scm.com/docs/git-blame"], "snippet": "blame"}
+{"site": "git-scm.com", "q": "How do I squash several commits into one?", "answer": ["https://git-scm.com/docs/git-rebase"], "snippet": "squash"}
+{"site": "git-scm.com", "q": "How do I check out two branches at the same time in separate directories?", "answer": ["https://git-scm.com/docs/git-worktree"], "snippet": "worktree"}
+{"site": "git-scm.com", "q": "How do I create an annotated tag for a release?", "answer": ["https://git-scm.com/docs/git-tag"], "snippet": "--annotate"}
+{"site": "git-scm.com", "q": "How do I delete untracked files from my working tree?", "answer": ["https://git-scm.com/docs/git-clean"], "snippet": "untracked"}
+{"site": "git-scm.com", "q": "How do I get back a commit I lost after a reset?", "answer": ["https://git-scm.com/docs/git-reflog"], "snippet": "reflog"}
+{"site": "git-scm.com", "q": "How do I include another repository inside mine as a subdirectory?", "answer": ["https://git-scm.com/docs/git-submodule"], "snippet": "submodule"}
+{"site": "git-scm.com", "q": "How do I tell Git to ignore some files?", "answer": ["https://git-scm.com/docs/gitignore"], "snippet": ".gitignore"}

@@ -23,6 +23,8 @@ ego-tree = "0.10"
 url = { version = "2", features = ["serde"] }
 regex = "1"
 similar = "2"
+sxd-document = "0.3"
+sxd-xpath = "0.4"
 
 # rquickjs links a C library and cannot build for wasm32. Gating it per
 # target keeps the `quickjs` feature usable on native while leaving the

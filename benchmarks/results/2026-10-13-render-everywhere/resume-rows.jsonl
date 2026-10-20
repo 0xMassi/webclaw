@@ -1,0 +1,3 @@
+{"arm": "webclaw", "before_kill": 96, "unique": 200, "duplicates": 32, "seconds": 3.4, "restarts": 1, "finished": true}
+{"arm": "scrapling", "before_kill": 111, "unique": 200, "duplicates": 111, "seconds": 4.8, "restarts": 1, "finished": true}
+{"arm": "crawl4ai", "before_kill": 9, "unique": 170, "duplicates": 0, "seconds": 20.2, "restarts": 1, "finished": true}

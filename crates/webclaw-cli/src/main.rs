@@ -12,11 +12,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 use webclaw_core::{
     ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options,
-    to_llm_text,
+    to_citations_after, to_llm_text,
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
-    FetchConfig, FetchResult, PageResult, SitemapEntry,
+    FetchConfig, FetchResult, PageResult, PageSink, SitemapEntry,
 };
 use webclaw_llm::LlmProvider;
 use webclaw_pdf::PdfMode;
@@ -132,6 +132,7 @@ fn warn_empty(url: &str, reason: &EmptyReason) {
         EmptyReason::Antibot => eprintln!(
             "\x1b[33mwarning:\x1b[0m Anti-bot protection detected on {url}\n\
              This site requires CAPTCHA solving or browser rendering.\n\
+             For a Cloudflare challenge, try --solve (needs a `browser` build).\n\
              Use the webclaw Cloud API for automatic bypass: https://webclaw.io/pricing"
         ),
         EmptyReason::ConsentWall => eprintln!(
@@ -150,7 +151,7 @@ fn warn_empty(url: &str, reason: &EmptyReason) {
 }
 
 #[derive(Parser)]
-#[command(name = "webclaw", about = "Extract web content for LLMs", version)]
+#[command(name = "webclaw", about = "Extract web content for LLMs", version = VERSION)]
 struct Cli {
     /// Optional subcommand. When omitted, the CLI falls back to the
     /// traditional flag-based flow (URL + --format, --crawl, etc.).
@@ -182,7 +183,7 @@ struct Cli {
     #[arg(short, long, default_value = "chrome")]
     browser: Browser,
 
-    /// Proxy URL (http://user:pass@host:port or socks5://host:port)
+    /// Proxy URL (http://user:pass@host:port or https://host:port)
     #[arg(short, long, env = "WEBCLAW_PROXY", hide_env_values = true)]
     proxy: Option<String>,
 
@@ -193,6 +194,71 @@ struct Cli {
     /// Request timeout in seconds
     #[arg(short, long, default_value = "30")]
     timeout: u64,
+
+    /// Keep fetched pages on disk and reuse them on later runs instead of
+    /// fetching again, in WEBCLAW_CACHE_DIR or ~/.cache/webclaw. Entries never
+    /// expire; delete the directory to refresh
+    #[arg(long)]
+    cache: bool,
+
+    /// Render pages in a local Chrome. auto renders only pages whose content needs JavaScript; needs a build with the `browser` feature
+    #[arg(long, value_enum, default_value_t = RenderMode::Auto)]
+    render: RenderMode,
+
+    /// Render with an already running browser at this DevTools endpoint (ws://... or http://host:port) instead of launching Chrome
+    #[arg(long)]
+    cdp_url: Option<String>,
+
+    /// Keep the local browser's cookies, local storage and IndexedDB in this
+    /// directory, created when missing, so a login carries over to later
+    /// runs. Web pages then load in the browser with the profile's cookies,
+    /// and --cookie and --cookie-file cookies are saved in the profile. One
+    /// run at a time per directory; use a directory of its own, not your
+    /// everyday Chrome profile
+    #[arg(long, value_name = "DIR", conflicts_with = "cdp_url")]
+    browser_profile: Option<PathBuf>,
+
+    /// When rendering, also wait until an element matching this CSS selector exists
+    #[arg(long)]
+    wait_for: Option<String>,
+
+    /// Get past Cloudflare challenge pages in a local Chrome: render a page
+    /// that comes back as one, wait for it to clear or click its checkbox,
+    /// and read the page it leads to. Later pages of that site are fetched
+    /// with the clearance cookie it got. A Turnstile checkbox in any page
+    /// that gets rendered is clicked too. Needs a build with the `browser`
+    /// feature
+    #[arg(long, conflicts_with_all = ["screenshot", "save_pdf", "save_mhtml"])]
+    solve: bool,
+
+    /// When rendering a page for its content, skip these resources: a comma
+    /// list of images, fonts and media, or none. Screenshots and PDFs
+    /// load everything
+    #[arg(long, value_name = "TYPES", conflicts_with_all = ["screenshot", "save_pdf", "save_mhtml"])]
+    block: Option<webclaw_fetch::Block>,
+
+    /// Steps to run in the local browser once the page has loaded, before it
+    /// is read, in the hosted API's format: a JSON array, or @FILE to read
+    /// one, e.g. '[{"type": "click", "selector": "button.more", "repeat":
+    /// 10}]'. Steps: click, type, press, scroll, wait, waitForSelector and
+    /// executeJavascript; see the README. The values of executeJavascript
+    /// steps come back as js_results: in the output with -f json, on stderr
+    /// otherwise. Renders the page even with --render auto
+    #[arg(long, value_name = "JSON", conflicts_with_all = ["crawl", "watch", "map", "brand", "cloud"])]
+    actions: Option<String>,
+
+    /// Scroll to the end of the page in the local browser, again and again
+    /// until it stops growing, at most TIMES times (default 20, or
+    /// --scroll=50), before reading it. Runs before --actions
+    #[arg(
+        long,
+        value_name = "TIMES",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "20",
+        conflicts_with_all = ["crawl", "watch", "map", "brand", "cloud"]
+    )]
+    scroll: Option<u32>,
 
     /// Extract from local HTML file instead of fetching
     #[arg(long)]
@@ -209,6 +275,166 @@ struct Cli {
     /// Output raw fetched HTML instead of extracting
     #[arg(long)]
     raw_html: bool,
+
+    /// Keep only the parts of the page that answer this question, under their
+    /// headings. With --crawl, also follow the links most likely to answer it
+    /// first and list pages best match first. With --map, list URLs best match
+    /// first by the words in their paths
+    #[arg(long, value_name = "QUESTION", conflicts_with = "watch")]
+    query: Option<String>,
+
+    /// Print the page as chunks for retrieval, one JSON object per line (one
+    /// JSON array with -f json) with url, index, heading_path, tokens and
+    /// markdown text. Paragraphs, lists, tables and code blocks stay whole;
+    /// each chunk stays under about this many tokens. Works with several URLs
+    /// and --crawl (chunks per page)
+    #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(1..),
+          conflicts_with_all = ["select", "xpath", "find_text", "find_regex", "tables", "screenshot", "save_pdf", "save_mhtml", "output_dir", "metadata", "watch", "diff_with", "brand", "map", "raw_html", "extract_json", "extract_prompt", "summarize", "research"])]
+    chunk: Option<u32>,
+
+    /// With --chunk, start each chunk with up to this many tokens from the end
+    /// of the one before (at most half the chunk size)
+    #[arg(long, value_name = "TOKENS", requires = "chunk", default_value_t = 0)]
+    chunk_overlap: u32,
+
+    /// Move link and image URLs out of the markdown into a numbered
+    /// Links list at the end: `[text](url)` becomes `text[^1]`, and a URL
+    /// used twice keeps one number. Applies to -f markdown and to the
+    /// markdown inside -f json and jsonl, for one URL, several or --crawl
+    #[arg(long, conflicts_with_all = ["chunk", "raw_html", "capture_network", "select", "xpath", "find_text", "find_regex", "tables", "screenshot", "save_pdf", "watch", "diff_with", "brand", "map", "extract_json", "extract_prompt", "summarize", "research"])]
+    citations: bool,
+
+    /// Print what a CSS selector picks as a JSON array. End it in `::text`
+    /// (the default), `::attr(NAME)` or `::html`, e.g. "h3 a::attr(href)"
+    #[arg(long, value_name = "SELECTOR", group = "pick")]
+    select: Option<String>,
+
+    /// Print what an XPath 1.0 expression picks as a JSON array: element and
+    /// text values as text, attributes as values, e.g. "//h3/a/@title"
+    #[arg(long, value_name = "EXPRESSION", group = "pick")]
+    xpath: Option<String>,
+
+    /// Print the page's data tables as JSON: caption, headers and rows of
+    /// cell text. Layout tables are skipped
+    #[arg(
+        long,
+        group = "pick",
+        conflicts_with_all = ["similar", "fields", "exact", "case_sensitive", "crawl", "watch", "map"]
+    )]
+    tables: bool,
+
+    /// Print the deepest elements whose text contains TEXT, any case, as a
+    /// JSON array of {"selector", "text"}, each with a CSS path to the element
+    #[arg(long, value_name = "TEXT", groups = ["pick", "find"])]
+    find_text: Option<String>,
+
+    /// Like --find-text with a regular expression, e.g. "^£\d+\.\d\d$"
+    #[arg(long, value_name = "REGEX", groups = ["pick", "find"])]
+    find_regex: Option<String>,
+
+    /// With --find-text, match the whole text instead of a part of it
+    #[arg(long, requires = "find_text", conflicts_with_all = ["select", "xpath", "find_regex"])]
+    exact: bool,
+
+    /// With --find-text or --find-regex, match letter case
+    #[arg(long, requires = "find")]
+    case_sensitive: bool,
+
+    /// Use the first element --select, --xpath, --find-text or --find-regex
+    /// picks as an example and print every element like it, with one CSS
+    /// selector that picks them all: {"selector", "matches"}
+    #[arg(long, requires = "pick")]
+    similar: bool,
+
+    /// With --select, --xpath or --similar, print one JSON object per match
+    /// instead: NAME=SELECTOR run inside each match (repeatable), e.g. `--field
+    /// price=.price_color`, or with --xpath `--field "price=.//p[@class='price_color']"`.
+    /// With --similar the fields are CSS and the output is {"selector", "records"}
+    #[arg(long = "field", value_name = "NAME=SELECTOR", requires = "pick")]
+    fields: Vec<String>,
+
+    /// Save a 1280x720 screenshot of the rendered page to this file, JPEG
+    /// when it ends in .jpg or .jpeg, PNG otherwise. Needs the `browser` feature
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
+    screenshot: Option<PathBuf>,
+
+    /// With --screenshot, capture the whole scrollable page
+    #[arg(long, requires = "screenshot")]
+    full_page: bool,
+
+    /// Render the page in the local browser and print the responses it
+    /// loaded as a JSON array instead of the page: url, method, status,
+    /// resource type, MIME type, request headers and the body of text
+    /// responses. PATTERN is a regular expression the URL must match, given
+    /// with an equals sign: --capture-network=/api/. With --actions or
+    /// --scroll, the steps run first, so the responses they trigger are
+    /// captured too. Needs the `browser` feature
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "",
+        conflicts_with_all = [
+            "pick", "crawl", "watch", "map", "screenshot", "save_pdf", "save_mhtml", "brand", "raw_html", "cloud",
+            "format", "query", "chunk", "include", "exclude", "only_main_content", "metadata"
+        ]
+    )]
+    capture_network: Option<String>,
+
+    /// With --capture-network, the resource types to keep: a comma list such
+    /// as xhr,fetch (the default), document, script, or all
+    #[arg(long, value_name = "TYPES", requires = "capture_network")]
+    capture_types: Option<String>,
+
+    /// With --capture-network, also keep request headers that carry
+    /// credentials, such as Authorization or API keys
+    #[arg(long, requires = "capture_network")]
+    capture_credentials: bool,
+
+    /// Save the rendered page as a PDF to this file (- for stdout), every
+    /// page of it, as the browser prints it. Needs the `browser` feature
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
+    save_pdf: Option<PathBuf>,
+
+    /// Save the rendered page as MHTML to this file (- for stdout): one file
+    /// with the page and the images, styles and frames it loaded, which a
+    /// browser opens offline. Needs the `browser` feature
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["pick", "crawl", "watch", "map", "screenshot", "save_pdf", "paper", "landscape", "print_background", "scale", "full_page", "capture_types", "capture_credentials", "format", "summarize", "cloud", "output_dir", "diff_with", "brand", "raw_html", "pdf_mode", "metadata", "query", "extract_json", "extract_prompt", "research", "include", "exclude", "only_main_content", "stdin", "file"])]
+    save_mhtml: Option<PathBuf>,
+
+    /// Also keep every HTTP response webclaw fetches, with its request, in
+    /// this WARC file, the web archive format (ISO 28500), gzipped record by
+    /// record when FILE ends in .gz. Works with one URL, several, and
+    /// --crawl. Records are written as they arrive, so a stopped crawl keeps
+    /// what it fetched, and a FILE that exists is added to, each run starting
+    /// with its own warcinfo record. Pages a browser renders are not in it:
+    /// use --save-mhtml for those
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["cache", "cloud", "stdin", "file", "screenshot", "save_pdf", "save_mhtml", "capture_network", "full_page", "paper", "landscape", "print_background", "scale", "capture_types", "capture_credentials"])]
+    warc: Option<PathBuf>,
+
+    /// With --save-pdf, the paper size
+    #[arg(long, value_enum, default_value_t = PaperArg::Letter, requires = "save_pdf")]
+    paper: PaperArg,
+
+    /// With --save-pdf, turn the paper sideways
+    #[arg(long, requires = "save_pdf")]
+    landscape: bool,
+
+    /// With --save-pdf, keep background colors and images, which browsers
+    /// leave out when printing
+    #[arg(long, requires = "save_pdf")]
+    print_background: bool,
+
+    /// With --save-pdf, zoom the page content, from 0.1 to 2
+    #[arg(
+        long,
+        value_name = "FACTOR",
+        default_value_t = 1.0,
+        value_parser = pdf_scale,
+        requires = "save_pdf"
+    )]
+    scale: f64,
 
     /// CSS selectors to include (comma-separated, e.g. "article,.content")
     #[arg(long)]
@@ -286,25 +512,38 @@ struct Cli {
     #[arg(long, default_value = "5")]
     concurrency: usize,
 
-    /// Delay between requests in ms [default: 100]
+    /// Minimum time between two page requests to the same host in ms, shared
+    /// by all workers; the first page waits this long after robots.txt and
+    /// sitemaps. With --ignore-robots, redirect hops inside one fetch are not
+    /// spaced. `0` = no spacing [default: 100]
     #[arg(long, default_value = "100")]
     delay: u64,
 
-    /// Only crawl URLs matching this path prefix
+    /// Only crawl, or list with --map, URLs matching this path prefix
     #[arg(long)]
     path_prefix: Option<String>,
 
-    /// Glob patterns for crawl URL paths to include (comma-separated, e.g. "/api/*,/guides/**")
+    /// Glob patterns for crawl and --map URL paths to include (comma-separated, e.g. "/api/*,/guides/**")
     #[arg(long)]
     include_paths: Option<String>,
 
-    /// Glob patterns for crawl URL paths to exclude (comma-separated, e.g. "/changelog/*,/blog/*")
+    /// Glob patterns for crawl and --map URL paths to exclude (comma-separated, e.g. "/changelog/*,/blog/*")
     #[arg(long)]
     exclude_paths: Option<String>,
 
     /// Path to save/resume crawl state. On Ctrl+C: saves progress. On start: resumes if file exists.
     #[arg(long)]
     crawl_state: Option<PathBuf>,
+
+    /// Crawl URLs that robots.txt disallows, and ignore its Crawl-delay
+    #[arg(long)]
+    ignore_robots: bool,
+
+    /// With --crawl --query, stop once a page rated at least 0.8 has been
+    /// found and the next 8 pages rated no higher, instead of always crawling
+    /// up to --max-pages
+    #[arg(long, requires_all = ["crawl", "query"])]
+    stop_when_answered: bool,
 
     /// Seed crawl frontier from sitemap discovery (robots.txt + /sitemap.xml)
     #[arg(long)]
@@ -322,9 +561,20 @@ struct Cli {
     #[arg(long)]
     no_map_crawl: bool,
 
-    /// Cap the number of URLs --map returns (default: uncapped)
-    #[arg(long)]
+    /// Cap the number of URLs --map returns, at least 1 (default: uncapped)
+    #[arg(long, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     map_limit: Option<usize>,
+
+    /// Where --map looks for URLs, comma-separated: sitemap (the default, with
+    /// the crawl fallback) and cc, the public Common Crawl index of the pages
+    /// it captured on the site. E.g. sitemap,cc
+    #[arg(long, value_name = "LIST", requires = "map")]
+    map_source: Option<String>,
+
+    /// With --map-source cc, also keep Common Crawl captures that were not
+    /// HTML pages answering 200 (redirects, errors, PDFs, images)
+    #[arg(long, requires = "map_source")]
+    map_all_captures: bool,
 
     // -- LLM options --
     /// Extract structured JSON using LLM (pass a JSON schema string or @file)
@@ -466,15 +716,33 @@ enum Commands {
 enum OutputFormat {
     Markdown,
     Json,
+    /// One compact JSON object per line. Crawls stream each page as it finishes.
+    Jsonl,
     Text,
     Llm,
     Html,
 }
 
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum RenderMode {
+    Auto,
+    Always,
+    Never,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum PaperArg {
+    Letter,
+    A4,
+}
+
 #[derive(Clone, ValueEnum)]
 enum Browser {
     Chrome,
+    ChromeMacos,
     Firefox,
+    Safari,
+    Edge,
     /// Safari iOS 26. Pair with a country-matched residential proxy for sites
     /// that reject non-mobile profiles.
     SafariIos,
@@ -503,7 +771,10 @@ impl From<Browser> for BrowserProfile {
     fn from(b: Browser) -> Self {
         match b {
             Browser::Chrome => BrowserProfile::Chrome,
+            Browser::ChromeMacos => BrowserProfile::ChromeMacos,
             Browser::Firefox => BrowserProfile::Firefox,
+            Browser::Safari => BrowserProfile::Safari,
+            Browser::Edge => BrowserProfile::Edge,
             Browser::SafariIos => BrowserProfile::SafariIos,
             Browser::Random => BrowserProfile::Random,
         }
@@ -589,20 +860,159 @@ fn build_fetch_config(cli: &Cli) -> FetchConfig {
             }
             Err(e) => {
                 eprintln!("error: failed to parse cookie file: {e}");
-                process::exit(1);
+                exit(1);
             }
         }
     }
 
-    FetchConfig {
+    #[allow(unused_mut)]
+    let mut config = FetchConfig {
         browser: cli.browser.clone().into(),
         proxy,
         proxy_pool,
         timeout: std::time::Duration::from_secs(cli.timeout),
         pdf_mode: cli.pdf_mode.clone().into(),
         headers,
+        cache: cli.cache.then(cache_dir),
+        archive: cli.warc.as_deref().map(warc_archive),
         ..Default::default()
+    };
+    #[cfg(feature = "browser")]
+    if cli.render != RenderMode::Never {
+        config.render = Some(webclaw_fetch::render::RenderConfig {
+            pool: render_pool(cli, &config),
+            always: cli.render == RenderMode::Always,
+            wait_for: cli.wait_for.clone(),
+            block: cli.block.unwrap_or_default(),
+            solve: cli.solve,
+        });
     }
+    config
+}
+
+#[cfg(feature = "browser")]
+fn render_pool(cli: &Cli, config: &FetchConfig) -> Arc<webclaw_fetch::render::RenderPool> {
+    use webclaw_fetch::render::RenderPool;
+    static PROFILE_POOL: std::sync::OnceLock<Arc<RenderPool>> = std::sync::OnceLock::new();
+    let build = || {
+        let pool = RenderPool::new(
+            browser_source(cli, config),
+            std::time::Duration::from_secs(cli.timeout),
+        );
+        if let Some(cookie) = config.headers.get("Cookie") {
+            for (url, _) in collect_urls(cli).unwrap_or_default() {
+                pool.save_cookies(&url, cookie);
+            }
+        }
+        Arc::new(pool)
+    };
+    match cli.browser_profile {
+        Some(_) => PROFILE_POOL.get_or_init(build).clone(),
+        None => build(),
+    }
+}
+
+#[cfg(feature = "browser")]
+fn browser_source(cli: &Cli, config: &FetchConfig) -> webclaw_fetch::render::BrowserSource {
+    use webclaw_fetch::render::BrowserSource;
+    match &cli.cdp_url {
+        Some(endpoint) => BrowserSource::Connect(endpoint.clone()),
+        None => BrowserSource::launch_for(config).with_profile(cli.browser_profile.clone()),
+    }
+}
+
+fn check_warc(cli: &Cli) -> Result<(), String> {
+    let Some(path) = &cli.warc else {
+        return Ok(());
+    };
+    if path == Path::new("-") {
+        return Err(
+            "--warc needs a file: an archive is appended to, so it cannot go to stdout".into(),
+        );
+    }
+    if cli.command.is_some() {
+        return Err(
+            "--warc does not reach the subcommands; run the fetch, crawl or map without one".into(),
+        );
+    }
+    if cli.render == RenderMode::Always || cli.actions.is_some() || cli.scroll.is_some() {
+        return Err("--warc keeps the HTTP responses webclaw fetches, and --render always, --actions and --scroll load the page in the browser instead; save a rendered page with --save-mhtml".into());
+    }
+    Ok(())
+}
+
+fn open_warc(path: &Path) -> io::Result<webclaw_fetch::warc::Writer<io::BufWriter<std::fs::File>>> {
+    let gzip = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("gz"));
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)?;
+    if !webclaw_fetch::warc::ends_whole(&mut file, gzip)? {
+        return Err(io::Error::other(if gzip {
+            "it ends inside a record, or is not gzipped, so records added to it would be unreadable; a run that stopped while writing can leave it so. Give --warc a new file"
+        } else {
+            "it ends inside a record, or is not a WARC file, so records added to it would be unreadable; a run that stopped while writing can leave it so. Give --warc a new file"
+        }));
+    }
+    webclaw_fetch::warc::Writer::new(
+        io::BufWriter::new(file),
+        gzip,
+        concat!("webclaw/", env!("CARGO_PKG_VERSION")),
+    )
+}
+
+fn warc_archive(path: &Path) -> webclaw_fetch::warc::Archive {
+    static ARCHIVE: std::sync::OnceLock<webclaw_fetch::warc::Archive> = std::sync::OnceLock::new();
+    ARCHIVE
+        .get_or_init(|| {
+            let fail = |e: io::Error| -> ! {
+                eprintln!("error: cannot write {}: {e}", path.display());
+                exit(1);
+            };
+            let writer = open_warc(path).unwrap_or_else(|e| fail(e));
+            // ponytail: one lock, written on the fetching task; a writer thread if a wide crawl waits on it
+            let writer = std::sync::Mutex::new(writer);
+            let path = path.to_path_buf();
+            webclaw_fetch::warc::Archive(Arc::new(move |exchange| {
+                let written = match writer.lock() {
+                    Ok(mut writer) => writer.write(exchange),
+                    Err(e) => Err(io::Error::other(e.to_string())),
+                };
+                if let Err(e) = written {
+                    eprintln!("error: cannot write {}: {e}", path.display());
+                    exit(1);
+                }
+            }))
+        })
+        .clone()
+}
+
+fn cache_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("WEBCLAW_CACHE_DIR") {
+        return dir.into();
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .unwrap_or_else(|| ".".into());
+    PathBuf::from(home).join(".cache").join("webclaw")
+}
+
+async fn close_browser(config: &FetchConfig) {
+    #[cfg(feature = "browser")]
+    if let Some(render) = &config.render {
+        render.pool.close().await;
+    }
+    let _ = config;
+}
+
+fn pdf_scale(text: &str) -> Result<f64, String> {
+    text.parse()
+        .ok()
+        .filter(|scale| (0.1..=2.0).contains(scale))
+        .ok_or_else(|| format!("{text} is not a number from 0.1 to 2"))
 }
 
 /// Parse a JSON cookie file (Chrome extension format) into a Cookie header string.
@@ -687,7 +1097,7 @@ fn looks_truncated(url: &str) -> bool {
 fn url_to_filename(raw_url: &str, format: &OutputFormat) -> String {
     let ext = match format {
         OutputFormat::Markdown | OutputFormat::Llm => "md",
-        OutputFormat::Json => "json",
+        OutputFormat::Json | OutputFormat::Jsonl => "json",
         OutputFormat::Text => "txt",
         OutputFormat::Html => "html",
     };
@@ -825,6 +1235,10 @@ fn format_output(result: &ExtractionResult, format: &OutputFormat, show_metadata
             out
         }
         OutputFormat::Json => serde_json::to_string_pretty(result).expect("serialization failed"),
+        OutputFormat::Jsonl => format!(
+            "{}\n",
+            serde_json::to_string(result).expect("serialization failed")
+        ),
         OutputFormat::Text => result.content.plain_text.clone(),
         OutputFormat::Llm => to_llm_text(result, result.metadata.url.as_deref()),
         OutputFormat::Html => raw_html_or_markdown(result).to_string(),
@@ -879,7 +1293,7 @@ fn backfill_single_file_url(urls: &mut Vec<String>, entries: &[(String, Option<S
 
 /// Result that can be either a local extraction or a cloud API JSON response.
 enum FetchOutput {
-    Local(Box<ExtractionResult>),
+    Local(Box<ExtractionResult>, Vec<serde_json::Value>),
     Cloud(serde_json::Value),
 }
 
@@ -887,7 +1301,10 @@ impl FetchOutput {
     /// Get the local ExtractionResult, or try to parse it from the cloud response.
     fn into_extraction(self) -> Result<ExtractionResult, String> {
         match self {
-            FetchOutput::Local(r) => Ok(*r),
+            FetchOutput::Local(r, js_results) => {
+                print_script_results(&js_results);
+                Ok(*r)
+            }
             FetchOutput::Cloud(resp) => {
                 // Cloud response has an "extraction" field with the full ExtractionResult
                 resp.get("extraction")
@@ -906,7 +1323,7 @@ fn cloud_scrape_format(cli: &Cli) -> &'static str {
     }
     match cli.format {
         OutputFormat::Markdown => "markdown",
-        OutputFormat::Json => "json",
+        OutputFormat::Json | OutputFormat::Jsonl => "json",
         OutputFormat::Text => "text",
         OutputFormat::Llm => "llm",
         OutputFormat::Html => "rawHtml",
@@ -915,8 +1332,281 @@ fn cloud_scrape_format(cli: &Cli) -> &'static str {
 
 /// Fetch a URL and extract content, handling PDF detection automatically.
 /// Falls back to cloud API when bot protection or JS rendering is detected.
+const BROWSER_BUILD: bool = cfg!(feature = "browser");
+const VERSION: &str = if BROWSER_BUILD {
+    concat!(env!("CARGO_PKG_VERSION"), " +browser")
+} else {
+    env!("CARGO_PKG_VERSION")
+};
+
+#[cfg(feature = "browser")]
+fn page_actions(cli: &Cli) -> Result<Vec<webclaw_fetch::render::Action>, String> {
+    let mut actions = Vec::new();
+    if let Some(times) = cli.scroll {
+        actions.push(webclaw_fetch::render::Action::Scroll {
+            direction: webclaw_fetch::render::Direction::Down,
+            amount: None,
+            selector: None,
+            repeat: Some(times),
+        });
+    }
+    if let Some(json) = &cli.actions {
+        let json = match json.strip_prefix('@') {
+            Some(path) => {
+                std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?
+            }
+            None => json.clone(),
+        };
+        actions.extend(webclaw_fetch::render::parse_actions(&json)?);
+    }
+    Ok(actions)
+}
+
+fn one_url_error(cli: &Cli) -> String {
+    let error = "--actions and --scroll take one URL";
+    match cli.urls.iter().find(|u| u.parse::<u32>().is_ok()) {
+        Some(count) if cli.scroll.is_some() => {
+            format!("{error}; for a scroll count write --scroll={count}")
+        }
+        _ => error.to_string(),
+    }
+}
+
+fn print_script_results(results: &[serde_json::Value]) {
+    for (i, value) in results.iter().enumerate() {
+        eprintln!("js_results[{i}]: {value}");
+    }
+}
+
+#[cfg(feature = "browser")]
+async fn render_page(
+    cli: &Cli,
+    config: &FetchConfig,
+    url: &str,
+) -> Result<(FetchResult, Vec<serde_json::Value>), String> {
+    let actions = page_actions(cli)?;
+    let render = config.render.as_ref().ok_or("rendering is off")?;
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let (page, js_results) = render
+        .pool
+        .render_actions(
+            url,
+            None,
+            render.wait_for.as_deref(),
+            &headers,
+            render.block,
+            render.solve,
+            &actions,
+        )
+        .await
+        .map_err(|e| format!("render error: {e}"))?;
+    Ok((page, js_results))
+}
+
+#[cfg(not(feature = "browser"))]
+async fn render_page(
+    _cli: &Cli,
+    _config: &FetchConfig,
+    _url: &str,
+) -> Result<(FetchResult, Vec<serde_json::Value>), String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
+}
+
+#[cfg(feature = "browser")]
+async fn run_screenshot(cli: &Cli, url: &str, path: &Path) -> Result<(), String> {
+    let actions = page_actions(cli)?;
+    let config = build_fetch_config(cli);
+    let render = config
+        .render
+        .as_ref()
+        .ok_or("--screenshot needs the browser, so it cannot run with --render never")?;
+    let jpeg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg"));
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let shot = render
+        .pool
+        .screenshot_actions(
+            url,
+            render.wait_for.as_deref(),
+            &headers,
+            webclaw_fetch::render::ScreenshotOptions {
+                full_page: cli.full_page,
+                jpeg,
+            },
+            &actions,
+        )
+        .await;
+    close_browser(&config).await;
+    let (shot, js_results) = shot.map_err(|e| format!("screenshot error: {e}"))?;
+    print_script_results(&js_results);
+    webclaw_fetch::FetchError::check_status(shot.status).map_err(|e| e.to_string())?;
+    std::fs::write(path, &shot.image)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    eprintln!(
+        "saved {} ({} bytes) of {}",
+        path.display(),
+        shot.image.len(),
+        shot.url
+    );
+    Ok(())
+}
+
+#[cfg(feature = "browser")]
+async fn run_capture(cli: &Cli, url: &str, pattern: &str) -> Result<(), String> {
+    let actions = page_actions(cli)?;
+    let capture = webclaw_fetch::render::NetworkCapture::new(
+        Some(pattern),
+        cli.capture_types.as_deref(),
+        cli.capture_credentials,
+    )?;
+    let config = build_fetch_config(cli);
+    let render = config
+        .render
+        .as_ref()
+        .ok_or("--capture-network needs the browser, so it cannot run with --render never")?;
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let captured = webclaw_fetch::with_progress(
+        url,
+        render.pool.capture(
+            url,
+            render.wait_for.as_deref(),
+            &headers,
+            render.block,
+            render.solve,
+            &actions,
+            &capture,
+        ),
+    )
+    .await;
+    close_browser(&config).await;
+    let webclaw_fetch::render::Captured {
+        page,
+        js_results,
+        network,
+    } = captured.map_err(|e| format!("render error: {e}"))?;
+    print_script_results(&js_results);
+    webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&network).map_err(|e| e.to_string())?
+    );
+    eprintln!("captured {} responses of {}", network.len(), page.url);
+    Ok(())
+}
+
+#[cfg(not(feature = "browser"))]
+async fn run_capture(_cli: &Cli, _url: &str, _pattern: &str) -> Result<(), String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
+}
+
+#[cfg(not(feature = "browser"))]
+async fn run_screenshot(_cli: &Cli, _url: &str, _path: &Path) -> Result<(), String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
+}
+
+#[cfg(feature = "browser")]
+async fn run_save(cli: &Cli, url: &str, path: &Path, pdf: bool) -> Result<(), String> {
+    use webclaw_fetch::render::{Paper, PdfOptions};
+    let (flag, kind) = if pdf {
+        ("--save-pdf", "PDF")
+    } else {
+        ("--save-mhtml", "MHTML")
+    };
+    let actions = page_actions(cli)?;
+    let config = build_fetch_config(cli);
+    let render = config.render.as_ref().ok_or(format!(
+        "{flag} needs the browser, so it cannot run with --render never"
+    ))?;
+    let headers: Vec<(String, String)> = config.headers.clone().into_iter().collect();
+    let to_stdout = path == Path::new("-");
+    let mut part = path.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    let mut out: Box<dyn std::io::Write + Send> = if to_stdout {
+        Box::new(std::io::stdout())
+    } else {
+        Box::new(
+            std::fs::File::create(&part)
+                .map_err(|e| format!("cannot write {}: {e}", part.display()))?,
+        )
+    };
+    let wait_for = render.wait_for.as_deref();
+    let printed = if pdf {
+        let mut options = PdfOptions::default();
+        options.paper = match cli.paper {
+            PaperArg::Letter => Paper::Letter,
+            PaperArg::A4 => Paper::A4,
+        };
+        options.landscape = cli.landscape;
+        options.print_background = cli.print_background;
+        options.scale = cli.scale;
+        render
+            .pool
+            .pdf_actions(url, wait_for, &headers, options, &actions, &mut out)
+            .await
+            .map(|(p, js)| ((p.bytes, p.status, p.url), js))
+    } else {
+        render
+            .pool
+            .mhtml_actions(url, wait_for, &headers, &actions, &mut out)
+            .await
+            .map(|(m, js)| ((m.bytes, m.status, m.url), js))
+    };
+    close_browser(&config).await;
+    let printed = printed
+        .map_err(|e| match e.to_string() {
+            e if e.contains("the render timeout covers") => {
+                format!("{kind} error: {e}; raise it with --timeout")
+            }
+            e => format!("{kind} error: {e}"),
+        })
+        .and_then(|(printed, js_results)| {
+            print_script_results(&js_results);
+            webclaw_fetch::FetchError::check_status(printed.1)
+                .map(|()| printed)
+                .map_err(|e| e.to_string())
+        });
+    let flushed = out.flush();
+    drop(out);
+    let printed = printed
+        .and_then(|printed| {
+            flushed
+                .map(|()| printed)
+                .map_err(|e| format!("cannot write {}: {e}", part.display()))
+        })
+        .and_then(|printed| {
+            if !to_stdout {
+                std::fs::rename(&part, path)
+                    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            }
+            Ok(printed)
+        });
+    let printed = match printed {
+        Ok(printed) => printed,
+        Err(e) => {
+            if !to_stdout {
+                let _ = std::fs::remove_file(&part);
+            }
+            return Err(e);
+        }
+    };
+    let target = if to_stdout {
+        "stdout".to_string()
+    } else {
+        path.display().to_string()
+    };
+    eprintln!("saved {target} ({} bytes) of {}", printed.0, printed.2);
+    Ok(())
+}
+
+#[cfg(not(feature = "browser"))]
+async fn run_save(_cli: &Cli, _url: &str, _path: &Path, _pdf: bool) -> Result<(), String> {
+    Err("this webclaw build has no browser support; build it with `--features browser`".into())
+}
+
 async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
-    // Local sources: read and extract as HTML
     if cli.stdin {
         let mut buf = String::new();
         io::stdin()
@@ -924,7 +1614,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
             .map_err(|e| format!("failed to read stdin: {e}"))?;
         let options = build_extraction_options(cli);
         return extract_with_options(&buf, None, &options)
-            .map(|r| FetchOutput::Local(Box::new(r)))
+            .map(|r| FetchOutput::Local(Box::new(r), Vec::new()))
             .map_err(|e| format!("extraction error: {e}"));
     }
 
@@ -933,7 +1623,7 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
             std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
         let options = build_extraction_options(cli);
         return extract_with_options(&html, None, &options)
-            .map(|r| FetchOutput::Local(Box::new(r)))
+            .map(|r| FetchOutput::Local(Box::new(r), Vec::new()))
             .map_err(|e| format!("extraction error: {e}"));
     }
 
@@ -941,9 +1631,6 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         .urls
         .first()
         .ok_or("no input provided -- pass a URL, --file, or --stdin")?;
-    // M14: warn when the URL looks like the shell split it on `&` or `?`.
-    // Informational only — fetch still proceeds. Suppressed by --url-encoded,
-    // which asserts the caller has handled escaping intentionally.
     if !cli.url_encoded && looks_truncated(raw_url) {
         eprintln!(
             "# webclaw: warning: URL looks truncated (ends with '&' or '?'); did the shell split it? Quote the URL or use --url-encoded."
@@ -954,7 +1641,6 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
 
     let cloud_client = webclaw_fetch::cloud::CloudClient::new(cli.api_key.as_deref());
 
-    // --cloud: skip local, go straight to cloud API
     if cli.cloud {
         let c =
             cloud_client.ok_or("--cloud requires WEBCLAW_API_KEY (set via env or --api-key)")?;
@@ -972,15 +1658,26 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         return Ok(FetchOutput::Cloud(resp));
     }
 
-    // Normal path: try local first
-    let client =
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
+    let config = build_fetch_config(cli);
+    let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
-    // M13: wrap with periodic stderr progress emitter. Fast fetches see
-    // zero emissions (timer never fires in <10s); slow fetches get a
-    // line every 10s of elapsed time so the CLI doesn't appear hung.
-    let fetch_fut = client.fetch_and_extract_with_options(url, &options);
-    let result = match webclaw_fetch::with_progress(url, fetch_fut).await {
+    let mut js_results = Vec::new();
+    let extracted = if cli.render == RenderMode::Always {
+        let rendered = webclaw_fetch::with_progress(url, render_page(cli, &config, url)).await;
+        close_browser(&config).await;
+        let (page, values) = rendered?;
+        js_results = values;
+        client.extract(&page, &options)
+    } else {
+        let fetched = webclaw_fetch::with_progress(url, client.fetch_smart(url))
+            .await
+            .map_err(|e| format!("fetch error: {e}"))?;
+        let (_, extracted) =
+            webclaw_fetch::with_progress(url, client.extract_page(fetched, &options)).await;
+        close_browser(&config).await;
+        extracted
+    };
+    let result = match extracted {
         Ok(result) => result,
         Err(
             error @ (webclaw_fetch::FetchError::Content(_)
@@ -1004,7 +1701,6 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
         Err(error) => return Err(format!("fetch error: {error}")),
     };
 
-    // Check if we should fall back to cloud
     let reason = detect_empty(&result);
     if !matches!(reason, EmptyReason::None) {
         if let Some(ref c) = cloud_client {
@@ -1023,14 +1719,13 @@ async fn fetch_and_extract(cli: &Cli) -> Result<FetchOutput, String> {
                 Ok(resp) => return Ok(FetchOutput::Cloud(resp)),
                 Err(e) => {
                     eprintln!("\x1b[33mwarning:\x1b[0m cloud fallback failed: {e}");
-                    // Fall through to return the local result with a warning
                 }
             }
         }
         warn_empty(url, &reason);
     }
 
-    Ok(FetchOutput::Local(Box::new(result)))
+    Ok(FetchOutput::Local(Box::new(result), js_results))
 }
 
 /// Fetch raw HTML from a URL (no extraction). Used for --raw-html and brand extraction.
@@ -1075,6 +1770,117 @@ async fn fetch_html(cli: &Cli) -> Result<FetchResult, String> {
         .fetch(&url)
         .await
         .map_err(|e| format!("fetch error: {e}"))
+}
+
+async fn fetch_page(cli: &Cli) -> Result<FetchResult, String> {
+    let page = if cli.stdin || cli.file.is_some() {
+        fetch_html(cli).await?
+    } else {
+        let url = normalize_url(
+            cli.urls
+                .first()
+                .ok_or("no input provided -- pass a URL, --file, or --stdin")?,
+        );
+        let config = build_fetch_config(cli);
+        let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
+        let page = if cli.render == RenderMode::Always {
+            render_page(cli, &config, &url)
+                .await
+                .map(|(page, js_results)| {
+                    print_script_results(&js_results);
+                    page
+                })
+        } else {
+            match client.fetch_smart(&url).await {
+                Ok(fetched) => Ok(client
+                    .extract_page(fetched, &build_extraction_options(cli))
+                    .await
+                    .0),
+                Err(e) => Err(format!("fetch error: {e}")),
+            }
+        };
+        close_browser(&config).await;
+        page?
+    };
+    webclaw_fetch::FetchError::check_status(page.status).map_err(|e| e.to_string())?;
+    Ok(page)
+}
+
+async fn run_tables(cli: &Cli) -> Result<(), String> {
+    let page = fetch_page(cli).await?;
+    let json = serde_json::to_string_pretty(&webclaw_core::tables(&page.html));
+    println!("{}", json.map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+async fn run_select(cli: &Cli) -> Result<(), String> {
+    let text = match (&cli.find_text, &cli.find_regex) {
+        (Some(text), _) => Some(webclaw_core::TextMatch::text(
+            text,
+            cli.exact,
+            cli.case_sensitive,
+        )),
+        (None, Some(regex)) => Some(webclaw_core::TextMatch::regex(regex, cli.case_sensitive)),
+        (None, None) => None,
+    }
+    .transpose()
+    .map_err(|e| e.to_string())?;
+    if text.is_some() && !cli.similar && !cli.fields.is_empty() {
+        return Err("--field works with --select, --xpath or --similar".into());
+    }
+    let fields = cli
+        .fields
+        .iter()
+        .map(|field| {
+            field
+                .split_once('=')
+                .map(|(name, css)| (name.trim().to_string(), css.trim().to_string()))
+                .ok_or_else(|| format!("--field needs NAME=SELECTOR, got `{field}`"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let page = fetch_page(cli).await?;
+    let url = (!page.url.is_empty()).then_some(page.url.as_str());
+    let html = page.html.as_str();
+    let json = match (&cli.select, &cli.xpath, &text) {
+        _ if cli.similar => {
+            let example = match (&cli.select, &cli.xpath, &text) {
+                (Some(css), _, _) => webclaw_core::FindExample::Css(css),
+                (_, Some(xpath), _) => webclaw_core::FindExample::XPath(xpath),
+                (_, _, Some(text)) => webclaw_core::FindExample::Text(text),
+                _ => return Err("--similar needs an example".into()),
+            };
+            let similar = webclaw_core::find_similar(html, example)
+                .map_err(|e| e.to_string())?
+                .ok_or("nothing on the page matches the example")?;
+            if fields.is_empty() {
+                serde_json::to_string_pretty(&similar)
+            } else {
+                let records =
+                    webclaw_core::select_records(html, url, &similar.selector, &fields)
+                        .map_err(|e| format!("with --similar, --field takes CSS selectors: {e}"))?;
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"selector": similar.selector, "records": records}),
+                )
+            }
+        }
+        (_, _, Some(text)) => serde_json::to_string_pretty(&webclaw_core::find_text(html, text)),
+        (Some(css), _, _) if fields.is_empty() => serde_json::to_string_pretty(
+            &webclaw_core::select(html, url, css).map_err(|e| e.to_string())?,
+        ),
+        (Some(css), _, _) => serde_json::to_string_pretty(
+            &webclaw_core::select_records(html, url, css, &fields).map_err(|e| e.to_string())?,
+        ),
+        (_, Some(xpath), _) if fields.is_empty() => serde_json::to_string_pretty(
+            &webclaw_core::select_xpath(html, url, xpath).map_err(|e| e.to_string())?,
+        ),
+        (_, Some(xpath), _) => serde_json::to_string_pretty(
+            &webclaw_core::select_xpath_records(html, url, xpath, &fields)
+                .map_err(|e| e.to_string())?,
+        ),
+        (None, None, None) => return Err("nothing to pick".into()),
+    };
+    println!("{}", json.map_err(|e| e.to_string())?);
+    Ok(())
 }
 
 /// Fetch external stylesheets referenced in HTML and inject them as `<style>` blocks.
@@ -1172,8 +1978,28 @@ fn format_frontmatter(meta: &Metadata) -> String {
     lines.join("\n")
 }
 
+fn with_js_results(
+    result: &ExtractionResult,
+    js_results: &[serde_json::Value],
+    pretty: bool,
+) -> String {
+    let mut value = serde_json::to_value(result).unwrap_or_default();
+    value["js_results"] = serde_json::Value::from(js_results.to_vec());
+    if pretty {
+        serde_json::to_string_pretty(&value).unwrap_or_default()
+    } else {
+        value.to_string()
+    }
+}
+
 fn print_output(result: &ExtractionResult, format: &OutputFormat, show_metadata: bool) {
     match format {
+        OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string(result).expect("serialization failed")
+            );
+        }
         OutputFormat::Markdown => {
             if show_metadata {
                 print!("{}", format_frontmatter(&result.metadata));
@@ -1205,6 +2031,70 @@ fn print_output(result: &ExtractionResult, format: &OutputFormat, show_metadata:
     }
 }
 
+fn chunk_sizes(cli: &Cli) -> Option<(u32, u32)> {
+    cli.chunk.map(|size| (size, cli.chunk_overlap))
+}
+
+fn check_markdown_flags(cli: &Cli) -> Result<(), String> {
+    let markdown_less = matches!(
+        cli.format,
+        OutputFormat::Text | OutputFormat::Llm | OutputFormat::Html
+    );
+    if cli.chunk.is_some() && markdown_less {
+        return Err(
+            "--chunk prints markdown chunks as JSON lines, or one JSON array with -f json".into(),
+        );
+    }
+    if cli.citations && markdown_less {
+        return Err("--citations rewrites markdown: use -f markdown, json or jsonl".into());
+    }
+    Ok(())
+}
+
+fn cite_pages<'a>(pages: impl IntoIterator<Item = &'a mut ExtractionResult>, together: bool) {
+    let mut last = 0;
+    for page in pages {
+        let (markdown, high) =
+            to_citations_after(&page.content.markdown, page.metadata.url.as_deref(), last);
+        page.content.markdown = markdown;
+        if together {
+            last = high;
+        }
+    }
+}
+
+fn printed_together(cli: &Cli) -> bool {
+    matches!(cli.format, OutputFormat::Markdown) && cli.output_dir.is_none()
+}
+
+fn chunk_page(
+    markdown: &str,
+    url: Option<&str>,
+    (size, overlap): (u32, u32),
+) -> Vec<webclaw_core::Chunk> {
+    let mut chunks = webclaw_core::chunk(markdown, size as usize, overlap as usize);
+    for chunk in &mut chunks {
+        chunk.url = url.map(String::from);
+    }
+    chunks
+}
+
+fn print_chunks(chunks: &[webclaw_core::Chunk], format: &OutputFormat) {
+    if matches!(format, OutputFormat::Json) {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(chunks).expect("serialization failed")
+        );
+        return;
+    }
+    for chunk in chunks {
+        println!(
+            "{}",
+            serde_json::to_string(chunk).expect("serialization failed")
+        );
+    }
+}
+
 fn cloud_text<'a>(resp: &'a serde_json::Value, field: &str, legacy: &str) -> Option<&'a str> {
     resp.get(field)
         .and_then(|v| v.as_str())
@@ -1214,6 +2104,7 @@ fn cloud_text<'a>(resp: &'a serde_json::Value, field: &str, legacy: &str) -> Opt
 /// Print cloud API response in the requested format.
 fn print_cloud_output(resp: &serde_json::Value, format: &OutputFormat) {
     match format {
+        OutputFormat::Jsonl => println!("{resp}"),
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -1264,6 +2155,12 @@ fn print_cloud_output(resp: &serde_json::Value, format: &OutputFormat) {
 
 fn print_diff_output(diff: &ContentDiff, format: &OutputFormat) {
     match format {
+        OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string(diff).expect("serialization failed")
+            );
+        }
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -1310,6 +2207,14 @@ fn print_diff_output(diff: &ContentDiff, format: &OutputFormat) {
 
 fn print_crawl_output(result: &CrawlResult, format: &OutputFormat, show_metadata: bool) {
     match format {
+        OutputFormat::Jsonl => {
+            for page in &result.pages {
+                println!(
+                    "{}",
+                    serde_json::to_string(page).expect("serialization failed")
+                );
+            }
+        }
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -1367,6 +2272,15 @@ fn print_crawl_output(result: &CrawlResult, format: &OutputFormat, show_metadata
 
 fn print_batch_output(results: &[BatchExtractResult], format: &OutputFormat, show_metadata: bool) {
     match format {
+        OutputFormat::Jsonl => {
+            for r in results {
+                let line = match &r.result {
+                    Ok(extraction) => serde_json::json!({ "url": r.url, "result": extraction }),
+                    Err(e) => serde_json::json!({ "url": r.url, "error": e.to_string() }),
+                };
+                println!("{line}");
+            }
+        }
         OutputFormat::Json => {
             // Build a JSON array of {url, result?, error?} objects
             let entries: Vec<serde_json::Value> = results
@@ -1452,8 +2366,21 @@ fn print_batch_output(results: &[BatchExtractResult], format: &OutputFormat, sho
     }
 }
 
+fn path_globs(list: Option<&str>) -> Vec<String> {
+    list.map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_default()
+}
+
 fn print_map_output(entries: &[SitemapEntry], format: &OutputFormat) {
     match format {
+        OutputFormat::Jsonl => {
+            for entry in entries {
+                println!(
+                    "{}",
+                    serde_json::to_string(entry).expect("serialization failed")
+                );
+            }
+        }
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -1484,6 +2411,17 @@ fn format_progress(page: &PageResult, index: usize, max_pages: Option<usize>) ->
     format!("[{index}{of}] {status} {} ({timing}{detail})", page.url)
 }
 
+fn report_page_problems(page: &PageResult) {
+    if let Some(ref err) = page.error {
+        eprintln!("error: {} -- {}", page.url, err);
+    } else if let Some(ref extraction) = page.extraction {
+        let reason = detect_empty(extraction);
+        if !matches!(reason, EmptyReason::None) {
+            warn_empty(&page.url, &reason);
+        }
+    }
+}
+
 async fn run_crawl(cli: &Cli) -> Result<(), String> {
     let url = cli
         .urls
@@ -1496,24 +2434,48 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         return Err("--crawl cannot be used with --file or --stdin".into());
     }
 
-    let include_patterns: Vec<String> = cli
-        .include_paths
-        .as_deref()
-        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
-        .unwrap_or_default();
-    let exclude_patterns: Vec<String> = cli
-        .exclude_paths
-        .as_deref()
-        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
-        .unwrap_or_default();
+    let include_patterns = path_globs(cli.include_paths.as_deref());
+    let exclude_patterns = path_globs(cli.exclude_paths.as_deref());
 
-    // Set up streaming progress channel
-    let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(100);
+    let (progress_tx, mut progress_rx) = tokio::sync::broadcast::channel::<PageResult>(4096);
+    let stream_jsonl = (matches!(cli.format, OutputFormat::Jsonl)
+        || (cli.chunk.is_some() && !matches!(cli.format, OutputFormat::Json)))
+        && cli.output_dir.is_none();
+    let chunk_cli = chunk_sizes(cli);
+    let streamed_urls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let keep_urls = cli.webhook.is_some();
+    let citations = cli.citations;
+    let on_page = stream_jsonl.then(|| {
+        let streamed_urls = Arc::clone(&streamed_urls);
+        PageSink(Arc::new(move |page: &PageResult| {
+            match (chunk_cli, &page.extraction) {
+                (Some(sizes), Some(extraction)) => print_chunks(
+                    &chunk_page(&extraction.content.markdown, Some(&page.url), sizes),
+                    &OutputFormat::Jsonl,
+                ),
+                (Some(_), None) => {}
+                (None, Some(_)) if citations => {
+                    let mut page = page.clone();
+                    cite_pages(page.extraction.iter_mut(), false);
+                    println!(
+                        "{}",
+                        serde_json::to_string(&page).expect("serialization failed")
+                    );
+                }
+                (None, _) => println!(
+                    "{}",
+                    serde_json::to_string(page).expect("serialization failed")
+                ),
+            }
+            report_page_problems(page);
+            if keep_urls {
+                streamed_urls.lock().unwrap().push(page.url.clone());
+            }
+        }))
+    });
 
-    // Set up cancel flag for Ctrl+C handling
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
-    // Register Ctrl+C handler when --crawl-state is set
     let state_path = cli.crawl_state.clone();
     if state_path.is_some() {
         let flag = Arc::clone(&cancel_flag);
@@ -1524,15 +2486,12 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         });
     }
 
+    let fetch = build_fetch_config(cli);
     let config = CrawlConfig {
-        fetch: build_fetch_config(cli),
+        fetch: fetch.clone(),
         max_depth: cli.depth,
-        // `--max-pages 0` = no cap.
         max_pages: (cli.max_pages > 0).then_some(cli.max_pages),
-        // The CLI renders a document from the collected pages at the end, so
-        // it keeps them. An uncapped crawl therefore grows with the site —
-        // acceptable on a workstation, and Ctrl+C saves resumable state.
-        stream_only: false,
+        stream_only: stream_jsonl,
         concurrency: cli.concurrency,
         delay: std::time::Duration::from_millis(cli.delay),
         path_prefix: cli.path_prefix.clone(),
@@ -1543,9 +2502,13 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         cancel_flag: Some(Arc::clone(&cancel_flag)),
         allow_subdomains: false,
         allow_external_links: false,
+        respect_robots: !cli.ignore_robots,
+        checkpoint: state_path.clone(),
+        on_page,
+        query: cli.query.clone(),
+        stop_when_answered: cli.stop_when_answered,
     };
 
-    // Load resume state if --crawl-state file exists
     let resume_state = state_path
         .as_ref()
         .and_then(|p| Crawler::load_state(p))
@@ -1557,39 +2520,51 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
             );
         });
 
-    // `None` = uncapped, so the progress line shows a running count only.
     let max_pages = (cli.max_pages > 0).then_some(cli.max_pages);
     let completed_offset = resume_state.as_ref().map_or(0, |s| s.completed_pages);
 
-    // Spawn background task to print streaming progress to stderr
     let progress_handle = tokio::spawn(async move {
         let mut count = completed_offset;
-        while let Ok(page) = progress_rx.recv().await {
-            count += 1;
-            eprintln!("{}", format_progress(&page, count, max_pages));
+        loop {
+            match progress_rx.recv().await {
+                Ok(page) => {
+                    count += 1;
+                    eprintln!("{}", format_progress(&page, count, max_pages));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("warning: output fell behind the crawl, {n} pages were not printed");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
         }
     });
 
     let crawler = Crawler::new(url, config).map_err(|e| format!("crawler error: {e}"))?;
-    let result = crawler.crawl(url, resume_state).await;
+    let mut result = crawler.crawl(url, resume_state).await;
+    if cli.query.is_some() {
+        result.pages.sort_by(|a, b| {
+            b.relevance
+                .unwrap_or(0.0)
+                .total_cmp(&a.relevance.unwrap_or(0.0))
+        });
+    }
+    if cli.citations {
+        cite_pages(
+            result
+                .pages
+                .iter_mut()
+                .filter_map(|p| p.extraction.as_mut()),
+            printed_together(cli),
+        );
+    }
 
-    // Drop the crawler (and its progress_tx clone) so the progress task finishes
     drop(crawler);
+    close_browser(&fetch).await;
     let _ = progress_handle.await;
 
-    // If cancelled via Ctrl+C and --crawl-state is set, save state for resume
     let was_cancelled = cancel_flag.load(Ordering::Relaxed);
     if was_cancelled {
         if let Some(ref path) = state_path {
-            Crawler::save_state(
-                path,
-                url,
-                &result.visited,
-                &result.remaining_frontier,
-                completed_offset + result.total,
-                cli.max_pages,
-                cli.depth,
-            )?;
             eprintln!(
                 "Crawl state saved to {} ({} pages completed). Resume with --crawl-state {}",
                 path.display(),
@@ -1597,24 +2572,13 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 path.display(),
             );
         }
-    } else if let Some(ref path) = state_path {
-        // Crawl completed normally — clean up state file
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
-        }
+    } else if let Some(ref path) = state_path
+        && path.exists()
+    {
+        let _ = std::fs::remove_file(path);
     }
 
-    // Log per-page errors and extraction warnings to stderr
-    for page in &result.pages {
-        if let Some(ref err) = page.error {
-            eprintln!("error: {} -- {}", page.url, err);
-        } else if let Some(ref extraction) = page.extraction {
-            let reason = detect_empty(extraction);
-            if !matches!(reason, EmptyReason::None) {
-                warn_empty(&page.url, &reason);
-            }
-        }
-    }
+    result.pages.iter().for_each(report_page_problems);
 
     if let Some(ref dir) = cli.output_dir {
         let mut saved = 0usize;
@@ -1627,6 +2591,22 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
             }
         }
         eprintln!("Saved {saved} files to {}", dir.display());
+    } else if let Some(sizes) = chunk_sizes(cli) {
+        if !stream_jsonl {
+            let chunks: Vec<_> = result
+                .pages
+                .iter()
+                .filter_map(|p| {
+                    Some(chunk_page(
+                        &p.extraction.as_ref()?.content.markdown,
+                        Some(&p.url),
+                        sizes,
+                    ))
+                })
+                .flatten()
+                .collect();
+            print_chunks(&chunks, &cli.format);
+        }
     } else {
         print_crawl_output(&result, &cli.format, cli.metadata);
     }
@@ -1635,10 +2615,20 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
         "Crawled {} pages ({} ok, {} errors) in {:.1}s",
         result.total, result.ok, result.errors, result.elapsed_secs,
     );
+    if result.skipped_by_robots > 0 {
+        eprintln!(
+            "Skipped {} URLs disallowed by robots.txt (--ignore-robots to crawl them)",
+            result.skipped_by_robots
+        );
+    }
 
-    // Fire webhook on crawl complete
     if let Some(ref webhook_url) = cli.webhook {
-        let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
+        let streamed = streamed_urls.lock().unwrap().clone();
+        let urls: Vec<&str> = if stream_jsonl {
+            streamed.iter().map(String::as_str).collect()
+        } else {
+            result.pages.iter().map(|p| p.url.as_str()).collect()
+        };
         let handle = fire_webhook(
             webhook_url,
             &serde_json::json!({
@@ -1646,11 +2636,11 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
                 "total": result.total,
                 "ok": result.ok,
                 "errors": result.errors,
+                "skipped_by_robots": result.skipped_by_robots,
                 "elapsed_secs": result.elapsed_secs,
                 "urls": urls,
             }),
         );
-        // Wait for the webhook to finish so the process doesn't exit mid-send.
         let _ = handle.await;
     }
 
@@ -1739,22 +2729,42 @@ async fn run_map(cli: &Cli) -> Result<(), String> {
         .map(|u| normalize_url(u))?;
     let url = url.as_str();
 
-    let client =
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
-
-    // Layered discovery: sitemaps first, bounded crawl fallback when thin.
     let mut opts = webclaw_fetch::MapOptions::default();
+    opts.crawl_fallback = !cli.no_map_crawl;
+    opts.max_urls = cli.map_limit;
+    opts.html_only = !cli.map_all_captures;
+    opts.path_prefix = cli.path_prefix.clone();
+    opts.include_patterns = path_globs(cli.include_paths.as_deref());
+    opts.exclude_patterns = path_globs(cli.exclude_paths.as_deref());
+    opts.query = cli.query.clone();
     if let Some(pages) = cli.map_pages {
         opts.max_crawl_pages = pages;
     }
-    if cli.no_map_crawl {
-        opts.crawl_fallback = false;
-    }
-    if let Some(limit) = cli.map_limit {
-        opts.max_urls = Some(limit);
+    if let Some(list) = &cli.map_source {
+        opts.set_sources(list)?;
     }
 
-    let entries = webclaw_fetch::discover_urls(&client, url, &opts).await;
+    let mut config = build_fetch_config(cli);
+    if opts.common_crawl {
+        config.total_timeout = Some(std::time::Duration::from_secs(
+            cli.timeout.saturating_mul(2),
+        ));
+    }
+    let client = FetchClient::new(config).map_err(|e| format!("client error: {e}"))?;
+
+    let site = webclaw_fetch::map_site(&client, url, &opts)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(e) = &site.index_error {
+        let why = format!(
+            "the Common Crawl lookup stopped early ({e}); the index is often busy, try again later"
+        );
+        if site.entries.is_empty() {
+            return Err(why);
+        }
+        eprintln!("warning: {why}; listing the URLs found until then");
+    }
+    let entries = site.entries;
 
     if entries.is_empty() {
         eprintln!("no URLs found for {url}");
@@ -1767,20 +2777,26 @@ async fn run_map(cli: &Cli) -> Result<(), String> {
 }
 
 async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<(), String> {
-    let client = Arc::new(
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?,
-    );
+    let config = build_fetch_config(cli);
+    let client =
+        Arc::new(FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?);
 
     let urls: Vec<&str> = entries.iter().map(|(u, _)| u.as_str()).collect();
     let options = build_extraction_options(cli);
-    let results = client
+    let mut results = client
         .fetch_and_extract_batch_with_options(&urls, cli.concurrency, &options)
         .await;
+    if cli.citations {
+        cite_pages(
+            results.iter_mut().filter_map(|r| r.result.as_mut().ok()),
+            printed_together(cli),
+        );
+    }
+    close_browser(&config).await;
 
     let ok = results.iter().filter(|r| r.result.is_ok()).count();
     let errors = results.len() - ok;
 
-    // Log errors and extraction warnings to stderr
     for r in &results {
         if let Err(ref e) = r.result {
             eprintln!("error: {} -- {}", r.url, e);
@@ -1792,7 +2808,6 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
         }
     }
 
-    // Build a lookup of custom filenames by URL
     let custom_names: std::collections::HashMap<&str, &str> = entries
         .iter()
         .filter_map(|(url, name)| name.as_deref().map(|n| (url.as_str(), n)))
@@ -1812,6 +2827,19 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
             }
         }
         eprintln!("Saved {saved} files to {}", dir.display());
+    } else if let Some(sizes) = chunk_sizes(cli) {
+        let chunks: Vec<_> = results
+            .iter()
+            .filter_map(|r| {
+                Some(chunk_page(
+                    &r.result.as_ref().ok()?.content.markdown,
+                    Some(&r.url),
+                    sizes,
+                ))
+            })
+            .flatten()
+            .collect();
+        print_chunks(&chunks, &cli.format);
     } else {
         print_batch_output(&results, &cli.format, cli.metadata);
     }
@@ -1823,7 +2851,6 @@ async fn run_batch(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<()
         errors
     );
 
-    // Fire webhook on batch complete
     if let Some(ref webhook_url) = cli.webhook {
         let urls: Vec<&str> = results.iter().map(|r| r.url.as_str()).collect();
         let handle = fire_webhook(
@@ -1985,12 +3012,11 @@ async fn run_watch(cli: &Cli, urls: &[String]) -> Result<(), String> {
         return Err("--watch requires at least one URL".into());
     }
 
-    let client = Arc::new(
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?,
-    );
+    let config = build_fetch_config(cli);
+    let client =
+        Arc::new(FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?);
     let options = build_extraction_options(cli);
 
-    // Ctrl+C handler
     let cancelled = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&cancelled);
     tokio::spawn(async move {
@@ -1998,13 +3024,13 @@ async fn run_watch(cli: &Cli, urls: &[String]) -> Result<(), String> {
         flag.store(true, Ordering::Relaxed);
     });
 
-    // Single-URL mode: preserve original behavior exactly
-    if urls.len() == 1 {
-        return run_watch_single(cli, &client, &options, &urls[0], &cancelled).await;
-    }
-
-    // Multi-URL mode: batch fetch, diff each, report aggregate
-    run_watch_multi(cli, &client, &options, urls, &cancelled).await
+    let watched = if urls.len() == 1 {
+        run_watch_single(cli, &client, &options, &urls[0], &cancelled).await
+    } else {
+        run_watch_multi(cli, &client, &options, urls, &cancelled).await
+    };
+    close_browser(&config).await;
+    watched
 }
 
 /// Original single-URL watch loop -- backward compatible.
@@ -2383,8 +3409,8 @@ async fn run_llm(cli: &Cli) -> Result<(), String> {
 /// Batch LLM extraction: fetch each URL, run LLM on extracted content, save/print results.
 /// URLs are processed sequentially to respect LLM provider rate limits.
 async fn run_batch_llm(cli: &Cli, entries: &[(String, Option<String>)]) -> Result<(), String> {
-    let client =
-        FetchClient::new(build_fetch_config(cli)).map_err(|e| format!("client error: {e}"))?;
+    let config = build_fetch_config(cli);
+    let client = FetchClient::new(config.clone()).map_err(|e| format!("client error: {e}"))?;
     let options = build_extraction_options(cli);
     let provider = build_llm_provider(cli).await?;
     let model = cli.llm_model.as_deref();
@@ -2509,6 +3535,7 @@ async fn run_batch_llm(cli: &Cli, entries: &[(String, Option<String>)]) -> Resul
         }
     }
 
+    close_browser(&config).await;
     eprintln!("Processed {total} URLs ({ok} ok, {errors} errors)");
 
     if let Some(ref webhook_url) = cli.webhook {
@@ -2679,16 +3706,54 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
     ))
 }
 
+fn exit(code: i32) -> ! {
+    #[cfg(feature = "browser")]
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| runtime.block_on(webclaw_fetch::render::close_profiles()));
+    }
+    process::exit(code)
+}
+
 #[tokio::main]
 async fn main() {
+    run().await;
+    #[cfg(feature = "browser")]
+    webclaw_fetch::render::close_profiles().await;
+}
+
+async fn run() {
     dotenvy::dotenv().ok();
 
     let mut cli = Cli::parse();
     init_logging(cli.verbose);
+    if let Err(e) = check_warc(&cli) {
+        eprintln!("error: {e}");
+        exit(1);
+    }
 
-    // Subcommand path. Handled before the flag dispatch so a subcommand
-    // can't collide with a flag-based flow. When no subcommand is set
-    // we fall through to the existing behaviour.
+    if cli.browser_profile.is_some() && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
+        eprintln!(
+            "error: --browser-profile needs the browser: a build with the `browser` feature, and --render auto or always"
+        );
+        exit(1);
+    }
+    #[cfg(all(unix, feature = "browser"))]
+    webclaw_fetch::render::close_profiles_on_terminate();
+    #[cfg(feature = "browser")]
+    if cli.browser_profile.is_some()
+        && let Some(render) = build_fetch_config(&cli).render
+        && let Err(e) = render.pool.open().await
+    {
+        eprintln!("error: {e}");
+        exit(1);
+    }
+    if cli.solve && (!BROWSER_BUILD || cli.render == RenderMode::Never) {
+        eprintln!(
+            "error: --solve needs the browser: a build with `--features browser`, and no --render never"
+        );
+        exit(1);
+    }
+
     if let Some(ref cmd) = cli.command {
         match cmd {
             Commands::Bench { url, json, facts } => {
@@ -2699,26 +3764,21 @@ async fn main() {
                 };
                 if let Err(e) = bench::run(&args).await {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
                 return;
             }
             Commands::Extractors { json } => {
                 let entries = webclaw_fetch::extractors::list();
                 if *json {
-                    // Serialize with serde_json. ExtractorInfo derives
-                    // Serialize so this is a one-liner.
                     match serde_json::to_string_pretty(&entries) {
                         Ok(s) => println!("{s}"),
                         Err(e) => {
                             eprintln!("error: failed to serialise catalog: {e}");
-                            process::exit(1);
+                            exit(1);
                         }
                     }
                 } else {
-                    // Human-friendly table: NAME + LABEL + one URL
-                    // pattern sample. Keeps the output scannable on a
-                    // narrow terminal.
                     println!("{} vertical extractors available:\n", entries.len());
                     let name_w = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
                     let label_w = entries.iter().map(|e| e.label.len()).max().unwrap_or(0);
@@ -2738,10 +3798,6 @@ async fn main() {
                 return;
             }
             Commands::Vertical { name, url, raw } => {
-                // Build a FetchClient with cloud fallback attached when
-                // WEBCLAW_API_KEY is set. Antibot-gated verticals
-                // (amazon, ebay, etsy, trustpilot) need this to escalate
-                // on bot protection.
                 let fetch_cfg = webclaw_fetch::FetchConfig {
                     browser: webclaw_fetch::BrowserProfile::Firefox,
                     ..webclaw_fetch::FetchConfig::default()
@@ -2750,7 +3806,7 @@ async fn main() {
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("error: failed to build fetch client: {e}");
-                        process::exit(1);
+                        exit(1);
                     }
                 };
                 if let Some(cloud) = webclaw_fetch::cloud::CloudClient::from_env() {
@@ -2767,15 +3823,13 @@ async fn main() {
                             Ok(s) => println!("{s}"),
                             Err(e) => {
                                 eprintln!("error: JSON encode failed: {e}");
-                                process::exit(1);
+                                exit(1);
                             }
                         }
                     }
                     Err(e) => {
-                        // UrlMismatch / UnknownVertical / Fetch all get
-                        // Display impls with actionable messages.
                         eprintln!("error: {e}");
-                        process::exit(1);
+                        exit(1);
                     }
                 }
                 return;
@@ -2795,7 +3849,7 @@ async fn main() {
                         eprintln!(
                             "error: search requires a Serper.dev API key: pass --serper-key or set SERPER_API_KEY (get one free at serper.dev)"
                         );
-                        process::exit(1);
+                        exit(1);
                     }
                 };
                 if let Err(e) = run_search(
@@ -2810,121 +3864,217 @@ async fn main() {
                 .await
                 {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
                 return;
             }
         }
     }
 
-    // --map: sitemap discovery mode
     if cli.map {
         if let Err(e) = run_map(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
-    // Collect URLs from args + --urls-file up front, and backfill a lone
-    // --urls-file URL into cli.urls so a one-line file behaves like a positional
-    // URL across ALL modes below (crawl / watch / diff / brand / batch / single).
-    // See issue #86 — the mode gates and single path read cli.urls, which is
-    // empty when the URL came only from --urls-file.
     let entries = match collect_urls(&cli) {
         Ok(u) => u,
         Err(e) => {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
     };
     backfill_single_file_url(&mut cli.urls, &entries);
+    if let Err(e) = check_markdown_flags(&cli) {
+        eprintln!("error: {e}");
+        exit(1);
+    }
 
-    // --crawl: recursive crawl mode
-    if cli.crawl {
-        if let Err(e) = run_crawl(&cli).await {
+    if cli.actions.is_some() || cli.scroll.is_some() {
+        if entries.len() != 1 {
+            eprintln!("error: {}", one_url_error(&cli));
+            exit(1);
+        }
+        if cli.render == RenderMode::Never {
+            eprintln!(
+                "error: --actions and --scroll run in the browser, so they cannot run with --render never"
+            );
+            exit(1);
+        }
+        cli.render = RenderMode::Always;
+    }
+
+    if let Some(ref path) = cli.screenshot {
+        let shot = match (entries.len(), cli.urls.first()) {
+            (1, Some(url)) => run_screenshot(&cli, &normalize_url(url), path).await,
+            _ => Err("--screenshot takes one URL".to_string()),
+        };
+        if let Err(e) = shot {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
-    // --watch: poll URL(s) for changes
+    if let Some(ref pattern) = cli.capture_network {
+        let captured = match (entries.len(), cli.urls.first()) {
+            (1, Some(url)) => run_capture(&cli, &normalize_url(url), pattern).await,
+            _ => Err(
+                "--capture-network takes one URL; give a pattern as --capture-network=PATTERN"
+                    .to_string(),
+            ),
+        };
+        if let Err(e) = captured {
+            eprintln!("error: {e}");
+            exit(1);
+        }
+        return;
+    }
+
+    let save = (cli.save_pdf.as_ref().map(|path| (path, true)))
+        .or(cli.save_mhtml.as_ref().map(|path| (path, false)));
+    if let Some((path, pdf)) = save {
+        let printed = match (entries.len(), cli.urls.first()) {
+            (1, Some(url)) => run_save(&cli, &normalize_url(url), path, pdf).await,
+            _ if pdf => Err("--save-pdf takes one URL".to_string()),
+            _ => Err("--save-mhtml takes one URL".to_string()),
+        };
+        if let Err(e) = printed {
+            eprintln!("error: {e}");
+            exit(1);
+        }
+        return;
+    }
+
+    if cli.tables {
+        let found = if entries.len() > 1 {
+            Err("--tables takes one URL".to_string())
+        } else {
+            run_tables(&cli).await
+        };
+        if let Err(e) = found {
+            eprintln!("error: {e}");
+            exit(1);
+        }
+        return;
+    }
+
+    if cli.select.is_some()
+        || cli.xpath.is_some()
+        || cli.find_text.is_some()
+        || cli.find_regex.is_some()
+    {
+        let selected = if entries.len() > 1 {
+            Err("--select, --xpath, --find-text and --find-regex take one URL".to_string())
+        } else {
+            run_select(&cli).await
+        };
+        if let Err(e) = selected {
+            eprintln!("error: {e}");
+            exit(1);
+        }
+        return;
+    }
+
+    if cli.crawl {
+        if let Err(e) = run_crawl(&cli).await {
+            eprintln!("error: {e}");
+            exit(1);
+        }
+        return;
+    }
+
     if cli.watch {
         let watch_urls: Vec<String> = entries.iter().map(|(url, _)| url.clone()).collect();
         if let Err(e) = run_watch(&cli, &watch_urls).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
-    // --diff-with: change tracking mode
     if let Some(ref snapshot_path) = cli.diff_with {
         if let Err(e) = run_diff(&cli, snapshot_path).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
-    // --brand: brand identity extraction mode
     if cli.brand {
         if let Err(e) = run_brand(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
-    // --research: deep research via cloud API
     if let Some(ref query) = cli.research {
         if let Err(e) = run_research(&cli, query).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
-    // LLM modes: --extract-json, --extract-prompt, --summarize
-    // When multiple URLs are provided, run batch LLM extraction over all of them.
     if has_llm_flags(&cli) {
         if entries.len() > 1 {
             if let Err(e) = run_batch_llm(&cli, &entries).await {
                 eprintln!("error: {e}");
-                process::exit(1);
+                exit(1);
             }
         } else if let Err(e) = run_llm(&cli).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
-    // Multi-URL batch mode
+    if cli.query.is_some() && entries.len() > 1 {
+        eprintln!("error: --query works on one page at a time");
+        exit(1);
+    }
+
     if entries.len() > 1 {
         if let Err(e) = run_batch(&cli, &entries).await {
             eprintln!("error: {e}");
-            process::exit(1);
+            exit(1);
         }
         return;
     }
 
-    // --raw-html: skip extraction, dump the fetched HTML
     if cli.raw_html && cli.include.is_none() && cli.exclude.is_none() {
-        match fetch_html(&cli).await {
-            Ok(r) => println!("{}", r.html),
+        let page = if cli.actions.is_some() || cli.scroll.is_some() {
+            fetch_page(&cli).await
+        } else {
+            fetch_html(&cli).await
+        };
+        match page {
+            Ok(r) => {
+                println!("{}", r.html);
+                if let Err(e) = webclaw_fetch::FetchError::check_status(r.status) {
+                    eprintln!("error: {e}");
+                    exit(1);
+                }
+            }
             Err(e) => {
                 eprintln!("error: {e}");
-                process::exit(1);
+                exit(1);
             }
         }
         return;
     }
 
-    // Single-page extraction (handles both HTML and PDF via content-type detection)
     match fetch_and_extract(&cli).await {
-        Ok(FetchOutput::Local(result)) => {
+        Ok(FetchOutput::Local(mut result, js_results)) => {
+            if let Some(ref query) = cli.query {
+                webclaw_core::focus_extraction(&mut result, query);
+            }
+            if cli.citations {
+                cite_pages([&mut *result], false);
+            }
             if let Some(ref dir) = cli.output_dir {
                 let url = cli
                     .urls
@@ -2936,18 +4086,59 @@ async fn main() {
                 let content = format_output(&result, &cli.format, cli.metadata);
                 if let Err(e) = write_to_file(dir, &filename, &content) {
                     eprintln!("error: {e}");
-                    process::exit(1);
+                    exit(1);
                 }
+            } else if let Some(sizes) = chunk_sizes(&cli) {
+                let chunks = chunk_page(
+                    &result.content.markdown,
+                    result.metadata.url.as_deref(),
+                    sizes,
+                );
+                print_chunks(&chunks, &cli.format);
+            } else if !js_results.is_empty()
+                && matches!(cli.format, OutputFormat::Json | OutputFormat::Jsonl)
+            {
+                println!(
+                    "{}",
+                    with_js_results(
+                        &result,
+                        &js_results,
+                        matches!(cli.format, OutputFormat::Json)
+                    )
+                );
             } else {
                 print_output(&result, &cli.format, cli.metadata);
             }
+            if !matches!(cli.format, OutputFormat::Json | OutputFormat::Jsonl)
+                || cli.output_dir.is_some()
+                || chunk_sizes(&cli).is_some()
+            {
+                print_script_results(&js_results);
+            }
         }
-        Ok(FetchOutput::Cloud(resp)) => {
-            print_cloud_output(&resp, &cli.format);
+        Ok(FetchOutput::Cloud(mut resp)) => {
+            if let Some(ref query) = cli.query {
+                webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
+            }
+            if cli.citations {
+                let url = cli.urls.first().map(|u| normalize_url(u));
+                webclaw_fetch::cloud::cite_cloud_response(&mut resp, url.as_deref());
+            }
+            if let Some(sizes) = chunk_sizes(&cli) {
+                let url = cli.urls.first().map(|u| normalize_url(u));
+                let chunks = chunk_page(
+                    cloud_text(&resp, "markdown", "markdown").unwrap_or_default(),
+                    url.as_deref(),
+                    sizes,
+                );
+                print_chunks(&chunks, &cli.format);
+            } else {
+                print_cloud_output(&resp, &cli.format);
+            }
         }
         Err(e) => {
             eprintln!("{e}");
-            process::exit(1);
+            exit(1);
         }
     }
 }
@@ -2955,7 +4146,347 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use webclaw_core::Content;
+
+    #[test]
+    fn a_map_limit_of_zero_is_refused() {
+        assert!(
+            Cli::try_parse_from(["webclaw", "--map", "--map-limit", "0", "https://a.com"]).is_err()
+        );
+        let cli =
+            Cli::try_parse_from(["webclaw", "--map", "--map-limit", "1", "https://a.com"]).unwrap();
+        assert_eq!(cli.map_limit, Some(1));
+    }
+
+    #[test]
+    fn scroll_takes_its_count_only_after_an_equals_sign() {
+        let cli = Cli::try_parse_from(["webclaw", "--scroll", "https://example.com"]).unwrap();
+        assert_eq!(cli.scroll, Some(20));
+        assert_eq!(cli.urls, vec!["https://example.com".to_string()]);
+        let cli = Cli::try_parse_from(["webclaw", "--scroll=5", "https://example.com"]).unwrap();
+        assert_eq!(cli.scroll, Some(5));
+    }
+
+    #[test]
+    fn json_output_carries_js_results_and_raw_html_takes_actions() {
+        let result = empty_result(Some("t"), Some("https://example.com/"), "body");
+        let json: serde_json::Value = serde_json::from_str(&with_js_results(
+            &result,
+            &[serde_json::json!(3), serde_json::json!({"a": 1})],
+            true,
+        ))
+        .unwrap();
+        assert_eq!(json["js_results"], serde_json::json!([3, {"a": 1}]));
+        assert_eq!(json["content"]["markdown"], "body");
+        assert!(
+            Cli::try_parse_from([
+                "webclaw",
+                "https://example.com",
+                "--actions",
+                "[]",
+                "--raw-html"
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_scroll_count_after_a_space_gets_a_hint() {
+        let cli = Cli::try_parse_from(["webclaw", "--scroll", "3", "https://example.com"]).unwrap();
+        assert_eq!(
+            one_url_error(&cli),
+            "--actions and --scroll take one URL; for a scroll count write --scroll=3"
+        );
+        let cli =
+            Cli::try_parse_from(["webclaw", "--scroll", "https://a.com", "https://b.com"]).unwrap();
+        assert_eq!(one_url_error(&cli), "--actions and --scroll take one URL");
+    }
+
+    #[test]
+    fn one_picker_at_a_time_and_tables_take_no_pick_options() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        assert!(parse(&["--tables"]).is_ok());
+        assert!(parse(&["--find-text", "a", "--exact", "--similar"]).is_ok());
+        assert!(parse(&["--select", "a", "--similar", "--field", "x=b"]).is_ok());
+        for extra in [
+            &["--tables", "--select", "a"][..],
+            &["--tables", "--xpath", "//a"],
+            &["--tables", "--find-text", "a"],
+            &["--tables", "--find-regex", "a"],
+            &["--tables", "--similar"],
+            &["--tables", "--field", "x=b"],
+            &["--tables", "--exact"],
+            &["--tables", "--case-sensitive"],
+            &["--select", "a", "--find-text", "b"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?}");
+        }
+    }
+
+    #[test]
+    fn chunk_flags_parse_and_refuse_modes_they_cannot_join() {
+        let cli = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com",
+            "--chunk",
+            "256",
+            "--chunk-overlap",
+            "32",
+        ])
+        .unwrap();
+        assert_eq!(chunk_sizes(&cli), Some((256, 32)));
+        for args in [
+            vec!["webclaw", "https://example.com", "--chunk", "0"],
+            vec!["webclaw", "https://example.com", "--chunk-overlap", "8"],
+            vec![
+                "webclaw",
+                "https://example.com",
+                "--chunk",
+                "64",
+                "--select",
+                "a",
+            ],
+            vec![
+                "webclaw",
+                "https://example.com",
+                "--chunk",
+                "64",
+                "--raw-html",
+            ],
+            vec![
+                "webclaw",
+                "https://example.com",
+                "--chunk",
+                "64",
+                "--find-text",
+                "a",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    async fn a_failed_save_pdf_leaves_an_existing_file_alone() {
+        let dir = std::env::temp_dir().join(format!("webclaw-save-pdf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("page.pdf");
+        std::fs::write(&path, "earlier PDF").unwrap();
+        let cli = Cli::try_parse_from([
+            "webclaw",
+            "https://example.com",
+            "--cdp-url",
+            "ws://127.0.0.1:9/no-browser",
+            "--save-pdf",
+            path.to_str().unwrap(),
+        ])
+        .unwrap();
+        let saved = run_save(&cli, "https://example.com/", &path, true).await;
+        let kept = std::fs::read_to_string(&path).unwrap();
+        let leftovers = std::fs::read_dir(&dir).unwrap().count();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(saved.is_err());
+        assert_eq!(kept, "earlier PDF");
+        assert_eq!(leftovers, 1);
+    }
+
+    #[test]
+    fn a_new_run_appends_to_an_existing_warc_with_its_own_warcinfo() {
+        let dir = std::env::temp_dir().join(format!("webclaw-warc-append-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("site.warc");
+        drop(open_warc(&path).unwrap());
+        let earlier = std::fs::read(&path).unwrap();
+        drop(open_warc(&path).unwrap());
+        let file = std::fs::read(&path).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(file.starts_with(&earlier));
+        let text = String::from_utf8_lossy(&file);
+        assert_eq!(text.matches("WARC-Type: warcinfo").count(), 2);
+    }
+
+    #[test]
+    fn a_warc_cut_inside_a_record_is_refused_and_left_alone() {
+        let dir = std::env::temp_dir().join(format!("webclaw-warc-cut-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["site.warc", "site.warc.gz"] {
+            let path = dir.join(name);
+            drop(open_warc(&path).unwrap());
+            let whole = std::fs::read(&path).unwrap();
+            std::fs::write(&path, &whole[..whole.len() - 5]).unwrap();
+            let refused = open_warc(&path).err().map(|e| e.to_string());
+            assert!(
+                refused.as_deref().is_some_and(|e| e.contains("new file")),
+                "{name}: {refused:?}"
+            );
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                whole[..whole.len() - 5],
+                "{name}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn warc_refuses_what_never_goes_over_http() {
+        let check = |args: &[&str]| check_warc(&Cli::try_parse_from(args).unwrap());
+        assert!(check(&["webclaw", "https://example.com", "--warc", "a.warc"]).is_ok());
+        assert!(
+            check(&[
+                "webclaw",
+                "https://example.com",
+                "--warc",
+                "a.warc",
+                "--render",
+                "always"
+            ])
+            .is_err()
+        );
+        assert!(check(&["webclaw", "--warc", "a.warc", "extractors"]).is_err());
+        assert!(check(&["webclaw", "https://example.com", "--warc", "-"]).is_err());
+        assert!(
+            check(&[
+                "webclaw",
+                "--warc",
+                "a.warc",
+                "vertical",
+                "github_repo",
+                "https://github.com/a/b"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn warc_goes_with_fetches_and_crawls_but_not_with_other_sources() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com", "--warc", "a.warc.gz"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        for fine in [
+            &[][..],
+            &["--crawl", "--depth", "2"],
+            &["-f", "json"],
+            &["--raw-html"],
+        ] {
+            assert!(parse(fine).is_ok(), "{fine:?}");
+        }
+        for refused in [
+            &["--cache"][..],
+            &["--cloud"],
+            &["--stdin"],
+            &["--file", "page.html"],
+            &["--screenshot", "a.png"],
+            &["--save-pdf", "a.pdf"],
+            &["--save-mhtml", "a.mhtml"],
+            &["--capture-network"],
+            &["--full-page"],
+            &["--paper", "a4"],
+            &["--landscape"],
+            &["--print-background"],
+            &["--scale", "0.5"],
+            &["--capture-types", "xhr"],
+            &["--capture-credentials"],
+        ] {
+            assert!(parse(refused).is_err(), "{refused:?}");
+        }
+        for refused in [
+            &["--full-page"][..],
+            &["--capture-types", "xhr"],
+            &["--capture-credentials"],
+        ] {
+            let mut args = vec!["webclaw", "https://example.com", "--save-mhtml", "a.mhtml"];
+            args.extend_from_slice(refused);
+            assert!(Cli::try_parse_from(args).is_err(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn pdf_flags_need_save_pdf_and_refuse_other_outputs() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        let cli = parse(&[
+            "--save-pdf",
+            "page.pdf",
+            "--paper",
+            "a4",
+            "--landscape",
+            "--print-background",
+            "--scale",
+            "0.8",
+            "--wait-for",
+            "main",
+        ])
+        .unwrap();
+        assert!(matches!(cli.paper, PaperArg::A4));
+        assert_eq!(cli.scale, 0.8);
+        for extra in [
+            &["--landscape"][..],
+            &["--paper", "a4"],
+            &["--print-background"],
+            &["--scale", "2"],
+            &["--save-pdf", "a.pdf", "--paper", "a3"],
+            &["--save-pdf", "a.pdf", "--scale", "3"],
+            &["--save-pdf", "a.pdf", "--scale", "0"],
+            &["--save-pdf", "a.pdf", "--screenshot", "a.png"],
+            &["--save-pdf", "a.pdf", "--select", "a"],
+            &["--save-pdf", "a.pdf", "--crawl"],
+            &["--save-pdf", "a.pdf", "--chunk", "64"],
+            &["--save-pdf", "a.pdf", "--block", "images"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?}");
+        }
+        assert!(parse(&["--screenshot", "a.png"]).is_ok());
+        assert!(parse(&["--save-mhtml", "a.mhtml", "--wait-for", "main", "--scroll"]).is_ok());
+        for extra in [
+            &["--save-mhtml", "a.mhtml", "--save-pdf", "a.pdf"][..],
+            &["--save-mhtml", "a.mhtml", "--screenshot", "a.png"],
+            &["--save-mhtml", "a.mhtml", "--print-background"],
+            &["--save-mhtml", "a.mhtml", "--crawl"],
+            &["--save-mhtml", "a.mhtml", "--block", "images"],
+            &["--save-mhtml", "a.mhtml", "--solve"],
+            &["--save-mhtml", "a.mhtml", "--chunk", "64"],
+            &["--save-mhtml", "a.mhtml", "--capture-network"],
+            &["--save-mhtml", "a.mhtml", "--warc", "a.warc"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?}");
+        }
+        for output in ["--screenshot", "--save-pdf", "--save-mhtml"] {
+            for other in [
+                &["-f", "json"][..],
+                &["--summarize"],
+                &["--cloud"],
+                &["--output-dir", "out"],
+                &["--diff-with", "old.json"],
+                &["--brand"],
+                &["--raw-html"],
+                &["--pdf-mode", "fast"],
+                &["--metadata"],
+                &["--query", "price"],
+                &["--extract-prompt", "title"],
+                &["--include", "main"],
+                &["--exclude", "nav"],
+                &["--only-main-content"],
+                &["--stdin"],
+                &["--file", "page.html"],
+            ] {
+                let mut extra = vec![output, "a.out"];
+                extra.extend_from_slice(other);
+                assert!(parse(&extra).is_err(), "{extra:?}");
+            }
+        }
+    }
 
     #[test]
     fn cloud_format_preserves_extraction_for_diff_and_llm_modes() {
@@ -3027,6 +4558,55 @@ mod tests {
         ];
         backfill_single_file_url(&mut urls, &entries);
         assert!(urls.is_empty());
+    }
+
+    #[test]
+    fn citations_refuse_modes_that_print_no_page_markdown() {
+        for mode in [
+            &["--select", "a"][..],
+            &["--capture-network", ""],
+            &["--xpath", "//a"],
+            &["--find-text", "x"],
+            &["--tables"],
+            &["--map"],
+            &["--brand"],
+            &["--diff-with", "old.json"],
+            &["--watch"],
+            &["--summarize"],
+            &["--extract-prompt", "x"],
+            &["--chunk", "100"],
+            &["--raw-html"],
+        ] {
+            let args = ["webclaw", "https://example.com", "--citations"]
+                .into_iter()
+                .chain(mode.iter().copied());
+            assert!(Cli::try_parse_from(args).is_err(), "{mode:?}");
+        }
+        assert!(
+            Cli::try_parse_from([
+                "webclaw",
+                "https://example.com",
+                "--citations",
+                "--metadata"
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn citations_continue_across_pages_printed_together() {
+        let pages = || {
+            vec![
+                empty_result(None, None, "[a](https://a.com)"),
+                empty_result(None, None, "[b](https://b.com)"),
+            ]
+        };
+        let mut together = pages();
+        cite_pages(together.iter_mut(), true);
+        assert!(together[1].content.markdown.starts_with("b[^2]"));
+        let mut apart = pages();
+        cite_pages(apart.iter_mut(), false);
+        assert!(apart[1].content.markdown.starts_with("b[^1]"));
     }
 
     fn empty_result(title: Option<&str>, url: Option<&str>, markdown: &str) -> ExtractionResult {
@@ -3299,5 +4879,38 @@ mod tests {
         assert!(slug.chars().count() <= 50);
         // Round-trips through formatting without panicking.
         let _ = format!("research-{slug}.json");
+    }
+
+    #[test]
+    fn a_capture_pattern_needs_an_equals_sign() {
+        let cli =
+            Cli::try_parse_from(["webclaw", "--capture-network", "https://example.com"]).unwrap();
+        assert_eq!(cli.capture_network.as_deref(), Some(""));
+        assert_eq!(cli.urls, ["https://example.com"]);
+        let cli =
+            Cli::try_parse_from(["webclaw", "--capture-network=/api/", "https://example.com"])
+                .unwrap();
+        assert_eq!(cli.capture_network.as_deref(), Some("/api/"));
+    }
+
+    #[test]
+    fn a_capture_refuses_page_options_it_would_ignore() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["webclaw", "https://example.com", "--capture-network"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        assert!(parse(&[]).is_ok());
+        for extra in [
+            &["-f", "markdown"][..],
+            &["--query", "price"],
+            &["--chunk", "200"],
+            &["--include", "main"],
+            &["--exclude", "nav"],
+            &["--only-main-content"],
+            &["--metadata"],
+        ] {
+            assert!(parse(extra).is_err(), "{extra:?} was accepted");
+        }
     }
 }

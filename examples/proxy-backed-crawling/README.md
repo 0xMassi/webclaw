@@ -1,6 +1,6 @@
 # Proxy-Backed Crawling
 
-Use proxy rotation when you need to distribute a crawl across a proxy pool. webclaw supports a single proxy or a proxy file, and accepts any standard HTTP/HTTPS or SOCKS5 proxy URL.
+Use proxy rotation when you need to distribute a crawl across a proxy pool. webclaw supports a single proxy or a proxy file, and accepts any standard HTTP or HTTPS proxy URL. SOCKS proxies are not supported.
 
 ## Using ColdProxy
 
@@ -69,14 +69,6 @@ ColdProxy offers access across 195+ countries. Use the country-specific endpoint
 ```bash
 webclaw https://example.com \
   --proxy http://user:pass@proxy.example.com:8080 \
-  --format markdown
-```
-
-SOCKS5 is supported too:
-
-```bash
-webclaw https://example.com \
-  --proxy socks5://proxy.example.com:1080 \
   --format markdown
 ```
 

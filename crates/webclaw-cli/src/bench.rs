@@ -5,14 +5,14 @@
 //! removed vs. the raw HTML. Optional `--facts` reuses the
 //! benchmark harness's curated fact lists to score fidelity.
 //!
-//! v1 uses an *approximate* tokenizer (chars/4 for Latin text,
-//! chars/2 for CJK-heavy text). Output is clearly labeled
-//! "≈ tokens" so nobody mistakes it for a real tiktoken run.
-//! Swapping to tiktoken-rs later is a one-function change.
+//! Token counts come from `webclaw_core::chunk::approx_tokens`, an
+//! estimate made without a tokenizer, and are labeled "≈ tokens" so
+//! nobody mistakes them for a real tokenizer run.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use webclaw_core::chunk::approx_tokens;
 use webclaw_core::{extract, to_llm_text};
 use webclaw_fetch::{BrowserProfile, FetchClient, FetchConfig};
 
@@ -95,40 +95,6 @@ pub async fn run(args: &BenchArgs) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// Approximate tokenizer
-// ---------------------------------------------------------------------------
-
-/// Rough token count. `chars / 4` is the classic English rule of thumb
-/// (close to cl100k_base for typical prose). CJK scripts pack ~2 chars
-/// per token, so we switch to `chars / 2` when CJK dominates.
-///
-/// Off by ±10% vs. a real BPE tokenizer, which is fine for "is webclaw's
-/// output 66% smaller or 66% bigger than raw HTML" — the signal is
-/// order-of-magnitude, not precise accounting.
-fn approx_tokens(s: &str) -> usize {
-    let total: usize = s.chars().count();
-    if total == 0 {
-        return 0;
-    }
-    let cjk = s.chars().filter(|c| is_cjk(*c)).count();
-    let cjk_ratio = cjk as f64 / total as f64;
-    if cjk_ratio > 0.30 {
-        total.div_ceil(2)
-    } else {
-        total.div_ceil(4)
-    }
-}
-
-fn is_cjk(c: char) -> bool {
-    let n = c as u32;
-    (0x4E00..=0x9FFF).contains(&n)   // CJK Unified Ideographs
-        || (0x3040..=0x309F).contains(&n) // Hiragana
-        || (0x30A0..=0x30FF).contains(&n) // Katakana
-        || (0xAC00..=0xD7AF).contains(&n) // Hangul Syllables
-        || (0x3400..=0x4DBF).contains(&n) // CJK Extension A
-}
-
-// ---------------------------------------------------------------------------
 // Output: ASCII / Unicode box
 // ---------------------------------------------------------------------------
 
@@ -176,7 +142,7 @@ fn print_box(r: &BenchResult) {
     }
     println!("└{top}┘");
     println!();
-    println!("note: token counts are approximate (chars/4 Latin, chars/2 CJK).");
+    println!("note: token counts are estimates, not a real tokenizer run.");
 }
 
 fn print_row(label: &str, middle: &str, right: &str) {
@@ -298,7 +264,7 @@ fn check_facts(path: &Path, url: &str, llm_text: &str) -> Result<Option<(usize, 
 }
 
 /// Match a single fact against the lowercased text. Mirrors the
-/// python harness in `benchmarks/scripts/bench.py`:
+/// python harness in `benchmarks/scripts/run.py`:
 /// - Single alphanumeric token → word-boundary (so `API` doesn't hit
 ///   `apiece`).
 /// - Multi-word or non-alpha facts (e.g. `99.999`) → substring.
@@ -338,32 +304,6 @@ fn matches_fact(text_low: &str, fact: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn approx_tokens_empty() {
-        assert_eq!(approx_tokens(""), 0);
-    }
-
-    #[test]
-    fn approx_tokens_latin_roughly_chars_over_4() {
-        // 100 ASCII chars → ~25 tokens
-        let s = "a".repeat(100);
-        assert_eq!(approx_tokens(&s), 25);
-    }
-
-    #[test]
-    fn approx_tokens_cjk_denser() {
-        // 100 CJK chars → ~50 tokens (chars/2 branch)
-        let s: String = "中".repeat(100);
-        assert_eq!(approx_tokens(&s), 50);
-    }
-
-    #[test]
-    fn approx_tokens_mixed_uses_latin_branch() {
-        // 80 latin + 20 CJK → CJK ratio 20% < 30% → chars/4 branch
-        let s = format!("{}{}", "a".repeat(80), "中".repeat(20));
-        assert_eq!(approx_tokens(&s), 25);
-    }
 
     #[test]
     fn fmt_int_commas() {

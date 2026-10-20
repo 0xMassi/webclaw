@@ -1,0 +1,78 @@
+{"id": "news02", "category": "news", "url": "https://www.nasa.gov/news-release/nasa-reveals-webb-telescopes-first-images-of-unseen-universe/", "facts": ["Carina", "Southern Ring"]}
+{"id": "news03", "category": "news", "url": "https://www.nasa.gov/news-release/nasas-dart-mission-hits-asteroid-in-first-ever-planetary-defense-test/", "facts": ["Dimorphos", "Didymos"]}
+{"id": "news04", "category": "news", "url": "https://www.nasa.gov/news-release/nasa-confirms-dart-mission-impact-changed-asteroids-motion-in-space/", "facts": ["Dimorphos", "32 minutes"]}
+{"id": "news06", "category": "news", "url": "https://www.nasa.gov/news-release/nasas-perseverance-rover-sends-sneak-peek-of-mars-landing/", "facts": ["Jezero", "Perseverance"]}
+{"id": "news07", "category": "news", "url": "https://www.nasa.gov/news-release/nasas-ingenuity-mars-helicopter-succeeds-in-historic-first-flight/", "facts": ["Ingenuity", "Wright"]}
+{"id": "shop01", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html", "facts": ["A Light in the Attic", "51.77"]}
+{"id": "shop02", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html", "facts": ["Tipping the Velvet", "53.74"]}
+{"id": "shop03", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/soumission_998/index.html", "facts": ["Soumission", "50.10"]}
+{"id": "shop04", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/sharp-objects_997/index.html", "facts": ["Sharp Objects", "47.82"]}
+{"id": "shop05", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/sapiens-a-brief-history-of-humankind_996/index.html", "facts": ["Sapiens", "54.23"]}
+{"id": "shop06", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/the-requiem-red_995/index.html", "facts": ["The Requiem Red", "22.65"]}
+{"id": "shop07", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/the-dirty-little-secrets-of-getting-your-dream-job_994/index.html", "facts": ["Dirty Little Secrets", "33.34"]}
+{"id": "shop08", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/the-coming-woman-a-novel-based-on-the-life-of-the-infamous-feminist-victoria-woodhull_993/index.html", "facts": ["Victoria Woodhull", "17.93"]}
+{"id": "shop09", "category": "ecommerce", "url": "https://books.toscrape.com/catalogue/the-boys-in-the-boat-nine-americans-and-their-epic-quest-for-gold-at-the-1936-berlin-olympics_992/index.html", "facts": ["The Boys in the Boat", "22.60"]}
+{"id": "docs01", "category": "docs", "url": "https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html", "facts": ["Variables and Mutability", "mut"]}
+{"id": "docs02", "category": "docs", "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html", "facts": ["Ownership", "owner"]}
+{"id": "docs03", "category": "docs", "url": "https://docs.python.org/3/tutorial/datastructures.html", "facts": ["Data Structures", "append"]}
+{"id": "docs04", "category": "docs", "url": "https://docs.python.org/3/library/json.html", "facts": ["JSON encoder and decoder", "dumps"]}
+{"id": "docs05", "category": "docs", "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise", "facts": ["Promise", "pending"]}
+{"id": "docs06", "category": "docs", "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/table", "facts": ["table", "tabular"]}
+{"id": "docs07", "category": "docs", "url": "https://go.dev/doc/effective_go", "facts": ["Effective Go", "gofmt"]}
+{"id": "docs08", "category": "docs", "url": "https://www.postgresql.org/docs/current/ddl-constraints.html", "facts": ["Constraints", "CHECK"]}
+{"id": "docs09", "category": "docs", "url": "https://git-scm.com/docs/git-worktree", "facts": ["worktree", "prune"]}
+{"id": "spa01", "category": "spa", "url": "https://quotes.toscrape.com/js/", "facts": ["Albert Einstein", "The world as we have created it"]}
+{"id": "spa02", "category": "spa", "url": "https://quotes.toscrape.com/js/page/2/", "facts": ["Marilyn Monroe", "This life is what you make it"]}
+{"id": "spa03", "category": "spa", "url": "https://quotes.toscrape.com/js/page/3/", "facts": ["Pablo Neruda", "I love you without knowing how"]}
+{"id": "spa04", "category": "spa", "url": "https://quotes.toscrape.com/js/page/4/", "facts": ["Dr. Seuss", "The more that you read"]}
+{"id": "spa05", "category": "spa", "url": "https://demo.playwright.dev/todomvc/", "facts": ["todos", "Double-click to edit a todo"]}
+{"id": "spa06", "category": "spa", "url": "https://todomvc.com/examples/react/dist/", "facts": ["todos", "Double-click to edit a todo"]}
+{"id": "spa07", "category": "spa", "url": "https://todomvc.com/examples/vue/dist/", "facts": ["todos", "Double-click to edit a todo"]}
+{"id": "spa08", "category": "spa", "url": "https://hn.algolia.com/", "facts": ["Search", "Hacker News"]}
+{"id": "spa09", "category": "spa", "url": "https://angular.dev/tutorials/learn-angular", "facts": ["Learn Angular", "tutorial"]}
+{"id": "pdf01", "category": "pdf", "url": "https://arxiv.org/pdf/1706.03762", "facts": ["Attention Is All You Need", "Vaswani"]}
+{"id": "pdf02", "category": "pdf", "url": "https://arxiv.org/pdf/1810.04805", "facts": ["BERT", "Devlin"]}
+{"id": "pdf03", "category": "pdf", "url": "https://arxiv.org/pdf/2005.14165", "facts": ["Language Models are Few-Shot Learners", "Brown"]}
+{"id": "pdf04", "category": "pdf", "url": "https://arxiv.org/pdf/1512.03385", "facts": ["Deep Residual Learning", "Kaiming He"]}
+{"id": "pdf05", "category": "pdf", "url": "https://arxiv.org/pdf/2010.11929", "facts": ["An Image is Worth 16x16 Words", "Dosovitskiy"]}
+{"id": "pdf06", "category": "pdf", "url": "https://arxiv.org/pdf/1412.6980", "facts": ["Adam", "Kingma"]}
+{"id": "pdf07", "category": "pdf", "url": "https://arxiv.org/pdf/2106.09685", "facts": ["LoRA", "Edward"]}
+{"id": "pdf08", "category": "pdf", "url": "https://arxiv.org/pdf/2103.00020", "facts": ["Learning Transferable Visual Models", "Radford"]}
+{"id": "pdf09", "category": "pdf", "url": "https://arxiv.org/pdf/1409.0473", "facts": ["Neural Machine Translation", "Bahdanau"]}
+{"id": "lang01", "category": "nonenglish", "url": "https://it.wikipedia.org/wiki/Roma", "facts": ["Roma", "Lazio"]}
+{"id": "lang02", "category": "nonenglish", "url": "https://it.wikipedia.org/wiki/Milano", "facts": ["Milano", "Lombardia"]}
+{"id": "lang03", "category": "nonenglish", "url": "https://fr.wikipedia.org/wiki/Paris", "facts": ["Paris", "Seine"]}
+{"id": "lang04", "category": "nonenglish", "url": "https://de.wikipedia.org/wiki/Berlin", "facts": ["Berlin", "Deutschland"]}
+{"id": "lang05", "category": "nonenglish", "url": "https://es.wikipedia.org/wiki/Madrid", "facts": ["Madrid", "Espa\u00f1a"]}
+{"id": "lang06", "category": "nonenglish", "url": "https://pt.wikipedia.org/wiki/Lisboa", "facts": ["Lisboa", "Portugal"]}
+{"id": "lang07", "category": "nonenglish", "url": "https://ja.wikipedia.org/wiki/\u6771\u4eac\u90fd", "facts": ["\u6771\u4eac\u90fd", "\u65e5\u672c"]}
+{"id": "lang08", "category": "nonenglish", "url": "https://zh.wikipedia.org/wiki/\u5317\u4eac\u5e02", "facts": ["\u5317\u4eac", "\u4e2d\u56fd"]}
+{"id": "lang09", "category": "nonenglish", "url": "https://ar.wikipedia.org/wiki/\u0627\u0644\u0642\u0627\u0647\u0631\u0629", "facts": ["\u0627\u0644\u0642\u0627\u0647\u0631\u0629", "\u0645\u0635\u0631"]}
+{"id": "news10", "category": "news", "url": "https://science.nasa.gov/mars/facts/", "facts": ["Phobos", "Deimos"]}
+{"id": "news11", "category": "news", "url": "https://science.nasa.gov/venus/facts/", "facts": ["Venus", "carbon dioxide"]}
+{"id": "news12", "category": "news", "url": "https://science.nasa.gov/jupiter/facts/", "facts": ["Jupiter", "Great Red Spot"]}
+{"id": "news13", "category": "news", "url": "https://science.nasa.gov/saturn/facts/", "facts": ["Saturn", "rings"]}
+{"id": "article01", "category": "paywalled", "url": "https://www.ft.com/content/3bafb3ae-ba94-44f0-984c-ec7c9f54a5e0", "facts": ["Saudi Arabia", "East-West pipeline"]}
+{"id": "article02", "category": "paywalled", "url": "https://www.ft.com/content/b7fe0fe0-0463-4f55-9590-0a7d08d8fe66", "facts": ["AI race", "human extinction"]}
+{"id": "article03", "category": "paywalled", "url": "https://www.ft.com/content/916eea1b-d483-49e1-9a70-53b4df8f9870", "facts": ["JPMorgan", "Situational Awareness"]}
+{"id": "article04", "category": "paywalled", "url": "https://www.economist.com/finance-and-economics/2026/09/12/wanted-new-business-finance-and-economics-interns", "facts": ["interns", "Marjorie Deane"]}
+{"id": "article05", "category": "paywalled", "url": "https://www.economist.com/science-and-technology/2026/09/11/top-mathematicians-are-outraged-by-openais-methods", "facts": ["mathematicians", "OpenAI"]}
+{"id": "article06", "category": "paywalled", "url": "https://www.economist.com/business/2026/09/10/are-you-committed-to-your-company-or-your-team", "facts": ["company", "team"]}
+{"id": "home00", "category": "homepage", "url": "https://openai.com", "facts": ["ChatGPT", "Sora", "API", "Enterprise", "research"]}
+{"id": "home01", "category": "homepage", "url": "https://vercel.com", "facts": ["Next.js", "Hobby", "Pro", "Enterprise", "deploy"]}
+{"id": "home02", "category": "homepage", "url": "https://anthropic.com", "facts": ["Opus", "Claude", "Glasswing", "Perseverance", "NASA"]}
+{"id": "home03", "category": "homepage", "url": "https://www.notion.com", "facts": ["agents", "Forbes", "Figma", "Ramp", "Cursor"]}
+{"id": "home04", "category": "homepage", "url": "https://stripe.com", "facts": ["Hertz", "URBN", "Instacart", "99.999", "1.9"]}
+{"id": "home05", "category": "homepage", "url": "https://tavily.com", "facts": ["search", "extract", "crawl", "research", "developers"]}
+{"id": "home06", "category": "homepage", "url": "https://www.shopify.com", "facts": ["Plus", "merchants", "retail", "brands", "checkout"]}
+{"id": "home07", "category": "homepage", "url": "https://docs.python.org/3/", "facts": ["tutorial", "library", "reference", "setup", "distribution"]}
+{"id": "home08", "category": "homepage", "url": "https://react.dev", "facts": ["Components", "JSX", "Hooks", "Learn", "Reference"]}
+{"id": "home09", "category": "homepage", "url": "https://tailwindcss.com/docs/installation", "facts": ["Vite", "PostCSS", "CLI", "install", "Next.js"]}
+{"id": "home10", "category": "homepage", "url": "https://nextjs.org/docs", "facts": ["App Router", "Pages Router", "getting-started", "deploying", "Server"]}
+{"id": "home11", "category": "homepage", "url": "https://github.com", "facts": ["Copilot", "Actions", "millions", "developers", "Enterprise"]}
+{"id": "home12", "category": "homepage", "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)", "facts": ["Graydon", "Mozilla", "borrow", "Cargo", "2015"]}
+{"id": "home13", "category": "homepage", "url": "https://simonwillison.net/2026/Mar/15/latent-reasoning/", "facts": ["latent", "reasoning", "Willison", "model", "Simon"]}
+{"id": "home14", "category": "homepage", "url": "https://paulgraham.com/essays.html", "facts": ["Graham", "essay", "startup", "Lisp", "founders"]}
+{"id": "home15", "category": "homepage", "url": "https://techcrunch.com", "facts": ["TechCrunch", "startup", "news", "events", "latest"]}
+{"id": "home16", "category": "homepage", "url": "https://www.databricks.com", "facts": ["Lakehouse", "platform", "data", "MLflow", "AI"]}
+{"id": "home17", "category": "homepage", "url": "https://www.hashicorp.com", "facts": ["Terraform", "Vault", "Consul", "infrastructure", "enterprise"]}

@@ -61,6 +61,27 @@ pub struct FetchConfig {
     pub max_redirects: u32,
     pub headers: HashMap<String, String>,
     pub pdf_mode: PdfMode,
+    /// Keep successful responses in this directory and answer later fetches
+    /// of the same URL, browser profile, headers and redirect settings from it
+    /// without touching the network. Entries never expire; delete the
+    /// directory to refresh. Challenge and bot-protection pages and HTTP errors
+    /// are not kept, nor `Set-Cookie` headers. Cookies a site sets during a run
+    /// are not part of the key. The directory and its files are readable by
+    /// their owner only on Unix. Only the HTTP response is kept: rendering a
+    /// cached page in the browser still loads its scripts over the network.
+    pub cache: Option<std::path::PathBuf>,
+    /// Hand every HTTP response the client receives, with the request that
+    /// asked for it, to this callback, for example to keep them in a WARC
+    /// file with [`crate::warc::Writer`]. With `follow_redirects`, the client
+    /// then follows redirects itself, so every hop is passed, under the same
+    /// rules: each target is checked, and credentials stay on their origin.
+    /// Responses answered from `cache` are not passed, nor pages a browser
+    /// loads.
+    pub archive: Option<crate::warc::Archive>,
+    /// Render pages that need JavaScript in a browser after fetching them
+    /// over HTTP, keeping whichever extraction has more text. `None` never renders.
+    #[cfg(feature = "browser")]
+    pub render: Option<crate::render::RenderConfig>,
 }
 
 impl Default for FetchConfig {
@@ -75,6 +96,10 @@ impl Default for FetchConfig {
             max_redirects: 10,
             headers: HashMap::from([("Accept-Language".to_string(), "en-US,en;q=0.9".to_string())]),
             pdf_mode: PdfMode::default(),
+            cache: None,
+            archive: None,
+            #[cfg(feature = "browser")]
+            render: None,
         }
     }
 }
@@ -99,24 +124,33 @@ impl FetchResult {
         &self,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        if let Some(bytes) = &self.document_bytes {
-            if is_pdf_content_type(&self.headers) || bytes.starts_with(b"%PDF-") {
-                let pdf = webclaw_pdf::extract_pdf(bytes, PdfMode::default())?;
-                return Ok(pdf_to_extraction_result(&pdf, &self.url));
-            }
-            if let Some(kind) = crate::document::is_document_content_type(&self.headers, &self.url)
-            {
-                let mut result = crate::document::extract_document(bytes, kind)?;
-                result.metadata.url = Some(self.url.clone());
-                return Ok(result);
-            }
-        }
-        Ok(webclaw_core::extract_with_options(
-            &self.html,
-            Some(&self.url),
-            options,
-        )?)
+        extract_fetched(self, options, PdfMode::default())
     }
+}
+
+fn extract_fetched(
+    fetched: &FetchResult,
+    options: &webclaw_core::ExtractionOptions,
+    pdf_mode: PdfMode,
+) -> Result<webclaw_core::ExtractionResult, FetchError> {
+    if let Some(bytes) = &fetched.document_bytes {
+        if is_pdf_content_type(&fetched.headers) || bytes.starts_with(b"%PDF-") {
+            let pdf = webclaw_pdf::extract_pdf(bytes, pdf_mode)?;
+            return Ok(pdf_to_extraction_result(&pdf, &fetched.url));
+        }
+        if let Some(kind) =
+            crate::document::is_document_content_type(&fetched.headers, &fetched.url)
+        {
+            let mut result = crate::document::extract_document(bytes, kind)?;
+            result.metadata.url = Some(fetched.url.clone());
+            return Ok(result);
+        }
+    }
+    Ok(webclaw_core::extract_with_options(
+        &fetched.html,
+        Some(&fetched.url),
+        options,
+    )?)
 }
 
 /// Result for a single URL in a batch fetch operation.
@@ -138,6 +172,8 @@ pub struct BatchExtractResult {
 struct Response {
     status: u16,
     url: String,
+    version: http::Version,
+    ip: Option<std::net::IpAddr>,
     headers: http::HeaderMap,
     /// Owned as `Vec<u8>` rather than `Bytes` so `into_text` can hand the
     /// allocation straight to `String` instead of copying it (see `into_text`).
@@ -189,6 +225,8 @@ impl Response {
         }
         let status = resp.status().as_u16();
         let url = resp.uri().to_string();
+        let version = resp.version();
+        let ip = resp.remote_addr().map(|addr| addr.ip());
         let headers = resp.headers().clone();
 
         // wreq 6.0.0-rc.29 dropped `Response::chunk()`. Stream post-decompression
@@ -211,6 +249,8 @@ impl Response {
         Ok(Self {
             status,
             url,
+            version,
+            ip,
             headers,
             body: buf,
         })
@@ -227,10 +267,6 @@ impl Response {
     }
     fn body(&self) -> &[u8] {
         &self.body
-    }
-
-    fn text(&self) -> std::borrow::Cow<'_, str> {
-        String::from_utf8_lossy(&self.body)
     }
 
     /// Decode the body to `String`, consuming the buffer.
@@ -266,6 +302,7 @@ impl Response {
 struct ObservedClient {
     client: wreq::Client,
     proxy: Option<String>,
+    sends: Option<http::HeaderMap>,
 }
 impl std::ops::Deref for ObservedClient {
     type Target = wreq::Client;
@@ -303,6 +340,15 @@ pub struct FetchClient {
     cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
     /// Ceiling on one complete `fetch`. See [`FetchConfig::total_timeout`].
     total_timeout: Option<Duration>,
+    cache: Option<crate::cache::ResponseCache>,
+    archive: Option<crate::warc::Archive>,
+    redirects: Option<u32>,
+    #[cfg(feature = "browser")]
+    render: Option<crate::render::RenderConfig>,
+    #[cfg(feature = "browser")]
+    headers: Vec<(String, String)>,
+    #[cfg(feature = "browser")]
+    follow_redirects: bool,
 }
 
 impl FetchClient {
@@ -340,6 +386,17 @@ impl FetchClient {
 
     /// Build a new client from config.
     pub fn new(config: FetchConfig) -> Result<Self, FetchError> {
+        #[cfg(feature = "browser")]
+        if config.render.as_ref().is_some_and(|render| render.solve)
+            && !matches!(
+                config.browser,
+                BrowserProfile::Chrome | BrowserProfile::ChromeMacos | BrowserProfile::Edge
+            )
+        {
+            return Err(FetchError::Build(
+                "solving Cloudflare challenges sends Chrome's User-Agent over HTTP, so it needs the chrome, chrome-macos or edge browser profile".into(),
+            ));
+        }
         let variants = collect_variants(&config.browser);
         let pdf_mode = config.pdf_mode.clone();
 
@@ -352,12 +409,16 @@ impl FetchClient {
                         config.timeout,
                         &config.headers,
                         config.proxy.as_deref(),
-                        config.follow_redirects,
+                        config.follow_redirects && config.archive.is_none(),
                         config.max_redirects,
                     )
                     .map(|client| ObservedClient {
                         client,
                         proxy: config.proxy.as_deref().and_then(crate::transfer::authority),
+                        sends: config
+                            .archive
+                            .as_ref()
+                            .map(|_| crate::tls::request_headers(v, &config.headers)),
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -382,12 +443,16 @@ impl FetchClient {
                         config.timeout,
                         &config.headers,
                         Some(proxy),
-                        config.follow_redirects,
+                        config.follow_redirects && config.archive.is_none(),
                         config.max_redirects,
                     )
                     .map(|client| ObservedClient {
                         client,
                         proxy: crate::transfer::authority(proxy),
+                        sends: config
+                            .archive
+                            .as_ref()
+                            .map(|_| crate::tls::request_headers(v, &config.headers)),
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -400,11 +465,35 @@ impl FetchClient {
             ClientPool::Rotating { clients }
         };
 
+        let cache = config.cache.clone().map(|dir| {
+            let mut headers: Vec<_> = config.headers.iter().collect();
+            headers.sort();
+            crate::cache::ResponseCache::new(
+                dir,
+                &(
+                    format!("{:?}", config.browser),
+                    headers,
+                    config.follow_redirects,
+                    config.max_redirects,
+                ),
+            )
+        });
+
         Ok(Self {
             pool,
             pdf_mode,
             cloud: None,
             total_timeout: config.total_timeout,
+            cache,
+            archive: config.archive.clone(),
+            redirects: (config.follow_redirects && config.archive.is_some())
+                .then_some(config.max_redirects),
+            #[cfg(feature = "browser")]
+            render: config.render.clone(),
+            #[cfg(feature = "browser")]
+            headers: config.headers.clone().into_iter().collect(),
+            #[cfg(feature = "browser")]
+            follow_redirects: config.follow_redirects,
         })
     }
 
@@ -432,9 +521,10 @@ impl FetchClient {
         self.cloud.as_deref()
     }
 
-    /// Fetch a URL with per-site rescue paths: Reddit URLs redirect to the
-    /// `.json` API, and Akamai-style challenge responses trigger a homepage
-    /// cookie warmup and a retry. Returns the same `FetchResult` shape as
+    /// Fetch a URL with per-site rescue paths: Reddit URLs go to
+    /// old.reddit.com, and Akamai-style challenge responses trigger a homepage
+    /// cookie warmup and a retry whose result, error included, is the answer.
+    /// The whole call shares one [`FetchConfig::total_timeout`]. Returns the same `FetchResult` shape as
     /// [`Self::fetch`] so every caller (CLI, MCP, OSS server, production
     /// server) benefits without shape churn.
     ///
@@ -451,8 +541,6 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        // Reddit: fetch old.reddit.com for stable server-rendered HTML.
-        // The JSON API is blocked; old.reddit.com works without JS or auth.
         let owned;
         let url = if crate::reddit::is_reddit_url(url) {
             owned = crate::reddit::to_old_reddit_url(url);
@@ -460,86 +548,30 @@ impl FetchClient {
         } else {
             url
         };
-
-        let resp = self.fetch_with_headers(url, extra).await?;
-
-        // Akamai / bazadebezolkohpepadr challenge: visit the homepage to
-        // collect warmup cookies (_abck, bm_sz, etc.), then retry.
-        if is_challenge_html(&resp.html)
-            && let Some(homepage) = extract_homepage(url)
-        {
+        self.within_budget(Instant::now(), url, async {
+            let resp = self.fetch_with_headers(url, extra).await?;
+            let Some(homepage) = extract_homepage(url).filter(|_| is_challenge_html(&resp.html))
+            else {
+                return Ok(resp);
+            };
             debug!("challenge detected, warming cookies via {homepage}");
-            let _ = self.fetch_with_headers(&homepage, extra).await;
-            if let Ok(retry) = self.fetch_with_headers(url, extra).await {
-                return Ok(retry);
-            }
-        }
-
-        Ok(resp)
+            let _ = self.fetch_uncached(&homepage, extra).await;
+            self.fetch_with_headers(url, extra).await
+        })
+        .await
     }
 
     /// Fetch a URL and return the raw HTML + response metadata.
     ///
-    /// Automatically retries on transient failures (network errors, 5xx, 429)
-    /// with exponential backoff: 0s, 1s (2 attempts total). No per-site
-    /// rescue logic; use [`Self::fetch_smart`] for that.
+    /// Retries once on transient failures (network errors, 429, 502-504,
+    /// 520-524). The pause is 1s, or the response's `Retry-After` when it is
+    /// longer and still fits the remaining [`FetchConfig::total_timeout`].
+    /// No per-site rescue logic; use [`Self::fetch_smart`] for that.
     #[instrument(skip(self), fields(url = %url))]
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
-        let delays = [Duration::ZERO, Duration::from_secs(1)];
-        let mut last_err = None;
-        // Clock starts before the first attempt so the retry pause and every
-        // attempt come out of one budget, rather than each getting a fresh one.
-        let started = Instant::now();
-
-        for (attempt, delay) in delays.iter().enumerate() {
-            if attempt > 0 {
-                tokio::time::sleep(*delay).await;
-            }
-
-            match self.within_budget(started, url, self.fetch_once(url)).await {
-                Ok(result) => {
-                    if is_retryable_status(result.status) && attempt < delays.len() - 1 {
-                        warn!(
-                            url,
-                            status = result.status,
-                            attempt = attempt + 1,
-                            "retryable status, will retry"
-                        );
-                        last_err = Some(FetchError::Build(format!("HTTP {}", result.status)));
-                        continue;
-                    }
-                    if attempt > 0 {
-                        debug!(url, attempt = attempt + 1, "retry succeeded");
-                    }
-                    return Ok(result);
-                }
-                Err(e) => {
-                    if !is_retryable_error(&e) || attempt == delays.len() - 1 {
-                        return Err(e);
-                    }
-                    warn!(
-                        url,
-                        error = %e,
-                        attempt = attempt + 1,
-                        "transient error, will retry"
-                    );
-                    last_err = Some(e);
-                }
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
+        self.fetch_with_headers(url, &[]).await
     }
 
-    /// Single fetch attempt.
-    async fn fetch_once(&self, url: &str) -> Result<FetchResult, FetchError> {
-        self.fetch_once_with_headers(url, &[]).await
-    }
-
-    /// Single fetch attempt with optional per-request headers appended
-    /// after the profile defaults. Used by extractors that need to
-    /// satisfy site-specific headers (e.g. `x-ig-app-id` for Instagram's
-    /// internal API).
     async fn fetch_once_with_headers(
         &self,
         url: &str,
@@ -550,13 +582,34 @@ impl FetchClient {
         let start = Instant::now();
         let client = self.pick_client(url);
 
-        let mut req = client.get(url);
-        for (k, v) in extra {
-            req = req.header(*k, *v);
-        }
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = req.send().await?;
-        let response = Response::from_wreq(resp, attempt).await?;
+        let sent: Vec<(&str, String)> = extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        #[cfg(feature = "browser")]
+        let sent = {
+            let mut sent = sent;
+            if let Some(render) = self.render.as_ref().filter(|render| render.solve)
+                && let Some((cookies, agent)) = render.pool.clearance(url)
+            {
+                debug!(url, "sending the clearance from a solved challenge");
+                let own = self
+                    .headers
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str()))
+                    .chain(extra.iter().copied())
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+                    .map(|(_, value)| value);
+                let cookies = own
+                    .chain(std::iter::once(cookies.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                sent.retain(|(name, _)| {
+                    !name.eq_ignore_ascii_case("cookie") && !name.eq_ignore_ascii_case("user-agent")
+                });
+                sent.push(("cookie", cookies));
+                sent.push(("user-agent", agent));
+            }
+            sent
+        };
+        let response = self.send(client, url, &sent).await?;
         response_to_result(response, start)
     }
 
@@ -567,57 +620,195 @@ impl FetchClient {
     /// `FetchConfig.headers` shouldn't carry to other hosts (Instagram's
     /// `x-ig-app-id`, GitHub's `Authorization` once we wire `GITHUB_TOKEN`,
     /// Reddit's compliant UA when we add OAuth, etc.).
+    ///
+    /// With a render pool on a persistent browser profile, an HTML page is
+    /// then loaded in the browser with the profile's cookies; see
+    /// `render::RenderPool::load_in_profile` in a `browser` build.
     #[instrument(skip(self, extra), fields(url = %url, extra_count = extra.len()))]
     pub async fn fetch_with_headers(
         &self,
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        let delays = [Duration::ZERO, Duration::from_secs(1)];
-        let mut last_err = None;
-        // One budget across the whole call — see `within_budget`.
-        let started = Instant::now();
+        let fetched = self.fetch_over_http(url, extra).await?;
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.render {
+            return render
+                .pool
+                .load_in_profile(url, fetched, render, &self.headers, self.follow_redirects)
+                .await;
+        }
+        Ok(fetched)
+    }
 
-        for (attempt, delay) in delays.iter().enumerate() {
-            if attempt > 0 {
-                tokio::time::sleep(*delay).await;
-            }
-            match self
-                .within_budget(started, url, self.fetch_once_with_headers(url, extra))
+    async fn fetch_over_http(
+        &self,
+        url: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        let cached = self
+            .cache
+            .as_ref()
+            .map(|cache| (cache.clone(), cache.key(url, extra)));
+        if let Some((cache, key)) = cached.clone() {
+            let request = url.to_string();
+            let hit = tokio::task::spawn_blocking(move || cache.read(&key, &request))
                 .await
-            {
-                Ok(result) => {
-                    if is_retryable_status(result.status) && attempt < delays.len() - 1 {
-                        warn!(
-                            url,
-                            status = result.status,
-                            attempt = attempt + 1,
-                            "retryable status, will retry"
-                        );
-                        last_err = Some(FetchError::Build(format!("HTTP {}", result.status)));
-                        continue;
-                    }
-                    if attempt > 0 {
-                        debug!(url, attempt = attempt + 1, "retry succeeded");
-                    }
-                    return Ok(result);
-                }
-                Err(e) => {
-                    if !is_retryable_error(&e) || attempt == delays.len() - 1 {
-                        return Err(e);
-                    }
-                    warn!(
-                        url,
-                        error = %e,
-                        attempt = attempt + 1,
-                        "transient error, will retry"
-                    );
-                    last_err = Some(e);
-                }
+                .ok()
+                .flatten();
+            if let Some(hit) = hit {
+                debug!(url, "answered from the cache");
+                return Ok(hit);
             }
         }
+        let fetched = self.fetch_uncached(url, extra).await?;
+        if let Some((cache, key)) = cached
+            && fetched.status < 400
+            && !is_challenge_html(&fetched.html)
+            && !crate::cloud::is_bot_protected(&fetched.html, &fetched.headers)
+        {
+            let request = url.to_string();
+            let stored = fetched.clone();
+            let _ = tokio::task::spawn_blocking(move || cache.write(&key, &request, &stored)).await;
+        }
+        Ok(fetched)
+    }
 
-        Err(last_err.unwrap_or_else(|| FetchError::Build("all retries exhausted".into())))
+    async fn fetch_uncached(
+        &self,
+        url: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        self.with_retries(url, || self.fetch_once_with_headers(url, extra))
+            .await
+    }
+
+    async fn with_retries<F, Fut>(
+        &self,
+        url: &str,
+        mut attempt: F,
+    ) -> Result<FetchResult, FetchError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<FetchResult, FetchError>>,
+    {
+        let started = Instant::now();
+        for attempt_no in 1.. {
+            let outcome = self.within_budget(started, url, attempt()).await;
+            let wait = match &outcome {
+                _ if attempt_no == MAX_ATTEMPTS => None,
+                Ok(result) if is_retryable_status(result.status) => {
+                    self.retry_wait(started, retry_after(&result.headers))
+                }
+                Err(e) if is_retryable_error(e) => self.retry_wait(started, None),
+                _ => None,
+            };
+            let Some(wait) = wait else {
+                return outcome;
+            };
+            match &outcome {
+                Ok(result) => warn!(
+                    url,
+                    status = result.status,
+                    attempt_no,
+                    wait_ms = wait.as_millis() as u64,
+                    "retryable status, will retry"
+                ),
+                Err(e) => {
+                    warn!(url, error = %e, attempt_no, wait_ms = wait.as_millis() as u64, "transient error, will retry")
+                }
+            }
+            tokio::time::sleep(wait).await;
+        }
+        unreachable!("the loop returns on the last attempt")
+    }
+
+    fn retry_wait(&self, started: Instant, retry_after: Option<Duration>) -> Option<Duration> {
+        let wait = retry_after.map_or(RETRY_PAUSE, |d| d.max(RETRY_PAUSE));
+        let ceiling = self.total_timeout.map_or(RETRY_AFTER_CAP, |total| {
+            total.saturating_sub(started.elapsed())
+        });
+        (wait < ceiling).then_some(wait)
+    }
+
+    async fn send(
+        &self,
+        client: &ObservedClient,
+        url: &str,
+        sent: &[(&str, String)],
+    ) -> Result<Response, FetchError> {
+        let Some(archive) = &self.archive else {
+            let mut req = client.get(url);
+            for (k, v) in sent {
+                req = req.header(*k, v.as_str());
+            }
+            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
+            return Response::from_wreq(req.send().await?, attempt).await;
+        };
+        let mut headers = client.sends.clone().unwrap_or_default();
+        for (name, value) in sent {
+            if let (Ok(name), Ok(value)) = (
+                http::header::HeaderName::from_bytes(name.as_bytes()),
+                http::header::HeaderValue::from_str(value),
+            ) {
+                headers.insert(name, value);
+            }
+        }
+        let mut url = url::Url::parse(url).map_err(|_| FetchError::InvalidUrl(url.into()))?;
+        let mut hops = 0;
+        loop {
+            let attempt = crate::transfer::Attempt::new(url.as_str(), client.proxy.as_deref());
+            let mut req = client
+                .get(url.as_str())
+                .default_headers(false)
+                .headers(headers.clone());
+            if let Some(max) = self.redirects {
+                req = req.redirect(crate::tls::stop_at_redirect(hops < max));
+            }
+            let resp = req.send().await?;
+            let response = Response::from_wreq(resp, attempt).await?;
+            (archive.0)(&crate::warc::Exchange {
+                url: &response.url,
+                request_headers: &headers,
+                status: response.status,
+                version: response.version,
+                headers: &response.headers,
+                body: &response.body,
+                ip: response.ip,
+            });
+            let next = self
+                .redirects
+                .filter(|_| matches!(response.status, 301 | 302 | 303 | 307 | 308))
+                .and_then(|_| response.headers.get(http::header::LOCATION)?.to_str().ok())
+                .and_then(|location| url.join(location).ok());
+            let Some(next) = next else {
+                return Ok(response);
+            };
+            hops += 1;
+            let next = crate::url_security::validate_public_http_url(next.as_str()).await?;
+            if next.origin() != url.origin() {
+                for name in [
+                    http::header::AUTHORIZATION,
+                    http::header::COOKIE,
+                    http::header::HeaderName::from_static("cookie2"),
+                    http::header::PROXY_AUTHORIZATION,
+                    http::header::WWW_AUTHENTICATE,
+                ] {
+                    headers.remove(name);
+                }
+            }
+            headers.remove(http::header::REFERER);
+            if !(url.scheme() == "https" && next.scheme() == "http") {
+                let mut referer = url.clone();
+                let _ = referer.set_username("");
+                let _ = referer.set_password(None);
+                referer.set_fragment(None);
+                if let Ok(value) = http::HeaderValue::from_str(referer.as_str()) {
+                    headers.insert(http::header::REFERER, value);
+                }
+            }
+            url = next;
+        }
     }
 
     /// Fetch a URL and return the raw, undecoded response body as bytes.
@@ -630,16 +821,18 @@ impl FetchClient {
     /// String path would mangle them. Callers detect the gzip magic
     /// (`0x1f 0x8b`) and gunzip before parsing.
     ///
-    /// No retry wrapper: callers (sitemap discovery) already tolerate
-    /// per-URL failures by skipping. Returns `(status, body)`.
+    /// One attempt, bounded by [`FetchConfig::total_timeout`]: callers
+    /// (sitemap discovery) already tolerate per-URL failures by skipping.
+    /// Returns `(status, body)`.
     pub async fn fetch_raw(&self, url: &str) -> Result<(u16, bytes::Bytes), FetchError> {
-        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
-        let url = parsed_url.as_str();
-        let client = self.pick_client(url);
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = client.get(url).send().await?;
-        let response = Response::from_wreq(resp, attempt).await?;
-        Ok((response.status(), response.into_body()))
+        self.within_budget(Instant::now(), url, async {
+            let parsed_url = crate::url_security::validate_public_http_url(url).await?;
+            let url = parsed_url.as_str();
+            let client = self.pick_client(url);
+            let response = self.send(client, url, &[]).await?;
+            Ok((response.status(), response.into_body()))
+        })
+        .await
     }
 
     /// Fetch a URL then extract structured content.
@@ -659,111 +852,114 @@ impl FetchClient {
         url: &str,
         options: &webclaw_core::ExtractionOptions,
     ) -> Result<webclaw_core::ExtractionResult, FetchError> {
-        let parsed_url = crate::url_security::validate_public_http_url(url).await?;
-        let url = parsed_url.as_str();
+        let fetched = self.fetch_smart(url).await?;
+        self.extract_page(fetched, options).await.1
+    }
 
-        // Reddit: rewrite to old.reddit.com for stable server-rendered HTML.
-        // webclaw-core's Reddit fast path then parses the thread structure.
-        let reddit_owned;
-        let url = if crate::reddit::is_reddit_url(url) {
-            reddit_owned = crate::reddit::to_old_reddit_url(url);
-            debug!("reddit: rewriting to {reddit_owned}");
-            reddit_owned.as_str()
-        } else {
-            url
+    /// [`Self::extract`], then, with `FetchConfig::render` set, render the
+    /// page when it seems to need JavaScript and keep whichever extraction
+    /// has more text. Returns the page that extraction came from.
+    pub async fn extract_page(
+        &self,
+        fetched: FetchResult,
+        options: &webclaw_core::ExtractionOptions,
+    ) -> (
+        FetchResult,
+        Result<webclaw_core::ExtractionResult, FetchError>,
+    ) {
+        if let Some(solved) = self.solve_challenge(&fetched).await {
+            return match solved {
+                Ok(page) => {
+                    let extracted = self.extract(&page, options);
+                    (page, extracted)
+                }
+                Err(e) => (fetched, Err(e)),
+            };
+        }
+        let extracted = self.extract(&fetched, options);
+        let words = match &extracted {
+            Ok(result) => result.metadata.word_count,
+            Err(FetchError::Content(_)) => 0,
+            Err(_) => return (fetched, extracted),
         };
-
-        let start = Instant::now();
-        let client = self.pick_client(url);
-        let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-        let resp = client.get(url).send().await?;
-        let mut response = Response::from_wreq(resp, attempt).await?;
-
-        // Cookie warmup: if we get a challenge page, visit the homepage first
-        // to collect Akamai cookies (_abck, bm_sz, etc.), then retry.
-        if is_challenge_response(&response)
-            && let Some(homepage) = extract_homepage(url)
-        {
-            debug!("challenge detected, warming cookies via {homepage}");
-            let _ = self.fetch(&homepage).await;
-            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-            let resp = client.get(url).send().await?;
-            response = Response::from_wreq(resp, attempt).await?;
-            debug!("retried after cookie warmup: status={}", response.status());
-        }
-
-        let status = response.status();
-        if status >= 400 {
-            return Err(FetchError::UpstreamStatus(status));
-        }
-        let final_url = response.url().to_string();
-
-        // Borrowed, not cloned: both consumers below take `&HeaderMap`, and the
-        // borrow ends before `response` is moved into `into_text()`.
-        let headers = response.headers();
-
-        let is_pdf = is_pdf_content_type(headers);
-
-        if is_pdf {
-            debug!(status, "detected PDF response, using pdf extraction");
-
-            let bytes = response.body();
-
-            let elapsed = start.elapsed();
-            debug!(
-                status,
-                bytes = bytes.len(),
-                elapsed_ms = %elapsed.as_millis(),
-                "PDF fetch complete"
-            );
-
-            let pdf_result = webclaw_pdf::extract_pdf(bytes, self.pdf_mode.clone())?;
-            Ok(pdf_to_extraction_result(&pdf_result, &final_url))
-        } else if let Some(doc_type) =
-            crate::document::is_document_content_type(headers, &final_url)
-        {
-            debug!(status, doc_type = ?doc_type, "detected document response, extracting");
-
-            let bytes = response.body();
-
-            let elapsed = start.elapsed();
-            debug!(
-                status,
-                bytes = bytes.len(),
-                elapsed_ms = %elapsed.as_millis(),
-                "document fetch complete"
-            );
-
-            let mut result = crate::document::extract_document(bytes, doc_type)?;
-            result.metadata.url = Some(final_url);
-            Ok(result)
+        let Some(rendered) = self.render_if_needed(&fetched, words).await else {
+            return (fetched, extracted);
+        };
+        let from_render = self.extract(&rendered, options);
+        let rendered_words = from_render.as_ref().map_or(0, |r| r.metadata.word_count);
+        if rendered_words > words {
+            (rendered, from_render)
         } else {
-            let html = response.into_text();
-
-            let elapsed = start.elapsed();
-            debug!(status, elapsed_ms = %elapsed.as_millis(), "fetch complete");
-
-            // LinkedIn: extract from embedded <code> JSON blobs
-            if crate::linkedin::is_linkedin_post(&final_url) {
-                if let Some(result) = crate::linkedin::extract_linkedin_post(&html, &final_url) {
-                    debug!("linkedin extraction succeeded");
-                    return Ok(result);
-                }
-                debug!("linkedin extraction failed, falling back to standard");
-            }
-
-            let extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
-
-            if let Some(issue) = webclaw_core::quality::content_issue(&extraction) {
-                // An explicit selector may intentionally match no readable text.
-                if issue != webclaw_core::quality::ContentIssue::Empty
-                    || !webclaw_core::quality::allows_empty_content(&html, options)
-                {
-                    return Err(issue.into());
-                }
-            }
-            Ok(extraction)
+            (fetched, extracted)
         }
+    }
+
+    /// Get past the Cloudflare challenge that `fetched` is, when
+    /// `FetchConfig::render` solves challenges: `None` when it does not or
+    /// `fetched` is no challenge, and the render's error when the challenge
+    /// stays.
+    pub async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        if fetched.document_bytes.is_some()
+            || !crate::cloud::is_cloudflare_challenge(&fetched.html, &fetched.headers)
+        {
+            return None;
+        }
+        #[cfg(feature = "browser")]
+        if let Some(render) = self.render.as_ref().filter(|render| render.solve) {
+            return Some(render.pool.solve(fetched, render, &self.headers).await);
+        }
+        None
+    }
+
+    /// Render `fetched` with `FetchConfig::render` when it is set and the
+    /// page seems to need it; `http_words` is the word count extracted over HTTP.
+    pub async fn render_if_needed(
+        &self,
+        fetched: &FetchResult,
+        http_words: usize,
+    ) -> Option<FetchResult> {
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.render {
+            return render
+                .pool
+                .render_if_needed(fetched, http_words, render, &self.headers)
+                .await;
+        }
+        let _ = (fetched, http_words);
+        None
+    }
+
+    /// Extract an already fetched page exactly as
+    /// [`Self::fetch_and_extract_with_options`] does: an HTTP error status
+    /// fails, PDFs and office documents go through their parsers, LinkedIn
+    /// posts use their embedded data, and an empty extraction fails unless
+    /// the options allow it.
+    pub fn extract(
+        &self,
+        fetched: &FetchResult,
+        options: &webclaw_core::ExtractionOptions,
+    ) -> Result<webclaw_core::ExtractionResult, FetchError> {
+        FetchError::check_status(fetched.status)?;
+        if fetched.document_bytes.is_some() {
+            return extract_fetched(fetched, options, self.pdf_mode.clone());
+        }
+        if crate::linkedin::is_linkedin_post(&fetched.url)
+            && let Some(result) =
+                crate::linkedin::extract_linkedin_post(&fetched.html, &fetched.url)
+        {
+            return Ok(result);
+        }
+        let extraction = extract_fetched(fetched, options, self.pdf_mode.clone())?;
+        if let Some(issue) = webclaw_core::quality::content_issue(&extraction)
+            && (issue != webclaw_core::quality::ContentIssue::Empty
+                || !webclaw_core::quality::allows_empty_content(&fetched.html, options))
+        {
+            return Err(issue.into());
+        }
+        Ok(extraction)
     }
 
     /// Fetch multiple URLs concurrently with bounded parallelism.
@@ -935,6 +1131,29 @@ impl crate::fetcher::Fetcher for FetchClient {
     fn cloud(&self) -> Option<&crate::cloud::CloudClient> {
         FetchClient::cloud(self)
     }
+
+    async fn render_if_needed(
+        &self,
+        fetched: &FetchResult,
+        http_words: usize,
+    ) -> Option<FetchResult> {
+        FetchClient::render_if_needed(self, fetched, http_words).await
+    }
+
+    async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        FetchClient::solve_challenge(self, fetched).await
+    }
+
+    fn solves_challenges(&self) -> bool {
+        #[cfg(feature = "browser")]
+        if let Some(render) = &self.render {
+            return render.solve;
+        }
+        false
+    }
 }
 
 /// Collect the browser variants to use based on the browser profile.
@@ -942,7 +1161,10 @@ fn collect_variants(profile: &BrowserProfile) -> Vec<BrowserVariant> {
     match profile {
         BrowserProfile::Random => browser::all_variants(),
         BrowserProfile::Chrome => vec![browser::latest_chrome()],
+        BrowserProfile::ChromeMacos => vec![BrowserVariant::ChromeMacos],
         BrowserProfile::Firefox => vec![browser::latest_firefox()],
+        BrowserProfile::Safari => vec![BrowserVariant::Safari],
+        BrowserProfile::Edge => vec![BrowserVariant::Edge],
         BrowserProfile::SafariIos => vec![BrowserVariant::SafariIos26],
     }
 }
@@ -998,6 +1220,16 @@ fn pick_random(clients: &[ObservedClient]) -> &ObservedClient {
     &clients[idx]
 }
 
+const MAX_ATTEMPTS: usize = 2;
+const RETRY_PAUSE: Duration = Duration::from_secs(1);
+const RETRY_AFTER_CAP: Duration = Duration::from_secs(30);
+
+// ponytail: delta-seconds only; the HTTP-date form falls back to RETRY_PAUSE. Parse it if a target needs it.
+fn retry_after(headers: &http::HeaderMap) -> Option<Duration> {
+    let value = headers.get(http::header::RETRY_AFTER)?.to_str().ok()?;
+    value.trim().parse().ok().map(Duration::from_secs)
+}
+
 /// Status codes worth retrying: server errors + rate limiting.
 fn is_retryable_status(status: u16) -> bool {
     status == 429
@@ -1025,15 +1257,6 @@ fn is_pdf_content_type(headers: &http::HeaderMap) -> bool {
             mime.eq_ignore_ascii_case("application/pdf")
         })
         .unwrap_or(false)
-}
-
-/// Detect if a response looks like a bot protection challenge page.
-fn is_challenge_response(response: &Response) -> bool {
-    let body_len = response.body().len();
-    if body_len > 15_000 || body_len == 0 {
-        return false;
-    }
-    is_challenge_html(response.text().as_ref())
 }
 
 /// Same as `is_challenge_response`, operating on a body string directly
@@ -1219,6 +1442,276 @@ mod tests {
         );
     }
 
+    async fn counting_proxy(
+        body: fn(usize) -> &'static str,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let body = body(counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+                let mut buffer = [0; 4096];
+                let _ = socket.read(&mut buffer).await;
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        (proxy, hits)
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn an_archive_gets_each_response_decoded_with_the_request_headers() {
+        use std::io::Write as _;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            gz.write_all(b"<p>caf\xe9</p>").unwrap();
+            let body = gz.finish().unwrap();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=latin1\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            socket.write_all(&body).await.unwrap();
+        });
+        type Seen = (String, u16, http::HeaderMap, http::HeaderMap, Vec<u8>);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Seen>::new()));
+        let sink = seen.clone();
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::from([("X-Configured".to_string(), "yes".to_string())]),
+            archive: Some(crate::warc::Archive(Arc::new(move |exchange| {
+                sink.lock().unwrap().push((
+                    exchange.url.to_string(),
+                    exchange.status,
+                    exchange.request_headers.clone(),
+                    exchange.headers.clone(),
+                    exchange.body.to_vec(),
+                ));
+            }))),
+            ..Default::default()
+        })
+        .unwrap();
+        client
+            .fetch_with_headers("http://example.com/archived", &[("X-Request", "also")])
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        let (url, status, sent, headers, body) = &seen[0];
+        assert_eq!(url, "http://example.com/archived");
+        assert_eq!(*status, 200);
+        assert_eq!(body, b"<p>caf\xe9</p>");
+        assert!(headers.get("content-encoding").is_none());
+        assert!(headers.get("content-length").is_none());
+        assert_eq!(headers["content-type"], "text/html; charset=latin1");
+        assert_eq!(sent["x-configured"], "yes");
+        assert_eq!(sent["x-request"], "also");
+        assert!(sent["user-agent"].to_str().unwrap().contains("Chrome/"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn an_archive_gets_every_redirect_hop_and_cookies_stay_on_their_origin() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let wire = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for reply in [
+                "HTTP/1.1 301 Moved Permanently\r\nLocation: /b\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 302 Found\r\nLocation: http://example.org/c\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 9\r\nConnection: close\r\n\r\n<p>c</p>\n",
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = Vec::new();
+                while !buffer.ends_with(b"\r\n\r\n") {
+                    let mut chunk = [0; 4096];
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert!(n > 0);
+                    buffer.extend_from_slice(&chunk[..n]);
+                }
+                requests.push(String::from_utf8(buffer).unwrap().to_ascii_lowercase());
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        type Hop = (String, u16, http::HeaderMap);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Hop>::new()));
+        let sink = seen.clone();
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::new(),
+            archive: Some(crate::warc::Archive(Arc::new(move |exchange| {
+                sink.lock().unwrap().push((
+                    exchange.url.to_string(),
+                    exchange.status,
+                    exchange.request_headers.clone(),
+                ));
+            }))),
+            ..Default::default()
+        })
+        .unwrap();
+        let page = client
+            .fetch_with_headers("http://example.com/a", &[("Cookie", "session=1")])
+            .await
+            .unwrap();
+        let wire = wire.await.unwrap();
+        assert_eq!(page.url, "http://example.org/c");
+        assert_eq!(page.html, "<p>c</p>\n");
+        let seen = seen.lock().unwrap();
+        let hops: Vec<_> = seen
+            .iter()
+            .map(|(url, status, _)| (url.as_str(), *status))
+            .collect();
+        assert_eq!(
+            hops,
+            [
+                ("http://example.com/a", 301),
+                ("http://example.com/b", 302),
+                ("http://example.org/c", 200)
+            ]
+        );
+        assert_eq!(seen[1].2["cookie"], "session=1");
+        assert!(seen[2].2.get("cookie").is_none());
+        assert_eq!(seen[2].2["referer"], "http://example.com/b");
+        assert!(wire[1].contains("cookie: session=1\r\n"));
+        assert!(!wire[2].contains("cookie:"), "{}", wire[2]);
+        assert!(wire[2].contains("referer: http://example.com/b\r\n"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn too_many_redirects_fail_the_same_way_with_an_archive() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut outcomes = Vec::new();
+        for archive in [None, Some(crate::warc::Archive(Arc::new(|_| {})))] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let proxy = format!("http://{}", listener.local_addr().unwrap());
+            let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counted = hits.clone();
+            tokio::spawn(async move {
+                while let Ok((mut socket, _)) = listener.accept().await {
+                    let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let mut buffer = [0; 4096];
+                    let _ = socket.read(&mut buffer).await;
+                    let reply = format!(
+                        "HTTP/1.1 302 Found\r\nLocation: /r{n}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                }
+            });
+            let client = FetchClient::new(FetchConfig {
+                proxy: Some(proxy),
+                max_redirects: 2,
+                archive,
+                ..Default::default()
+            })
+            .unwrap();
+            let error = client.fetch("http://example.com/start").await.unwrap_err();
+            let redirect = matches!(&error, FetchError::Request(e) if e.is_redirect());
+            outcomes.push((
+                redirect,
+                error.to_string().contains("too many redirects"),
+                hits.load(std::sync::atomic::Ordering::SeqCst),
+            ));
+        }
+        assert_eq!(outcomes[0], (true, true, 6), "{outcomes:?}");
+        assert_eq!(outcomes[1], outcomes[0]);
+    }
+
+    fn cached_config(proxy: String, dir: &std::path::Path) -> FetchConfig {
+        FetchConfig {
+            proxy: Some(proxy),
+            cache: Some(dir.into()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn a_cached_page_is_fetched_once() {
+        let (proxy, hits) =
+            counting_proxy(|n| if n == 0 { "<p>one</p>" } else { "<p>two</p>" }).await;
+        let dir = tempfile::tempdir().unwrap();
+        let first = FetchClient::new(cached_config(proxy.clone(), dir.path())).unwrap();
+        assert_eq!(
+            first.fetch("http://example.com/c").await.unwrap().html,
+            "<p>one</p>"
+        );
+        let second = FetchClient::new(cached_config(proxy, dir.path())).unwrap();
+        assert_eq!(
+            second.fetch("http://example.com/c").await.unwrap().html,
+            "<p>one</p>"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            second.fetch("http://example.com/d").await.unwrap().html,
+            "<p>two</p>"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn a_challenge_page_is_never_cached() {
+        let challenge = "<html><body>_cf_chl_opt loaded</body></html>";
+        assert!(crate::cloud::is_bot_protected(
+            challenge,
+            &http::HeaderMap::new()
+        ));
+        let (proxy, hits) = counting_proxy(|n| {
+            if n == 0 {
+                "<html><body>_cf_chl_opt loaded</body></html>"
+            } else {
+                "<p>through</p>"
+            }
+        })
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let first = FetchClient::new(cached_config(proxy.clone(), dir.path())).unwrap();
+        assert_eq!(
+            first.fetch("http://example.com/c").await.unwrap().html,
+            challenge
+        );
+        let second = FetchClient::new(cached_config(proxy, dir.path())).unwrap();
+        assert_eq!(
+            second.fetch("http://example.com/c").await.unwrap().html,
+            "<p>through</p>"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn redirect_settings_are_part_of_the_cache_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = |follow_redirects| {
+            let client = FetchClient::new(FetchConfig {
+                follow_redirects,
+                cache: Some(dir.path().into()),
+                ..Default::default()
+            })
+            .unwrap();
+            client
+                .cache
+                .as_ref()
+                .unwrap()
+                .key("https://example.com/", &[])
+        };
+        assert_ne!(key(true), key(false));
+    }
+
     #[tokio::test]
     #[ignore = "requires local TCP sockets"]
     async fn transfer_observer_counts_partial_body_when_stream_fails() {
@@ -1267,6 +1760,8 @@ mod tests {
         Response {
             status: 200,
             url: "https://example.com/".to_string(),
+            version: http::Version::HTTP_11,
+            ip: None,
             headers: http::HeaderMap::new(),
             body,
         }
@@ -1390,6 +1885,112 @@ mod tests {
             .within_budget(started, "https://example.com", async { Ok(7) })
             .await;
         assert_eq!(res.expect("should run"), 7);
+    }
+
+    fn canned(status: u16, retry_after: Option<&str>) -> FetchResult {
+        let mut headers = http::HeaderMap::new();
+        if let Some(value) = retry_after {
+            headers.insert(http::header::RETRY_AFTER, value.parse().unwrap());
+        }
+        FetchResult {
+            html: String::new(),
+            document_bytes: None,
+            status,
+            url: "https://example.com/".into(),
+            headers,
+            elapsed: Duration::ZERO,
+        }
+    }
+
+    fn client_with_budget(total_timeout: Option<Duration>) -> FetchClient {
+        FetchClient::new(FetchConfig {
+            total_timeout,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    async fn run_retries(
+        client: &FetchClient,
+        mut responses: Vec<Result<FetchResult, FetchError>>,
+    ) -> (Result<FetchResult, FetchError>, usize, Duration) {
+        responses.reverse();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let responses = std::sync::Mutex::new(responses);
+        let began = Instant::now();
+        let outcome = client
+            .with_retries("https://example.com/", || {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let next = responses.lock().unwrap().pop().unwrap();
+                async move { next }
+            })
+            .await;
+        (outcome, calls.into_inner(), began.elapsed())
+    }
+
+    #[tokio::test]
+    async fn waits_for_retry_after_before_the_second_attempt() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, waited) = run_retries(
+            &client,
+            vec![Ok(canned(429, Some("2"))), Ok(canned(200, None))],
+        )
+        .await;
+        assert_eq!(outcome.unwrap().status, 200);
+        assert_eq!(calls, 2);
+        assert!(waited >= Duration::from_secs(2), "waited only {waited:?}");
+    }
+
+    #[tokio::test]
+    async fn returns_the_rate_limited_response_when_retry_after_exceeds_the_budget() {
+        let client = client_with_budget(Some(Duration::from_secs(3)));
+        let (outcome, calls, waited) =
+            run_retries(&client, vec![Ok(canned(429, Some("120")))]).await;
+        assert_eq!(outcome.unwrap().status, 429);
+        assert_eq!(calls, 1);
+        assert!(waited < Duration::from_millis(500));
+    }
+
+    #[tokio::test]
+    async fn caps_retry_after_when_there_is_no_budget() {
+        let client = client_with_budget(None);
+        let (outcome, calls, _) = run_retries(&client, vec![Ok(canned(503, Some("3600")))]).await;
+        assert_eq!(outcome.unwrap().status, 503);
+        assert_eq!(calls, 1);
+    }
+
+    #[tokio::test]
+    async fn retries_a_transient_error_once_then_gives_up() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, waited) = run_retries(
+            &client,
+            vec![
+                Err(FetchError::BodyDecode("reset".into())),
+                Err(FetchError::BodyDecode("reset again".into())),
+            ],
+        )
+        .await;
+        assert!(matches!(outcome, Err(FetchError::BodyDecode(m)) if m == "reset again"));
+        assert_eq!(calls, 2);
+        assert!(waited >= RETRY_PAUSE);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_a_final_status() {
+        let client = client_with_budget(Some(Duration::from_secs(24)));
+        let (outcome, calls, _) = run_retries(&client, vec![Ok(canned(404, None))]).await;
+        assert_eq!(outcome.unwrap().status, 404);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn parses_retry_after_seconds_only() {
+        let parse = |v: &str| retry_after(&canned(429, Some(v)).headers);
+        assert_eq!(parse("2"), Some(Duration::from_secs(2)));
+        assert_eq!(parse(" 7 "), Some(Duration::from_secs(7)));
+        assert_eq!(parse("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+        assert_eq!(parse("soon"), None);
+        assert_eq!(retry_after(&http::HeaderMap::new()), None);
     }
 
     #[test]

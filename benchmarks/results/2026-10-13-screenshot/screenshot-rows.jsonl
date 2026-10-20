@@ -1,0 +1,9 @@
+{"arm": "webclaw", "mode": "cold", "full_page": false, "shots": 10, "ok": 10, "ms": 1740.5412290245295, "p95_ms": 2150.214249966666, "kb": 141.525390625, "size": "1280x720", "errors": []}
+{"arm": "scrapling", "mode": "cold", "full_page": false, "shots": 10, "ok": 10, "ms": 999.0715414751321, "p95_ms": 1436.7184578441083, "kb": 314.13427734375, "size": "2560x1440", "errors": []}
+{"arm": "crawl4ai", "mode": "cold", "full_page": false, "shots": 10, "ok": 10, "ms": 703.2901454949751, "p95_ms": 1378.2160829287022, "kb": 100.51171875, "size": "1080x600", "errors": []}
+{"arm": "webclaw", "mode": "cold", "full_page": true, "shots": 10, "ok": 10, "ms": 1494.7252504061908, "p95_ms": 1899.0789579693228, "kb": 507.35107421875, "size": "1280x775", "errors": []}
+{"arm": "scrapling", "mode": "cold", "full_page": true, "shots": 10, "ok": 10, "ms": 1506.8540001520887, "p95_ms": 1776.7179580405354, "kb": 1122.845703125, "size": "2560x1550", "errors": []}
+{"arm": "crawl4ai", "mode": "cold", "full_page": true, "shots": 10, "ok": 10, "ms": 3118.3267704909667, "p95_ms": 3686.4292919635773, "kb": 1393.82568359375, "size": "1080x745", "errors": []}
+{"arm": "webclaw", "mode": "warm", "full_page": false, "shots": 20, "ok": 20, "ms": 893.6385834822431, "p95_ms": 1468.9972910564393, "kb": 141.54736328125, "size": "1280x720", "errors": []}
+{"arm": "scrapling", "mode": "warm", "full_page": false, "shots": 20, "ok": 20, "ms": 588.4249999653548, "p95_ms": 1349.4362498167902, "kb": 314.13427734375, "size": "2560x1440", "errors": []}
+{"arm": "crawl4ai", "mode": "warm", "full_page": false, "shots": 20, "ok": 20, "ms": 473.76264550257474, "p95_ms": 1168.7307499814779, "kb": 100.51171875, "size": "1080x600", "errors": []}

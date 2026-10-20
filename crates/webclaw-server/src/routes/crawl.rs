@@ -25,6 +25,7 @@ pub struct CrawlRequest {
     pub allow_external_links: bool,
     pub include_patterns: Vec<String>,
     pub exclude_patterns: Vec<String>,
+    pub ignore_robots: bool,
 }
 
 pub async fn crawl(
@@ -62,6 +63,11 @@ pub async fn crawl(
         allow_external_links: req.allow_external_links,
         progress_tx: None,
         cancel_flag: None,
+        respect_robots: !req.ignore_robots,
+        checkpoint: None,
+        on_page: None,
+        query: None,
+        stop_when_answered: false,
     };
 
     let crawler = Crawler::new(url.as_str(), config).map_err(ApiError::from)?;
@@ -87,6 +93,7 @@ pub async fn crawl(
         "total": result.total,
         "completed": result.ok,
         "errors": result.errors,
+        "skipped_by_robots": result.skipped_by_robots,
         "elapsed_secs": result.elapsed_secs,
         "pages": pages,
     })))

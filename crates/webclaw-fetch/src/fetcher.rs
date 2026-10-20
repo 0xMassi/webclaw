@@ -1,7 +1,7 @@
 //! Pluggable fetcher abstraction for vertical extractors.
 //!
 //! Extractors call the network through this trait instead of hard-
-//! coding [`FetchClient`]. The OSS CLI / MCP / self-hosted server all
+//! coding [`crate::FetchClient`]. The OSS CLI / MCP / self-hosted server all
 //! pass `&FetchClient` (wreq-backed BoringSSL). The production API
 //! server, which must not use in-process TLS fingerprinting, provides
 //! its own implementation that routes through the Go tls-sidecar.
@@ -12,8 +12,8 @@
 //!
 //! ## Choosing an implementation
 //!
-//! - CLI, MCP, self-hosted `webclaw-server`: build a [`FetchClient`]
-//!   with [`FetchClient::with_cloud`] to attach cloud fallback, pass
+//! - CLI, MCP, self-hosted `webclaw-server`: build a [`crate::FetchClient`]
+//!   with [`crate::FetchClient::with_cloud`] to attach cloud fallback, pass
 //!   it to extractors as `&client`.
 //! - `api.webclaw.io` production server: build a `TlsSidecarFetcher`
 //!   (in `server/src/engine/`) that delegates to `engine::tls_client`
@@ -73,6 +73,33 @@ pub trait Fetcher: Send + Sync {
     fn cloud(&self) -> Option<&CloudClient> {
         None
     }
+
+    /// Render `fetched` in a browser when this fetcher has one and the page
+    /// seems to need it. `http_words` is the word count extracted over HTTP.
+    async fn render_if_needed(
+        &self,
+        _fetched: &FetchResult,
+        _http_words: usize,
+    ) -> Option<FetchResult> {
+        None
+    }
+
+    /// Get past the Cloudflare challenge that `fetched` is, in a browser:
+    /// `None` when this fetcher does not solve challenges or `fetched` is no
+    /// challenge, and the error when the challenge stays.
+    async fn solve_challenge(
+        &self,
+        _fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        None
+    }
+
+    /// Whether this fetcher solves Cloudflare challenges, so that a page
+    /// holding a Turnstile widget is content to read rather than a block to
+    /// escalate.
+    fn solves_challenges(&self) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +123,25 @@ impl<T: Fetcher + ?Sized> Fetcher for &T {
     fn cloud(&self) -> Option<&CloudClient> {
         (**self).cloud()
     }
+
+    async fn render_if_needed(
+        &self,
+        fetched: &FetchResult,
+        http_words: usize,
+    ) -> Option<FetchResult> {
+        (**self).render_if_needed(fetched, http_words).await
+    }
+
+    async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        (**self).solve_challenge(fetched).await
+    }
+
+    fn solves_challenges(&self) -> bool {
+        (**self).solves_challenges()
+    }
 }
 
 #[async_trait]
@@ -114,5 +160,24 @@ impl<T: Fetcher + ?Sized> Fetcher for std::sync::Arc<T> {
 
     fn cloud(&self) -> Option<&CloudClient> {
         (**self).cloud()
+    }
+
+    async fn render_if_needed(
+        &self,
+        fetched: &FetchResult,
+        http_words: usize,
+    ) -> Option<FetchResult> {
+        (**self).render_if_needed(fetched, http_words).await
+    }
+
+    async fn solve_challenge(
+        &self,
+        fetched: &FetchResult,
+    ) -> Option<Result<FetchResult, FetchError>> {
+        (**self).solve_challenge(fetched).await
+    }
+
+    fn solves_challenges(&self) -> bool {
+        (**self).solves_challenges()
     }
 }

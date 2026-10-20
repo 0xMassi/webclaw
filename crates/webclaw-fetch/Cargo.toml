@@ -33,6 +33,10 @@ serde_json.workspace = true
 calamine = "0.36"
 zip = "2"
 flate2 = "1"
+chromey = { version = "=2.58.2", optional = true, default-features = false, features = ["rust-tls", "auto-detect-executable", "serde0", "bytes"] }
+
+[features]
+browser = ["dep:chromey"]
 
 [dev-dependencies]
 tempfile = "3"

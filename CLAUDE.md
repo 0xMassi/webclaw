@@ -276,6 +276,6 @@ version.
   hosted api.webclaw.io service is a separate private repo that depends on this
   one.)
 - Use the `/commit` skill for commits.
-- Before pushing to this repo, scan the diff — it's public-OSS-bound (AGPL-3.0).
+- Before pushing to this repo, scan the diff — it's public-OSS-bound (AGPL-3.0-only).
   No proxy/provider names, antibot mechanics, VPS/Tailscale details, keys, or
   private roadmap notes. Use generic user-facing wording in `CHANGELOG.md`.

@@ -214,26 +214,29 @@ jobs:
   npm:
     name: npm (@webclaw/mcp)
     needs: release
-    # Publish the zero-install MCP launcher on STABLE tags only (prerelease
-    # tags contain a hyphen and are skipped). Requires the NPM_TOKEN repo
-    # secret: an npm automation token with publish rights on the @webclaw scope.
     if: ${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
       - name: Pin launcher to this release and publish
         working-directory: packages/webclaw-mcp
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/webclaw-npmrc
         run: |
-          node -e 'const major = Number(process.versions.node.split(".")[0]); if (major < 18) process.exit(1)'
-          printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
-          tag="${GITHUB_REF#refs/tags/}"   # e.g. v0.6.17 (core release)
+          npm_version="$(npm --version)"
+          if [[ "$(printf '%s\n' 11.5.1 "$npm_version" | sort -V | head -1)" != 11.5.1 ]]; then
+            echo "npm ${npm_version} cannot use trusted publishing (needs 11.5.1+)" >&2
+            exit 1
+          fi
+          tag="${GITHUB_REF#refs/tags/}"
           version="$(node -p "require('./package.json').version")"
           if [[ "v${version}" != "${tag}" ]]; then
             echo "launcher version ${version} does not match release ${tag}" >&2

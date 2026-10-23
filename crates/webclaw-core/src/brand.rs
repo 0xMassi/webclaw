@@ -57,26 +57,30 @@ pub struct BrandIdentity {
 // ---------------------------------------------------------------------------
 
 /// Matches CSS declarations with a property and value, e.g. `color: #fff;`
-static CSS_DECL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)([\w-]+)\s*:\s*([^;}{]+)").unwrap());
+static CSS_DECL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)([\w-]+)\s*:\s*([^;}{]+)").expect("regex literal is valid"));
 
 /// Matches hex colors: #RGB or #RRGGBB
-static HEX_COLOR: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"#([0-9a-fA-F]{3})\b|#([0-9a-fA-F]{6})\b").unwrap());
+static HEX_COLOR: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"#([0-9a-fA-F]{3})\b|#([0-9a-fA-F]{6})\b").expect("regex literal is valid")
+});
 
 /// Matches rgb(r, g, b)
 static RGB_COLOR: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)").unwrap()
+    Regex::new(r"(?i)rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)")
+        .expect("regex literal is valid")
 });
 
 /// Matches rgba(r, g, b, a)
 static RGBA_COLOR: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*[\d.]+\s*\)").unwrap()
+    Regex::new(r"(?i)rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*[\d.]+\s*\)")
+        .expect("regex literal is valid")
 });
 
 /// Matches hsl(h, s%, l%)
 static HSL_COLOR: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)hsla?\(\s*(\d{1,3})\s*,\s*(\d{1,3})%\s*,\s*(\d{1,3})%\s*(?:,\s*[\d.]+\s*)?\)")
-        .unwrap()
+        .expect("regex literal is valid")
 });
 
 /// Matches the family tail of CSS `font:` shorthand after size/line-height.
@@ -90,12 +94,13 @@ static FONT_SHORTHAND_FAMILY: Lazy<Regex> = Lazy::new(|| {
         (.+)$
     "#,
     )
-    .unwrap()
+    .expect("regex literal is valid")
 });
 
 macro_rules! selector {
     ($s:expr) => {{
-        static SEL: Lazy<Selector> = Lazy::new(|| Selector::parse($s).unwrap());
+        static SEL: Lazy<Selector> =
+            Lazy::new(|| Selector::parse($s).expect("selector literal is valid"));
         &*SEL
     }};
 }
@@ -219,7 +224,8 @@ fn parse_declarations(css_text: &str, out: &mut Vec<CssDecl>) {
 
 /// Extract CSS custom properties that look like color values.
 /// e.g., `--primary: #3b82f6;` or `--brand-bg: rgb(30, 41, 59);`
-static CSS_VAR: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)--([\w-]+)\s*:\s*([^;}{]+)").unwrap());
+static CSS_VAR: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)--([\w-]+)\s*:\s*([^;}{]+)").expect("regex literal is valid"));
 
 fn parse_css_variables(css_text: &str, out: &mut Vec<CssDecl>) {
     for cap in CSS_VAR.captures_iter(css_text) {
@@ -256,7 +262,8 @@ fn parse_css_variables(css_text: &str, out: &mut Vec<CssDecl>) {
 /// Extract Tailwind arbitrary color values from class strings.
 /// e.g., `bg-[#1a1a2e]`, `text-[#e94560]`, `border-[rgb(255,0,0)]`
 static TW_COLOR: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:bg|text|border|ring|outline|shadow|accent|fill|stroke)-\[([^\]]+)\]").unwrap()
+    Regex::new(r"(?:bg|text|border|ring|outline|shadow|accent|fill|stroke)-\[([^\]]+)\]")
+        .expect("regex literal is valid")
 });
 
 fn parse_tailwind_colors(class: &str, out: &mut Vec<CssDecl>) {

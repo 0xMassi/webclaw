@@ -11,12 +11,13 @@ use super::cleanup::is_asset_label;
 // ---------------------------------------------------------------------------
 
 /// Matches `[![alt](img-url)](link-url)` -- an image wrapped in a link.
-static LINKED_IMAGE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\[!\[([^\]]*)\]\([^)]+\)\]\(([^)]+)\)").unwrap());
+static LINKED_IMAGE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\[!\[([^\]]*)\]\([^)]+\)\]\(([^)]+)\)").expect("regex literal is valid")
+});
 
 /// Matches empty markdown links `[](url)` left after image stripping.
 pub(crate) static EMPTY_LINK_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\[\s*\]\([^)]+\)").unwrap());
+    Lazy::new(|| Regex::new(r"\[\s*\]\([^)]+\)").expect("regex literal is valid"));
 
 /// Convert linked images to plain links, preserving the alt text and link target.
 /// Adds a newline after each to prevent text mashing when multiple are adjacent.
@@ -36,7 +37,7 @@ pub(crate) fn convert_linked_images(input: &str) -> String {
 
 /// Regex matching a line that is *only* a markdown image (with optional whitespace).
 static IMAGE_LINE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^!\[([^\]]*)\]\([^)]+\)\s*$").unwrap());
+    Lazy::new(|| Regex::new(r"^!\[([^\]]*)\]\([^)]+\)\s*$").expect("regex literal is valid"));
 
 /// Collapse consecutive image-only lines into a comma-separated summary
 /// of their alt texts (for logo bars, partner grids, etc.).
@@ -97,7 +98,8 @@ pub(crate) fn collapse_logo_images(input: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Matches `![alt](url)` anywhere in a line, including multiple on the same line.
-static INLINE_IMAGE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"!\[([^\]]*)\]\([^)]+\)").unwrap());
+static INLINE_IMAGE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"!\[([^\]]*)\]\([^)]+\)").expect("regex literal is valid"));
 
 /// Strip inline images. For multi-image lines, separate short alts (logos)
 /// from long alts (descriptive) so they don't get mixed together.

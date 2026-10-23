@@ -290,8 +290,9 @@ pub fn page_links(html: &str, base_url: &str) -> Vec<String> {
         .collect()
 }
 
-static ANCHORS: std::sync::LazyLock<scraper::Selector> =
-    std::sync::LazyLock::new(|| scraper::Selector::parse("a[href]").unwrap());
+static ANCHORS: std::sync::LazyLock<scraper::Selector> = std::sync::LazyLock::new(|| {
+    scraper::Selector::parse("a[href]").expect("selector literal is valid")
+});
 
 /// A link on a page with the words a reader sees on and around it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]

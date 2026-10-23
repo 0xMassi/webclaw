@@ -16,13 +16,13 @@ use crate::noise;
 /// (e.g., `&amp;nbsp;` -> `&nbsp;` after first parse) and entities in
 /// attribute-derived text can leak through.
 pub(crate) fn decode_html_entities(input: &str) -> String {
-    // Fast path: no ampersands means nothing to decode
     if !input.contains('&') {
         return input.to_string();
     }
 
-    static ENTITY_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);").unwrap());
+    static ENTITY_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);").expect("regex literal is valid")
+    });
 
     ENTITY_RE
         .replace_all(input, |caps: &regex::Captures| {
@@ -54,7 +54,7 @@ pub(crate) fn decode_html_entities(input: &str) -> String {
                     .and_then(char::from_u32)
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| caps[0].to_string()),
-                _ => caps[0].to_string(), // unknown entity -- leave as-is
+                _ => caps[0].to_string(),
             }
         })
         .into_owned()
@@ -112,7 +112,8 @@ pub(crate) fn strip_invisible_unicode(input: &str) -> String {
 /// Strip lines containing raw JavaScript that leaked from inline <script> or
 /// framework hydration code (e.g., Next.js `self.__wrap_n=...`).
 pub(crate) fn strip_leaked_js(input: &str) -> String {
-    static JS_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"self\.__\w+").unwrap());
+    static JS_PATTERN: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"self\.__\w+").expect("regex literal is valid"));
 
     let mut out = String::with_capacity(input.len());
     let mut in_code_fence = false;
@@ -131,7 +132,6 @@ pub(crate) fn strip_leaked_js(input: &str) -> String {
             continue;
         }
 
-        // Only handle the most reliable pattern: `self.__` which is framework hydration
         if JS_PATTERN.is_match(line) {
             if let Some(idx) = line.find("self.__") {
                 let cleaned = line[..idx].trim_end();
@@ -139,7 +139,6 @@ pub(crate) fn strip_leaked_js(input: &str) -> String {
                     out.push_str(cleaned);
                 }
             }
-            // If entire line is JS, skip it (cleaned is empty)
         } else {
             out.push_str(line);
         }
@@ -163,7 +162,7 @@ pub(crate) fn strip_a11y_link_chrome(input: &str) -> String {
         Regex::new(
             r"(?i)(?:\s*,\s*(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\b\.?|\s+\((?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website)|external link)\)\.?|\s+external link\b\.?$)",
         )
-        .unwrap()
+        .expect("regex literal is valid")
     });
 
     let mut out = String::with_capacity(input.len());
@@ -306,13 +305,16 @@ pub(crate) fn collapse_whitespace(input: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// `**text**` or `__text__`
-static BOLD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\*\*([^*]+)\*\*|__([^_]+)__").unwrap());
+static BOLD_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\*\*([^*]+)\*\*|__([^_]+)__").expect("regex literal is valid"));
 
 /// `*text*` -- safe to use after bold `**` is already stripped.
-static ITALIC_STAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\*([^*]+)\*").unwrap());
+static ITALIC_STAR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\*([^*]+)\*").expect("regex literal is valid"));
 
 /// `_text_` -- match underscores at word boundaries.
-static ITALIC_UNDER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b_([^_]+)_\b").unwrap());
+static ITALIC_UNDER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b_([^_]+)_\b").expect("regex literal is valid"));
 
 /// Strip bold/italic emphasis markers, preserving code blocks.
 pub(crate) fn strip_emphasis(input: &str) -> String {
@@ -656,10 +658,10 @@ fn is_repeated_brand_list(line: &str) -> bool {
 /// through. These are multi-sentence scene descriptions typically starting with
 /// "An illustration", "A screenshot", "A photo", etc.
 pub(crate) fn strip_long_alt_descriptions(input: &str) -> String {
-    // Inline regex for "This element contains..." descriptions embedded mid-line
-    // (common on sites like cursor.com where ARIA descriptions leak into text)
-    static ELEMENT_DESC_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"This element contains [^.]*\.[^.]*\.(?:\s*[^.]*\.)*").unwrap());
+    static ELEMENT_DESC_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"This element contains [^.]*\.[^.]*\.(?:\s*[^.]*\.)*")
+            .expect("regex literal is valid")
+    });
 
     let mut out = String::with_capacity(input.len());
     for line in input.lines() {
@@ -717,7 +719,8 @@ pub(crate) fn is_long_alt_description(line: &str) -> bool {
 /// E.g., `@keyframes copy{from{background:var(--runtime)}`
 pub(crate) fn strip_css_artifacts(input: &str) -> String {
     static CSS_INLINE_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"@(?:keyframes|font-face|media|supports|layer)\s*[^{]*\{[^}]*\}?").unwrap()
+        Regex::new(r"@(?:keyframes|font-face|media|supports|layer)\s*[^{]*\{[^}]*\}?")
+            .expect("regex literal is valid")
     });
 
     let mut out = String::with_capacity(input.len());
@@ -726,7 +729,6 @@ pub(crate) fn strip_css_artifacts(input: &str) -> String {
         if is_css_artifact_line(trimmed) {
             continue;
         }
-        // Also strip inline CSS artifacts within a line
         let cleaned = CSS_INLINE_RE.replace_all(line, "");
         let cleaned = cleaned.trim_end();
         if !out.is_empty() {

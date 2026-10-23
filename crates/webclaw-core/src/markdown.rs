@@ -12,9 +12,12 @@ use url::Url;
 use crate::noise;
 use crate::types::{CodeBlock, Image, Link};
 
-static CODE_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("code").unwrap());
-static IMG_ALT_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("img[alt]").unwrap());
-static A_HREF_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("a[href]").unwrap());
+static CODE_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("code").expect("selector literal is valid"));
+static IMG_ALT_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("img[alt]").expect("selector literal is valid"));
+static A_HREF_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("a[href]").expect("selector literal is valid"));
 
 /// Maximum recursion depth for DOM traversal.
 /// Express.co.uk live blogs and similar pages can nest 1000+ levels deep,
@@ -949,15 +952,21 @@ pub(crate) fn strip_markdown(md: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock as Lazy;
 
-    static LINK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[([^\]]*)\]\([^)]*\)").unwrap());
-    static IMG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"!\[([^\]]*)\]\([^)]*\)").unwrap());
-    static BOLD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\*\*([^*]+)\*\*").unwrap());
-    static ITALIC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\*([^*]+)\*").unwrap());
-    static CODE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"`([^`]+)`").unwrap());
-    static HEADING_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^#{1,6}\s+").unwrap());
-    // Table separator rows: | --- | --- | (with optional colons for alignment)
-    static TABLE_SEP_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^\|\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|$").unwrap());
+    static LINK_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\[([^\]]*)\]\([^)]*\)").expect("regex literal is valid"));
+    static IMG_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"!\[([^\]]*)\]\([^)]*\)").expect("regex literal is valid"));
+    static BOLD_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\*\*([^*]+)\*\*").expect("regex literal is valid"));
+    static ITALIC_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\*([^*]+)\*").expect("regex literal is valid"));
+    static CODE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"`([^`]+)`").expect("regex literal is valid"));
+    static HEADING_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?m)^#{1,6}\s+").expect("regex literal is valid"));
+    static TABLE_SEP_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^\|\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|$").expect("regex literal is valid")
+    });
 
     let s = IMG_RE.replace_all(md, "$1");
     let s = LINK_RE.replace_all(&s, "$1");
@@ -966,7 +975,6 @@ pub(crate) fn strip_markdown(md: &str) -> String {
     let s = CODE_RE.replace_all(&s, "$1");
     let s = HEADING_RE.replace_all(&s, "");
 
-    // Remove fenced code block markers + strip table syntax
     let mut lines: Vec<String> = Vec::new();
     let mut in_fence = false;
     for line in s.lines() {
@@ -977,14 +985,10 @@ pub(crate) fn strip_markdown(md: &str) -> String {
 
         let trimmed = line.trim();
 
-        // Skip table separator rows (| --- | --- |)
         if TABLE_SEP_RE.is_match(trimmed) {
             continue;
         }
 
-        // Convert table data rows: strip leading/trailing pipes, replace inner pipes with tabs.
-        // Require at least 2 chars so the slice `[1..len-1]` stays non-empty on single-pipe rows
-        // (which aren't real tables anyway); a lone `|` previously panicked at `begin <= end`.
         if trimmed.len() >= 2 && trimmed.starts_with('|') && trimmed.ends_with('|') {
             let inner = &trimmed[1..trimmed.len() - 1];
             let cells: Vec<&str> = inner.split('|').map(|c| c.trim()).collect();

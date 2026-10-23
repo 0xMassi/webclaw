@@ -213,7 +213,8 @@ fn is_amazon_host(host: &str) -> bool {
 fn parse_asin(url: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r"/(?:dp|gp/product|product|ASIN)/([A-Z0-9]{10})(?:[/?#]|$)").unwrap()
+        Regex::new(r"/(?:dp|gp/product|product|ASIN)/([A-Z0-9]{10})(?:[/?#]|$)")
+            .expect("regex literal is valid")
     });
     re.captures(url)
         .and_then(|c| c.get(1))
@@ -325,7 +326,9 @@ fn get_aggregate_rating(v: &Value) -> Option<Value> {
 
 fn dom_title(html: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"(?s)id="productTitle"[^>]*>([^<]+)<"#).unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"(?s)id="productTitle"[^>]*>([^<]+)<"#).expect("regex literal is valid")
+    });
     re.captures(html)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().trim().to_string())
@@ -333,7 +336,9 @@ fn dom_title(html: &str) -> Option<String> {
 
 fn dom_image(html: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"id="landingImage"[^>]+src="([^"]+)""#).unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"id="landingImage"[^>]+src="([^"]+)""#).expect("regex literal is valid")
+    });
     re.captures(html)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())

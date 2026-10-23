@@ -13,8 +13,10 @@ use rquickjs::{Context, Runtime};
 use scraper::{Html, Selector};
 use tracing::debug;
 
-static SCRIPT_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("script").unwrap());
-static HTML_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
+static SCRIPT_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("script").expect("selector literal is valid"));
+static HTML_TAG_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<[^>]+>").expect("regex literal is valid"));
 const JS_EVAL_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Markers that, if absent from the HTML, prove the QuickJS scan cannot find

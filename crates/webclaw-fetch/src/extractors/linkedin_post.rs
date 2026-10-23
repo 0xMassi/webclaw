@@ -85,7 +85,6 @@ fn extract_urn(url: &str) -> Option<String> {
         let tail = &url[idx..];
         let end = tail.find(['/', '?', '#']).unwrap_or(tail.len());
         let urn = &tail[..end];
-        // Validate shape: urn:li:{type}:{digits}
         let mut parts = urn.split(':');
         if parts.next() == Some("urn")
             && parts.next() == Some("li")
@@ -99,8 +98,6 @@ fn extract_urn(url: &str) -> Option<String> {
         }
     }
 
-    // /posts/{user}_{slug}-{19-digit-id}-{4-char-hash}/ — id is the second-
-    // to-last segment after the last `-`.
     if url.contains("/posts/") {
         static RE: OnceLock<Regex> = OnceLock::new();
         let re = RE.get_or_init(|| {

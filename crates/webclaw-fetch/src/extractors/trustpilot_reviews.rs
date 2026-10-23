@@ -346,7 +346,6 @@ fn compute_rating_stats(distribution: &Value) -> (Option<String>, Option<i64>) {
 /// `title` is the (entity-decoded) `og:title` content.
 fn parse_name_from_og_title(title: Option<&str>) -> Option<String> {
     let title = title?;
-    // "Anthropic is rated \"Bad\" with 1.5 / 5 on Trustpilot"
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"^(.+?)\s+is rated\b").expect("regex literal is valid"));
     re.captures(title)
@@ -361,7 +360,6 @@ fn parse_rating_from_og_title(title: Option<&str>) -> (Option<String>, Option<St
         return (None, None);
     };
     static RE: OnceLock<Regex> = OnceLock::new();
-    // "Anthropic is rated \"Bad\" with 1.5 / 5 on Trustpilot"
     let re = RE.get_or_init(|| {
         Regex::new(r#"is rated\s*[\\"]+([^"\\]+)[\\"]+\s*with\s*([\d.]+)\s*/\s*5"#)
             .expect("regex literal is valid")

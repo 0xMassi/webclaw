@@ -134,7 +134,6 @@ fn parse_caption(html: &str) -> Option<String> {
     });
     let block = outer.captures(html)?.get(1)?.as_str();
 
-    // Strip everything wrapped in <a class="CaptionUsername">...</a>.
     static RE_USER: OnceLock<Regex> = OnceLock::new();
     let user_re = RE_USER.get_or_init(|| {
         Regex::new(r#"(?s)<a[^>]*class="CaptionUsername"[^>]*>.*?</a>"#)
@@ -142,7 +141,6 @@ fn parse_caption(html: &str) -> Option<String> {
     });
     let stripped = user_re.replace_all(block, "");
 
-    // Then strip anything remaining tagged.
     static RE_TAGS: OnceLock<Regex> = OnceLock::new();
     let tag_re = RE_TAGS.get_or_init(|| Regex::new(r"<[^>]+>").expect("regex literal is valid"));
     let text = tag_re.replace_all(&stripped, " ");

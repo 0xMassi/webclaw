@@ -181,8 +181,6 @@ pub fn extract_caption_tracks(html: &str) -> Vec<CaptionTrack> {
 /// Parse YouTube timed text XML into plain transcript text.
 /// The XML format is: `<transcript><text start="0" dur="1.5">Hello</text>...</transcript>`
 pub fn parse_timed_text(xml: &str) -> String {
-    // Simple regex-based parsing to avoid adding an XML crate dependency.
-    // Extract text content between <text ...>...</text> tags.
     static TEXT_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"<text[^>]*>([^<]*)</text>").expect("regex literal is valid"));
 
@@ -192,7 +190,6 @@ pub fn parse_timed_text(xml: &str) -> String {
         if text.is_empty() {
             continue;
         }
-        // Decode XML entities
         let decoded = text
             .replace("&amp;", "&")
             .replace("&lt;", "<")

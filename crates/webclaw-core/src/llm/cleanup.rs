@@ -16,7 +16,6 @@ use crate::noise;
 /// (e.g., `&amp;nbsp;` -> `&nbsp;` after first parse) and entities in
 /// attribute-derived text can leak through.
 pub(crate) fn decode_html_entities(input: &str) -> String {
-    // Fast path: no ampersands means nothing to decode
     if !input.contains('&') {
         return input.to_string();
     }
@@ -55,7 +54,7 @@ pub(crate) fn decode_html_entities(input: &str) -> String {
                     .and_then(char::from_u32)
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| caps[0].to_string()),
-                _ => caps[0].to_string(), // unknown entity -- leave as-is
+                _ => caps[0].to_string(),
             }
         })
         .into_owned()
@@ -133,7 +132,6 @@ pub(crate) fn strip_leaked_js(input: &str) -> String {
             continue;
         }
 
-        // Only handle the most reliable pattern: `self.__` which is framework hydration
         if JS_PATTERN.is_match(line) {
             if let Some(idx) = line.find("self.__") {
                 let cleaned = line[..idx].trim_end();
@@ -141,7 +139,6 @@ pub(crate) fn strip_leaked_js(input: &str) -> String {
                     out.push_str(cleaned);
                 }
             }
-            // If entire line is JS, skip it (cleaned is empty)
         } else {
             out.push_str(line);
         }
@@ -661,8 +658,6 @@ fn is_repeated_brand_list(line: &str) -> bool {
 /// through. These are multi-sentence scene descriptions typically starting with
 /// "An illustration", "A screenshot", "A photo", etc.
 pub(crate) fn strip_long_alt_descriptions(input: &str) -> String {
-    // Inline regex for "This element contains..." descriptions embedded mid-line
-    // (common on sites like cursor.com where ARIA descriptions leak into text)
     static ELEMENT_DESC_RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"This element contains [^.]*\.[^.]*\.(?:\s*[^.]*\.)*")
             .expect("regex literal is valid")
@@ -734,7 +729,6 @@ pub(crate) fn strip_css_artifacts(input: &str) -> String {
         if is_css_artifact_line(trimmed) {
             continue;
         }
-        // Also strip inline CSS artifacts within a line
         let cleaned = CSS_INLINE_RE.replace_all(line, "");
         let cleaned = cleaned.trim_end();
         if !out.is_empty() {

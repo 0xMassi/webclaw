@@ -237,9 +237,6 @@ fn parse_video_id(url: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn extract_player_response(html: &str) -> Option<Value> {
-    // Same regex as webclaw_core::youtube. Duplicated here because
-    // core's regex is module-private. Kept in lockstep; changes are
-    // rare and we cover with tests in both places.
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         Regex::new(r"var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;")

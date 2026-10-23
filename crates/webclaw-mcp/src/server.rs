@@ -1123,8 +1123,7 @@ impl WebclawMcp {
             return Err("Either 'schema' or 'prompt' is required for extraction.".into());
         }
 
-        // No local LLM — fall back to cloud API directly
-        if self.llm_chain.is_none() {
+        let Some(chain) = self.llm_chain.as_deref() else {
             let cloud = self.cloud.as_ref().ok_or(
                 "No LLM providers available. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or WEBCLAW_API_KEY for cloud fallback.",
             )?;
@@ -1137,9 +1136,7 @@ impl WebclawMcp {
             }
             let resp = cloud.post("extract", body).await?;
             return Ok(serde_json::to_string_pretty(&resp).unwrap_or_default());
-        }
-
-        let chain = self.llm_chain.as_deref().unwrap();
+        };
 
         let llm_content = match self.smart_fetch_llm(&params.url).await? {
             SmartFetchResult::Local(extraction) => {
@@ -1158,7 +1155,10 @@ impl WebclawMcp {
                 .await
                 .map_err(|e| format!("LLM extraction failed: {e}"))?
         } else {
-            let prompt = params.prompt.as_deref().unwrap();
+            let prompt = params
+                .prompt
+                .as_deref()
+                .expect("extract returns early when schema and prompt are both unset");
             webclaw_llm::extract::extract_with_prompt(&llm_content, prompt, chain, None)
                 .await
                 .map_err(|e| format!("LLM extraction failed: {e}"))?
@@ -1176,8 +1176,7 @@ impl WebclawMcp {
     ) -> Result<String, String> {
         validate_url(&params.url).await?;
 
-        // No local LLM — fall back to cloud API directly
-        if self.llm_chain.is_none() {
+        let Some(chain) = self.llm_chain.as_deref() else {
             let cloud = self.cloud.as_ref().ok_or(
                 "No LLM providers available. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or WEBCLAW_API_KEY for cloud fallback.",
             )?;
@@ -1191,9 +1190,7 @@ impl WebclawMcp {
                 return Ok(serde_json::to_string_pretty(&resp).unwrap_or_default());
             }
             return Ok(summary.to_string());
-        }
-
-        let chain = self.llm_chain.as_deref().unwrap();
+        };
 
         let llm_content = match self.smart_fetch_llm(&params.url).await? {
             SmartFetchResult::Local(extraction) => {

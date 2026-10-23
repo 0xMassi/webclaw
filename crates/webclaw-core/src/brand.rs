@@ -268,7 +268,7 @@ fn parse_tailwind_colors(class: &str, out: &mut Vec<CssDecl>) {
             || HSL_COLOR.is_match(value)
         {
             // Classify by prefix
-            let full = cap.get(0).unwrap().as_str();
+            let full = &cap[0];
             let property = if full.starts_with("bg-") {
                 "background-color"
             } else if full.starts_with("text-") {

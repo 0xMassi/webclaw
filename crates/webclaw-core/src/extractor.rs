@@ -57,8 +57,6 @@ fn convert_selected(
         } else {
             fallback.inner_html()
         };
-        // Decode in the original ancestry so selectors such as `main .omit`
-        // and `noscript > .omit` keep their meaning. Fragment parsing alone loses it.
         let mut decoded = doc.clone();
         for child in fallback.children() {
             decoded
@@ -97,7 +95,6 @@ fn convert_selected(
             .expect("appended fragment stays in the tree")
             .detach();
         let decoded_exclude = build_exclude_set(&decoded, &options.exclude_selectors);
-        // After matching selectors, make this fallback an ordinary content container.
         if let scraper::node::Node::Element(element) = decoded
             .tree
             .get_mut(fallback.id())

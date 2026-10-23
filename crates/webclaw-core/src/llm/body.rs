@@ -292,7 +292,6 @@ fn dedup_heading_paragraph(input: &str) -> String {
             let heading_text = h_caps[2].trim();
             let heading_prefix = &h_caps[1];
 
-            // Look ahead past blank lines for the next non-blank line
             let mut j = i + 1;
             while j < lines.len() && lines[j].trim().is_empty() {
                 j += 1;
@@ -355,14 +354,12 @@ fn dedup_text_against_headings(input: &str) -> String {
     for line in &lines {
         let trimmed = line.trim();
 
-        // Keep blank lines and headings unconditionally
         if trimmed.is_empty() || HEADING_RE.is_match(trimmed) {
             out.push_str(line);
             out.push('\n');
             continue;
         }
 
-        // Drop non-heading lines whose text matches a heading
         if heading_texts.contains(&trimmed.to_lowercase()) {
             continue;
         }
@@ -487,8 +484,6 @@ fn strip_empty_headings(input: &str) -> String {
     for line in input.lines() {
         if let Some(h_caps) = HEADING_RE.captures(line.trim()) {
             let heading_text = h_caps[2].trim();
-            // Strip empty headings, headings with only invisible chars (ZWJ, NBSP),
-            // and noise headings like "Footer", "Header", "Navigation"
             if heading_text.is_empty()
                 || heading_text.chars().all(|c| !c.is_alphanumeric())
                 || is_noise_heading(heading_text)

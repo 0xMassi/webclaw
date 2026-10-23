@@ -215,7 +215,6 @@ fn extract_contentful_node(
 ) -> Option<TextChunk> {
     match node_type {
         "document" => {
-            // Top-level document — collect children
             let content = map.get("content")?.as_array()?;
             let mut parts = Vec::new();
             for child in content {

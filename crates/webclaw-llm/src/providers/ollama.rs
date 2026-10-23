@@ -149,6 +149,7 @@ mod tests {
     #[test]
     #[ignore = "mutates process env; run with --test-threads=1"]
     fn env_var_fallback() {
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe {
             std::env::set_var("OLLAMA_HOST", "http://remote:11434");
             std::env::set_var("OLLAMA_MODEL", "mistral:7b");
@@ -158,6 +159,7 @@ mod tests {
         assert_eq!(provider.base_url, "http://remote:11434");
         assert_eq!(provider.default_model, "mistral:7b");
 
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe {
             std::env::remove_var("OLLAMA_HOST");
             std::env::remove_var("OLLAMA_MODEL");

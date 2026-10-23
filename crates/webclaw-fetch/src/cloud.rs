@@ -1413,6 +1413,7 @@ mod tests {
         let client = CloudClient::new(Some("from-flag")).expect("client built");
         assert_eq!(client.api_key, "from-flag");
         assert_eq!(client.base_url(), "http://127.0.0.1:8099/v1");
+        // SAFETY: ENV_LOCK is still held, so no other CloudClient test touches the env.
         unsafe {
             std::env::remove_var("WEBCLAW_API_KEY");
             std::env::remove_var("WEBCLAW_API_URL");

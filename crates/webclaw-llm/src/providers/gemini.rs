@@ -348,15 +348,18 @@ mod tests {
     #[test]
     #[ignore = "mutates process env; run with --test-threads=1"]
     fn env_var_key_fallback() {
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::set_var("GEMINI_API_KEY", "gemini-env-key") };
         let p = GeminiProvider::new(None, None, None).expect("should construct from env");
         assert_eq!(p.key, "gemini-env-key");
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::remove_var("GEMINI_API_KEY") };
     }
 
     #[test]
     #[ignore = "mutates process env; run with --test-threads=1"]
     fn no_key_returns_none() {
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::remove_var("GEMINI_API_KEY") };
         assert!(GeminiProvider::new(None, None, None).is_none());
     }

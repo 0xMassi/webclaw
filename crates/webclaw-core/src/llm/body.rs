@@ -139,7 +139,8 @@ pub(crate) fn process_body(markdown: &str) -> ProcessedBody {
 // Repeated phrase dedup
 // ---------------------------------------------------------------------------
 
-static HEADING_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(#{1,6})\s+(.+)$").unwrap());
+static HEADING_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^(#{1,6})\s+(.+)$").expect("regex literal is valid"));
 
 /// Responsive HTML often produces "Read more Read more Read more" after link
 /// stripping. Collapse N consecutive identical phrases into one.

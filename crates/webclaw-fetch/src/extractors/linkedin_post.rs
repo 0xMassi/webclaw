@@ -103,8 +103,10 @@ fn extract_urn(url: &str) -> Option<String> {
     // to-last segment after the last `-`.
     if url.contains("/posts/") {
         static RE: OnceLock<Regex> = OnceLock::new();
-        let re =
-            RE.get_or_init(|| Regex::new(r"/posts/[^/]*?-(\d{15,})-[A-Za-z0-9]{2,}/?").unwrap());
+        let re = RE.get_or_init(|| {
+            Regex::new(r"/posts/[^/]*?-(\d{15,})-[A-Za-z0-9]{2,}/?")
+                .expect("regex literal is valid")
+        });
         if let Some(c) = re.captures(url)
             && let Some(id) = c.get(1)
         {
@@ -123,7 +125,8 @@ fn extract_urn(url: &str) -> Option<String> {
 fn parse_og_tags(html: &str) -> std::collections::HashMap<String, String> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#).unwrap()
+        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#)
+            .expect("regex literal is valid")
     });
     let mut out = std::collections::HashMap::new();
     for c in re.captures_iter(html) {
@@ -149,7 +152,7 @@ fn parse_post_body(html: &str) -> Option<String> {
         Regex::new(
             r#"(?s)<p[^>]+class="[^"]*attributed-text-segment-list__content[^"]*"[^>]*>(.*?)</p>"#,
         )
-        .unwrap()
+        .expect("regex literal is valid")
     });
     let inner = re.captures(html).and_then(|c| c.get(1))?.as_str();
     Some(strip_tags(inner).trim().to_string())
@@ -161,7 +164,8 @@ fn parse_post_body(html: &str) -> Option<String> {
 /// to the og:title minus the post body if there's no title.
 fn parse_author(html: &str) -> Option<String> {
     static RE_TITLE: OnceLock<Regex> = OnceLock::new();
-    let re = RE_TITLE.get_or_init(|| Regex::new(r"<title>([^<]+)</title>").unwrap());
+    let re = RE_TITLE
+        .get_or_init(|| Regex::new(r"<title>([^<]+)</title>").expect("regex literal is valid"));
     let title = re.captures(html).and_then(|c| c.get(1))?.as_str();
     title
         .rsplit_once('|')
@@ -186,7 +190,7 @@ fn html_decode(s: &str) -> String {
 /// whitespace introduced by line wrapping.
 fn strip_tags(html: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
+    let re = RE.get_or_init(|| Regex::new(r"<[^>]+>").expect("regex literal is valid"));
     let no_tags = re.replace_all(html, "").to_string();
     html_decode(&no_tags)
 }

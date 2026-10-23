@@ -269,7 +269,8 @@ fn parse_og_tags(html: &str) -> std::collections::HashMap<String, String> {
     use std::sync::OnceLock;
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#).unwrap()
+        Regex::new(r#"(?i)<meta[^>]+property="og:([a-z_]+)"[^>]+content="([^"]+)""#)
+            .expect("regex literal is valid")
     });
     let mut out = std::collections::HashMap::new();
     for c in re.captures_iter(html) {
@@ -308,7 +309,7 @@ fn parse_counts_from_og_description(desc: Option<&str>) -> (Option<i64>, Option<
     use std::sync::OnceLock;
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r"(?i)([\d.,]+[KMB]?)\s*Followers,\s*([\d.,]+[KMB]?)\s*Following,\s*([\d.,]+[KMB]?)\s*Posts").unwrap()
+        Regex::new(r"(?i)([\d.,]+[KMB]?)\s*Followers,\s*([\d.,]+[KMB]?)\s*Following,\s*([\d.,]+[KMB]?)\s*Posts").expect("regex literal is valid")
     });
     if let Some(c) = re.captures(&decoded) {
         return (

@@ -11,8 +11,10 @@ use tracing::debug;
 
 /// Regex to find the ytInitialPlayerResponse assignment in a <script> block.
 /// YouTube uses: `var ytInitialPlayerResponse = {...};`
-static YT_PLAYER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;").unwrap());
+static YT_PLAYER_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;")
+        .expect("regex literal is valid")
+});
 
 /// Check if a URL is a YouTube video page.
 pub fn is_youtube_url(url: &str) -> bool {
@@ -181,7 +183,8 @@ pub fn extract_caption_tracks(html: &str) -> Vec<CaptionTrack> {
 pub fn parse_timed_text(xml: &str) -> String {
     // Simple regex-based parsing to avoid adding an XML crate dependency.
     // Extract text content between <text ...>...</text> tags.
-    static TEXT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<text[^>]*>([^<]*)</text>").unwrap());
+    static TEXT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"<text[^>]*>([^<]*)</text>").expect("regex literal is valid"));
 
     let mut lines: Vec<String> = Vec::new();
     for cap in TEXT_RE.captures_iter(xml) {

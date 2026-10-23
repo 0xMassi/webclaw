@@ -8,7 +8,8 @@ use crate::types::Metadata;
 macro_rules! selector {
     ($s:expr) => {{
         use std::sync::LazyLock as Lazy;
-        static SEL: Lazy<Selector> = Lazy::new(|| Selector::parse($s).unwrap());
+        static SEL: Lazy<Selector> =
+            Lazy::new(|| Selector::parse($s).expect("selector literal is valid"));
         &*SEL
     }};
 }

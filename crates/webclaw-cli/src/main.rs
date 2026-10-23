@@ -1894,7 +1894,7 @@ async fn enrich_html_with_stylesheets(html: &str, base_url: &str) -> String {
     // Extract stylesheet hrefs from <link rel="stylesheet" href="...">
     let re = regex::Regex::new(
         r#"<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)["']|<link[^>]+href=["']([^"']+)["'][^>]+rel=["']stylesheet["']"#
-    ).unwrap();
+    ).expect("regex literal is valid");
 
     let hrefs: Vec<String> = re
         .captures_iter(html)

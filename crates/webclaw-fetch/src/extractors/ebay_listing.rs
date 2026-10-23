@@ -166,7 +166,7 @@ fn parse_item_id(url: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         // /itm/(optional-slug/)?(digits)([/?#]|end)
-        Regex::new(r"/itm/(?:[^/]+/)?(\d{8,})(?:[/?#]|$)").unwrap()
+        Regex::new(r"/itm/(?:[^/]+/)?(\d{8,})(?:[/?#]|$)").expect("regex literal is valid")
     });
     re.captures(url)
         .and_then(|c| c.get(1))

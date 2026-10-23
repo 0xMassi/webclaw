@@ -10,7 +10,8 @@ use regex::Regex;
 // ---------------------------------------------------------------------------
 
 /// Matches `[text](url)`. Images are already stripped, so no `!` prefix concern.
-static LINK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap());
+static LINK_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").expect("regex literal is valid"));
 
 /// Extract all links from markdown, replacing inline `[text](url)` with just `text`.
 /// Returns the cleaned text and a deduplicated list of (label, href) pairs.
@@ -98,13 +99,13 @@ fn is_noise_link(text: &str, href: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 static MD_MARKERS_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"#{1,6}\s+|\*{1,2}|_{1,2}|`").unwrap());
+    Lazy::new(|| Regex::new(r"#{1,6}\s+|\*{1,2}|_{1,2}|`").expect("regex literal is valid"));
 
 static A11Y_LABEL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?i)(?:\s*,?\s*(?:opens (?:in )?(?:a )?new (?:tab|window)|opens external (?:link|website))\b\.?|\s*,\s*external link\b\.?|\s+external link\b\.?$)",
     )
-    .unwrap()
+    .expect("regex literal is valid")
 });
 
 /// Clean a link label: strip markdown, dedup repeated phrases, truncate.

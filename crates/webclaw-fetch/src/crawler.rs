@@ -320,13 +320,18 @@ impl Crawler {
     pub fn preload_robots(&self, origin: &str, rules: RobotsRules) {
         self.robots
             .lock()
-            .unwrap()
+            .expect("robots cache lock is not poisoned")
             .insert(origin.to_string(), Arc::new(rules));
     }
 
     async fn robots_for(&self, url: &Url) -> Arc<RobotsRules> {
         let origin = url.origin().ascii_serialization();
-        if let Some(rules) = self.robots.lock().unwrap().get(&origin) {
+        if let Some(rules) = self
+            .robots
+            .lock()
+            .expect("robots cache lock is not poisoned")
+            .get(&origin)
+        {
             return Arc::clone(rules);
         }
         let rules = match self.client.fetch_raw(&format!("{origin}/robots.txt")).await {
@@ -346,7 +351,7 @@ impl Crawler {
         let rules = Arc::new(rules);
         self.robots
             .lock()
-            .unwrap()
+            .expect("robots cache lock is not poisoned")
             .insert(origin, Arc::clone(&rules));
         rules
     }

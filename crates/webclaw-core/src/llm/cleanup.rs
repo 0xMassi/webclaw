@@ -26,7 +26,7 @@ pub(crate) fn decode_html_entities(input: &str) -> String {
 
     ENTITY_RE
         .replace_all(input, |caps: &regex::Captures| {
-            let entity = caps.get(1).unwrap().as_str();
+            let entity = &caps[1];
             match entity {
                 "nbsp" => " ".to_string(),
                 "amp" => "&".to_string(),

@@ -57,41 +57,59 @@ fn convert_selected(
         } else {
             fallback.inner_html()
         };
-        // Decode in the original ancestry so selectors such as `main .omit`
-        // and `noscript > .omit` keep their meaning. Fragment parsing alone loses it.
         let mut decoded = doc.clone();
         for child in fallback.children() {
-            decoded.tree.get_mut(child.id()).unwrap().detach();
+            decoded
+                .tree
+                .get_mut(child.id())
+                .expect("cloned document keeps node ids")
+                .detach();
         }
         let fragment = Html::parse_fragment(&html);
         let fragment_id = decoded
             .tree
             .get_mut(fallback.id())
-            .unwrap()
+            .expect("cloned document keeps node ids")
             .append_subtree(fragment.tree)
             .id();
         let wrapper_id = decoded
             .tree
             .get(fragment_id)
-            .unwrap()
+            .expect("appended fragment stays in the tree")
             .first_child()
-            .unwrap()
+            .expect("a parsed fragment starts with its html root")
             .id();
         decoded
             .tree
             .get_mut(fallback.id())
-            .unwrap()
+            .expect("cloned document keeps node ids")
             .reparent_from_id_append(wrapper_id);
-        decoded.tree.get_mut(fragment_id).unwrap().detach();
-        decoded.tree.get_mut(wrapper_id).unwrap().detach();
+        decoded
+            .tree
+            .get_mut(fragment_id)
+            .expect("appended fragment stays in the tree")
+            .detach();
+        decoded
+            .tree
+            .get_mut(wrapper_id)
+            .expect("appended fragment stays in the tree")
+            .detach();
         let decoded_exclude = build_exclude_set(&decoded, &options.exclude_selectors);
-        // After matching selectors, make this fallback an ordinary content container.
-        if let scraper::node::Node::Element(element) =
-            decoded.tree.get_mut(fallback.id()).unwrap().value()
+        if let scraper::node::Node::Element(element) = decoded
+            .tree
+            .get_mut(fallback.id())
+            .expect("cloned document keeps node ids")
+            .value()
         {
             element.name.local = "section".into();
         }
-        let decoded_fallback = ElementRef::wrap(decoded.tree.get(fallback.id()).unwrap()).unwrap();
+        let decoded_fallback = ElementRef::wrap(
+            decoded
+                .tree
+                .get(fallback.id())
+                .expect("cloned document keeps node ids"),
+        )
+        .expect("noscript fallback is an element");
         let candidate = markdown::convert(decoded_fallback, base_url, &decoded_exclude);
         let words = word_count(&candidate.0);
         if words >= 5 && words > word_count(&result.0) {

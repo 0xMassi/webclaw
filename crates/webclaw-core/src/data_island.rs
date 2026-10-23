@@ -215,15 +215,13 @@ fn extract_contentful_node(
 ) -> Option<TextChunk> {
     match node_type {
         "document" => {
-            // Top-level document — collect children
             let content = map.get("content")?.as_array()?;
             let mut parts = Vec::new();
             for child in content {
-                if let Some(chunk) = child
-                    .as_object()
-                    .and_then(|m| m.get("nodeType").and_then(|v| v.as_str()))
-                    .and_then(|nt| extract_contentful_node(child.as_object().unwrap(), nt))
-                {
+                if let Some(chunk) = child.as_object().and_then(|m| {
+                    let nt = m.get("nodeType")?.as_str()?;
+                    extract_contentful_node(m, nt)
+                }) {
                     if let Some(h) = &chunk.heading {
                         parts.push(format!("## {h}"));
                     }

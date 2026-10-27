@@ -37,7 +37,3 @@ Follow Conventional Commits with imperative subjects under 72 characters; histor
 ## Security & Configuration
 
 Use `env.example` and `proxies.example.txt` as configuration references. Never commit credentials, local `.env` files, or private infrastructure details. Inspect staged diffs for sensitive material before committing.
-
-## Verification
-
-- Prove user-facing CLI and MCP behaviour with `.claude/skills/verify-webclaw/SKILL.md`; its `features/` map lists every entry point.

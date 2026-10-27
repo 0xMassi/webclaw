@@ -3574,38 +3574,25 @@ fn has_llm_flags(cli: &Cli) -> bool {
     cli.extract_json.is_some() || cli.extract_prompt.is_some() || cli.summarize.is_some()
 }
 
-async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
-    let api_key = cli
-        .api_key
-        .as_deref()
-        .ok_or("--research requires WEBCLAW_API_KEY (set via env or --api-key)")?;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .map_err(|e| format!("http client error: {e}"))?;
-
+async fn run_research(
+    cloud: &webclaw_fetch::cloud::CloudClient,
+    query: &str,
+    deep: bool,
+) -> Result<(), String> {
     let mut body = serde_json::json!({ "query": query });
-    if cli.deep {
+    if deep {
         body["deep"] = serde_json::json!(true);
     }
 
     eprintln!("Starting research: {query}");
-    if cli.deep {
+    if deep {
         eprintln!("Deep mode enabled (longer, more thorough)");
     }
 
-    // Start job
-    let resp = client
-        .post("https://api.webclaw.io/v1/research")
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&body)
-        .send()
+    let resp = cloud
+        .post("research", body)
         .await
-        .map_err(|e| format!("API error: {e}"))?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("parse error: {e}"))?;
+        .map_err(|e| format!("API error: {e}"))?;
 
     let job_id = resp
         .get("id")
@@ -3615,19 +3602,13 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
 
     eprintln!("Job started: {job_id}");
 
-    // Poll
     for poll in 0..200 {
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-        let status_resp = client
-            .get(format!("https://api.webclaw.io/v1/research/{job_id}"))
-            .header("Authorization", format!("Bearer {api_key}"))
-            .send()
+        let status_resp = cloud
+            .get(&format!("research/{job_id}"))
             .await
-            .map_err(|e| format!("poll error: {e}"))?
-            .json::<serde_json::Value>()
-            .await
-            .map_err(|e| format!("parse error: {e}"))?;
+            .map_err(|e| format!("poll error: {e}"))?;
 
         let status = status_resp
             .get("status")
@@ -3641,7 +3622,6 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                // Save full result to JSON file
                 let slug: String = query
                     .chars()
                     .map(|c| {
@@ -3656,8 +3636,6 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
                     .collect::<Vec<_>>()
                     .join("-")
                     .to_lowercase();
-                // char-safe truncation: byte slicing panics if char 50
-                // lands mid-codepoint (multibyte queries).
                 let slug: String = slug.chars().take(50).collect();
                 let filename = format!("research-{slug}.json");
 
@@ -3684,7 +3662,6 @@ async fn run_research(cli: &Cli, query: &str) -> Result<(), String> {
                 );
                 eprintln!("Saved to: {filename}");
 
-                // Print report to stdout
                 if !report.is_empty() {
                     println!("{report}");
                 }
@@ -4017,7 +3994,11 @@ async fn run() {
     }
 
     if let Some(ref query) = cli.research {
-        if let Err(e) = run_research(&cli, query).await {
+        let Some(cloud) = webclaw_fetch::cloud::CloudClient::new(cli.api_key.as_deref()) else {
+            eprintln!("error: --research requires WEBCLAW_API_KEY (set via env or --api-key)");
+            exit(1);
+        };
+        if let Err(e) = run_research(&cloud, query, cli.deep).await {
             eprintln!("error: {e}");
             exit(1);
         }
@@ -4153,6 +4134,40 @@ mod tests {
     use super::*;
 
     use webclaw_core::Content;
+
+    #[tokio::test]
+    async fn research_goes_to_the_configured_cloud_base() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = vec![0; 8192];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = if request.starts_with("POST /v1/research ") {
+                    r#"{"id":"job-1"}"#
+                } else if request.starts_with("GET /v1/research/job-1 ") {
+                    r#"{"status":"failed","error":"answered by the configured base"}"#
+                } else {
+                    r#"{"status":"failed","error":"unexpected request"}"#
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        let cloud = webclaw_fetch::cloud::CloudClient::with_key_and_base("staging-key", base);
+
+        let result = run_research(&cloud, "rust", false).await;
+
+        assert_eq!(
+            result,
+            Err("Research failed: answered by the configured base".to_string())
+        );
+    }
 
     #[test]
     fn a_map_limit_of_zero_is_refused() {

@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- `--research` now uses the cloud base set in `WEBCLAW_API_URL`, like every other cloud call. Before, it always went to the production API.
+
 ## [0.7.0] - 2026-10-19
 
 ### Added

@@ -65,6 +65,87 @@ fn explicit_scope_survives_sparse_fallbacks_and_data_recovery() {
 }
 
 #[test]
+fn main_region_takes_priority_over_teaser_articles() {
+    for region in ["main", "section role='main'"] {
+        let tag = region.split_whitespace().next().unwrap();
+        let html = format!(
+            "<article>Teaser card</article><{region}><p>Page introduction</p><article>Full article</article><p>Page conclusion</p></{tag}>"
+        );
+        let result = extract_with_options(
+            &html,
+            None,
+            &ExtractionOptions {
+                only_main_content: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            result.content.plain_text,
+            "Page introduction\n\nFull article\n\nPage conclusion"
+        );
+    }
+}
+
+#[test]
+fn peer_articles_do_not_truncate_a_catalogue_to_one_card() {
+    let html = "<nav>Navigation links</nav><div><h1>Tool catalogue</h1><article><div class='content'><p>A versatile precision driver kit with interchangeable bits for small electronic repairs.</p></div></article><article><p>A magnetic project mat that keeps screws and small components organized during repairs.</p><p class='omit'>Excluded promotion</p></article></div><footer>Footer links</footer>";
+    let result = extract_with_options(
+        html,
+        None,
+        &ExtractionOptions {
+            only_main_content: true,
+            exclude_selectors: vec![".omit".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(result.content.plain_text.contains("precision driver kit"));
+    assert!(result.content.plain_text.contains("magnetic project mat"));
+    for noise in ["Navigation", "Excluded", "Footer"] {
+        assert!(!result.content.plain_text.contains(noise));
+    }
+}
+
+#[test]
+fn nested_and_ignored_articles_do_not_widen_a_single_article() {
+    let html = format!(
+        "<div><p>{}</p></div><article class='omit'>Excluded peer</article><aside><article>Sidebar peer</article></aside><article>Primary text<article>Nested text</article></article>",
+        "outside ".repeat(600)
+    );
+    let result = extract_with_options(
+        &html,
+        None,
+        &ExtractionOptions {
+            only_main_content: true,
+            exclude_selectors: vec![".omit".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.content.plain_text, "Primary text Nested text");
+}
+
+#[test]
+fn component_prefix_does_not_hide_content_or_disable_consent_filtering() {
+    for main in [false, true] {
+        let result = extract_with_options(
+            "<main class='cmp-container' id='cmp-content'><div class='cmp-text'><p>Product description with useful details.</p></div><div class='qc-cmp-ui'>Consent settings</div><div id='onetrust-banner-sdk'>Privacy preferences</div><div class='cmp-container modal'>Cookie dialog</div></main>",
+            None,
+            &ExtractionOptions {
+                only_main_content: main,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            result.content.plain_text,
+            "Product description with useful details."
+        );
+    }
+}
+
+#[test]
 fn fallback_content_obeys_exclusions_and_keeps_text_formats_in_sync() {
     let html = r#"<div class="modal"><h1>Cookie preferences</h1></div><main><p>A short useful article.</p></main><div class="omit"><h1>Hidden title</h1></div>"#;
     let result = extract_with_options(

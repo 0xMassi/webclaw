@@ -56,7 +56,7 @@ pub fn visible_word_count(html: &str) -> usize {
 pub fn allows_empty_content(html: &str, options: &crate::ExtractionOptions) -> bool {
     !options.include_selectors.is_empty()
         || (options.only_main_content
-            && crate::extractor::has_main_content(&scraper::Html::parse_document(html)))
+            && crate::extractor::has_main_content(&scraper::Html::parse_document(html), options))
 }
 
 pub fn content_issue(result: &ExtractionResult) -> Option<ContentIssue> {
@@ -119,6 +119,18 @@ mod tests {
             ..Default::default()
         };
         assert!(allows_empty_content("<main></main>", &options));
+        assert!(allows_empty_content(
+            "<article><article></article></article>",
+            &options
+        ));
+        assert!(!allows_empty_content(
+            "<article></article><article></article>",
+            &options
+        ));
+        assert!(!allows_empty_content(
+            "<aside><article></article></aside>",
+            &options
+        ));
         assert!(!allows_empty_content(
             "<body><div id='app'></div></body>",
             &options

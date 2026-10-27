@@ -197,7 +197,7 @@ fn extract_with_options_inner(
 
     // Never widen a selected main region, even when it is empty or very short.
     let scoped = !options.include_selectors.is_empty()
-        || (options.only_main_content && extractor::has_main_content(&doc));
+        || (options.only_main_content && extractor::has_main_content(&doc, options));
 
     // Strategy 2: if scored extraction is sparse (<200 words) AND the page has
     // significantly more visible text, retry with include_selectors: ["body"].

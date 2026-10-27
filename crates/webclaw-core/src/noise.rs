@@ -100,7 +100,6 @@ const COOKIE_CONSENT_ID_PREFIXES: &[&str] = &[
     "cookie-law",     // Cookie Law Info
     "gdpr",           // Generic GDPR banners
     "consent-",       // Generic consent banners
-    "cmp-",           // Consent Management Platforms
     "sp_message",     // SourcePoint
     "qc-cmp",         // Quantcast CMP
     "trustarc",       // TrustArc

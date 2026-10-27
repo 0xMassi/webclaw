@@ -311,7 +311,8 @@ fn handle_from_author_url(u: &str) -> Option<String> {
 fn meta_property(html: &str, prop: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="([^"]+)"[^>]+content="([^"]+)""#).unwrap()
+        Regex::new(r#"(?i)<meta[^>]+property="([^"]+)"[^>]+content="([^"]+)""#)
+            .expect("regex literal is valid")
     });
     for c in re.captures_iter(html) {
         if c.get(1).is_some_and(|m| m.as_str() == prop) {
@@ -323,8 +324,10 @@ fn meta_property(html: &str, prop: &str) -> Option<String> {
 
 fn canonical_url(html: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE
-        .get_or_init(|| Regex::new(r#"(?i)<link[^>]+rel="canonical"[^>]+href="([^"]+)""#).unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"(?i)<link[^>]+rel="canonical"[^>]+href="([^"]+)""#)
+            .expect("regex literal is valid")
+    });
     re.captures(html)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())

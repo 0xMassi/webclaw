@@ -115,7 +115,9 @@ fn path_segment_for(kind: &str) -> &'static str {
 /// Username appears as the anchor text inside `<a class="CaptionUsername">`.
 fn parse_username(html: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"(?s)class="CaptionUsername"[^>]*>([^<]+)<"#).unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"(?s)class="CaptionUsername"[^>]*>([^<]+)<"#).expect("regex literal is valid")
+    });
     re.captures(html)
         .and_then(|c| c.get(1))
         .map(|m| html_decode(m.as_str().trim()))
@@ -126,19 +128,21 @@ fn parse_username(html: &str) -> Option<String> {
 /// node, and any trailing "Photo by" / "View ... on Instagram" boilerplate.
 fn parse_caption(html: &str) -> Option<String> {
     static RE_OUTER: OnceLock<Regex> = OnceLock::new();
-    let outer = RE_OUTER
-        .get_or_init(|| Regex::new(r#"(?s)<div\s+class="Caption"[^>]*>(.*?)</div>"#).unwrap());
+    let outer = RE_OUTER.get_or_init(|| {
+        Regex::new(r#"(?s)<div\s+class="Caption"[^>]*>(.*?)</div>"#)
+            .expect("regex literal is valid")
+    });
     let block = outer.captures(html)?.get(1)?.as_str();
 
-    // Strip everything wrapped in <a class="CaptionUsername">...</a>.
     static RE_USER: OnceLock<Regex> = OnceLock::new();
-    let user_re = RE_USER
-        .get_or_init(|| Regex::new(r#"(?s)<a[^>]*class="CaptionUsername"[^>]*>.*?</a>"#).unwrap());
+    let user_re = RE_USER.get_or_init(|| {
+        Regex::new(r#"(?s)<a[^>]*class="CaptionUsername"[^>]*>.*?</a>"#)
+            .expect("regex literal is valid")
+    });
     let stripped = user_re.replace_all(block, "");
 
-    // Then strip anything remaining tagged.
     static RE_TAGS: OnceLock<Regex> = OnceLock::new();
-    let tag_re = RE_TAGS.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
+    let tag_re = RE_TAGS.get_or_init(|| Regex::new(r"<[^>]+>").expect("regex literal is valid"));
     let text = tag_re.replace_all(&stripped, " ");
 
     let cleaned = collapse_whitespace(&html_decode(text.trim()));
@@ -155,14 +159,15 @@ fn parse_thumbnail(html: &str) -> Option<String> {
     static RE_IMG: OnceLock<Regex> = OnceLock::new();
     let img_re = RE_IMG.get_or_init(|| {
         Regex::new(r#"(?s)<img[^>]+class="[^"]*EmbeddedMediaImage[^"]*"[^>]+src="([^"]+)""#)
-            .unwrap()
+            .expect("regex literal is valid")
     });
     if let Some(m) = img_re.captures(html).and_then(|c| c.get(1)) {
         return Some(html_decode(m.as_str()));
     }
     static RE_OG: OnceLock<Regex> = OnceLock::new();
     let og_re = RE_OG.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="og:image"[^>]+content="([^"]+)""#).unwrap()
+        Regex::new(r#"(?i)<meta[^>]+property="og:image"[^>]+content="([^"]+)""#)
+            .expect("regex literal is valid")
     });
     og_re
         .captures(html)

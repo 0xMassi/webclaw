@@ -237,12 +237,11 @@ fn parse_video_id(url: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn extract_player_response(html: &str) -> Option<Value> {
-    // Same regex as webclaw_core::youtube. Duplicated here because
-    // core's regex is module-private. Kept in lockstep; changes are
-    // rare and we cover with tests in both places.
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE
-        .get_or_init(|| Regex::new(r"var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;").unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r"var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;")
+            .expect("regex literal is valid")
+    });
     let json_str = re.captures(html)?.get(1)?.as_str();
     serde_json::from_str(json_str).ok()
 }
@@ -254,7 +253,8 @@ fn extract_player_response(html: &str) -> Option<Value> {
 fn meta_name(html: &str, name: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+name="([^"]+)"[^>]+content="([^"]+)""#).unwrap()
+        Regex::new(r#"(?i)<meta[^>]+name="([^"]+)"[^>]+content="([^"]+)""#)
+            .expect("regex literal is valid")
     });
     for c in re.captures_iter(html) {
         if c.get(1).is_some_and(|m| m.as_str() == name) {

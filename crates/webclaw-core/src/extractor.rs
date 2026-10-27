@@ -13,22 +13,32 @@ use crate::markdown;
 use crate::noise;
 use crate::types::{Content, ExtractionOptions, Link};
 
-static CANDIDATE_SELECTOR: Lazy<Selector> =
-    Lazy::new(|| Selector::parse("article, main, [role='main'], div, section, td").unwrap());
-static BODY_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("body").unwrap());
-static H1_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("h1").unwrap());
-static H2_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("h2").unwrap());
-static P_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("p").unwrap());
-static A_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("a").unwrap());
-static ANNOUNCEMENT_SELECTOR: Lazy<Selector> =
-    Lazy::new(|| Selector::parse("[role='region'][aria-label]").unwrap());
-static FOOTER_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("footer").unwrap());
+static CANDIDATE_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("article, main, [role='main'], div, section, td")
+        .expect("selector literal is valid")
+});
+static BODY_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("body").expect("selector literal is valid"));
+static H1_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("h1").expect("selector literal is valid"));
+static H2_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("h2").expect("selector literal is valid"));
+static P_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("p").expect("selector literal is valid"));
+static A_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("a").expect("selector literal is valid"));
+static ANNOUNCEMENT_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("[role='region'][aria-label]").expect("selector literal is valid")
+});
+static FOOTER_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("footer").expect("selector literal is valid"));
 static FOOTER_HEADING_SELECTOR: Lazy<Selector> =
-    Lazy::new(|| Selector::parse("h2, h3, h4, h5, h6").unwrap());
+    Lazy::new(|| Selector::parse("h2, h3, h4, h5, h6").expect("selector literal is valid"));
 
 /// Selector for only_main_content: article, main, [role="main"]
-static MAIN_CONTENT_SELECTOR: Lazy<Selector> =
-    Lazy::new(|| Selector::parse("article, main, [role='main']").unwrap());
+static MAIN_CONTENT_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("article, main, [role='main']").expect("selector literal is valid")
+});
 
 pub(crate) fn has_main_content(doc: &Html) -> bool {
     doc.select(&MAIN_CONTENT_SELECTOR).next().is_some()
@@ -47,7 +57,7 @@ fn convert_selected(
     if word_count(&result.0) >= 30 || exclude.contains(&element.id()) {
         return result;
     }
-    let selector = Selector::parse("noscript").unwrap();
+    let selector = Selector::parse("noscript").expect("selector literal is valid");
     for fallback in element.select(&selector) {
         if exclude.contains(&fallback.id()) || noise::is_noise_descendant(fallback) {
             continue;

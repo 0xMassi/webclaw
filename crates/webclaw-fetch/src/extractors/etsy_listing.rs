@@ -176,7 +176,9 @@ fn is_etsy_host(host: &str) -> bool {
 /// `/{locale}/listing/{id}` shape (e.g. `/fr/listing/...`).
 fn parse_listing_id(url: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"/listing/(\d{6,})(?:[/?#]|$)").unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r"/listing/(\d{6,})(?:[/?#]|$)").expect("regex literal is valid")
+    });
     re.captures(url)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
@@ -187,7 +189,8 @@ fn parse_listing_id(url: &str) -> Option<String> {
 /// is the bare `/listing/{id}` shape.
 fn parse_slug(url: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"/listing/\d{6,}/([^/?#]+)").unwrap());
+    let re = RE
+        .get_or_init(|| Regex::new(r"/listing/\d{6,}/([^/?#]+)").expect("regex literal is valid"));
     re.captures(url)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
@@ -372,7 +375,9 @@ fn strip_schema_prefix(s: String) -> String {
 /// breadcrumb boundary.
 fn shop_url_from_html(html: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"href="(/shop/[A-Za-z0-9_-]+)""#).unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"href="(/shop/[A-Za-z0-9_-]+)""#).expect("regex literal is valid")
+    });
     re.captures(html)
         .and_then(|c| c.get(1))
         .map(|m| format!("https://www.etsy.com{}", m.as_str()))

@@ -9,8 +9,9 @@ use std::sync::LazyLock as Lazy;
 use scraper::{Html, Selector};
 use tracing::debug;
 
-static SCRIPT_JSON_SELECTOR: Lazy<Selector> =
-    Lazy::new(|| Selector::parse("script[type='application/json']").unwrap());
+static SCRIPT_JSON_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("script[type='application/json']").expect("selector literal is valid")
+});
 
 /// Below this word count, try data islands for supplemental content.
 /// Set high enough to cover marketing homepages with partial SSR (e.g., Notion

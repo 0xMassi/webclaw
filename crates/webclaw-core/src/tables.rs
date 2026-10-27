@@ -78,7 +78,8 @@ const BLOCK: &[&str] = &[
 
 const SEPARATED: &[&str] = &["br", "caption", "option", "td", "th", "tr"];
 
-static TABLE: LazyLock<Selector> = LazyLock::new(|| Selector::parse("table").unwrap());
+static TABLE: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("table").expect("selector literal is valid"));
 
 /// Every data table in `html`, in document order. Hidden tables and cells
 /// are left out, the way [`crate::page_links`] leaves out hidden links.

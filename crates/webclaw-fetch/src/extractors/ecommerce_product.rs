@@ -377,7 +377,8 @@ fn build_og_offer(html: &str) -> Option<Value> {
 fn meta_property(html: &str, prop: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r#"(?i)<meta[^>]+property="([^"]+)"[^>]+content="([^"]+)""#).unwrap()
+        Regex::new(r#"(?i)<meta[^>]+property="([^"]+)"[^>]+content="([^"]+)""#)
+            .expect("regex literal is valid")
     });
     for c in re.captures_iter(html) {
         if c.get(1).is_some_and(|m| m.as_str() == prop) {

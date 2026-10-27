@@ -437,7 +437,9 @@ impl FetchClient {
                 .proxy_pool
                 .iter()
                 .map(|proxy| {
-                    let v = *variants.choose(&mut rng).unwrap();
+                    let v = *variants
+                        .choose(&mut rng)
+                        .expect("collect_variants returns at least one variant");
                     crate::tls::build_client(
                         v,
                         config.timeout,

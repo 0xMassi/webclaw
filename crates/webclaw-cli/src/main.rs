@@ -2468,7 +2468,10 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
             }
             report_page_problems(page);
             if keep_urls {
-                streamed_urls.lock().unwrap().push(page.url.clone());
+                streamed_urls
+                    .lock()
+                    .expect("streamed_urls lock is not poisoned")
+                    .push(page.url.clone());
             }
         }))
     });
@@ -2622,7 +2625,10 @@ async fn run_crawl(cli: &Cli) -> Result<(), String> {
     }
 
     if let Some(ref webhook_url) = cli.webhook {
-        let streamed = streamed_urls.lock().unwrap().clone();
+        let streamed = streamed_urls
+            .lock()
+            .expect("streamed_urls lock is not poisoned")
+            .clone();
         let urls: Vec<&str> = if stream_jsonl {
             streamed.iter().map(String::as_str).collect()
         } else {

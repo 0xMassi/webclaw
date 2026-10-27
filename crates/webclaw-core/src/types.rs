@@ -73,8 +73,11 @@ pub struct ExtractionOptions {
     pub include_selectors: Vec<String>,
     /// CSS selectors for elements to exclude from the output.
     pub exclude_selectors: Vec<String>,
-    /// If true, skip scoring and pick the first `article`, `main`, or `[role="main"]` element.
+    /// If true, prefer the first usable `main` or `[role="main"]`, then a single
+    /// outermost `article`. If no unique semantic scope exists, score containers
+    /// instead of individual articles.
     pub only_main_content: bool,
-    /// If true, populate `Content::raw_html` with the extracted content's HTML.
+    /// If true, populate `Content::raw_html` with the selected nodes' HTML,
+    /// without text recovered from elsewhere on the page.
     pub include_raw_html: bool,
 }

@@ -35,13 +35,28 @@ static FOOTER_SELECTOR: Lazy<Selector> =
 static FOOTER_HEADING_SELECTOR: Lazy<Selector> =
     Lazy::new(|| Selector::parse("h2, h3, h4, h5, h6").expect("selector literal is valid"));
 
-/// Selector for only_main_content: article, main, [role="main"]
-static MAIN_CONTENT_SELECTOR: Lazy<Selector> = Lazy::new(|| {
-    Selector::parse("article, main, [role='main']").expect("selector literal is valid")
-});
+static MAIN_CONTENT_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("main, [role='main']").expect("selector literal is valid"));
+static ARTICLE_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("article").expect("selector literal is valid"));
 
-pub(crate) fn has_main_content(doc: &Html) -> bool {
-    doc.select(&MAIN_CONTENT_SELECTOR).next().is_some()
+fn main_content_node<'a>(doc: &'a Html, exclude: &HashSet<NodeId>) -> Option<ElementRef<'a>> {
+    let usable = |el: &ElementRef<'_>| {
+        !exclude.contains(&el.id()) && !noise::is_noise(*el) && !noise::is_noise_descendant(*el)
+    };
+    doc.select(&MAIN_CONTENT_SELECTOR).find(usable).or_else(|| {
+        let mut articles = doc.select(&ARTICLE_SELECTOR).filter(usable).filter(|el| {
+            !el.ancestors()
+                .filter_map(ElementRef::wrap)
+                .any(|parent| parent.value().name() == "article")
+        });
+        let first = articles.next()?;
+        articles.next().is_none().then_some(first)
+    })
+}
+
+pub(crate) fn has_main_content(doc: &Html, options: &ExtractionOptions) -> bool {
+    main_content_node(doc, &build_exclude_set(doc, &options.exclude_selectors)).is_some()
 }
 
 // A no-script version can be the only readable representation of a page. Keep
@@ -188,12 +203,9 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
     // Main-only recovery stays inside the selected content node.
     let best = options
         .only_main_content
-        .then(|| {
-            doc.select(&MAIN_CONTENT_SELECTOR)
-                .find(|el| !exclude.contains(&el.id()))
-        })
+        .then(|| main_content_node(doc, &exclude))
         .flatten()
-        .or_else(|| find_best_node(doc));
+        .or_else(|| find_best_node(doc, &exclude, options.only_main_content));
 
     let (content_element, mut markdown, _plain_text, mut assets) = if let Some(node) = best {
         debug!(tag = node.value().name(), "selected content node");
@@ -880,11 +892,24 @@ fn is_inside_structural_noise(el: ElementRef<'_>) -> bool {
 }
 
 /// Score each candidate node and return the best one.
-fn find_best_node(doc: &Html) -> Option<ElementRef<'_>> {
+fn find_best_node<'a>(
+    doc: &'a Html,
+    exclude: &HashSet<NodeId>,
+    skip_articles: bool,
+) -> Option<ElementRef<'a>> {
     let mut best: Option<(ElementRef<'_>, f64)> = None;
 
     for candidate in doc.select(&CANDIDATE_SELECTOR) {
-        if noise::is_noise(candidate) || noise::is_noise_descendant(candidate) {
+        if exclude.contains(&candidate.id())
+            || (skip_articles
+                && (candidate.value().name() == "article"
+                    || candidate
+                        .ancestors()
+                        .filter_map(ElementRef::wrap)
+                        .any(|parent| parent.value().name() == "article")))
+            || noise::is_noise(candidate)
+            || noise::is_noise_descendant(candidate)
+        {
             continue;
         }
 

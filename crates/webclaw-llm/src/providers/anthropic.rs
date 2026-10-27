@@ -218,15 +218,18 @@ mod tests {
     #[test]
     #[ignore = "mutates process env; run with --test-threads=1"]
     fn env_var_key_fallback() {
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-env") };
         let provider = AnthropicProvider::new(None, None).expect("should construct from env");
         assert_eq!(provider.key, "sk-ant-env");
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
     }
 
     #[test]
     #[ignore = "mutates process env; run with --test-threads=1"]
     fn no_key_returns_none() {
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
         assert!(AnthropicProvider::new(None, None).is_none());
     }

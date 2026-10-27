@@ -284,15 +284,18 @@ mod tests {
     #[test]
     #[ignore = "mutates process env; run with --test-threads=1"]
     fn env_var_key_fallback() {
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::set_var("OPENAI_API_KEY", "sk-env-key") };
         let provider = OpenAiProvider::new(None, None, None).expect("should construct from env");
         assert_eq!(provider.key, "sk-env-key");
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::remove_var("OPENAI_API_KEY") };
     }
 
     #[test]
     #[ignore = "mutates process env; run with --test-threads=1"]
     fn no_key_returns_none() {
+        // SAFETY: #[ignore]d and run only with --test-threads=1, so no other thread reads the env.
         unsafe { std::env::remove_var("OPENAI_API_KEY") };
         assert!(OpenAiProvider::new(None, None, None).is_none());
     }

@@ -25,7 +25,9 @@ pub fn to_feed_url(url: &str) -> String {
     let path = match (comments, segments.last().map(String::as_str)) {
         (_, Some(last)) if last.ends_with(".rss") => format!("/{}", segments.join("/")),
         (Some(i), _) if i + 1 < segments.len() => {
-            parsed.set_query(Some("limit=500"));
+            if !parsed.query_pairs().any(|(key, _)| key == "limit") {
+                parsed.query_pairs_mut().append_pair("limit", "500");
+            }
             format!("/{}/.rss", segments[..=i + 1].join("/"))
         }
         (_, Some("search")) => format!("/{}.rss", segments.join("/")),
@@ -47,7 +49,6 @@ mod tests {
     fn thread_maps_to_its_comment_feed() {
         for url in [
             "https://www.reddit.com/r/rust/comments/abc123/some_title/",
-            "https://old.reddit.com/r/rust/comments/abc123/some_title/?context=3#c",
             "https://reddit.com/r/rust/comments/abc123",
             "http://np.reddit.com/r/rust/comments/abc123/some_title/def456/",
         ] {
@@ -57,6 +58,18 @@ mod tests {
                 "{url}"
             );
         }
+    }
+
+    #[test]
+    fn thread_keeps_its_query_and_limit() {
+        assert_eq!(
+            to_feed_url("https://old.reddit.com/r/rust/comments/abc123/x/?sort=new#c"),
+            "https://www.reddit.com/r/rust/comments/abc123/.rss?sort=new&limit=500"
+        );
+        assert_eq!(
+            to_feed_url("https://www.reddit.com/r/rust/comments/abc123/?limit=100"),
+            "https://www.reddit.com/r/rust/comments/abc123/.rss?limit=100"
+        );
     }
 
     #[test]

@@ -564,7 +564,8 @@ impl FetchClient {
     ///
     /// Retries once on transient failures (network errors, 429, 502-504,
     /// 520-524). The pause is 1s, or the response's `Retry-After` when it is
-    /// longer and still fits the remaining [`FetchConfig::total_timeout`].
+    /// longer and still fits the remaining [`FetchConfig::total_timeout`];
+    /// a `Retry-After` that does not fit falls back to the 1s pause.
     /// No per-site rescue logic; use [`Self::fetch_smart`] for that.
     #[instrument(skip(self), fields(url = %url))]
     pub async fn fetch(&self, url: &str) -> Result<FetchResult, FetchError> {
@@ -727,7 +728,7 @@ impl FetchClient {
         let ceiling = self.total_timeout.map_or(RETRY_AFTER_CAP, |total| {
             total.saturating_sub(started.elapsed())
         });
-        (wait < ceiling).then_some(wait)
+        [wait, RETRY_PAUSE].into_iter().find(|w| *w < ceiling)
     }
 
     async fn send(
@@ -1941,8 +1942,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_the_rate_limited_response_when_retry_after_exceeds_the_budget() {
+    async fn retries_after_the_short_pause_when_retry_after_exceeds_the_budget() {
         let client = client_with_budget(Some(Duration::from_secs(3)));
+        let (outcome, calls, waited) = run_retries(
+            &client,
+            vec![Ok(canned(429, Some("120"))), Ok(canned(200, None))],
+        )
+        .await;
+        assert_eq!(outcome.unwrap().status, 200);
+        assert_eq!(calls, 2);
+        assert!(waited >= RETRY_PAUSE && waited < Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn returns_the_rate_limited_response_when_no_pause_fits_the_budget() {
+        let client = client_with_budget(Some(Duration::from_millis(500)));
         let (outcome, calls, waited) =
             run_retries(&client, vec![Ok(canned(429, Some("120")))]).await;
         assert_eq!(outcome.unwrap().status, 429);
@@ -1953,9 +1967,14 @@ mod tests {
     #[tokio::test]
     async fn caps_retry_after_when_there_is_no_budget() {
         let client = client_with_budget(None);
-        let (outcome, calls, _) = run_retries(&client, vec![Ok(canned(503, Some("3600")))]).await;
+        let (outcome, calls, waited) = run_retries(
+            &client,
+            vec![Ok(canned(503, Some("3600"))), Ok(canned(503, None))],
+        )
+        .await;
         assert_eq!(outcome.unwrap().status, 503);
-        assert_eq!(calls, 1);
+        assert_eq!(calls, 2);
+        assert!(waited < Duration::from_secs(2));
     }
 
     #[tokio::test]

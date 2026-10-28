@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **Reddit works again.** Threads, subreddits, listings and search are read from Reddit's public feeds. Threads return the post and up to 500 comments. Scores and reply nesting are not available this way, so `score` is `null` and comments come back as a flat list.
+
 ## [0.7.0] - 2026-10-19
 
 ### Added

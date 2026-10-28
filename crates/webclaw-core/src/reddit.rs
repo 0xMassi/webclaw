@@ -101,7 +101,8 @@ struct Entry {
 
 fn parse_feed(body: &str) -> Option<Feed> {
     let body = body.trim_start_matches('\u{feff}');
-    if !body[..body.len().min(512)].contains("<feed") {
+    let head = &body.as_bytes()[..body.len().min(512)];
+    if !head.windows(5).any(|w| w == b"<feed") {
         return None;
     }
     let package = sxd_document::parser::parse(body).ok()?;
@@ -610,6 +611,13 @@ mod tests {
         let html = "<html><body><p>You've been blocked by network security.</p></body></html>";
         assert!(try_extract(html, THREAD).is_none());
         assert!(try_extract_thread(html, THREAD).is_none());
+    }
+
+    #[test]
+    fn multibyte_character_at_the_sniff_boundary_is_not_a_feed() {
+        let html = format!("<html>{}é{}", "a".repeat(505), "b".repeat(100));
+        assert!(!html.is_char_boundary(512));
+        assert!(try_extract(&html, THREAD).is_none());
     }
 
     #[test]

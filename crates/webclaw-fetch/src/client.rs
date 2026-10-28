@@ -521,9 +521,9 @@ impl FetchClient {
         self.cloud.as_deref()
     }
 
-    /// Fetch a URL with per-site rescue paths: Reddit URLs go to
-    /// old.reddit.com, and Akamai-style challenge responses trigger a homepage
-    /// cookie warmup and a retry whose result, error included, is the answer.
+    /// Fetch a URL with per-site rescue paths: Reddit URLs are fetched as
+    /// their Atom feed (the result keeps the requested URL), and Akamai-style
+    /// challenge responses trigger a homepage cookie warmup and a retry whose result, error included, is the answer.
     /// The whole call shares one [`FetchConfig::total_timeout`]. Returns the same `FetchResult` shape as
     /// [`Self::fetch`] so every caller (CLI, MCP, OSS server, production
     /// server) benefits without shape churn.
@@ -541,13 +541,12 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        let owned;
-        let url = if crate::reddit::is_reddit_url(url) {
-            owned = crate::reddit::to_old_reddit_url(url);
-            owned.as_str()
-        } else {
-            url
-        };
+        if crate::reddit::is_reddit_url(url) {
+            let feed = crate::reddit::to_feed_url(url);
+            let mut resp = self.fetch_with_headers(&feed, extra).await?;
+            resp.url = url.to_string();
+            return Ok(resp);
+        }
         self.within_budget(Instant::now(), url, async {
             let resp = self.fetch_with_headers(url, extra).await?;
             let Some(homepage) = extract_homepage(url).filter(|_| is_challenge_html(&resp.html))

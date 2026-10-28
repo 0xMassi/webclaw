@@ -1,23 +1,42 @@
 //! Reddit URL helpers for the fetch layer.
 //!
-//! The JSON API (`*.json`) is blocked. We rewrite all Reddit hosts to
-//! `old.reddit.com`, which serves stable server-rendered HTML that
-//! `webclaw-core::reddit` parses directly.
+//! Reddit answers logged-out HTML and `.json` requests with a block page, but
+//! serves its Atom feeds. Every Reddit URL is fetched as its `.rss` feed on
+//! www.reddit.com, which `webclaw-core::reddit` parses.
 
 pub fn is_reddit_url(url: &str) -> bool {
     webclaw_core::reddit::is_reddit_url(url)
 }
 
-/// Rewrite any Reddit host to old.reddit.com, preserving path and query.
-pub fn to_old_reddit_url(url: &str) -> String {
-    let Some(scheme_end) = url.find("://") else {
+/// The Atom feed that carries the content of a Reddit page: a thread's post
+/// and up to 500 comments, a listing's posts, or search results.
+pub fn to_feed_url(url: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(url) else {
         return url.to_string();
     };
-    let after = &url[scheme_end + 3..];
-    let host_end = after.find(['/', '?', '#']).unwrap_or(after.len());
-    let scheme = &url[..scheme_end + 3];
-    let rest = &after[host_end..];
-    format!("{scheme}old.reddit.com{rest}")
+    let segments: Vec<String> = parsed
+        .path_segments()
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let comments = segments.iter().position(|s| s == "comments");
+    let path = match (comments, segments.last().map(String::as_str)) {
+        (_, Some(last)) if last.ends_with(".rss") => format!("/{}", segments.join("/")),
+        (Some(i), _) if i + 1 < segments.len() => {
+            parsed.set_query(Some("limit=500"));
+            format!("/{}/.rss", segments[..=i + 1].join("/"))
+        }
+        (_, Some("search")) => format!("/{}.rss", segments.join("/")),
+        _ if segments.is_empty() => "/.rss".to_string(),
+        _ => format!("/{}/.rss", segments.join("/")),
+    };
+    parsed.set_path(&path);
+    parsed.set_fragment(None);
+    let _ = parsed.set_scheme("https");
+    let _ = parsed.set_host(Some("www.reddit.com"));
+    parsed.to_string()
 }
 
 #[cfg(test)]
@@ -25,32 +44,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rewrites_www_to_old() {
+    fn thread_maps_to_its_comment_feed() {
+        for url in [
+            "https://www.reddit.com/r/rust/comments/abc123/some_title/",
+            "https://old.reddit.com/r/rust/comments/abc123/some_title/?context=3#c",
+            "https://reddit.com/r/rust/comments/abc123",
+            "http://np.reddit.com/r/rust/comments/abc123/some_title/def456/",
+        ] {
+            assert_eq!(
+                to_feed_url(url),
+                "https://www.reddit.com/r/rust/comments/abc123/.rss?limit=500",
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn listings_map_to_their_feed() {
         assert_eq!(
-            to_old_reddit_url("https://www.reddit.com/r/rust/comments/abc/x/"),
-            "https://old.reddit.com/r/rust/comments/abc/x/"
+            to_feed_url("https://www.reddit.com/r/rust"),
+            "https://www.reddit.com/r/rust/.rss"
+        );
+        assert_eq!(
+            to_feed_url("https://old.reddit.com/r/AskReddit/top/?t=day"),
+            "https://www.reddit.com/r/AskReddit/top/.rss?t=day"
+        );
+        assert_eq!(
+            to_feed_url("https://www.reddit.com/user/someone/submitted/"),
+            "https://www.reddit.com/user/someone/submitted/.rss"
+        );
+        assert_eq!(
+            to_feed_url("https://reddit.com/"),
+            "https://www.reddit.com/.rss"
         );
     }
 
     #[test]
-    fn rewrites_bare_to_old() {
+    fn search_maps_to_search_feed() {
         assert_eq!(
-            to_old_reddit_url("https://reddit.com/r/rust/"),
-            "https://old.reddit.com/r/rust/"
+            to_feed_url("https://www.reddit.com/search/?q=web+scraping&sort=new"),
+            "https://www.reddit.com/search.rss?q=web+scraping&sort=new"
+        );
+        assert_eq!(
+            to_feed_url("https://old.reddit.com/r/rust/search?q=async&restrict_sr=on"),
+            "https://www.reddit.com/r/rust/search.rss?q=async&restrict_sr=on"
         );
     }
 
     #[test]
-    fn preserves_old_reddit_unchanged() {
-        let url = "https://old.reddit.com/r/rust/comments/abc/x/?context=3";
-        assert_eq!(to_old_reddit_url(url), url);
-    }
-
-    #[test]
-    fn preserves_query_and_hash() {
-        assert_eq!(
-            to_old_reddit_url("https://www.reddit.com/r/rust/?sort=top#anchor"),
-            "https://old.reddit.com/r/rust/?sort=top#anchor"
-        );
+    fn feed_urls_are_unchanged() {
+        for url in [
+            "https://www.reddit.com/r/rust/comments/abc123/.rss?limit=500",
+            "https://www.reddit.com/r/rust/new/.rss",
+            "https://www.reddit.com/search.rss?q=x&sort=new",
+        ] {
+            assert_eq!(to_feed_url(url), url);
+        }
     }
 }

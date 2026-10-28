@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - **Reddit works again.** Threads, subreddits, listings and search are read from Reddit's public feeds. Threads return the post and up to 500 comments. Scores and reply nesting are not available this way, so `score` is `null` and comments come back as a flat list.
+- **Pages streamed by React servers keep their content.** Sites built with streaming server rendering send the page body in hidden blocks that the browser reveals right away. Since 0.7.0 those blocks were dropped as hidden text, so such pages came back empty or missing their main section.
 
 ## [0.7.0] - 2026-10-19
 

@@ -99,21 +99,12 @@ fn extract_with_options_inner(
     let has_selectors =
         !options.include_selectors.is_empty() || !options.exclude_selectors.is_empty();
 
-    // Reddit fast path: parse old.reddit.com HTML directly.
-    // The fetch layer rewrites all Reddit hosts to old.reddit.com before
-    // calling extract, so we always get stable server-rendered HTML here.
     if let Some(u) = url
-        && !has_selectors
-        && !options.only_main_content
         && reddit::is_reddit_url(u)
     {
         if let Some(result) = reddit::try_extract(html, u) {
             return Ok(result);
         }
-        // A recognised comment thread that we couldn't parse (Reddit markup
-        // change, or a block/challenge page) — don't fall through to generic
-        // extraction, which would emit Reddit nav/sidebar chrome. Listings
-        // and profiles (no `/comments/`) intentionally fall through below.
         if u.contains("/comments/") {
             return Err(ExtractError::NoContent);
         }

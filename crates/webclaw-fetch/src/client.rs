@@ -432,9 +432,9 @@ impl FetchClient {
         self.cloud.as_deref()
     }
 
-    /// Fetch a URL with per-site rescue paths: Reddit URLs redirect to the
-    /// `.json` API, and Akamai-style challenge responses trigger a homepage
-    /// cookie warmup and a retry. Returns the same `FetchResult` shape as
+    /// Fetch a URL with per-site rescue paths: Reddit URLs are fetched as
+    /// their Atom feed (the result keeps the requested URL), and Akamai-style
+    /// challenge responses trigger a homepage cookie warmup and a retry. Returns the same `FetchResult` shape as
     /// [`Self::fetch`] so every caller (CLI, MCP, OSS server, production
     /// server) benefits without shape churn.
     ///
@@ -451,20 +451,15 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        // Reddit: fetch old.reddit.com for stable server-rendered HTML.
-        // The JSON API is blocked; old.reddit.com works without JS or auth.
-        let owned;
-        let url = if crate::reddit::is_reddit_url(url) {
-            owned = crate::reddit::to_old_reddit_url(url);
-            owned.as_str()
-        } else {
-            url
-        };
+        if crate::reddit::is_reddit_url(url) {
+            let feed = crate::reddit::to_feed_url(url);
+            let mut resp = self.fetch_with_headers(&feed, extra).await?;
+            resp.url = url.to_string();
+            return Ok(resp);
+        }
 
         let resp = self.fetch_with_headers(url, extra).await?;
 
-        // Akamai / bazadebezolkohpepadr challenge: visit the homepage to
-        // collect warmup cookies (_abck, bm_sz, etc.), then retry.
         if is_challenge_html(&resp.html)
             && let Some(homepage) = extract_homepage(url)
         {
@@ -662,13 +657,12 @@ impl FetchClient {
         let parsed_url = crate::url_security::validate_public_http_url(url).await?;
         let url = parsed_url.as_str();
 
-        // Reddit: rewrite to old.reddit.com for stable server-rendered HTML.
-        // webclaw-core's Reddit fast path then parses the thread structure.
-        let reddit_owned;
+        let source = url;
+        let feed;
         let url = if crate::reddit::is_reddit_url(url) {
-            reddit_owned = crate::reddit::to_old_reddit_url(url);
-            debug!("reddit: rewriting to {reddit_owned}");
-            reddit_owned.as_str()
+            feed = crate::reddit::to_feed_url(url);
+            debug!("reddit: fetching the feed {feed}");
+            feed.as_str()
         } else {
             url
         };
@@ -679,8 +673,6 @@ impl FetchClient {
         let resp = client.get(url).send().await?;
         let mut response = Response::from_wreq(resp, attempt).await?;
 
-        // Cookie warmup: if we get a challenge page, visit the homepage first
-        // to collect Akamai cookies (_abck, bm_sz, etc.), then retry.
         if is_challenge_response(&response)
             && let Some(homepage) = extract_homepage(url)
         {
@@ -696,10 +688,12 @@ impl FetchClient {
         if status >= 400 {
             return Err(FetchError::UpstreamStatus(status));
         }
-        let final_url = response.url().to_string();
+        let final_url = if crate::reddit::is_reddit_url(source) {
+            source.to_string()
+        } else {
+            response.url().to_string()
+        };
 
-        // Borrowed, not cloned: both consumers below take `&HeaderMap`, and the
-        // borrow ends before `response` is moved into `into_text()`.
         let headers = response.headers();
 
         let is_pdf = is_pdf_content_type(headers);
@@ -743,7 +737,6 @@ impl FetchClient {
             let elapsed = start.elapsed();
             debug!(status, elapsed_ms = %elapsed.as_millis(), "fetch complete");
 
-            // LinkedIn: extract from embedded <code> JSON blobs
             if crate::linkedin::is_linkedin_post(&final_url) {
                 if let Some(result) = crate::linkedin::extract_linkedin_post(&html, &final_url) {
                     debug!("linkedin extraction succeeded");
@@ -754,13 +747,11 @@ impl FetchClient {
 
             let extraction = webclaw_core::extract_with_options(&html, Some(&final_url), options)?;
 
-            if let Some(issue) = webclaw_core::quality::content_issue(&extraction) {
-                // An explicit selector may intentionally match no readable text.
-                if issue != webclaw_core::quality::ContentIssue::Empty
-                    || !webclaw_core::quality::allows_empty_content(&html, options)
-                {
-                    return Err(issue.into());
-                }
+            if let Some(issue) = webclaw_core::quality::content_issue(&extraction)
+                && (issue != webclaw_core::quality::ContentIssue::Empty
+                    || !webclaw_core::quality::allows_empty_content(&html, options))
+            {
+                return Err(issue.into());
             }
             Ok(extraction)
         }

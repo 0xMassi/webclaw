@@ -1,14 +1,13 @@
-//! Reddit thread extractor — parses old.reddit.com HTML directly.
+//! Reddit extractor over Reddit's public Atom feeds.
 //!
-//! old.reddit.com serves fully server-rendered HTML with stable class names
-//! and data attributes. No JS, no API key, no `.json` trick needed.
+//! The fetch layer maps Reddit page URLs to their `.rss` feed; this module
+//! turns that feed into markdown, and a comment thread into [`RedditThread`].
 
 use scraper::{ElementRef, Html, Selector};
 use serde::Serialize;
+use sxd_document::dom::{ChildOfElement, ChildOfRoot, Element};
 
 use crate::{Content, DomainData, DomainType, ExtractionResult, Metadata};
-
-// ─── Public types ──────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 pub struct RedditPost {
@@ -16,7 +15,7 @@ pub struct RedditPost {
     pub title: String,
     pub author: String,
     pub subreddit: Option<String>,
-    pub score: i64,
+    pub score: Option<i64>,
     pub body: Option<String>,
     pub num_comments: usize,
     pub permalink: String,
@@ -31,8 +30,6 @@ pub struct RedditComment {
     pub id: Option<String>,
     pub author: String,
     pub body: String,
-    /// `None` when Reddit hides the score (fresh comments). Distinct from
-    /// `Some(0)`, which is a real net-zero score.
     pub score: Option<i64>,
     pub depth: usize,
     pub is_op: bool,
@@ -48,8 +45,6 @@ pub struct RedditThread {
     pub comments: Vec<RedditComment>,
 }
 
-// ─── Public API ────────────────────────────────────────────────────────────────
-
 pub fn is_reddit_url(url: &str) -> bool {
     matches!(
         host_of(url),
@@ -57,53 +52,198 @@ pub fn is_reddit_url(url: &str) -> bool {
     )
 }
 
-/// Try to parse a Reddit thread from old.reddit.com HTML.
-/// Returns `None` if the page doesn't have recognisable Reddit structure.
-pub fn try_extract_thread(html: &str, url: &str) -> Option<RedditThread> {
+/// Parse a comment thread from its Atom feed. `None` when `url` is not a
+/// thread or `feed` is not a Reddit Atom feed.
+pub fn try_extract_thread(feed: &str, url: &str) -> Option<RedditThread> {
     if !url.contains("/comments/") {
         return None;
     }
-    let doc = Html::parse_document(html);
-    let post = parse_post(&doc);
-    let op = post.as_ref().map(|p| p.author.as_str()).unwrap_or("");
-    let comments = parse_comments(&doc, op);
+    thread_from_feed(&parse_feed(feed)?, url)
+}
 
-    if post.is_none() && comments.is_empty() {
+/// Entry point for `webclaw-core`'s extraction fast path: a thread or a
+/// listing (subreddit, search, user) from its Atom feed.
+pub fn try_extract(feed: &str, url: &str) -> Option<ExtractionResult> {
+    let feed = parse_feed(feed)?;
+    if url.contains("/comments/") {
+        let thread = thread_from_feed(&feed, url)?;
+        let (title, author, site_name) = thread
+            .post
+            .as_ref()
+            .map(|p| {
+                (
+                    Some(p.title.clone()),
+                    Some(p.author.clone()),
+                    p.subreddit.clone(),
+                )
+            })
+            .unwrap_or_default();
+        return Some(result(to_markdown(&thread), url, title, author, site_name));
+    }
+    let title = feed.title.clone();
+    Some(result(listing_markdown(&feed), url, title, None, None))
+}
+
+struct Feed {
+    title: Option<String>,
+    entries: Vec<Entry>,
+}
+
+struct Entry {
+    id: String,
+    author: String,
+    title: String,
+    link: String,
+    content: Html,
+    published: Option<String>,
+    subreddit: Option<String>,
+}
+
+fn parse_feed(body: &str) -> Option<Feed> {
+    let body = body.trim_start_matches('\u{feff}');
+    if !body[..body.len().min(512)].contains("<feed") {
         return None;
     }
-
-    Some(RedditThread {
-        source_url: url.to_string(),
-        post,
-        comments,
+    let package = sxd_document::parser::parse(body).ok()?;
+    let doc = package.as_document();
+    let feed = doc.root().children().into_iter().find_map(|c| match c {
+        ChildOfRoot::Element(e) if e.name().local_part() == "feed" => Some(e),
+        _ => None,
+    })?;
+    let entries = elements(feed, "entry")
+        .into_iter()
+        .filter_map(parse_entry)
+        .collect();
+    Some(Feed {
+        title: child_text(feed, "title"),
+        entries,
     })
 }
 
-/// Entry point for `webclaw-core`'s extraction fast path.
-pub fn try_extract(html: &str, url: &str) -> Option<ExtractionResult> {
-    let thread = try_extract_thread(html, url)?;
-    Some(to_extraction_result(&thread))
+fn parse_entry(e: Element) -> Option<Entry> {
+    let author = elements(e, "author")
+        .first()
+        .and_then(|a| child_text(*a, "name"))
+        .map(|n| n.trim_start_matches("/u/").to_string())
+        .unwrap_or_else(|| "[deleted]".to_string());
+    Some(Entry {
+        id: child_text(e, "id")?,
+        author,
+        title: child_text(e, "title").unwrap_or_default(),
+        link: elements(e, "link")
+            .first()
+            .and_then(|l| l.attribute_value("href"))
+            .unwrap_or_default()
+            .to_string(),
+        content: Html::parse_fragment(&child_text(e, "content").unwrap_or_default()),
+        published: child_text(e, "published").or_else(|| child_text(e, "updated")),
+        subreddit: elements(e, "category")
+            .first()
+            .and_then(|c| c.attribute_value("term"))
+            .filter(|t| !t.starts_with("u/"))
+            .map(str::to_string),
+    })
 }
 
-// ─── ExtractionResult builder ──────────────────────────────────────────────────
-
-fn to_extraction_result(thread: &RedditThread) -> ExtractionResult {
-    let md = to_markdown(thread);
-    let plain = plain_text(&md);
-    let wc = md.split_whitespace().count();
-
-    let (title, author, site_name) = thread
-        .post
-        .as_ref()
-        .map(|p| {
-            (
-                Some(p.title.clone()),
-                Some(p.author.clone()),
-                p.subreddit.clone(),
-            )
+fn elements<'d>(el: Element<'d>, name: &str) -> Vec<Element<'d>> {
+    el.children()
+        .into_iter()
+        .filter_map(|c| match c {
+            ChildOfElement::Element(e) if e.name().local_part() == name => Some(e),
+            _ => None,
         })
-        .unwrap_or_default();
+        .collect()
+}
 
+fn child_text(el: Element, name: &str) -> Option<String> {
+    let child = *elements(el, name).first()?;
+    let text: String = child
+        .children()
+        .into_iter()
+        .filter_map(|c| match c {
+            ChildOfElement::Text(t) => Some(t.text()),
+            _ => None,
+        })
+        .collect();
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+fn thread_from_feed(feed: &Feed, url: &str) -> Option<RedditThread> {
+    let comments: Vec<_> = feed
+        .entries
+        .iter()
+        .filter(|e| e.id.starts_with("t1_"))
+        .collect();
+    let post = feed.entries.iter().find(|e| e.id.starts_with("t3_"));
+    if post.is_none() && comments.is_empty() {
+        return None;
+    }
+    let op = post.map(|p| p.author.as_str()).unwrap_or("");
+    Some(RedditThread {
+        source_url: url.to_string(),
+        post: post.map(|p| to_post(p, comments.len())),
+        comments: comments
+            .into_iter()
+            .map(|c| RedditComment {
+                id: Some(c.id.trim_start_matches("t1_").to_string()),
+                author: c.author.clone(),
+                body: entry_body(c).unwrap_or_default(),
+                score: None,
+                depth: 0,
+                is_op: !op.is_empty() && c.author == op,
+                created_utc: c.published.clone(),
+                replies: vec![],
+            })
+            .collect(),
+    })
+}
+
+fn to_post(e: &Entry, num_comments: usize) -> RedditPost {
+    let url = external_link(e);
+    RedditPost {
+        id: Some(e.id.trim_start_matches("t3_").to_string()),
+        title: e.title.clone(),
+        author: e.author.clone(),
+        subreddit: e.subreddit.clone(),
+        score: None,
+        body: entry_body(e),
+        num_comments,
+        permalink: e.link.clone(),
+        is_self: url.is_none(),
+        url,
+        flair: None,
+        created_utc: e.published.clone(),
+    }
+}
+
+fn entry_body(e: &Entry) -> Option<String> {
+    let sel = Selector::parse("div.md").ok()?;
+    e.content
+        .select(&sel)
+        .next()
+        .map(md_to_markdown)
+        .filter(|s| !s.is_empty())
+}
+
+fn external_link(e: &Entry) -> Option<String> {
+    let sel = Selector::parse("a[href]").ok()?;
+    let href = e
+        .content
+        .select(&sel)
+        .find(|a| a.text().collect::<String>().trim() == "[link]")?
+        .value()
+        .attr("href")?;
+    (href.trim_end_matches('/') != e.link.trim_end_matches('/')).then(|| href.to_string())
+}
+
+fn result(
+    md: String,
+    url: &str,
+    title: Option<String>,
+    author: Option<String>,
+    site_name: Option<String>,
+) -> ExtractionResult {
     ExtractionResult {
         metadata: Metadata {
             title,
@@ -111,15 +251,15 @@ fn to_extraction_result(thread: &RedditThread) -> ExtractionResult {
             author,
             published_date: None,
             language: Some("en".to_string()),
-            url: Some(thread.source_url.clone()),
+            url: Some(url.to_string()),
             site_name,
             image: None,
             favicon: None,
-            word_count: wc,
+            word_count: md.split_whitespace().count(),
         },
         content: Content {
+            plain_text: plain_text(&md),
             markdown: md,
-            plain_text: plain,
             links: vec![],
             images: vec![],
             code_blocks: vec![],
@@ -132,32 +272,26 @@ fn to_extraction_result(thread: &RedditThread) -> ExtractionResult {
     }
 }
 
-// ─── Markdown rendering ────────────────────────────────────────────────────────
-
 pub fn to_markdown(thread: &RedditThread) -> String {
     let mut out = String::new();
 
     if let Some(p) = &thread.post {
         out.push_str(&format!("# {}\n\n", p.title));
-
-        let pts = pt_label(Some(p.score));
-        let cmt = match p.num_comments {
-            0 => String::new(),
-            1 => " · 1 comment".to_string(),
-            n => format!(" · {n} comments"),
-        };
-        let sub = p.subreddit.as_deref().unwrap_or("?");
-        out.push_str(&format!("**u/{}** · r/{sub} · {pts}{cmt}\n\n", p.author));
-
-        if let Some(ref body) = p.body
-            && !body.is_empty()
-        {
+        let mut line = vec![format!("**u/{}**", p.author)];
+        line.extend(p.subreddit.as_ref().map(|s| format!("r/{s}")));
+        line.extend(p.score.map(pt_label));
+        match p.num_comments {
+            0 => {}
+            1 => line.push("1 comment".to_string()),
+            n => line.push(format!("{n} comments")),
+        }
+        out.push_str(&line.join(" · "));
+        out.push_str("\n\n");
+        if let Some(body) = &p.body {
             out.push_str(body);
             out.push_str("\n\n");
         }
-        if let Some(ref link) = p.url
-            && !p.is_self
-        {
+        if let Some(link) = &p.url {
             out.push_str(&format!("[Link]({link})\n\n"));
         }
         out.push_str("---\n\n");
@@ -173,28 +307,47 @@ pub fn to_markdown(thread: &RedditThread) -> String {
     collapse_blank_lines(out.trim_end())
 }
 
-/// Render one comment + its replies. Nesting is expressed with blockquote
-/// depth (`> ` per level) rather than leading spaces: space-indentation of
-/// 4+ would turn ordinary text and ``` fences into CommonMark indented code
-/// blocks, corrupting any comment at depth ≥ 2.
+fn listing_markdown(feed: &Feed) -> String {
+    let mut out = String::new();
+    if let Some(title) = &feed.title {
+        out.push_str(&format!("# {title}\n\n"));
+    }
+    for e in &feed.entries {
+        out.push_str(&format!("## [{}]({})\n\n", e.title, e.link));
+        let mut line = vec![format!("**u/{}**", e.author)];
+        line.extend(e.subreddit.as_ref().map(|s| format!("r/{s}")));
+        line.extend(e.published.clone());
+        out.push_str(&line.join(" · "));
+        out.push_str("\n\n");
+        if let Some(body) = entry_body(e) {
+            out.push_str(&body);
+            out.push_str("\n\n");
+        }
+        if let Some(link) = external_link(e) {
+            out.push_str(&format!("[Link]({link})\n\n"));
+        }
+    }
+    collapse_blank_lines(out.trim_end())
+}
+
 fn render_comment(c: &RedditComment, out: &mut String) {
     let q = "> ".repeat(c.depth);
     let blank = ">".repeat(c.depth);
-    let author = if c.is_op {
+    let mut line = vec![if c.is_op {
         format!("**u/{} [OP]**", c.author)
     } else {
         format!("**u/{}**", c.author)
-    };
-    out.push_str(&format!("{q}{author} · {}\n", pt_label(c.score)));
-    for line in c.body.lines() {
-        if line.is_empty() {
+    }];
+    line.extend(c.score.map(pt_label));
+    out.push_str(&format!("{q}{}\n", line.join(" · ")));
+    for l in c.body.lines() {
+        if l.is_empty() {
             out.push_str(&blank);
-            out.push('\n');
         } else {
             out.push_str(&q);
-            out.push_str(line);
-            out.push('\n');
+            out.push_str(l);
         }
+        out.push('\n');
     }
     out.push('\n');
     for reply in &c.replies {
@@ -202,17 +355,13 @@ fn render_comment(c: &RedditComment, out: &mut String) {
     }
 }
 
-fn pt_label(n: Option<i64>) -> String {
+fn pt_label(n: i64) -> String {
     match n {
-        None => "score hidden".to_string(),
-        Some(1) => "1 pt".to_string(),
-        Some(-1) => "-1 pt".to_string(),
-        Some(n) => format!("{n} pts"),
+        1 | -1 => format!("{n} pt"),
+        n => format!("{n} pts"),
     }
 }
 
-/// Collapse runs of 3+ newlines down to a blank-line separator so the
-/// blockquote prefixes and `<pre>` spacing don't leave large gaps.
 fn collapse_blank_lines(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut newlines = 0;
@@ -233,9 +382,6 @@ fn collapse_blank_lines(s: &str) -> String {
 fn plain_text(md: &str) -> String {
     md.lines()
         .map(|l| {
-            // Strip a single leading blockquote / heading marker, then drop
-            // emphasis markers. Greedy char-class stripping (the old approach)
-            // ate legitimate content like ">"-prefixed quotes.
             let l = l.trim_start();
             let l = l
                 .strip_prefix("> ")
@@ -250,247 +396,6 @@ fn plain_text(md: &str) -> String {
         .join("\n")
 }
 
-// ─── HTML parsing ──────────────────────────────────────────────────────────────
-
-fn parse_post(doc: &Html) -> Option<RedditPost> {
-    let sel = Selector::parse("#siteTable .thing.link").ok()?;
-    let thing = doc.select(&sel).next()?;
-    let v = thing.value();
-
-    let id = v
-        .attr("data-fullname")
-        .map(|s| s.trim_start_matches("t3_").to_string());
-    let author = v.attr("data-author").unwrap_or("[deleted]").to_string();
-    let subreddit = v.attr("data-subreddit").map(str::to_string);
-    let score: i64 = v
-        .attr("data-score")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let num_comments: usize = v
-        .attr("data-comments-count")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let permalink_path = v.attr("data-permalink").unwrap_or("");
-    let permalink = format!("https://old.reddit.com{permalink_path}");
-    // Self-posts carry the `self` class and a `self.<sub>` domain; their
-    // data-url points back at the permalink rather than an external site.
-    let is_self = v.has_class("self", scraper::CaseSensitivity::AsciiCaseInsensitive)
-        || v.attr("data-domain")
-            .is_some_and(|d| d.starts_with("self."));
-    let link_url = v.attr("data-url").map(str::to_string);
-    let url = if is_self { None } else { link_url };
-
-    // Title
-    let sel_title = Selector::parse(".title a.title").ok()?;
-    let title = thing
-        .select(&sel_title)
-        .next()
-        .map(|el| el.text().collect::<String>().trim().to_string())
-        .filter(|s| !s.is_empty())?;
-
-    // Flair
-    let flair = Selector::parse(".linkflairlabel")
-        .ok()
-        .and_then(|s| thing.select(&s).next())
-        .map(|el| el.text().collect::<String>().trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    // Self-text body: thing > .entry > .expando > .usertext-body [> .md]
-    let body = direct_child(thing, "entry")
-        .and_then(|entry| find_class(entry, "expando"))
-        .and_then(|expando| find_class(expando, "usertext-body"))
-        .and_then(|ut| find_class(ut, "md"))
-        .map(md_to_markdown)
-        .filter(|s| !s.is_empty());
-
-    // Datetime
-    let created_utc = Selector::parse("time[datetime]")
-        .ok()
-        .and_then(|s| thing.select(&s).next())
-        .and_then(|t| t.value().attr("datetime"))
-        .map(str::to_string);
-
-    Some(RedditPost {
-        id,
-        title,
-        author,
-        subreddit,
-        score,
-        body,
-        num_comments,
-        permalink,
-        url,
-        is_self,
-        flair,
-        created_utc,
-    })
-}
-
-// ─── Comment parsing ───────────────────────────────────────────────────────────
-//
-// old.reddit.com nests comments structurally, not via a depth attribute:
-//
-//   .commentarea
-//     .sitetable.nestedlisting
-//       .comment.thing                          ← root comment
-//         .entry → form → .usertext-body → .md  ← its own body
-//         .child
-//           .sitetable.listing
-//             .comment.thing                    ← reply (recurse)
-//
-// `data-depth`/`data-replies` are absent or always "0" in the logged-out
-// HTML, so we walk the tree by recursing into each comment's `.child`.
-
-fn parse_comments(doc: &Html, op: &str) -> Vec<RedditComment> {
-    // Root listing is `.sitetable.nestedlisting` inside `.commentarea`
-    // (note: `commentarea` is a class on old.reddit, not an id). Fall back
-    // to the first `.nestedlisting` anywhere for comment-permalink pages.
-    let listing = Selector::parse(".commentarea .sitetable.nestedlisting")
-        .ok()
-        .and_then(|s| doc.select(&s).next())
-        .or_else(|| {
-            Selector::parse(".sitetable.nestedlisting")
-                .ok()
-                .and_then(|s| doc.select(&s).next())
-        });
-
-    match listing {
-        Some(l) => walk_comment_level(l, op, 0),
-        None => vec![],
-    }
-}
-
-/// Parse the direct-child `.comment.thing` elements of a comment listing.
-fn walk_comment_level(listing: ElementRef, op: &str, depth: usize) -> Vec<RedditComment> {
-    listing
-        .children()
-        .filter_map(ElementRef::wrap)
-        .filter(|c| {
-            let val = c.value();
-            val.has_class("comment", scraper::CaseSensitivity::AsciiCaseInsensitive)
-                && val.has_class("thing", scraper::CaseSensitivity::AsciiCaseInsensitive)
-        })
-        .filter_map(|c| parse_one_comment(c, op, depth))
-        .collect()
-}
-
-fn parse_one_comment(c: ElementRef, op: &str, depth: usize) -> Option<RedditComment> {
-    let v = c.value();
-
-    // "load more comments" placeholders are `.thing` with type=morechildren.
-    // They carry a t1_ fullname but no real content — skip them.
-    if v.attr("data-type") == Some("morechildren")
-        || v.has_class(
-            "morechildren",
-            scraper::CaseSensitivity::AsciiCaseInsensitive,
-        )
-    {
-        return None;
-    }
-
-    let is_deleted = v.has_class("deleted", scraper::CaseSensitivity::AsciiCaseInsensitive);
-    let id = v
-        .attr("data-fullname")
-        .map(|s| s.trim_start_matches("t1_").to_string());
-    let author = v
-        .attr("data-author")
-        .filter(|a| !a.is_empty())
-        .unwrap_or("[deleted]")
-        .to_string();
-
-    // Own body lives in `.entry > form > .usertext-body > .md`. `.child`
-    // (nested replies) is a sibling of `.entry`, so descending within
-    // `.entry` never crosses into a reply's body.
-    let entry = direct_child(c, "entry");
-    let body = entry
-        .and_then(|e| find_class(e, "usertext-body"))
-        .and_then(|ut| find_class(ut, "md"))
-        .map(md_to_markdown)
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            if is_deleted {
-                "[removed]".into()
-            } else {
-                String::new()
-            }
-        });
-
-    // Displayed score is `.score.unvoted`, whose `title` holds the exact
-    // integer (the sibling likes/dislikes spans are ±1). Hidden-score
-    // comments have no `.score.unvoted` span, so `comment_score` returns
-    // None — kept distinct from a genuine 0.
-    let score = entry.and_then(comment_score);
-
-    let created_utc = entry
-        .zip(Selector::parse("time[datetime]").ok())
-        .and_then(|(e, s)| e.select(&s).next())
-        .and_then(|t| t.value().attr("datetime"))
-        .map(str::to_string);
-
-    let is_op = !is_deleted && author != "[deleted]" && author == op;
-
-    // Replies: `.comment > .child > .sitetable > .comment`.
-    let replies = direct_child(c, "child")
-        .and_then(|child| direct_child(child, "sitetable"))
-        .map(|st| walk_comment_level(st, op, depth + 1))
-        .unwrap_or_default();
-
-    Some(RedditComment {
-        id,
-        author,
-        body,
-        score,
-        depth,
-        is_op,
-        created_utc,
-        replies,
-    })
-}
-
-/// Read a comment's score from the `.score.unvoted` span inside `.entry`.
-/// Prefers the `title` attribute (exact integer); falls back to the text.
-/// Returns `None` when Reddit hides the score (no `.score.unvoted` span).
-fn comment_score(entry: ElementRef) -> Option<i64> {
-    let sel = Selector::parse("span.score.unvoted").ok()?;
-    let span = entry.select(&sel).next()?;
-    span.value()
-        .attr("title")
-        .and_then(|t| t.trim().parse().ok())
-        .or_else(|| parse_score(&span.text().collect::<String>()))
-}
-
-// ─── DOM helpers ───────────────────────────────────────────────────────────────
-
-/// First direct child element whose class list includes `class`.
-fn direct_child<'a>(el: ElementRef<'a>, class: &str) -> Option<ElementRef<'a>> {
-    el.children().filter_map(ElementRef::wrap).find(|c| {
-        c.value()
-            .has_class(class, scraper::CaseSensitivity::AsciiCaseInsensitive)
-    })
-}
-
-/// First descendant (any depth) whose class list includes `class`.
-fn find_class<'a>(el: ElementRef<'a>, class: &str) -> Option<ElementRef<'a>> {
-    el.children().filter_map(ElementRef::wrap).find_map(|c| {
-        if c.value()
-            .has_class(class, scraper::CaseSensitivity::AsciiCaseInsensitive)
-        {
-            Some(c)
-        } else {
-            find_class(c, class)
-        }
-    })
-}
-
-fn parse_score(text: &str) -> Option<i64> {
-    text.split_whitespace()
-        .next()
-        .map(|w| w.replace('−', "-"))
-        .and_then(|w| w.parse().ok())
-}
-
-// ─── .md div → markdown ────────────────────────────────────────────────────────
-
 fn md_to_markdown(el: ElementRef) -> String {
     let mut out = String::new();
     render_children(el, &mut out);
@@ -501,6 +406,7 @@ fn render_children(el: ElementRef, out: &mut String) {
     use scraper::node::Node;
     for child in el.children() {
         match child.value() {
+            Node::Text(t) if out.ends_with('\n') => out.push_str(t.trim_start()),
             Node::Text(t) => out.push_str(t.as_ref()),
             Node::Element(_) => {
                 if let Some(c) = ElementRef::wrap(child) {
@@ -561,14 +467,11 @@ fn render_node(el: ElementRef, out: &mut String) {
             let text: String = el.text().collect();
             let text = text.trim();
             if !text.is_empty() {
-                // Preserve the destination as a markdown link. Resolve
-                // root-relative reddit hrefs (/r/, /user/, /wiki/, ...) and
-                // drop non-navigational ones (javascript:, #fragment, mailto:).
                 let href = el.value().attr("href").unwrap_or("");
                 if href.starts_with("http://") || href.starts_with("https://") {
                     out.push_str(&format!("[{text}]({href})"));
                 } else if href.starts_with('/') {
-                    out.push_str(&format!("[{text}](https://old.reddit.com{href})"));
+                    out.push_str(&format!("[{text}](https://www.reddit.com{href})"));
                 } else {
                     out.push_str(text);
                 }
@@ -612,13 +515,10 @@ fn render_node(el: ElementRef, out: &mut String) {
             let t: String = el.text().collect();
             out.push_str(t.trim());
         }
-        // Unknown / generic containers: recurse
         _ => render_children(el, out),
     }
 }
 
-/// Render a `<ul>`/`<ol>`, indenting nested lists by two spaces per level so
-/// child items keep their own line instead of being glued to the parent.
 fn render_list(list: ElementRef, ordered: bool, indent: usize, out: &mut String) {
     use scraper::node::Node;
     let pad = "  ".repeat(indent);
@@ -629,7 +529,6 @@ fn render_list(list: ElementRef, ordered: bool, indent: usize, out: &mut String)
         .filter(|c| c.value().name() == "li")
     {
         n += 1;
-        // Inline content of this <li>, excluding nested lists (rendered after).
         let mut inline = String::new();
         for child in li.children() {
             match child.value() {
@@ -663,8 +562,6 @@ fn render_list(list: ElementRef, ordered: bool, indent: usize, out: &mut String)
     }
 }
 
-// ─── URL helpers ───────────────────────────────────────────────────────────────
-
 fn host_of(url: &str) -> &str {
     url.split("://")
         .nth(1)
@@ -674,11 +571,16 @@ fn host_of(url: &str) -> &str {
         .unwrap_or("")
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const THREAD: &str = "https://www.reddit.com/r/AskReddit/comments/1xh2sk9/scientists_of_reddit_whats_a_discovery_that/";
+    const LINK_THREAD: &str = "https://old.reddit.com/r/technology/comments/1xhjlt8/meta_plotted/";
+
+    fn fixture(name: &str) -> String {
+        std::fs::read_to_string(format!("testdata/reddit-feed/{name}")).unwrap()
+    }
 
     #[test]
     fn is_reddit_url_recognises_variants() {
@@ -693,9 +595,21 @@ mod tests {
     }
 
     #[test]
-    fn try_extract_thread_returns_none_for_listing_url() {
-        let html = "<html><body></body></html>";
-        assert!(try_extract_thread(html, "https://old.reddit.com/r/rust/").is_none());
+    fn listing_url_is_not_a_thread() {
+        assert!(
+            try_extract_thread(
+                &fixture("subreddit-new.atom"),
+                "https://www.reddit.com/r/technology/new/"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn html_is_not_a_feed() {
+        let html = "<html><body><p>You've been blocked by network security.</p></body></html>";
+        assert!(try_extract(html, THREAD).is_none());
+        assert!(try_extract_thread(html, THREAD).is_none());
     }
 
     #[test]
@@ -724,21 +638,19 @@ mod tests {
 
     #[test]
     fn md_to_markdown_link_preserves_href() {
+        let sel = Selector::parse(".md").unwrap();
         let abs = Html::parse_fragment(
             r#"<div class="md"><p>see <a href="https://example.com/x">this</a></p></div>"#,
         );
-        let sel = Selector::parse(".md").unwrap();
         let el = abs.select(&sel).next().unwrap();
         assert!(md_to_markdown(el).contains("[this](https://example.com/x)"));
 
-        // Root-relative reddit links resolve against old.reddit.com.
         let rel = Html::parse_fragment(
             r#"<div class="md"><p><a href="/r/rust/wiki/faq">faq</a></p></div>"#,
         );
         let el = rel.select(&sel).next().unwrap();
-        assert!(md_to_markdown(el).contains("[faq](https://old.reddit.com/r/rust/wiki/faq)"));
+        assert!(md_to_markdown(el).contains("[faq](https://www.reddit.com/r/rust/wiki/faq)"));
 
-        // javascript: / fragment hrefs degrade to bare text.
         let js = Html::parse_fragment(
             r#"<div class="md"><p><a href="javascript:void(0)">x</a></p></div>"#,
         );
@@ -747,222 +659,76 @@ mod tests {
         assert!(out.contains('x') && !out.contains("javascript"));
     }
 
-    // ── Regression tests against REAL old.reddit.com HTML ──────────────────
-    //
-    // These fixtures are genuine pages fetched from old.reddit.com (see
-    // testdata/reddit/). They are the ground truth — synthetic HTML is too
-    // easy to write to match wrong assumptions, which is exactly how the
-    // first version of this parser shipped silently broken.
-
-    fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!("testdata/reddit/{name}")).unwrap()
-    }
-
-    fn total_comments(cs: &[RedditComment]) -> usize {
-        cs.len() + cs.iter().map(|c| total_comments(&c.replies)).sum::<usize>()
-    }
-
-    fn collect<'a>(cs: &'a [RedditComment], out: &mut Vec<&'a RedditComment>) {
-        for c in cs {
-            out.push(c);
-            collect(&c.replies, out);
-        }
+    #[test]
+    fn thread_feed_matches_golden_json() {
+        let thread = try_extract_thread(&fixture("thread-small.atom"), LINK_THREAD).unwrap();
+        let got = serde_json::to_value(&thread).unwrap();
+        let want: serde_json::Value = serde_json::from_str(&fixture("thread-small.json")).unwrap();
+        assert_eq!(got, want);
     }
 
     #[test]
-    fn real_link_post_metadata() {
-        // pandas: external-link post (blog.geekuni.com), 34 comments.
-        let html = fixture("pandas_34comments.html");
-        let t = try_extract_thread(
-            &html,
-            "https://old.reddit.com/r/programming/comments/abc123/t/",
-        )
-        .expect("should parse");
-        let p = t.post.expect("post");
-        assert_eq!(p.author, "Horror-Willingness74");
-        assert_eq!(p.subreddit.as_deref(), Some("programming"));
-        assert_eq!(p.score, 43);
-        assert_eq!(p.num_comments, 34, "data-comments-count");
-        assert!(!p.is_self, "external blog link, not a self post");
-        assert_eq!(
-            p.url.as_deref(),
-            Some("https://blog.geekuni.com/2026/06/why-learn-pandas.html")
-        );
-        assert!(p.title.contains("Pandas"));
-    }
-
-    #[test]
-    fn real_self_post_metadata() {
-        // A self-post (text) on r/rust: `self.rust` domain, self-text body,
-        // no external url.
-        let html = fixture("rust_selfpost_36comments.html");
-        let t = try_extract_thread(&html, "https://old.reddit.com/r/rust/comments/abc123/t/")
-            .expect("should parse");
-        let p = t.post.expect("post");
-        assert!(p.is_self, "self.rust domain → self post");
-        assert_eq!(p.url, None, "self posts carry no external url");
-        assert_eq!(p.subreddit.as_deref(), Some("rust"));
+    fn self_post_thread_has_post_and_every_comment() {
+        let t = try_extract_thread(&fixture("thread-busy.atom"), THREAD).unwrap();
+        let p = t.post.as_ref().unwrap();
+        assert_eq!(p.id.as_deref(), Some("1xh2sk9"));
+        assert_eq!(p.author, "user1");
+        assert_eq!(p.subreddit.as_deref(), Some("AskReddit"));
+        assert!(p.title.starts_with("Scientists of Reddit"));
+        assert!(p.is_self);
+        assert_eq!(p.url, None);
+        assert_eq!(p.score, None);
+        assert_eq!(p.created_utc.as_deref(), Some("2026-10-27T19:51:01+00:00"));
+        assert_eq!(t.comments.len(), 29);
+        assert_eq!(p.num_comments, 29);
+        assert_eq!(t.comments[0].id.as_deref(), Some("19rr19znbxl5v"));
+        assert!(t.comments[0].body.contains("cystic fibrosis"));
+        assert!(t.comments[0].created_utc.is_some());
         assert!(
-            p.body
-                .as_deref()
-                .unwrap_or("")
-                .contains("IT project manager"),
-            "self-text body should be extracted: {:?}",
-            p.body
+            t.comments
+                .iter()
+                .all(|c| !c.body.is_empty() && c.score.is_none())
         );
+        assert_eq!(t.source_url, THREAD);
     }
 
     #[test]
-    fn real_comment_bodies_and_scores() {
-        // The original bug: every comment body came back empty because
-        // .usertext-body sits inside a <form>, not directly under .entry.
-        let html = fixture("ebpf_6comments.html");
-        let t = try_extract_thread(
-            &html,
-            "https://old.reddit.com/r/programming/comments/abc123/t/",
-        )
-        .expect("should parse");
-        // 6 comments total: 5 top-level + 1 nested reply (admalledd under ejrh).
-        assert_eq!(t.comments.len(), 5, "5 top-level comments");
-        assert_eq!(total_comments(&t.comments), 6, "6 comments incl. nested");
-        let teerre = t
-            .comments
-            .iter()
-            .find(|c| c.author == "teerre")
-            .expect("teerre");
-        assert!(
-            teerre.body.contains("Very cool blog"),
-            "body must be populated, got {:?}",
-            teerre.body
-        );
-        // Score comes from .score.unvoted title (the real value), not the
-        // ±1 likes/dislikes siblings.
-        assert_eq!(
-            teerre.score,
-            Some(10),
-            "unvoted score, not dislikes(9)/likes(11)"
-        );
-        assert!(
-            t.comments.iter().all(|c| !c.body.is_empty()),
-            "no comment body should be empty"
-        );
-    }
-
-    #[test]
-    fn real_nested_comment_tree() {
-        // pandas has structurally-nested replies (.child > .sitetable >
-        // .comment). data-depth/data-replies are absent in logged-out HTML.
-        let html = fixture("pandas_34comments.html");
-        let t = try_extract_thread(
-            &html,
-            "https://old.reddit.com/r/programming/comments/abc123/t/",
-        )
-        .expect("should parse");
-        // 34 rendered comments with content + 1 [deleted] node that old.reddit
-        // still shows because it has live replies = 35 nodes in the tree.
-        assert_eq!(
-            total_comments(&t.comments),
-            35,
-            "all comments incl. nested + deleted"
-        );
-        let nested = t.comments.iter().any(|c| !c.replies.is_empty());
-        assert!(nested, "at least one comment must have replies");
-        let max_depth = {
-            fn d(cs: &[RedditComment]) -> usize {
-                cs.iter().map(|c| 1 + d(&c.replies)).max().unwrap_or(0)
-            }
-            d(&t.comments)
-        };
-        assert!(max_depth >= 2, "tree should be more than one level deep");
-        let a_reply = t.comments.iter().find_map(|c| c.replies.first());
-        assert_eq!(a_reply.map(|r| r.depth), Some(1));
-    }
-
-    #[test]
-    fn real_morechildren_stubs_skipped() {
-        // AskReddit deep thread: 259 .thing[data-fullname=t1_] markers, but
-        // some are "load more comments" stubs (data-type=morechildren) with
-        // no author/body. They must not appear as ghost comments.
-        let html = fixture("askreddit_deep_morechildren.html");
-        let t = try_extract_thread(
-            &html,
-            "https://old.reddit.com/r/AskReddit/comments/abc123/t/",
-        )
-        .expect("should parse");
-        fn check(cs: &[RedditComment]) {
-            for c in cs {
-                let ghost = c.body.is_empty() && c.author == "[deleted]" && c.id.is_some();
-                assert!(!ghost, "morechildren stub leaked as comment: {:?}", c.id);
-                check(&c.replies);
-            }
-        }
-        check(&t.comments);
-    }
-
-    #[test]
-    fn real_hidden_score_is_none_not_zero() {
-        // AskReddit has fresh comments with `.score-hidden` (no .score.unvoted
-        // span). These must be None, distinct from a genuine 0-score comment.
-        let html = fixture("askreddit_deep_morechildren.html");
-        let t = try_extract_thread(
-            &html,
-            "https://old.reddit.com/r/AskReddit/comments/abc123/t/",
-        )
-        .expect("should parse");
-        let mut all = Vec::new();
-        collect(&t.comments, &mut all);
-        assert!(
-            all.iter().any(|c| c.score.is_none()),
-            "some fresh comments have hidden scores → None"
-        );
-    }
-
-    #[test]
-    fn real_deleted_comment_preserves_subtree() {
-        // pandas has a [deleted] comment that still has visible replies. The
-        // structural walk must keep it so its children aren't orphaned.
-        let html = fixture("pandas_34comments.html");
-        let t = try_extract_thread(
-            &html,
-            "https://old.reddit.com/r/programming/comments/abc123/t/",
-        )
-        .expect("should parse");
-        let mut all = Vec::new();
-        collect(&t.comments, &mut all);
-        let deleted: Vec<_> = all.iter().filter(|c| c.author == "[deleted]").collect();
-        assert!(!deleted.is_empty(), "should keep deleted comments");
-        assert!(
-            deleted.iter().any(|c| !c.replies.is_empty()),
-            "a deleted comment with replies must retain its subtree"
-        );
-        assert!(deleted.iter().all(|c| !c.is_op));
-    }
-
-    #[test]
-    fn real_markdown_is_commonmark_clean() {
-        // Guards the markdown bugs the verification workflow found: no
-        // whitespace-only "blank" lines, and ``` fences never indented 4+
-        // spaces (which would turn them into literal indented code blocks).
-        let html = fixture("elixir_60comments.html");
-        let result = try_extract(
-            &html,
-            "https://old.reddit.com/r/programming/comments/abc123/t/",
-        )
-        .expect("should extract");
+    fn thread_markdown_is_clean() {
+        let result = try_extract(&fixture("thread-busy.atom"), THREAD).unwrap();
         let md = &result.content.markdown;
-        assert!(md.starts_with("# "));
+        assert!(md.starts_with("# Scientists of Reddit"));
+        assert!(md.contains("**u/user1** · r/AskReddit · 29 comments"));
         assert!(md.contains("## Comments"));
-        for line in md.lines() {
-            assert!(
-                !(line.starts_with(' ') && line.trim().is_empty()),
-                "whitespace-only line: {line:?}"
-            );
-            let trimmed = line.trim_start_matches(['>', ' ']);
-            if trimmed.starts_with("```") {
-                let indent = line.len() - line.trim_start_matches(' ').len();
-                assert!(indent < 4, "code fence indented {indent} spaces: {line:?}");
-            }
-        }
-        assert!(result.metadata.word_count > 20);
+        assert!(!md.contains("submitted by"));
+        assert!(!md.contains("score hidden"));
+        assert!(md.lines().all(|l| !l.starts_with(' ')));
+        assert_eq!(result.metadata.url.as_deref(), Some(THREAD));
+        assert_eq!(result.metadata.site_name.as_deref(), Some("AskReddit"));
+        assert!(result.metadata.word_count > 500);
+    }
+
+    #[test]
+    fn subreddit_listing_renders_every_post() {
+        let url = "https://www.reddit.com/r/technology/new/";
+        let result = try_extract(&fixture("subreddit-new.atom"), url).unwrap();
+        let md = &result.content.markdown;
+        assert!(md.starts_with("# newest submissions : technology"));
+        assert_eq!(md.matches("\n## [").count(), 6);
+        assert!(md.contains("## [Meta plotted to discredit critic Jonathan Haidt...](https://www.reddit.com/r/technology/comments/1xhjlt8/meta_plotted_to_discredit_critic_jonathan_haidt/)"));
+        assert!(md.contains("**u/user1** · r/technology · 2026-10-28T09:42:31+00:00"));
+        assert!(md.contains("[Link](https://pluang.com/"));
+        assert_eq!(result.metadata.url.as_deref(), Some(url));
+    }
+
+    #[test]
+    fn search_listing_keeps_subreddits_and_posts() {
+        let url = "https://www.reddit.com/search/?q=openai&sort=new";
+        let md = try_extract(&fixture("search-new.atom"), url)
+            .unwrap()
+            .content
+            .markdown;
+        assert!(md.contains("## [OpenAI](https://www.reddit.com/r/OpenAI/)"));
+        assert!(md.contains("n8n has released version 3.0.0 Beta"));
+        assert_eq!(md.matches("\n## [").count(), 6);
     }
 }

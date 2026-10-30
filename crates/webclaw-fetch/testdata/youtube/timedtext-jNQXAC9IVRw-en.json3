@@ -1,0 +1,49 @@
+{
+  "wireMagic": "pb3",
+  "pens": [ {
+  
+  } ],
+  "wsWinStyles": [ {
+  
+  } ],
+  "wpWinPositions": [ {
+  
+  } ],
+  "events": [ {
+    "tStartMs": 1200,
+    "dDurationMs": 2160,
+    "segs": [ {
+      "utf8": "All right, so here we are, in front of the\nelephants"
+    } ]
+  }, {
+    "tStartMs": 5318,
+    "dDurationMs": 2656,
+    "segs": [ {
+      "utf8": "the cool thing about these guys is that they\nhave really..."
+    } ]
+  }, {
+    "tStartMs": 7974,
+    "dDurationMs": 4642,
+    "segs": [ {
+      "utf8": "really really long trunks"
+    } ]
+  }, {
+    "tStartMs": 12616,
+    "dDurationMs": 1751,
+    "segs": [ {
+      "utf8": "and that's cool"
+    } ]
+  }, {
+    "tStartMs": 14421,
+    "dDurationMs": 1312,
+    "segs": [ {
+      "utf8": "(baaaaaaaaaaahhh!!)"
+    } ]
+  }, {
+    "tStartMs": 16881,
+    "dDurationMs": 2000,
+    "segs": [ {
+      "utf8": "and that's pretty much all there is to\nsay"
+    } ]
+  } ]
+}

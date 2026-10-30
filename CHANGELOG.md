@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 - **Reddit works again.** Threads, subreddits, listings and search are read from Reddit's public feeds. Threads return the post and up to 500 comments. Scores and reply nesting are not available this way, so `score` is `null` and comments come back as a flat list.
 - **Substack posts come back whole.** The `substack_post` vertical's `body_text` was only the first paragraph; it is now the text of the whole post.
+- **YouTube transcripts.** The `youtube_video` vertical returns `transcript` (`lang`, timed `segments`, joined `text`). The caption URLs in YouTube's web page answer with an empty body, so `caption_tracks` now lists URLs from YouTube's app player API, which can be fetched. When that API does not answer, `transcript` is `null` and the page's URLs are kept.
 - **Reddit comment scores.** The `reddit` vertical fills `score` for the first page of a thread's comments from Reddit's server-rendered comment tree. Comments past the first page and the post itself still have `score: null`.
 
 ## [0.7.0] - 2026-10-19

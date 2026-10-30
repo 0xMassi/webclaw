@@ -7,6 +7,14 @@
 //! from it: video id, title, author + channel id, view count,
 //! duration, upload date, keywords, thumbnails, caption-track URLs.
 //!
+//! The caption URLs in the web page carry `exp=xpe` and answer with an
+//! empty body unless the request proves it ran YouTube's web player. The
+//! Android app's player API (a POST) returns caption URLs without that
+//! requirement, so the extractor asks it for the tracks and returns the
+//! transcript of the first manual track (else the first track) as
+//! `transcript`. When that API is unavailable, `transcript` is null and
+//! `caption_tracks` keeps the page's URLs.
+//!
 //! Auto-dispatched: YouTube host is unique and the `v=` or `/shorts/`
 //! shape is stable.
 //!
@@ -32,7 +40,7 @@ use crate::fetcher::Fetcher;
 pub const INFO: ExtractorInfo = ExtractorInfo {
     name: "youtube_video",
     label: "YouTube video",
-    description: "Returns video id, title, channel, view count, duration, upload date, thumbnails, keywords, and caption-track URLs. Falls back to OG metadata on consent / age-gate pages.",
+    description: "Returns video id, title, channel, view count, duration, upload date, thumbnails, keywords, caption-track URLs, and the transcript. Falls back to OG metadata on consent / age-gate pages.",
     url_patterns: &[
         "https://www.youtube.com/watch?v={id}",
         "https://youtu.be/{id}",
@@ -51,8 +59,6 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
         FetchError::Build(format!("youtube_video: cannot parse video id from '{url}'"))
     })?;
 
-    // Always fetch the canonical /watch URL. /shorts/ and youtu.be
-    // sometimes serve a thinner page without the player blob.
     let canonical = format!("https://www.youtube.com/watch?v={video_id}");
     let resp = client.fetch(&canonical).await?;
     if resp.status != 200 {
@@ -62,15 +68,128 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
         )));
     }
 
-    if let Some(player) = extract_player_response(&resp.html) {
-        return Ok(build_player_payload(
-            &player, &resp.html, url, &canonical, &video_id,
-        ));
-    }
+    let mut payload = match extract_player_response(&resp.html) {
+        Some(player) => build_player_payload(&player, &resp.html, url, &canonical, &video_id),
+        None => build_og_fallback(&resp.html, url, &canonical, &video_id),
+    };
+    add_transcript(client, &video_id, &mut payload).await;
+    Ok(payload)
+}
 
-    // No player blob. Fall back to OG tags so the call still returns
-    // something useful for consent / age-gate pages.
-    Ok(build_og_fallback(&resp.html, url, &canonical, &video_id))
+const PLAYER_API: &str = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
+const APP_VERSION: &str = "20.10.38";
+
+async fn add_transcript(client: &dyn Fetcher, video_id: &str, payload: &mut Value) {
+    let Some(tracks) = app_player(client, video_id)
+        .await
+        .map(|player| app_caption_tracks(&player))
+        .filter(|tracks| !tracks.is_empty())
+    else {
+        return;
+    };
+    let track = tracks
+        .iter()
+        .find(|t| !t["url"].as_str().unwrap_or("").contains("kind=asr"))
+        .unwrap_or(&tracks[0]);
+    payload["transcript"] = fetch_transcript(client, track).await.unwrap_or(Value::Null);
+    payload["caption_tracks"] = Value::Array(tracks);
+}
+
+async fn app_player(client: &dyn Fetcher, video_id: &str) -> Option<Value> {
+    let body = json!({
+        "context": {"client": {
+            "clientName": "ANDROID",
+            "clientVersion": APP_VERSION,
+            "androidSdkVersion": 30,
+            "hl": "en",
+        }},
+        "videoId": video_id,
+    })
+    .to_string();
+    let agent = format!("com.google.android.youtube/{APP_VERSION} (Linux; U; Android 11) gzip");
+    let resp = client
+        .post_json(PLAYER_API, &body, &[("user-agent", &agent)])
+        .await
+        .ok()?;
+    if resp.status != 200 {
+        return None;
+    }
+    serde_json::from_str(&resp.html).ok()
+}
+
+fn app_caption_tracks(player: &Value) -> Vec<Value> {
+    player
+        .pointer("/captions/playerCaptionsTracklistRenderer/captionTracks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|t| {
+            let name = t
+                .pointer("/name/simpleText")
+                .or_else(|| t.pointer("/name/runs/0/text"));
+            Some(json!({
+                "url":  t.get("baseUrl")?.as_str()?,
+                "lang": t.get("languageCode"),
+                "name": name,
+            }))
+        })
+        .collect()
+}
+
+async fn fetch_transcript(client: &dyn Fetcher, track: &Value) -> Option<Value> {
+    let url = json3_url(track["url"].as_str()?)?;
+    let resp = client.fetch(&url).await.ok()?;
+    if resp.status != 200 {
+        return None;
+    }
+    let segments = transcript_segments(&resp.html)?;
+    let text = segments
+        .iter()
+        .filter_map(|s| s["text"].as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(json!({
+        "lang":     track["lang"],
+        "segments": segments,
+        "text":     text,
+    }))
+}
+
+fn json3_url(base: &str) -> Option<String> {
+    let (path, query) = base.split_once('?')?;
+    let mut params: Vec<&str> = query
+        .split('&')
+        .filter(|p| !p.starts_with("fmt="))
+        .collect();
+    params.push("fmt=json3");
+    Some(format!("{path}?{}", params.join("&")))
+}
+
+fn transcript_segments(json3: &str) -> Option<Vec<Value>> {
+    let doc: Value = serde_json::from_str(json3).ok()?;
+    let seconds = |e: &Value, key: &str| e.get(key).and_then(Value::as_f64).unwrap_or(0.0) / 1000.0;
+    let segments = doc
+        .get("events")?
+        .as_array()?
+        .iter()
+        .filter_map(|e| {
+            let raw: String = e
+                .get("segs")?
+                .as_array()?
+                .iter()
+                .filter_map(|s| s.get("utf8")?.as_str())
+                .collect();
+            let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+            (!text.is_empty()).then(|| {
+                json!({
+                    "start":    seconds(e, "tStartMs"),
+                    "duration": seconds(e, "dDurationMs"),
+                    "text":     text,
+                })
+            })
+        })
+        .collect();
+    Some(segments)
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +255,7 @@ fn build_player_payload(
         "keywords":     keywords,
         "thumbnails":   thumbnails,
         "caption_tracks": captions,
+        "transcript":   Value::Null,
     })
 }
 
@@ -144,14 +264,10 @@ fn build_player_payload(
 // ---------------------------------------------------------------------------
 
 fn build_og_fallback(html: &str, url: &str, canonical: &str, video_id: &str) -> Value {
-    // Single scan for the three og:* fields read below.
     let og_meta = parse_og(html);
     let title = og_meta.raw("title");
     let description = og_meta.raw("description");
     let thumbnail = og_meta.raw("image");
-    // YouTube sets `<meta name="channel_name" ...>` on some pages but
-    // OG-only pages reliably carry `og:video:tag` and the channel in
-    // `<link itemprop="name">`. We keep this lean: just what's stable.
     let channel = meta_name(html, "author");
 
     json!({
@@ -162,7 +278,6 @@ fn build_og_fallback(html: &str, url: &str, canonical: &str, video_id: &str) -> 
         "title":        title,
         "description":  description,
         "author":       channel,
-        // OG path: these are null so the caller doesn't have to guess.
         "channel_id":   None::<String>,
         "channel_url":  None::<String>,
         "view_count":   None::<i64>,
@@ -177,6 +292,7 @@ fn build_og_fallback(html: &str, url: &str, canonical: &str, video_id: &str) -> 
         "keywords":     Vec::<Value>::new(),
         "thumbnails":   thumbnail.as_ref().map(|t| vec![json!({"url": t})]).unwrap_or_default(),
         "caption_tracks": Vec::<Value>::new(),
+        "transcript":   Value::Null,
     })
 }
 
@@ -337,6 +453,149 @@ var ytInitialPlayerResponse = {"videoDetails":{"videoId":"abc","title":"T","auth
         let v = extract_player_response(html).unwrap();
         let vd = v.get("videoDetails").unwrap();
         assert_eq!(vd.get("title").unwrap().as_str(), Some("T"));
+    }
+
+    fn recorded(name: &str) -> String {
+        std::fs::read_to_string(format!("testdata/youtube/{name}")).unwrap()
+    }
+
+    #[test]
+    fn caption_tracks_come_from_the_app_player_response() {
+        let player: Value =
+            serde_json::from_str(&recorded("player-android-jNQXAC9IVRw.json")).unwrap();
+        let tracks = app_caption_tracks(&player);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0]["lang"], "en");
+        assert_eq!(tracks[0]["name"], "English");
+        assert_eq!(tracks[1]["lang"], "de");
+        let url = tracks[0]["url"].as_str().unwrap();
+        assert!(url.starts_with("https://www.youtube.com/api/timedtext?v=jNQXAC9IVRw"));
+        assert!(!url.contains("exp=xpe"));
+    }
+
+    #[test]
+    fn transcript_url_asks_for_json3() {
+        let url =
+            json3_url("https://www.youtube.com/api/timedtext?v=abc&signature=x.y&lang=en&fmt=srv3")
+                .unwrap();
+        assert_eq!(
+            url,
+            "https://www.youtube.com/api/timedtext?v=abc&signature=x.y&lang=en&fmt=json3"
+        );
+        assert_eq!(
+            json3_url("https://www.youtube.com/api/timedtext?v=abc&lang=en").unwrap(),
+            "https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=json3"
+        );
+    }
+
+    #[test]
+    fn json3_becomes_transcript_segments() {
+        let segments = transcript_segments(&recorded("timedtext-jNQXAC9IVRw-en.json3")).unwrap();
+        assert_eq!(segments.len(), 6);
+        assert_eq!(segments[0]["start"], 1.2);
+        assert_eq!(segments[0]["duration"], 2.16);
+        assert_eq!(
+            segments[0]["text"],
+            "All right, so here we are, in front of the elephants"
+        );
+        assert_eq!(
+            segments[5]["text"],
+            "and that's pretty much all there is to say"
+        );
+        assert!(transcript_segments("").is_none());
+    }
+
+    const WATCH_PAGE: &str = r#"<html><body><script>
+var ytInitialPlayerResponse = {"videoDetails":{"videoId":"jNQXAC9IVRw","title":"Me at the zoo","author":"jawed"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?v=jNQXAC9IVRw&exp=xpe&lang=en","name":{"simpleText":"English"},"languageCode":"en"}]}}};
+</script></body></html>"#;
+
+    struct RecordedYoutube {
+        app_player: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Fetcher for RecordedYoutube {
+        async fn fetch(&self, url: &str) -> Result<crate::client::FetchResult, FetchError> {
+            let html = if url.contains("/api/timedtext") {
+                assert!(
+                    url.contains("fmt=json3") && !url.contains("exp=xpe"),
+                    "{url}"
+                );
+                recorded("timedtext-jNQXAC9IVRw-en.json3")
+            } else {
+                WATCH_PAGE.to_string()
+            };
+            Ok(page(url, html))
+        }
+
+        async fn post_json(
+            &self,
+            url: &str,
+            body: &str,
+            _headers: &[(&str, &str)],
+        ) -> Result<crate::client::FetchResult, FetchError> {
+            assert!(url.starts_with("https://www.youtube.com/youtubei/v1/player"));
+            assert!(body.contains("\"videoId\":\"jNQXAC9IVRw\""));
+            if !self.app_player {
+                return Err(FetchError::Build("no POST".into()));
+            }
+            Ok(page(url, recorded("player-android-jNQXAC9IVRw.json")))
+        }
+    }
+
+    fn page(url: &str, html: String) -> crate::client::FetchResult {
+        crate::client::FetchResult {
+            html,
+            document_bytes: None,
+            status: 200,
+            url: url.to_string(),
+            headers: http::HeaderMap::new(),
+            elapsed: std::time::Duration::ZERO,
+        }
+    }
+
+    #[tokio::test]
+    async fn extract_returns_the_transcript_text() {
+        let v = extract(
+            &RecordedYoutube { app_player: true },
+            "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        )
+        .await
+        .unwrap();
+        assert_eq!(v["title"], "Me at the zoo");
+        assert_eq!(v["transcript"]["lang"], "en");
+        assert_eq!(v["transcript"]["segments"].as_array().unwrap().len(), 6);
+        assert!(
+            v["transcript"]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("All right, so here we are, in front of the elephants the cool thing")
+        );
+        assert_eq!(v["caption_tracks"].as_array().unwrap().len(), 2);
+        assert!(
+            !v["caption_tracks"][0]["url"]
+                .as_str()
+                .unwrap()
+                .contains("exp=xpe")
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_without_the_app_player_keeps_page_tracks() {
+        let v = extract(
+            &RecordedYoutube { app_player: false },
+            "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        )
+        .await
+        .unwrap();
+        assert!(v["transcript"].is_null());
+        assert_eq!(v["caption_tracks"].as_array().unwrap().len(), 1);
+        assert!(
+            v["caption_tracks"][0]["url"]
+                .as_str()
+                .unwrap()
+                .contains("exp=xpe")
+        );
     }
 
     #[test]

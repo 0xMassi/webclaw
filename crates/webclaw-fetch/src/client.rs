@@ -810,6 +810,36 @@ impl FetchClient {
         }
     }
 
+    /// POST `body` as JSON with extra headers. One attempt within
+    /// [`FetchConfig::total_timeout`], through the same SSRF check and client
+    /// pool as [`Self::fetch`], without the cache or any rescue.
+    pub async fn post_json(
+        &self,
+        url: &str,
+        body: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        self.within_budget(Instant::now(), url, async {
+            let parsed_url = crate::url_security::validate_public_http_url(url).await?;
+            let url = parsed_url.as_str();
+            let start = Instant::now();
+            let client = self.pick_client(url);
+            let mut req = client
+                .post(url)
+                .header("content-type", "application/json")
+                .body(body.to_string());
+            for (name, value) in extra {
+                req = req.header(*name, *value);
+            }
+            let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
+            response_to_result(
+                Response::from_wreq(req.send().await?, attempt).await?,
+                start,
+            )
+        })
+        .await
+    }
+
     /// Fetch a URL and return the raw, undecoded response body as bytes.
     ///
     /// Unlike [`fetch`](Self::fetch), this does **not** run the body through
@@ -1125,6 +1155,15 @@ impl crate::fetcher::Fetcher for FetchClient {
         headers: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
         FetchClient::fetch_with_headers(self, url, headers).await
+    }
+
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        FetchClient::post_json(self, url, body, headers).await
     }
 
     fn cloud(&self) -> Option<&crate::cloud::CloudClient> {

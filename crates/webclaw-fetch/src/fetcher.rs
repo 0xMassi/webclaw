@@ -59,6 +59,22 @@ pub trait Fetcher: Send + Sync {
         self.fetch(url).await
     }
 
+    /// POST `body` as JSON with additional request headers and return the
+    /// response like [`Self::fetch`]. Needed for JSON APIs that only answer
+    /// POST (YouTube's player API, for one). The default implementation
+    /// refuses, so implementers without POST support stay functional and
+    /// the extractors that call it fall back.
+    async fn post_json(
+        &self,
+        url: &str,
+        _body: &str,
+        _headers: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        Err(FetchError::Build(format!(
+            "this fetcher does not send POST requests ({url})"
+        )))
+    }
+
     /// Optional cloud-escalation client for antibot bypass. Returning
     /// `Some` tells extractors they can call into the hosted API when
     /// local fetch hits a challenge page. Returning `None` makes
@@ -120,6 +136,15 @@ impl<T: Fetcher + ?Sized> Fetcher for &T {
         (**self).fetch_with_headers(url, headers).await
     }
 
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        (**self).post_json(url, body, headers).await
+    }
+
     fn cloud(&self) -> Option<&CloudClient> {
         (**self).cloud()
     }
@@ -156,6 +181,15 @@ impl<T: Fetcher + ?Sized> Fetcher for std::sync::Arc<T> {
         headers: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
         (**self).fetch_with_headers(url, headers).await
+    }
+
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<FetchResult, FetchError> {
+        (**self).post_json(url, body, headers).await
     }
 
     fn cloud(&self) -> Option<&CloudClient> {

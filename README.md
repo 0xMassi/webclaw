@@ -712,6 +712,7 @@ webclaw/
 | `ORCAROUTER_BASE_URL` | OrcaRouter base URL (defaults to https://api.orcarouter.ai/v1) |
 | `WEBCLAW_PROXY` | Single proxy URL |
 | `WEBCLAW_PROXY_FILE` | Proxy pool file |
+| `WEBCLAW_ALLOW_CIDRS` | Comma-separated CIDRs or addresses that webclaw may fetch although they are private or reserved, e.g. `198.18.0.0/15` when a TUN-mode proxy's fake-IP DNS answers every domain with an address from that range (otherwise every page tool fails with "blocked private or internal address"). For the MCP server, set it in the server's `env` block. Loopback, link-local, multicast and cloud metadata addresses stay blocked whatever it lists |
 | `WEBCLAW_RENDER` | MCP server rendering: `auto` (default), `always` or `never`; needs a `browser` build |
 | `WEBCLAW_CDP_URL` | MCP server renders with the browser at this DevTools endpoint instead of launching Chrome |
 | `WEBCLAW_BROWSER_PROFILE` | MCP server keeps its browser's cookies and storage in this directory between runs; see `--browser-profile` |

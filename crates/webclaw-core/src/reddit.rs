@@ -52,6 +52,28 @@ pub fn is_reddit_url(url: &str) -> bool {
     )
 }
 
+/// Fill comment scores from Reddit's server-rendered comment tree, matched
+/// by comment id. The tree lists the first page of comments, so comments it
+/// leaves out keep `None`, and so does the post.
+pub fn apply_comment_scores(thread: &mut RedditThread, comment_tree: &str) {
+    static COMMENT: std::sync::LazyLock<Selector> = std::sync::LazyLock::new(|| {
+        Selector::parse("shreddit-comment[thingid][score]").expect("valid selector")
+    });
+    let doc = Html::parse_document(comment_tree);
+    let scores: std::collections::HashMap<&str, i64> = doc
+        .select(&COMMENT)
+        .filter_map(|c| {
+            let id = c.value().attr("thingid")?.strip_prefix("t1_")?;
+            Some((id, c.value().attr("score")?.parse().ok()?))
+        })
+        .collect();
+    for comment in &mut thread.comments {
+        if let Some(score) = comment.id.as_deref().and_then(|id| scores.get(id)) {
+            comment.score = Some(*score);
+        }
+    }
+}
+
 /// Parse a comment thread from its Atom feed. `None` when `url` is not a
 /// thread or `feed` is not a Reddit Atom feed.
 pub fn try_extract_thread(feed: &str, url: &str) -> Option<RedditThread> {
@@ -698,6 +720,39 @@ mod tests {
                 .all(|c| !c.body.is_empty() && c.score.is_none())
         );
         assert_eq!(t.source_url, THREAD);
+    }
+
+    #[test]
+    fn comment_scores_come_from_the_comment_tree() {
+        let url = "https://www.reddit.com/r/rust/comments/1x9w6by/hey_rustaceans_got_an_easy_question_ask_here/";
+        let mut t = try_extract_thread(&fixture("thread-scored.atom"), url).unwrap();
+        apply_comment_scores(&mut t, &fixture("thread-scored-comments.html"));
+        let scores: Vec<_> = t
+            .comments
+            .iter()
+            .map(|c| (c.id.as_deref().unwrap(), c.score))
+            .collect();
+        assert_eq!(
+            scores,
+            [
+                ("19rnkcav91gmd", Some(2)),
+                ("19rjjnurcui5d", Some(2)),
+                ("19reyh3zxamw5", Some(3)),
+                ("phosst6", Some(1)),
+                ("php29hk", Some(1)),
+                ("phq9ijv", Some(5)),
+                ("phqbljf", None),
+            ]
+        );
+        assert_eq!(t.post.unwrap().score, None);
+    }
+
+    #[test]
+    fn comment_scores_ignore_html_without_comments() {
+        let url = "https://www.reddit.com/r/rust/comments/1x9w6by/x/";
+        let mut t = try_extract_thread(&fixture("thread-scored.atom"), url).unwrap();
+        apply_comment_scores(&mut t, "<html><title>Reddit</title></html>");
+        assert!(t.comments.iter().all(|c| c.score.is_none()));
     }
 
     #[test]

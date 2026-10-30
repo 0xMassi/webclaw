@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - **Reddit works again.** Threads, subreddits, listings and search are read from Reddit's public feeds. Threads return the post and up to 500 comments. Scores and reply nesting are not available this way, so `score` is `null` and comments come back as a flat list.
+- **Substack posts come back whole.** The `substack_post` vertical's `body_text` was only the first paragraph; it is now the text of the whole post.
 
 ## [0.7.0] - 2026-10-19
 

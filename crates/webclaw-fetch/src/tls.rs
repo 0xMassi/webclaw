@@ -43,7 +43,8 @@ impl wreq::dns::Resolve for PublicDnsResolver {
                 if crate::url_security::is_blocked_ip(addr.ip()) {
                     let err: Box<dyn std::error::Error + Send + Sync> = Box::new(io::Error::new(
                         io::ErrorKind::PermissionDenied,
-                        "DNS resolved to a blocked private or internal address",
+                        "DNS resolved to a blocked private or internal address \
+                         (WEBCLAW_ALLOW_CIDRS lists ranges to allow)",
                     ));
                     return Err(err);
                 }

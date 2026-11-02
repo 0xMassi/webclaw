@@ -366,6 +366,7 @@ webclaw/
 | `ORCAROUTER_BASE_URL` | OrcaRouter 接口地址（默认 https://api.orcarouter.ai/v1） |
 | `WEBCLAW_PROXY` | 单个代理 URL |
 | `WEBCLAW_PROXY_FILE` | 代理池文件 |
+| `WEBCLAW_ALLOW_CIDRS` | 逗号分隔的 CIDR 或 IP，允许抓取这些私有或保留地址，例如 TUN 模式代理的 fake-IP DNS 把所有域名解析到 `198.18.0.0/15` 时设为该网段。MCP 服务器请写在其 `env` 中。回环、链路本地、组播和云元数据地址始终被拦截 |
 
 ---
 

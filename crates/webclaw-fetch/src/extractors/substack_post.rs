@@ -108,6 +108,10 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
 // ---------------------------------------------------------------------------
 
 fn build_api_payload(url: &str, api_url: &str, slug: &str, p: Post) -> Value {
+    let body_text = p
+        .body_text
+        .or_else(|| p.body_html.as_deref().and_then(|h| html_text(h, url)))
+        .or(p.truncated_body_text);
     json!({
         "url":                  url,
         "api_url":              api_url,
@@ -129,7 +133,7 @@ fn build_api_payload(url: &str, api_url: &str, slug: &str, p: Post) -> Value {
         "reactions":            p.reactions,
         "comment_count":        p.comment_count,
         "body_html":            p.body_html,
-        "body_text":            p.truncated_body_text.or(p.body_text),
+        "body_text":            body_text,
         "publication": json!({
             "id":           p.publication.as_ref().and_then(|pub_| pub_.id),
             "name":         p.publication.as_ref().and_then(|pub_| pub_.name.clone()),
@@ -143,6 +147,18 @@ fn build_api_payload(url: &str, api_url: &str, slug: &str, p: Post) -> Value {
             "photo":  a.photo_url,
         })).collect::<Vec<_>>(),
     })
+}
+
+fn html_text(html: &str, url: &str) -> Option<String> {
+    let options = webclaw_core::ExtractionOptions {
+        include_selectors: vec!["body".into()],
+        ..Default::default()
+    };
+    let text = webclaw_core::extract_with_options(html, Some(url), &options)
+        .ok()?
+        .content
+        .plain_text;
+    (!text.trim().is_empty()).then_some(text)
 }
 
 // ---------------------------------------------------------------------------
@@ -536,6 +552,26 @@ mod tests {
         assert_eq!(v["updated_at"], "2025-10-12T09:00:00Z");
         assert_eq!(v["authors"][0]["name"], "Alice Author");
         assert_eq!(v["authors"][0]["handle"], "alice");
+    }
+
+    #[test]
+    fn api_payload_body_text_is_the_whole_post() {
+        let raw =
+            std::fs::read_to_string("testdata/substack/the-october-inflection-point-for.json")
+                .unwrap();
+        let post: Post = serde_json::from_str(&raw).unwrap();
+        let url = "https://simonw.substack.com/p/the-october-inflection-point-for";
+        let v = build_api_payload(
+            url,
+            "https://simonw.substack.com/api/v1/posts/the-october-inflection-point-for",
+            "the-october-inflection-point-for",
+            post,
+        );
+        let body = v["body_text"].as_str().unwrap();
+        assert!(body.starts_with("In this newsletter:"), "{body:.80}");
+        assert!(body.split_whitespace().count() > 4500, "{}", body.len());
+        assert!(body.contains("please consider sponsoring me via GitHub"));
+        assert!(!body.contains("<p>"));
     }
 
     #[test]

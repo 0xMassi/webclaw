@@ -41,6 +41,20 @@ pub fn to_feed_url(url: &str) -> String {
     parsed.to_string()
 }
 
+/// Reddit's server-rendered comment tree for a `/r/<sub>/comments/<id>` URL.
+/// It carries the comment scores the feed leaves out.
+pub fn to_comments_url(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    let segments: Vec<&str> = parsed.path_segments()?.filter(|s| !s.is_empty()).collect();
+    let i = segments.iter().position(|s| *s == "comments")?;
+    match (&segments[..i], segments.get(i + 1)) {
+        ([r, sub], Some(id)) if *r == "r" => Some(format!(
+            "https://www.reddit.com/svc/shreddit/comments/r/{sub}/t3_{id}"
+        )),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +83,26 @@ mod tests {
         assert_eq!(
             to_feed_url("https://www.reddit.com/r/rust/comments/abc123/?limit=100"),
             "https://www.reddit.com/r/rust/comments/abc123/.rss?limit=100"
+        );
+    }
+
+    #[test]
+    fn thread_maps_to_its_comment_tree() {
+        for url in [
+            "https://www.reddit.com/r/rust/comments/1x9w6by/hey_rustaceans/",
+            "https://old.reddit.com/r/rust/comments/1x9w6by/?sort=new",
+            "https://www.reddit.com/r/rust/comments/1x9w6by/.rss?limit=500",
+        ] {
+            assert_eq!(
+                to_comments_url(url).as_deref(),
+                Some("https://www.reddit.com/svc/shreddit/comments/r/rust/t3_1x9w6by"),
+                "{url}"
+            );
+        }
+        assert_eq!(to_comments_url("https://www.reddit.com/r/rust/"), None);
+        assert_eq!(
+            to_comments_url("https://www.reddit.com/comments/1x9w6by/"),
+            None
         );
     }
 

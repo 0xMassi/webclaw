@@ -76,7 +76,6 @@ impl LlmProvider for AnthropicProvider {
             &request.model
         };
 
-        // Anthropic separates system from messages. Extract the system message if present.
         let system_content: Option<String> = request
             .messages
             .iter()
@@ -99,9 +98,6 @@ impl LlmProvider for AnthropicProvider {
         if let Some(system) = &system_content {
             body["system"] = json!(system);
         }
-        if let Some(temp) = request.temperature {
-            body["temperature"] = json!(temp);
-        }
 
         let resp = self
             .client
@@ -122,19 +118,11 @@ impl LlmProvider for AnthropicProvider {
             )));
         }
 
-        // Read body with a size cap so a malicious or misbehaving
-        // endpoint can't allocate unbounded memory via resp.json().
         let json = super::response_json_capped(resp).await?;
+        let raw = response_text(&json)
+            .ok_or_else(|| LlmError::InvalidJson("no text block in anthropic response".into()))?;
 
-        // Anthropic response: {"content": [{"type": "text", "text": "..."}]}
-        let raw = json["content"][0]["text"]
-            .as_str()
-            .map(String::from)
-            .ok_or_else(|| {
-                LlmError::InvalidJson("missing content[0].text in anthropic response".into())
-            })?;
-
-        Ok(strip_thinking_tags(&raw))
+        Ok(strip_thinking_tags(raw))
     }
 
     async fn is_available(&self) -> bool {
@@ -146,9 +134,32 @@ impl LlmProvider for AnthropicProvider {
     }
 }
 
+fn response_text(json: &serde_json::Value) -> Option<&str> {
+    json["content"]
+        .as_array()?
+        .iter()
+        .find(|block| block["type"] == "text")?["text"]
+        .as_str()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_text_skips_leading_thinking_block() {
+        let json = json!({"content": [
+            {"type": "thinking", "thinking": "", "signature": "sig"},
+            {"type": "text", "text": "answer"}
+        ]});
+        assert_eq!(response_text(&json), Some("answer"));
+    }
+
+    #[test]
+    fn response_text_is_none_without_a_text_block() {
+        let json = json!({"content": [{"type": "thinking", "thinking": ""}]});
+        assert_eq!(response_text(&json), None);
+    }
 
     #[test]
     fn empty_key_returns_none() {

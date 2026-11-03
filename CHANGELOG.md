@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **PDFs with a slightly off cross-reference offset open.** Some PDFs point their cross-reference table at the line break just before it. These failed with "invalid file trailer"; webclaw now corrects the offset and reads the text.
+
 ## [0.7.1] - 2026-11-03
 
 ### Fixed

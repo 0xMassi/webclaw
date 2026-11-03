@@ -9,6 +9,8 @@ pub use error::PdfError;
 
 // pdf-extract re-exports all of lopdf via `pub use lopdf::*`
 use pdf_extract::{Dictionary, Document, Object};
+use std::collections::HashSet;
+use std::ops::Range;
 use tracing::debug;
 
 /// Controls how strictly we treat empty/sparse PDFs.
@@ -41,6 +43,7 @@ pub struct PdfMetadata {
 const MAX_PDF_SIZE: usize = 50 * 1024 * 1024; // 50MB
 const MAX_PDF_PAGES: usize = 10_000;
 const PDF_HEADER_WINDOW: usize = 1_024;
+const PDF_WHITESPACE: &[u8] = b" \t\n\r\0\x0C";
 
 /// Extract text content from raw PDF bytes.
 ///
@@ -58,15 +61,21 @@ pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
         )));
     }
 
-    // The PDF header may *begin* anywhere in the first 1,024 bytes. Include
-    // enough trailing bytes to match a marker that starts at the last allowed
-    // offset without accepting a marker that starts after that boundary.
     let header_window = &bytes[..bytes.len().min(PDF_HEADER_WINDOW + 4)];
     if !header_window.windows(5).any(|window| window == b"%PDF-") {
         return Err(PdfError::InvalidPdf("missing PDF header".into()));
     }
 
-    let doc = Document::load_mem(bytes).map_err(|e| PdfError::InvalidPdf(e.to_string()))?;
+    let repaired;
+    let (bytes, doc) = match Document::load_mem(bytes) {
+        Ok(doc) => (bytes, doc),
+        Err(e) => {
+            let invalid = || PdfError::InvalidPdf(e.to_string());
+            repaired = repair_xref_offsets(bytes).ok_or_else(invalid)?;
+            let doc = Document::load_mem(&repaired).map_err(|_| invalid())?;
+            (repaired.as_slice(), doc)
+        }
+    };
 
     let page_count = doc.page_iter().take(MAX_PDF_PAGES + 1).count();
     if page_count > MAX_PDF_PAGES {
@@ -78,15 +87,11 @@ pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
 
     debug!(pages = page_count, "PDF document loaded");
 
-    // Some real PDFs contain drawing operators that panic pdf-extract's layout
-    // interpreter. Reuse lopdf's text-only reader on the already loaded document.
     let text = match std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes)) {
         Ok(Ok(text)) => text,
         _ => {
             tracing::warn!("PDF layout extraction failed; trying text-only extraction");
             let pages: Vec<_> = doc.get_pages().into_keys().collect();
-            // The document is owned here and discarded on unwind; no parser state
-            // is reused after a panic, including its opaque encryption filters.
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                 doc.extract_text(&pages)
             }))
@@ -111,6 +116,72 @@ pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
         page_count,
         metadata,
     })
+}
+
+fn repair_xref_offsets(bytes: &[u8]) -> Option<Vec<u8>> {
+    let bytes = &bytes[find(bytes, b"%PDF-")?..];
+    let tail = bytes.len().saturating_sub(512);
+    let at = tail + rfind(&bytes[tail..], b"startxref")? + b"startxref".len();
+    let (startxref, first) = xref_offset(bytes, at)?;
+    let mut repaired = bytes.to_vec();
+    let mut xref = first;
+    let mut seen = HashSet::new();
+    while seen.insert(xref) {
+        let Some(trailer) = find(&bytes[xref..], b"trailer").map(|pos| xref + pos) else {
+            break;
+        };
+        let dict = &bytes[trailer..bytes.len().min(trailer + 1_024)];
+        let dict = &dict[..find(dict, b"startxref").unwrap_or(dict.len())];
+        let Some((digits, prev)) =
+            find(dict, b"/Prev").and_then(|pos| xref_offset(bytes, trailer + pos + b"/Prev".len()))
+        else {
+            break;
+        };
+        let fixed = prev.to_string();
+        if fixed.len() == digits.len() {
+            repaired[digits].copy_from_slice(fixed.as_bytes());
+        }
+        xref = prev;
+    }
+    repaired.splice(startxref, first.to_string().into_bytes());
+    (repaired != bytes).then_some(repaired)
+}
+
+fn xref_offset(bytes: &[u8], at: usize) -> Option<(Range<usize>, usize)> {
+    let start = at
+        + bytes
+            .get(at..)?
+            .iter()
+            .take_while(|b| PDF_WHITESPACE.contains(b))
+            .count();
+    let len = bytes[start..]
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    let offset: usize = std::str::from_utf8(&bytes[start..start + len])
+        .ok()?
+        .parse()
+        .ok()?;
+    let target = bytes.get(offset..)?;
+    let skip = target
+        .iter()
+        .take_while(|b| PDF_WHITESPACE.contains(b))
+        .count();
+    target[skip..]
+        .starts_with(b"xref")
+        .then_some((start..start + len, offset + skip))
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .rposition(|window| window == needle)
 }
 
 /// Format a PdfResult as markdown for downstream consumers.
@@ -280,8 +351,7 @@ mod tests {
         assert!(matches!(result, Err(PdfError::InvalidPdf(_))));
     }
 
-    #[test]
-    fn malformed_drawing_operator_preserves_text_without_panicking() {
+    fn text_pdf(content: &[u8]) -> Vec<u8> {
         use pdf_extract::{Stream, dictionary};
         let mut doc = Document::with_version("1.5");
         let pages_id = doc.new_object_id();
@@ -289,21 +359,126 @@ mod tests {
             dictionary! {"Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"},
         );
         let resources = doc.add_object(dictionary! {"Font" => dictionary! {"F1" => font}});
-        let content = doc.add_object(Stream::new(
-            dictionary! {},
-            b"BT /F1 12 Tf 10 10 Td (Readable fallback text) Tj ET m".to_vec(),
-        ));
+        let content = doc.add_object(Stream::new(dictionary! {}, content.to_vec()));
         let page = doc.add_object(
             dictionary! {"Type" => "Page", "Parent" => pages_id, "Contents" => content},
         );
         doc.objects.insert(pages_id, dictionary! {"Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1, "Resources" => resources, "MediaBox" => vec![0.into(), 0.into(), 600.into(), 800.into()]}.into());
         let catalog = doc.add_object(dictionary! {"Type" => "Catalog", "Pages" => pages_id});
         doc.trailer.set("Root", catalog);
+        doc.reference_table.cross_reference_type = pdf_extract::xref::XrefType::CrossReferenceTable;
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn malformed_drawing_operator_preserves_text_without_panicking() {
+        let bytes = text_pdf(b"BT /F1 12 Tf 10 10 Td (Readable fallback text) Tj ET m");
         let result = extract_pdf(&bytes, PdfMode::Auto).unwrap();
         assert!(result.text.contains("Readable fallback text"));
         assert_eq!(result.page_count, 1);
+    }
+
+    fn startxref(bytes: &[u8]) -> (usize, usize, usize) {
+        let tail = bytes.len() - 64;
+        let at = tail + find(&bytes[tail..], b"startxref").unwrap() + b"startxref\n".len();
+        let digits = bytes[at..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        let xref = std::str::from_utf8(&bytes[at..at + digits])
+            .unwrap()
+            .parse()
+            .unwrap();
+        (at, digits, xref)
+    }
+
+    fn point_startxref_at(bytes: &[u8], offset: usize) -> Vec<u8> {
+        let (at, digits, _) = startxref(bytes);
+        let mut drifted = bytes.to_vec();
+        drifted.splice(at..at + digits, offset.to_string().into_bytes());
+        drifted
+    }
+
+    #[test]
+    fn xref_offset_pointing_at_preceding_whitespace_still_loads() {
+        let bytes = text_pdf(b"BT /F1 12 Tf 10 10 Td (Offset drift text) Tj ET");
+        let (_, _, xref) = startxref(&bytes);
+        assert_eq!(&bytes[xref - 1..xref + 4], b"\nxref");
+        let drifted = point_startxref_at(&bytes, xref - 1);
+        assert!(Document::load_mem(&drifted).is_err());
+        let result = extract_pdf(&drifted, PdfMode::Auto).unwrap();
+        assert!(result.text.contains("Offset drift text"));
+    }
+
+    #[test]
+    fn xref_repair_follows_prev_into_earlier_sections() {
+        let bytes = text_pdf(b"BT /F1 12 Tf 10 10 Td (Earlier revision text) Tj ET");
+        let (_, _, xref) = startxref(&bytes);
+        let trailer = find(&bytes[xref..], b"<<").unwrap() + xref;
+        let close = find(&bytes[trailer..], b">>").unwrap() + trailer;
+        let dict = std::str::from_utf8(&bytes[trailer..close]).unwrap();
+        let mut updated = bytes.clone();
+        let section = updated.len() + 1;
+        updated.extend_from_slice(
+            format!(
+                "\nxref\n0 1\n0000000000 65535 f \ntrailer\n{dict}/Prev {}>>\nstartxref\n{section}\n%%EOF\n",
+                xref - 1
+            )
+            .as_bytes(),
+        );
+        assert!(Document::load_mem(&updated).is_err());
+        let result = extract_pdf(&updated, PdfMode::Auto).unwrap();
+        assert!(result.text.contains("Earlier revision text"));
+    }
+
+    #[test]
+    fn xref_repair_leaves_stream_text_alone() {
+        let content = |n: usize| format!("BT /F1 12 Tf 10 10 Td (See startxref {n}) Tj ET");
+        let (_, _, xref) = startxref(&text_pdf(content(100).as_bytes()));
+        let bytes = text_pdf(content(xref - 1).as_bytes());
+        assert_eq!(startxref(&bytes).2, xref);
+        let drifted = point_startxref_at(&bytes, xref - 1);
+        let result = extract_pdf(&drifted, PdfMode::Auto).unwrap();
+        assert!(result.text.contains(&format!("See startxref {}", xref - 1)));
+    }
+
+    #[test]
+    fn xref_repair_counts_offsets_from_the_pdf_header() {
+        let bytes = text_pdf(b"BT /F1 12 Tf 10 10 Td (Prefixed text) Tj ET");
+        let (_, _, xref) = startxref(&bytes);
+        let mut prefixed = b"junk\n".to_vec();
+        prefixed.extend(point_startxref_at(&bytes, xref - 1));
+        let result = extract_pdf(&prefixed, PdfMode::Auto).unwrap();
+        assert!(result.text.contains("Prefixed text"));
+    }
+
+    #[test]
+    fn xref_repair_skips_nul_padding() {
+        let bytes = text_pdf(b"BT /F1 12 Tf 10 10 Td (Nul padded text) Tj ET");
+        let (_, _, xref) = startxref(&bytes);
+        let mut padded = point_startxref_at(&bytes, xref - 1);
+        padded[xref - 1] = 0;
+        let result = extract_pdf(&padded, PdfMode::Auto).unwrap();
+        assert!(result.text.contains("Nul padded text"));
+    }
+
+    #[test]
+    fn xref_repair_crosses_a_digit_boundary() {
+        let content = |pad: usize| {
+            format!(
+                "BT /F1 12 Tf 10 10 Td (Boundary text) Tj ET{}",
+                " ".repeat(pad)
+            )
+        };
+        let bytes = (0..1000)
+            .map(|pad| text_pdf(content(pad).as_bytes()))
+            .find(|bytes| startxref(bytes).2 == 1000)
+            .unwrap();
+        let drifted = point_startxref_at(&bytes, 999);
+        let result = extract_pdf(&drifted, PdfMode::Auto).unwrap();
+        assert!(result.text.contains("Boundary text"));
     }
 
     #[test]

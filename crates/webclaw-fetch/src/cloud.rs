@@ -553,6 +553,9 @@ fn noscript_asks_for_js(html: &str) -> bool {
 /// cloud API response when we escalated.
 pub enum SmartFetchResult {
     Local(Box<webclaw_core::ExtractionResult>),
+    /// A local extraction of a page that looks like it needs JavaScript to
+    /// show its content, returned when no cloud client was given to render it.
+    Unrendered(Box<webclaw_core::ExtractionResult>),
     Cloud(Value),
 }
 
@@ -662,7 +665,7 @@ pub async fn smart_fetch(
     let looks_unrendered =
         whole_page && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html);
     if issue.is_none() && looks_unrendered && cloud.is_none() {
-        return Ok(SmartFetchResult::Local(Box::new(extraction)));
+        return Ok(SmartFetchResult::Unrendered(Box::new(extraction)));
     }
     if issue.is_some() || looks_unrendered {
         info!(
@@ -1095,8 +1098,36 @@ mod tests {
         .await
         .expect("local extraction should be returned");
         assert!(
-            matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("Starter costs"))
+            matches!(result, SmartFetchResult::Unrendered(e) if e.content.markdown.contains("Starter costs"))
         );
+    }
+
+    #[tokio::test]
+    async fn only_a_page_that_needs_javascript_comes_back_unrendered() {
+        let run = |html| async move {
+            smart_fetch(
+                &StaticPage(html),
+                None,
+                "https://example.com/js/",
+                &[],
+                &[],
+                false,
+                &["markdown"],
+            )
+            .await
+        };
+        assert!(matches!(
+            run("<html><body><h1>Quotes to Scrape</h1><div class=\"quotes\"></div><script src=\"/static/jquery.js\"></script><script>var data = [];</script></body></html>").await,
+            Ok(SmartFetchResult::Unrendered(e)) if e.content.markdown.contains("Quotes to Scrape")
+        ));
+        let article = format!(
+            "<html><body><article><h1>Quotes</h1><p>{}</p></article><script src=\"/app.js\"></script></body></html>",
+            "Every quote on this page is written out in the HTML the server sends. ".repeat(20)
+        );
+        assert!(matches!(
+            run(Box::leak(article.into_boxed_str())).await,
+            Ok(SmartFetchResult::Local(_))
+        ));
     }
 
     struct BlockedPage(&'static str);
@@ -1196,7 +1227,7 @@ mod tests {
             .await
         };
         assert!(
-            matches!(run(true, SIGNUP).await, Ok(SmartFetchResult::Local(e)) if e.content.markdown.contains("Create an account"))
+            matches!(run(true, SIGNUP).await, Ok(SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e)) if e.content.markdown.contains("Create an account"))
         );
         assert!(run(false, SIGNUP).await.is_err());
         assert!(run(true, SIGNUP_BEHIND_DATADOME).await.is_err());

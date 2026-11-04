@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **The MCP `scrape` tool says when a page needs JavaScript.** In a `webclaw-mcp` built without the `browser` feature and run without `WEBCLAW_API_KEY`, a page that builds its content with scripts still comes back as fetched, followed by a one-line notice that it needs JavaScript and how to get it rendered.
+
 ## [0.7.1] - 2026-11-03
 
 ### Fixed

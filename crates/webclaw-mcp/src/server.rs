@@ -146,6 +146,16 @@ fn apply_render(
     }
 }
 
+#[cfg(not(feature = "browser"))]
+fn unrendered_notice(result: &SmartFetchResult) -> Option<&'static str> {
+    matches!(result, SmartFetchResult::Unrendered(_)).then_some(crate::hosted::UNRENDERED_NOTICE)
+}
+
+#[cfg(feature = "browser")]
+fn unrendered_notice(_result: &SmartFetchResult) -> Option<&'static str> {
+    None
+}
+
 #[cfg(feature = "browser")]
 fn parse_actions(
     actions: Option<&[serde_json::Value]>,
@@ -670,10 +680,14 @@ impl WebclawMcp {
 
     /// Scrape a single URL and extract its content as markdown, LLM-optimized text, plain text, or full JSON.
     /// Pages whose content needs JavaScript are rendered in a local Chrome when this server has browser support; otherwise, and on bot protection, it falls back to the webclaw cloud API when WEBCLAW_API_KEY is set.
+    /// A server without browser support returns a page that needs JavaScript with a notice saying so when WEBCLAW_API_KEY is not set.
     /// With `actions`, in the hosted API's format, the page is rendered and the steps (click, type, press, scroll, wait, waitForSelector, executeJavascript) run before it is read, for infinite scroll, "load more" buttons, tabs and forms.
     /// With `capture_network`, the page is rendered and the XHR and fetch responses it loaded (the JSON a single-page app gets from its API) come back after the content.
     #[tool]
-    async fn scrape(&self, Parameters(params): Parameters<ScrapeParams>) -> Result<String, String> {
+    async fn scrape(
+        &self,
+        Parameters(params): Parameters<ScrapeParams>,
+    ) -> Result<CallToolResult, String> {
         validate_url(&params.url).await?;
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
@@ -697,7 +711,9 @@ impl WebclawMcp {
         if params.actions.as_ref().is_some_and(|a| !a.is_empty())
             || params.capture_network.is_some()
         {
-            return self.act_and_scrape(&params, sizes).await;
+            return Ok(CallToolResult::success(vec![
+                rmcp::model::ContentBlock::text(self.act_and_scrape(&params, sizes).await?),
+            ]));
         }
         let include = params.include_selectors.unwrap_or_default();
         let exclude = params.exclude_selectors.unwrap_or_default();
@@ -757,64 +773,19 @@ impl WebclawMcp {
         )
         .await?;
 
-        match result {
-            SmartFetchResult::Local(mut extraction) => {
-                if let Some(ref query) = params.query {
-                    webclaw_core::focus_extraction(&mut extraction, query);
-                }
-                if cite_links {
-                    extraction = cited(extraction).await?;
-                }
-                if let Some((size, overlap)) = sizes {
-                    let (url, markdown) = (params.url.clone(), extraction.content.markdown);
-                    return tokio::task::spawn_blocking(move || {
-                        chunks_json(&[(&url, &markdown)], size, overlap)
-                    })
-                    .await
-                    .map_err(|e| e.to_string())?;
-                }
-                Ok(format_page(*extraction, format, &params.url))
-            }
-            SmartFetchResult::Cloud(mut resp) => {
-                if let Some(ref query) = params.query {
-                    webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
-                }
-                if cite_links {
-                    let url = params.url.clone();
-                    resp = tokio::task::spawn_blocking(move || {
-                        webclaw_fetch::cloud::cite_cloud_response(&mut resp, Some(&url));
-                        resp
-                    })
-                    .await
-                    .map_err(|e| e.to_string())?;
-                }
-                if let Some((size, overlap)) = sizes {
-                    let markdown = resp
-                        .get("markdown")
-                        .or_else(|| resp.get("content")?.get("markdown"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let url = params.url.clone();
-                    return tokio::task::spawn_blocking(move || {
-                        chunks_json(&[(&url, &markdown)], size, overlap)
-                    })
-                    .await
-                    .map_err(|e| e.to_string())?;
-                }
-                let content = resp
-                    .get(format)
-                    .or_else(|| resp.get("markdown"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                if content.is_empty() {
-                    Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
-                } else {
-                    Ok(content.to_string())
-                }
-            }
-        }
+        let notice = unrendered_notice(&result);
+        let page = scraped(
+            result,
+            &params.url,
+            params.query.as_deref(),
+            format,
+            sizes,
+            cite_links,
+        )
+        .await?;
+        let mut content = vec![rmcp::model::ContentBlock::text(page)];
+        content.extend(notice.map(rmcp::model::ContentBlock::text));
+        Ok(CallToolResult::success(content))
     }
 
     /// Crawl a website starting from a seed URL, following links breadth-first up to a configurable depth and page limit. With `query`, the links most likely to answer it are followed first and pages come back best match first, each cut to the parts that answer it.
@@ -1142,7 +1113,7 @@ impl WebclawMcp {
         let chain = self.llm_chain.as_deref().unwrap();
 
         let llm_content = match self.smart_fetch_llm(&params.url).await? {
-            SmartFetchResult::Local(extraction) => {
+            SmartFetchResult::Local(extraction) | SmartFetchResult::Unrendered(extraction) => {
                 webclaw_core::to_llm_text(&extraction, Some(&params.url))
             }
             SmartFetchResult::Cloud(resp) => resp
@@ -1196,7 +1167,7 @@ impl WebclawMcp {
         let chain = self.llm_chain.as_deref().unwrap();
 
         let llm_content = match self.smart_fetch_llm(&params.url).await? {
-            SmartFetchResult::Local(extraction) => {
+            SmartFetchResult::Local(extraction) | SmartFetchResult::Unrendered(extraction) => {
                 webclaw_core::to_llm_text(&extraction, Some(&params.url))
             }
             SmartFetchResult::Cloud(resp) => format!(
@@ -1235,7 +1206,7 @@ impl WebclawMcp {
         .await?;
 
         match result {
-            SmartFetchResult::Local(current) => {
+            SmartFetchResult::Local(current) | SmartFetchResult::Unrendered(current) => {
                 let content_diff = webclaw_core::diff::diff(&previous, &current);
                 Ok(serde_json::to_string_pretty(&content_diff).unwrap_or_default())
             }
@@ -1554,6 +1525,72 @@ impl WebclawMcp {
     }
 }
 
+async fn scraped(
+    result: SmartFetchResult,
+    url: &str,
+    query: Option<&str>,
+    format: &str,
+    sizes: Option<(usize, usize)>,
+    cite_links: bool,
+) -> Result<String, String> {
+    match result {
+        SmartFetchResult::Local(mut extraction) | SmartFetchResult::Unrendered(mut extraction) => {
+            if let Some(query) = query {
+                webclaw_core::focus_extraction(&mut extraction, query);
+            }
+            if cite_links {
+                extraction = cited(extraction).await?;
+            }
+            if let Some((size, overlap)) = sizes {
+                let (url, markdown) = (url.to_string(), extraction.content.markdown);
+                return tokio::task::spawn_blocking(move || {
+                    chunks_json(&[(&url, &markdown)], size, overlap)
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(format_page(*extraction, format, url))
+        }
+        SmartFetchResult::Cloud(mut resp) => {
+            if let Some(query) = query {
+                webclaw_fetch::cloud::focus_cloud_response(&mut resp, query);
+            }
+            if cite_links {
+                let url = url.to_string();
+                resp = tokio::task::spawn_blocking(move || {
+                    webclaw_fetch::cloud::cite_cloud_response(&mut resp, Some(&url));
+                    resp
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            }
+            if let Some((size, overlap)) = sizes {
+                let markdown = resp
+                    .get("markdown")
+                    .or_else(|| resp.get("content")?.get("markdown"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let url = url.to_string();
+                return tokio::task::spawn_blocking(move || {
+                    chunks_json(&[(&url, &markdown)], size, overlap)
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            }
+            let content = resp
+                .get(format)
+                .or_else(|| resp.get("markdown"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if content.is_empty() {
+                return Ok(serde_json::to_string_pretty(&resp).unwrap_or_default());
+            }
+            Ok(content.to_string())
+        }
+    }
+}
+
 fn chunk_sizes(
     chunk: Option<usize>,
     overlap: Option<usize>,
@@ -1811,6 +1848,33 @@ fn pick(
 #[cfg(test)]
 mod tests {
     use super::{check_select, citations, slugify};
+
+    #[test]
+    fn only_a_build_without_a_browser_flags_an_unrendered_page() {
+        use webclaw_fetch::cloud::SmartFetchResult;
+        let page = || {
+            Box::new(
+                webclaw_core::extract("<html><body><h1>Quotes</h1></body></html>", None).unwrap(),
+            )
+        };
+        assert_eq!(
+            super::unrendered_notice(&SmartFetchResult::Local(page())),
+            None
+        );
+        let notice = super::unrendered_notice(&SmartFetchResult::Unrendered(page()));
+        if cfg!(feature = "browser") {
+            assert_eq!(notice, None);
+        } else {
+            let notice = notice.unwrap();
+            assert!(
+                !notice.contains('\n')
+                    && notice.contains("JavaScript")
+                    && notice.contains("WEBCLAW_API_KEY")
+                    && notice.contains("--features browser"),
+                "{notice}"
+            );
+        }
+    }
 
     #[test]
     fn citation_refusals_name_the_formats_each_tool_takes() {

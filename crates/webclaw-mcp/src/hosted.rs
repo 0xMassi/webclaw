@@ -1,0 +1,1 @@
+pub(crate) const UNRENDERED_NOTICE: &str = "Notice: this page needs JavaScript to show its content, so what came back may be incomplete. Set WEBCLAW_API_KEY to render it through the hosted API, or build webclaw-mcp with `--features browser` to render it locally.";

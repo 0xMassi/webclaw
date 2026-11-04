@@ -668,7 +668,9 @@ pub async fn smart_fetch(
         page_words
     };
     let looks_unrendered = needs_js_rendering(words, &fetch_result.html);
-    if issue.is_none() && looks_unrendered && cloud.is_none() {
+    let empty_without_browser =
+        !cfg!(feature = "browser") && issue == Some(webclaw_core::quality::ContentIssue::Empty);
+    if (issue.is_none() || empty_without_browser) && looks_unrendered && cloud.is_none() {
         return Ok(SmartFetchResult::Unrendered(Box::new(extraction)));
     }
     if issue.is_some() || (whole_page && looks_unrendered) {
@@ -1159,6 +1161,27 @@ mod tests {
         )
         .await;
         assert!(matches!(excluded, Ok(SmartFetchResult::Unrendered(_))));
+    }
+
+    #[tokio::test]
+    async fn an_empty_app_shell_without_a_browser_comes_back_unrendered() {
+        let shell = smart_fetch(
+            &StaticPage(
+                "<html><body><div id=\"root\"></div><script src=\"/app.js\"></script></body></html>",
+            ),
+            None,
+            "https://example.com/app",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await;
+        if cfg!(feature = "browser") {
+            assert!(shell.is_err());
+        } else {
+            assert!(matches!(shell, Ok(SmartFetchResult::Unrendered(_))));
+        }
     }
 
     struct BlockedPage(&'static str);

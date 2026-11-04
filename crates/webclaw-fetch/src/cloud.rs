@@ -410,16 +410,22 @@ pub fn focus_cloud_response(resp: &mut Value, query: &str) {
     if let Some(content) = resp.get_mut("content") {
         focus_fields(content, query);
     }
+    if let Some(content) = resp.pointer_mut("/extraction/content") {
+        focus_fields(content, query);
+    }
 }
 
 /// Rewrite the markdown of a hosted API response with numbered link
 /// citations, as [`webclaw_core::to_citations`] does for a local page.
 pub fn cite_cloud_response(resp: &mut Value, page_url: Option<&str>) {
-    if let Some(Value::String(text)) = resp.get_mut("markdown") {
-        *text = webclaw_core::to_citations(text, page_url);
-    }
-    if let Some(Value::String(text)) = resp.get_mut("content").and_then(|c| c.get_mut("markdown")) {
-        *text = webclaw_core::to_citations(text, page_url);
+    for path in [
+        "/markdown",
+        "/content/markdown",
+        "/extraction/content/markdown",
+    ] {
+        if let Some(Value::String(text)) = resp.pointer_mut(path) {
+            *text = webclaw_core::to_citations(text, page_url);
+        }
     }
 }
 
@@ -1004,9 +1010,13 @@ mod tests {
     #[test]
     fn cloud_responses_are_focused_too() {
         let page = "# Rust\n\n## Tooling\n\nCargo builds it.\n\n## History\n\nGraydon began it.";
-        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "url": "https://x"});
+        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "extraction": {"content": {"markdown": page}}, "url": "https://x"});
         focus_cloud_response(&mut resp, "tooling");
-        for text in [&resp["markdown"], &resp["content"]["markdown"]] {
+        for text in [
+            &resp["markdown"],
+            &resp["content"]["markdown"],
+            &resp["extraction"]["content"]["markdown"],
+        ] {
             let text = text.as_str().unwrap();
             assert!(
                 text.contains("Cargo") && !text.contains("Graydon"),
@@ -1019,9 +1029,13 @@ mod tests {
     #[test]
     fn cloud_responses_are_cited_too() {
         let page = "See [docs](https://d.com).";
-        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "url": "https://x"});
+        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "extraction": {"content": {"markdown": page}}, "url": "https://x"});
         cite_cloud_response(&mut resp, Some("https://x"));
-        for text in [&resp["markdown"], &resp["content"]["markdown"]] {
+        for text in [
+            &resp["markdown"],
+            &resp["content"]["markdown"],
+            &resp["extraction"]["content"]["markdown"],
+        ] {
             assert_eq!(
                 text.as_str().unwrap(),
                 "See docs[^1].\n\n## Links\n\n[^1]: https://d.com"

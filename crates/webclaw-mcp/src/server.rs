@@ -131,19 +131,15 @@ fn apply_render(
 #[cfg(not(feature = "browser"))]
 fn apply_render(
     _config: &mut webclaw_fetch::FetchConfig,
-    mode: Option<&str>,
-    wait_for: Option<String>,
+    _mode: Option<&str>,
+    _wait_for: Option<String>,
     block: Option<&str>,
-    solve: Option<bool>,
+    _solve: Option<bool>,
 ) -> Result<(), String> {
-    block.map(str::parse::<webclaw_fetch::Block>).transpose()?;
-    match (mode, wait_for, solve) {
-        (None | Some("auto" | "never"), None, None | Some(false)) => Ok(()),
-        _ => Err(
-            "this webclaw-mcp build has no browser support; build it with `--features browser`"
-                .into(),
-        ),
-    }
+    block
+        .map(str::parse::<webclaw_fetch::Block>)
+        .transpose()
+        .map(drop)
 }
 
 #[cfg(not(feature = "browser"))]
@@ -215,7 +211,7 @@ async fn validate_url(url: &str) -> Result<(), String> {
 }
 
 /// Timeout for local fetch calls (prevents hanging on tarpitting servers).
-const LOCAL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const LOCAL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CRAWL_QUERY_CHARS: usize = 1000;
 const INDEX_BUDGET: Duration = Duration::from_secs(60);
 const MAP_CRAWL_BUDGET: Duration = Duration::from_secs(45);
@@ -618,29 +614,23 @@ impl WebclawMcp {
     }
 
     #[cfg(not(feature = "browser"))]
-    async fn act_and_scrape(
-        &self,
-        _params: &ScrapeParams,
-        _sizes: Option<(usize, usize)>,
-    ) -> Result<String, String> {
-        Err(
-            "this webclaw-mcp build has no browser support; build it with `--features browser`"
-                .into(),
-        )
-    }
-
-    #[cfg(not(feature = "browser"))]
     async fn take_screenshot(
         &self,
-        _url: &str,
-        _wait_for: Option<&str>,
-        _capture: Capture,
-        _actions: Option<&[serde_json::Value]>,
+        url: &str,
+        wait_for: Option<&str>,
+        capture: Capture,
+        actions: Option<&[serde_json::Value]>,
     ) -> Result<CallToolResult, String> {
-        Err(
-            "this webclaw-mcp build has no browser support; build it with `--features browser`"
-                .into(),
-        )
+        let cloud = self.cloud.as_ref().ok_or(crate::hosted::NO_BROWSER)?;
+        let Capture::Image {
+            full_page,
+            jpeg: false,
+        } = capture
+        else {
+            return Err(crate::hosted::PNG_ONLY.into());
+        };
+        let body = crate::hosted::screenshot_body(url, wait_for, full_page, actions)?;
+        crate::hosted::screenshot_result(&cloud.post("scrape", body).await?)
     }
 
     /// Return the cached Firefox client, building it on first use. Any
@@ -680,9 +670,9 @@ impl WebclawMcp {
 
     /// Scrape a single URL and extract its content as markdown, LLM-optimized text, plain text, or full JSON.
     /// Pages whose content needs JavaScript are rendered in a local Chrome when this server has browser support; otherwise, and on bot protection, it falls back to the webclaw cloud API when WEBCLAW_API_KEY is set.
-    /// A server without browser support returns a page that needs JavaScript with a notice saying so when WEBCLAW_API_KEY is not set.
+    /// A server without browser support sends `render` "always", `wait_for`, `solve` and `actions` to the hosted API when WEBCLAW_API_KEY is set, and without a key returns a page that needs JavaScript with a notice saying so.
     /// With `actions`, in the hosted API's format, the page is rendered and the steps (click, type, press, scroll, wait, waitForSelector, executeJavascript) run before it is read, for infinite scroll, "load more" buttons, tabs and forms.
-    /// With `capture_network`, the page is rendered and the XHR and fetch responses it loaded (the JSON a single-page app gets from its API) come back after the content.
+    /// With `capture_network`, the page is rendered in the local Chrome and the XHR and fetch responses it loaded (the JSON a single-page app gets from its API) come back after the content.
     #[tool]
     async fn scrape(
         &self,
@@ -708,11 +698,29 @@ impl WebclawMcp {
         {
             return Err("capture_types and capture_credentials need capture_network".into());
         }
+        #[cfg(feature = "browser")]
         if params.actions.as_ref().is_some_and(|a| !a.is_empty())
             || params.capture_network.is_some()
         {
             return Ok(CallToolResult::success(vec![
                 rmcp::model::ContentBlock::text(self.act_and_scrape(&params, sizes).await?),
+            ]));
+        }
+        #[cfg(not(feature = "browser"))]
+        if let Some(body) = crate::hosted::scrape_body(&params, format, self.cloud.is_some())? {
+            let cloud = self.cloud.as_ref().ok_or(crate::hosted::NO_BROWSER)?;
+            let resp = cloud.post("scrape", body).await?;
+            let page = scraped(
+                SmartFetchResult::Cloud(resp),
+                &params.url,
+                params.query.as_deref(),
+                format,
+                sizes,
+                cite_links,
+            )
+            .await?;
+            return Ok(CallToolResult::success(vec![
+                rmcp::model::ContentBlock::text(page),
             ]));
         }
         let include = params.include_selectors.unwrap_or_default();
@@ -948,7 +956,7 @@ impl WebclawMcp {
         .map_err(|e| e.to_string())?
     }
 
-    /// Capture a web page in the local Chrome after its scripts ran, as an image, a PDF or an MHTML archive. Images (PNG, or JPEG with `format`) show the 1280x720 viewport, or the whole page with `full_page`. With format "pdf" the whole page is printed to a Letter or A4 PDF and returned as an application/pdf resource of up to 10 MiB. With format "mhtml" the page is saved with the images, styles and frames it loaded as one file a browser opens offline, returned as a multipart/related resource of up to 10 MiB. Also returns the final URL, and with `actions` the values of their executeJavascript steps.
+    /// Capture a web page after its scripts ran, as an image, a PDF or an MHTML archive, in the local Chrome when this server has browser support. A server without it captures PNG images through the hosted API when WEBCLAW_API_KEY is set. Images (PNG, or JPEG with `format`) show the 1280x720 viewport, or the whole page with `full_page`. With format "pdf" the whole page is printed to a Letter or A4 PDF and returned as an application/pdf resource of up to 10 MiB. With format "mhtml" the page is saved with the images, styles and frames it loaded as one file a browser opens offline, returned as a multipart/related resource of up to 10 MiB. Also returns the final URL, and with `actions` the values of their executeJavascript steps.
     #[tool]
     async fn screenshot(
         &self,
@@ -1586,9 +1594,19 @@ async fn scraped(
             if content.is_empty() {
                 return Ok(serde_json::to_string_pretty(&resp).unwrap_or_default());
             }
-            Ok(content.to_string())
+            Ok(match js_results(&resp) {
+                Some(results) => format!("{content}\n\njs_results:\n```json\n{results}\n```"),
+                None => content.to_string(),
+            })
         }
     }
+}
+
+pub(crate) fn js_results(resp: &serde_json::Value) -> Option<String> {
+    resp.get("js_results")
+        .and_then(|v| v.as_array())
+        .filter(|r| !r.is_empty())
+        .map(|r| serde_json::to_string_pretty(r).unwrap_or_default())
 }
 
 fn chunk_sizes(
@@ -1848,6 +1866,8 @@ fn pick(
 #[cfg(test)]
 mod tests {
     use super::{check_select, citations, slugify};
+    #[cfg(not(feature = "browser"))]
+    use serde_json::json;
 
     #[test]
     fn only_a_build_without_a_browser_flags_an_unrendered_page() {
@@ -1874,6 +1894,166 @@ mod tests {
                 "{notice}"
             );
         }
+    }
+
+    #[cfg(not(feature = "browser"))]
+    const PAGE: &str = "http://93.184.215.14/js/";
+
+    #[cfg(not(feature = "browser"))]
+    fn mcp(cloud: Option<webclaw_fetch::cloud::CloudClient>) -> super::WebclawMcp {
+        let config = webclaw_fetch::FetchConfig::default();
+        super::WebclawMcp {
+            tool_router: super::WebclawMcp::tool_router(),
+            fetch_client: std::sync::Arc::new(
+                webclaw_fetch::FetchClient::new(config.clone()).unwrap(),
+            ),
+            fetch_config: config,
+            firefox_client: Default::default(),
+            llm_chain: None,
+            cloud,
+        }
+    }
+
+    #[cfg(not(feature = "browser"))]
+    async fn hosted_stub(
+        reply: serde_json::Value,
+    ) -> (
+        webclaw_fetch::cloud::CloudClient,
+        tokio::task::JoinHandle<(String, serde_json::Value)>,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 4096];
+            let (head, body) = loop {
+                let n = socket.read(&mut buf).await.unwrap();
+                request.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&request).into_owned();
+                if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                    let length = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if body.len() >= length {
+                        break (head.to_string(), body.to_string());
+                    }
+                }
+            };
+            let reply = reply.to_string();
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            (
+                head.lines().next().unwrap().to_string(),
+                serde_json::from_str(&body).unwrap(),
+            )
+        });
+        (
+            webclaw_fetch::cloud::CloudClient::with_key_and_base("test-key", base),
+            served,
+        )
+    }
+
+    #[cfg(not(feature = "browser"))]
+    #[tokio::test]
+    async fn render_always_goes_to_the_hosted_api_without_a_browser() {
+        use rmcp::handler::server::wrapper::Parameters;
+        let (cloud, served) = hosted_stub(json!({
+            "url": PAGE,
+            "markdown": "# Quotes\n\nA rendered quote.",
+            "js_results": [10],
+        }))
+        .await;
+        let out = mcp(Some(cloud))
+            .scrape(Parameters(
+                serde_json::from_value(json!({
+                    "url": PAGE,
+                    "render": "always",
+                    "actions": [{"type": "executeJavascript", "code": "10"}],
+                }))
+                .unwrap(),
+            ))
+            .await
+            .unwrap();
+        let (request_line, body) = served.await.unwrap();
+        assert_eq!(request_line, "POST /v1/scrape HTTP/1.1");
+        assert_eq!(body["url"], PAGE);
+        assert_eq!(
+            body["actions"],
+            json!([{"type": "executeJavascript", "code": "10"}])
+        );
+        let out = serde_json::to_value(&out).unwrap();
+        assert_eq!(out["content"].as_array().unwrap().len(), 1, "{out}");
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("A rendered quote.") && text.contains("js_results"),
+            "{text}"
+        );
+    }
+
+    #[cfg(not(feature = "browser"))]
+    #[tokio::test]
+    async fn screenshots_go_to_the_hosted_api_without_a_browser() {
+        use rmcp::handler::server::wrapper::Parameters;
+        let (cloud, served) = hosted_stub(json!({
+            "url": PAGE,
+            "markdown": "# Quotes",
+            "screenshot": "data:image/png;base64,iVBORw0KGgo=",
+        }))
+        .await;
+        let out = mcp(Some(cloud))
+            .screenshot(Parameters(
+                serde_json::from_value(json!({"url": PAGE, "full_page": true})).unwrap(),
+            ))
+            .await
+            .unwrap();
+        let (_, body) = served.await.unwrap();
+        assert_eq!(body["screenshot"], true);
+        assert_eq!(
+            body["actions"],
+            json!([{"type": "screenshot", "fullPage": true}])
+        );
+        let out = serde_json::to_value(&out).unwrap();
+        assert_eq!(out["content"][0]["mimeType"], "image/png");
+        let jpeg =
+            || Parameters(serde_json::from_value(json!({"url": PAGE, "format": "jpeg"})).unwrap());
+        assert_eq!(
+            mcp(None).screenshot(jpeg()).await.unwrap_err(),
+            crate::hosted::NO_BROWSER
+        );
+        let keyed =
+            webclaw_fetch::cloud::CloudClient::with_key_and_base("k", "http://127.0.0.1:9/v1");
+        assert_eq!(
+            mcp(Some(keyed)).screenshot(jpeg()).await.unwrap_err(),
+            crate::hosted::PNG_ONLY
+        );
+    }
+
+    #[cfg(not(feature = "browser"))]
+    #[tokio::test]
+    async fn rendering_without_a_key_or_a_browser_says_how_to_get_it() {
+        use rmcp::handler::server::wrapper::Parameters;
+        let err = mcp(None)
+            .scrape(Parameters(
+                serde_json::from_value(json!({"url": PAGE, "render": "always"})).unwrap(),
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(err, crate::hosted::NO_BROWSER);
     }
 
     #[test]

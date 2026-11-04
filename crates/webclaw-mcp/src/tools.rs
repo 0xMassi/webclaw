@@ -138,13 +138,13 @@ pub struct ScrapeParams {
     pub browser: Option<String>,
     /// Cookies to send with the request (e.g. ["name=value", "session=abc123"]). When the server keeps a browser profile (WEBCLAW_BROWSER_PROFILE), they are saved in it for this URL and sent on later calls too
     pub cookies: Option<Vec<String>>,
-    /// JavaScript rendering in a local Chrome: "auto" (default) renders pages whose content needs it, "always" renders every page that runs scripts, "never" skips it
+    /// JavaScript rendering: "auto" (default) renders pages whose content needs it, "always" renders every page that runs scripts, "never" skips it. Pages render in a local Chrome when this server has browser support, otherwise through the hosted API when WEBCLAW_API_KEY is set
     pub render: Option<String>,
     /// When rendering, also wait until an element matching this CSS selector exists
     pub wait_for: Option<String>,
     /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none"
     pub block: Option<String>,
-    /// Get past a Cloudflare challenge page in the local Chrome: wait for it to clear or click its checkbox, then read the page it leads to. A Turnstile checkbox in any page that gets rendered is clicked too
+    /// Get past a Cloudflare challenge page in the local Chrome: wait for it to clear or click its checkbox, then read the page it leads to. A Turnstile checkbox in any page that gets rendered is clicked too. A server without browser support reads the page through the hosted API instead when WEBCLAW_API_KEY is set
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub solve: Option<bool>,
     /// A question: keep only the parts of the page that answer it, under their headings
@@ -158,10 +158,10 @@ pub struct ScrapeParams {
     /// Move link and image URLs out of the markdown into a numbered Links list at the end: `[text](url)` becomes `text[^1]` and a URL used twice keeps one number. Works with the markdown format and the markdown inside "json", not with chunk
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]
     pub citations: Option<bool>,
-    /// Steps to run in the local browser once the page has loaded, before it is read. The page is always rendered when this is set. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error
+    /// Steps to run in the browser once the page has loaded, before it is read. The page is always rendered when this is set. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error. A server without browser support runs the steps through the hosted API when WEBCLAW_API_KEY is set, without nth, all, repeat or a scroll selector
     #[schemars(schema_with = "actions_schema")]
     pub actions: Option<Vec<serde_json::Value>>,
-    /// Render the page and also return the responses it loaded whose URL matches this regular expression, "" for all: url, method, status, resource_type, mime_type, request_headers and the body of text responses (at most 100 responses, each body cut to 100 KB and all bodies together to 1 MB). Single-page apps load their data as JSON this way, often cleaner than the page. Runs after `actions`, so it also catches what they trigger
+    /// Render the page in the local Chrome (needs a server with browser support) and also return the responses it loaded whose URL matches this regular expression, "" for all: url, method, status, resource_type, mime_type, request_headers and the body of text responses (at most 100 responses, each body cut to 100 KB and all bodies together to 1 MB). Single-page apps load their data as JSON this way, often cleaner than the page. Runs after `actions`, so it also catches what they trigger
     pub capture_network: Option<String>,
     /// With `capture_network`, the resource types to keep: a comma list such as "xhr,fetch" (the default), "document", "script", or "all"
     pub capture_types: Option<String>,
@@ -214,7 +214,7 @@ pub struct ScreenshotParams {
     pub print_background: Option<bool>,
     /// Also wait until an element matching this CSS selector exists before capturing
     pub wait_for: Option<String>,
-    /// Steps to run in the local browser once the page has loaded, before it is captured. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error
+    /// Steps to run in the browser once the page has loaded, before it is captured. Each step is an object with a "type", as in the hosted API: {"type": "click", "selector": CSS} with optionally "nth": index from 0, "all": true, or "repeat": N to keep clicking a "load more" button until it is gone; {"type": "type", "selector": CSS, "value": "..."}; {"type": "press", "key": "Enter"}; {"type": "scroll"} to the end, optionally with "direction": "down" or "up", "amount": pixels, "selector" for a scrollable element, and "repeat": N to keep scrolling until the page stops growing; {"type": "wait", "milliseconds": 1000}; {"type": "waitForSelector", "selector": CSS, "timeout": 10000}; {"type": "executeJavascript", "code": "JavaScript expression"} whose value is returned as js_results. A failing step fails the call and its number is in the error. A server without browser support runs the steps through the hosted API when WEBCLAW_API_KEY is set, without nth, all, repeat or a scroll selector
     #[schemars(schema_with = "actions_schema")]
     pub actions: Option<Vec<serde_json::Value>>,
 }

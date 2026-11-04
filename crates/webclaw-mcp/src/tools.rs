@@ -142,7 +142,7 @@ pub struct ScrapeParams {
     pub render: Option<String>,
     /// When rendering, also wait until an element matching this CSS selector exists
     pub wait_for: Option<String>,
-    /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none"
+    /// When rendering, skip these resources so pages download less: a comma list of "images", "fonts" and "media", or "none". Pages rendered through the hosted API ignore it
     pub block: Option<String>,
     /// Get past a Cloudflare challenge page in the local Chrome: wait for it to clear or click its checkbox, then read the page it leads to. A Turnstile checkbox in any page that gets rendered is clicked too. A server without browser support reads the page through the hosted API instead when WEBCLAW_API_KEY is set
     #[serde(default, deserialize_with = "deser_opt_bool_or_str")]

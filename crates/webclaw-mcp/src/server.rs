@@ -682,6 +682,7 @@ impl WebclawMcp {
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
         let cite_links = citations(params.citations, format, sizes.is_some(), "scrape")?;
+        let fetched = if sizes.is_some() { "markdown" } else { format };
         let browser = parse_browser(params.browser.as_deref())?;
         #[cfg(feature = "browser")]
         if let (Some(render), Some(cookies)) = (
@@ -707,7 +708,7 @@ impl WebclawMcp {
             ]));
         }
         #[cfg(not(feature = "browser"))]
-        if let Some(body) = crate::hosted::scrape_body(&params, format, self.cloud.is_some())? {
+        if let Some(body) = crate::hosted::scrape_body(&params, fetched, self.cloud.is_some())? {
             let cloud = self.cloud.as_ref().ok_or(crate::hosted::NO_BROWSER)?;
             let resp = cloud.post("scrape", body).await?;
             let page = scraped(
@@ -769,7 +770,7 @@ impl WebclawMcp {
                 &custom_client
             };
 
-        let formats = [format];
+        let formats = [fetched];
         let result = cloud::smart_fetch(
             client,
             self.cloud.as_ref(),
@@ -2041,6 +2042,34 @@ mod tests {
             mcp(Some(keyed)).screenshot(jpeg()).await.unwrap_err(),
             crate::hosted::PNG_ONLY
         );
+    }
+
+    #[cfg(not(feature = "browser"))]
+    #[tokio::test]
+    async fn hosted_chunks_ask_for_the_markdown_they_are_cut_from() {
+        use rmcp::handler::server::wrapper::Parameters;
+        let (cloud, served) = hosted_stub(json!({
+            "url": PAGE,
+            "markdown": "# Quotes\n\nA rendered quote.",
+        }))
+        .await;
+        let out = mcp(Some(cloud))
+            .scrape(Parameters(
+                serde_json::from_value(json!({
+                    "url": PAGE,
+                    "render": "always",
+                    "format": "llm",
+                    "chunk": 100,
+                }))
+                .unwrap(),
+            ))
+            .await
+            .unwrap();
+        let (_, body) = served.await.unwrap();
+        assert_eq!(body["formats"], json!(["markdown"]));
+        let out = serde_json::to_value(&out).unwrap();
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("A rendered quote."), "{text}");
     }
 
     #[cfg(not(feature = "browser"))]

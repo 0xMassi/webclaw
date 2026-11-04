@@ -2,6 +2,8 @@
 /// Exposes web extraction tools to AI agents over stdio, or over streamable
 /// HTTP with `--http`.
 mod handshake_guard;
+#[cfg(not(feature = "browser"))]
+mod hosted;
 mod server;
 mod tools;
 

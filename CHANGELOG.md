@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-04
+
+### Fixed
+- **The MCP `scrape` tool says when a page needs JavaScript.** In a `webclaw-mcp` built without the `browser` feature and run without `WEBCLAW_API_KEY`, a page that builds its content with scripts still comes back as fetched, followed by a one-line notice that it needs JavaScript and how to get it rendered.
+- **The prebuilt MCP server renders through the hosted API.** The prebuilt `webclaw-mcp` binaries have no local browser, so `render: "always"`, `wait_for`, `solve` and `actions` on `scrape` and the `screenshot` tool used to fail with a build error even when `WEBCLAW_API_KEY` was set. With a key they now run through the hosted API; `screenshot` returns PNG images that way. Without a key they return one error that says how to get rendering. `capture_network`, cookies on a rendered page, JPEG, PDF and MHTML captures, and the `nth`, `all`, `repeat` and scroll `selector` step options still need a build with `--features browser`, and the error says so.
+
 ## [0.7.1] - 2026-11-03
 
 ### Fixed

@@ -410,16 +410,22 @@ pub fn focus_cloud_response(resp: &mut Value, query: &str) {
     if let Some(content) = resp.get_mut("content") {
         focus_fields(content, query);
     }
+    if let Some(content) = resp.pointer_mut("/extraction/content") {
+        focus_fields(content, query);
+    }
 }
 
 /// Rewrite the markdown of a hosted API response with numbered link
 /// citations, as [`webclaw_core::to_citations`] does for a local page.
 pub fn cite_cloud_response(resp: &mut Value, page_url: Option<&str>) {
-    if let Some(Value::String(text)) = resp.get_mut("markdown") {
-        *text = webclaw_core::to_citations(text, page_url);
-    }
-    if let Some(Value::String(text)) = resp.get_mut("content").and_then(|c| c.get_mut("markdown")) {
-        *text = webclaw_core::to_citations(text, page_url);
+    for path in [
+        "/markdown",
+        "/content/markdown",
+        "/extraction/content/markdown",
+    ] {
+        if let Some(Value::String(text)) = resp.pointer_mut(path) {
+            *text = webclaw_core::to_citations(text, page_url);
+        }
     }
 }
 
@@ -553,6 +559,9 @@ fn noscript_asks_for_js(html: &str) -> bool {
 /// cloud API response when we escalated.
 pub enum SmartFetchResult {
     Local(Box<webclaw_core::ExtractionResult>),
+    /// A local extraction of a page that looks like it needs JavaScript to
+    /// show its content, returned when no cloud client was given to render it.
+    Unrendered(Box<webclaw_core::ExtractionResult>),
     Cloud(Value),
 }
 
@@ -659,12 +668,18 @@ pub async fn smart_fetch(
         *issue != webclaw_core::quality::ContentIssue::Empty
             || !webclaw_core::quality::allows_empty_content(&fetch_result.html, &options)
     });
-    let looks_unrendered =
-        whole_page && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html);
-    if issue.is_none() && looks_unrendered && cloud.is_none() {
-        return Ok(SmartFetchResult::Local(Box::new(extraction)));
+    let words = if whole_page {
+        extraction.metadata.word_count
+    } else {
+        page_words
+    };
+    let looks_unrendered = needs_js_rendering(words, &fetch_result.html);
+    let empty_without_browser =
+        !cfg!(feature = "browser") && issue == Some(webclaw_core::quality::ContentIssue::Empty);
+    if (issue.is_none() || empty_without_browser) && looks_unrendered && cloud.is_none() {
+        return Ok(SmartFetchResult::Unrendered(Box::new(extraction)));
     }
-    if issue.is_some() || looks_unrendered {
+    if issue.is_some() || (whole_page && looks_unrendered) {
         info!(
             url,
             word_count = extraction.metadata.word_count,
@@ -995,9 +1010,13 @@ mod tests {
     #[test]
     fn cloud_responses_are_focused_too() {
         let page = "# Rust\n\n## Tooling\n\nCargo builds it.\n\n## History\n\nGraydon began it.";
-        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "url": "https://x"});
+        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "extraction": {"content": {"markdown": page}}, "url": "https://x"});
         focus_cloud_response(&mut resp, "tooling");
-        for text in [&resp["markdown"], &resp["content"]["markdown"]] {
+        for text in [
+            &resp["markdown"],
+            &resp["content"]["markdown"],
+            &resp["extraction"]["content"]["markdown"],
+        ] {
             let text = text.as_str().unwrap();
             assert!(
                 text.contains("Cargo") && !text.contains("Graydon"),
@@ -1010,9 +1029,13 @@ mod tests {
     #[test]
     fn cloud_responses_are_cited_too() {
         let page = "See [docs](https://d.com).";
-        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "url": "https://x"});
+        let mut resp = json!({"markdown": page, "content": {"markdown": page}, "extraction": {"content": {"markdown": page}}, "url": "https://x"});
         cite_cloud_response(&mut resp, Some("https://x"));
-        for text in [&resp["markdown"], &resp["content"]["markdown"]] {
+        for text in [
+            &resp["markdown"],
+            &resp["content"]["markdown"],
+            &resp["extraction"]["content"]["markdown"],
+        ] {
             assert_eq!(
                 text.as_str().unwrap(),
                 "See docs[^1].\n\n## Links\n\n[^1]: https://d.com"
@@ -1095,8 +1118,84 @@ mod tests {
         .await
         .expect("local extraction should be returned");
         assert!(
-            matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("Starter costs"))
+            matches!(result, SmartFetchResult::Unrendered(e) if e.content.markdown.contains("Starter costs"))
         );
+    }
+
+    #[tokio::test]
+    async fn only_a_page_that_needs_javascript_comes_back_unrendered() {
+        let run = |html| async move {
+            smart_fetch(
+                &StaticPage(html),
+                None,
+                "https://example.com/js/",
+                &[],
+                &[],
+                false,
+                &["markdown"],
+            )
+            .await
+        };
+        assert!(matches!(
+            run("<html><body><h1>Quotes to Scrape</h1><div class=\"quotes\"></div><script src=\"/static/jquery.js\"></script><script>var data = [];</script></body></html>").await,
+            Ok(SmartFetchResult::Unrendered(e)) if e.content.markdown.contains("Quotes to Scrape")
+        ));
+        let article = format!(
+            "<html><body><article><h1>Quotes</h1><p>{}</p></article><script src=\"/app.js\"></script></body></html>",
+            "Every quote on this page is written out in the HTML the server sends. ".repeat(20)
+        );
+        assert!(matches!(
+            run(Box::leak(article.into_boxed_str())).await,
+            Ok(SmartFetchResult::Local(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn selectors_do_not_hide_that_a_page_needs_javascript() {
+        let quotes = "<html><body><h1>Quotes to Scrape</h1><div class=\"quotes\"></div><script src=\"/static/jquery.js\"></script></body></html>";
+        let main_only = smart_fetch(
+            &StaticPage(quotes),
+            None,
+            "https://example.com/js/",
+            &[],
+            &[],
+            true,
+            &["markdown"],
+        )
+        .await;
+        assert!(matches!(main_only, Ok(SmartFetchResult::Unrendered(_))));
+        let excluded = smart_fetch(
+            &StaticPage(quotes),
+            None,
+            "https://example.com/js/",
+            &[],
+            &["footer".to_string()],
+            false,
+            &["markdown"],
+        )
+        .await;
+        assert!(matches!(excluded, Ok(SmartFetchResult::Unrendered(_))));
+    }
+
+    #[tokio::test]
+    async fn an_empty_app_shell_without_a_browser_comes_back_unrendered() {
+        let shell = smart_fetch(
+            &StaticPage(
+                "<html><body><div id=\"root\"></div><script src=\"/app.js\"></script></body></html>",
+            ),
+            None,
+            "https://example.com/app",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await;
+        if cfg!(feature = "browser") {
+            assert!(shell.is_err());
+        } else {
+            assert!(matches!(shell, Ok(SmartFetchResult::Unrendered(_))));
+        }
     }
 
     struct BlockedPage(&'static str);
@@ -1196,7 +1295,7 @@ mod tests {
             .await
         };
         assert!(
-            matches!(run(true, SIGNUP).await, Ok(SmartFetchResult::Local(e)) if e.content.markdown.contains("Create an account"))
+            matches!(run(true, SIGNUP).await, Ok(SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e)) if e.content.markdown.contains("Create an account"))
         );
         assert!(run(false, SIGNUP).await.is_err());
         assert!(run(true, SIGNUP_BEHIND_DATADOME).await.is_err());

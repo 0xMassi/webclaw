@@ -662,12 +662,16 @@ pub async fn smart_fetch(
         *issue != webclaw_core::quality::ContentIssue::Empty
             || !webclaw_core::quality::allows_empty_content(&fetch_result.html, &options)
     });
-    let looks_unrendered =
-        whole_page && needs_js_rendering(extraction.metadata.word_count, &fetch_result.html);
+    let words = if whole_page {
+        extraction.metadata.word_count
+    } else {
+        page_words
+    };
+    let looks_unrendered = needs_js_rendering(words, &fetch_result.html);
     if issue.is_none() && looks_unrendered && cloud.is_none() {
         return Ok(SmartFetchResult::Unrendered(Box::new(extraction)));
     }
-    if issue.is_some() || looks_unrendered {
+    if issue.is_some() || (whole_page && looks_unrendered) {
         info!(
             url,
             word_count = extraction.metadata.word_count,
@@ -1128,6 +1132,33 @@ mod tests {
             run(Box::leak(article.into_boxed_str())).await,
             Ok(SmartFetchResult::Local(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn selectors_do_not_hide_that_a_page_needs_javascript() {
+        let quotes = "<html><body><h1>Quotes to Scrape</h1><div class=\"quotes\"></div><script src=\"/static/jquery.js\"></script></body></html>";
+        let main_only = smart_fetch(
+            &StaticPage(quotes),
+            None,
+            "https://example.com/js/",
+            &[],
+            &[],
+            true,
+            &["markdown"],
+        )
+        .await;
+        assert!(matches!(main_only, Ok(SmartFetchResult::Unrendered(_))));
+        let excluded = smart_fetch(
+            &StaticPage(quotes),
+            None,
+            "https://example.com/js/",
+            &[],
+            &["footer".to_string()],
+            false,
+            &["markdown"],
+        )
+        .await;
+        assert!(matches!(excluded, Ok(SmartFetchResult::Unrendered(_))));
     }
 
     struct BlockedPage(&'static str);

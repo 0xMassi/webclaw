@@ -630,7 +630,9 @@ impl WebclawMcp {
             return Err(crate::hosted::PNG_ONLY.into());
         };
         let body = crate::hosted::screenshot_body(url, wait_for, full_page, actions)?;
-        crate::hosted::screenshot_result(&cloud.post("scrape", body).await?)
+        crate::hosted::screenshot_result(
+            &crate::hosted::render(cloud, body, wait_for.is_some()).await?,
+        )
     }
 
     /// Return the cached Firefox client, building it on first use. Any
@@ -710,7 +712,7 @@ impl WebclawMcp {
         #[cfg(not(feature = "browser"))]
         if let Some(body) = crate::hosted::scrape_body(&params, fetched, self.cloud.is_some())? {
             let cloud = self.cloud.as_ref().ok_or(crate::hosted::NO_BROWSER)?;
-            let resp = cloud.post("scrape", body).await?;
+            let resp = crate::hosted::render(cloud, body, params.wait_for.is_some()).await?;
             let page = scraped(
                 SmartFetchResult::Cloud(resp),
                 &params.url,
@@ -2042,6 +2044,54 @@ mod tests {
             mcp(Some(keyed)).screenshot(jpeg()).await.unwrap_err(),
             crate::hosted::PNG_ONLY
         );
+    }
+
+    #[cfg(not(feature = "browser"))]
+    #[tokio::test]
+    async fn a_failed_hosted_step_fails_the_call_with_its_number() {
+        use rmcp::handler::server::wrapper::Parameters;
+        let performed = json!([
+            {"action": "waitForSelector", "success": true},
+            {"action": "click", "success": false, "error": "no element matches #more"},
+        ]);
+        let (cloud, _served) = hosted_stub(json!({
+            "url": PAGE,
+            "markdown": "# Quotes",
+            "actions_performed": performed,
+        }))
+        .await;
+        let err = mcp(Some(cloud))
+            .scrape(Parameters(
+                serde_json::from_value(json!({
+                    "url": PAGE,
+                    "wait_for": ".quote",
+                    "actions": [{"type": "click", "selector": "#more"}],
+                }))
+                .unwrap(),
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("step 1") && err.contains("no element matches #more"),
+            "{err}"
+        );
+        let (cloud, _served) = hosted_stub(json!({
+            "url": PAGE,
+            "screenshot": "data:image/png;base64,iVBORw0KGgo=",
+            "actions_performed": [{"action": "click", "success": false, "error": "gone"}],
+        }))
+        .await;
+        let err = mcp(Some(cloud))
+            .screenshot(Parameters(
+                serde_json::from_value(json!({
+                    "url": PAGE,
+                    "actions": [{"type": "click", "selector": "#more"}],
+                }))
+                .unwrap(),
+            ))
+            .await
+            .unwrap_err();
+        assert!(err.contains("step 1") && err.contains("gone"), "{err}");
     }
 
     #[cfg(not(feature = "browser"))]

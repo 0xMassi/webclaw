@@ -124,6 +124,28 @@ pub(crate) fn screenshot_body(
     Ok(json!({"url": url, "formats": ["markdown"], "screenshot": true, "actions": steps}))
 }
 
+pub(crate) async fn render(
+    cloud: &webclaw_fetch::cloud::CloudClient,
+    body: Value,
+    wait_for: bool,
+) -> Result<Value, String> {
+    let resp = cloud.post("scrape", body).await?;
+    let failed = resp["actions_performed"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .find(|(_, step)| step["success"] == false);
+    let Some((n, step)) = failed else {
+        return Ok(resp);
+    };
+    let error = step["error"].as_str().unwrap_or("it failed");
+    Err(match n.checked_sub(usize::from(wait_for)) {
+        None => format!("wait_for: {error}"),
+        Some(n) => format!("step {}: {error}", n + 1),
+    })
+}
+
 pub(crate) fn screenshot_result(resp: &Value) -> Result<CallToolResult, String> {
     let shot = resp
         .get("screenshot")

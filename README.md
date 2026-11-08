@@ -88,8 +88,8 @@ Download macOS, Linux, and Windows binaries from [GitHub Releases](https://githu
 #### Windows (x64)
 
 The prebuilt ZIP is the easiest installation and does not require Rust. On the
-[v0.6.22 release page](https://github.com/0xMassi/webclaw/releases/tag/v0.6.22),
-download `webclaw-v0.6.22-x86_64-pc-windows-msvc.zip`. Extract it in File Explorer,
+[v0.7.2 release page](https://github.com/0xMassi/webclaw/releases/tag/v0.7.2),
+download `webclaw-v0.7.2-x86_64-pc-windows-msvc.zip`. Extract it in File Explorer,
 open PowerShell in the extracted folder containing `webclaw.exe`, and run:
 
 ```powershell
@@ -112,7 +112,7 @@ directory if bindgen cannot find it, for example:
 
 ```powershell
 $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
-cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.6.22 --locked webclaw-cli
+cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.7.2 --locked webclaw-cli
 webclaw --version
 ```
 
@@ -131,8 +131,8 @@ docker run --rm ghcr.io/0xmassi/webclaw https://example.com
 ### Cargo
 
 ```bash
-cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.6.22 --locked webclaw-cli
-cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.6.22 --locked webclaw-mcp
+cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.7.2 --locked webclaw-cli
+cargo install --git https://github.com/0xMassi/webclaw.git --tag v0.7.2 --locked webclaw-mcp
 ```
 
 If building from source fails because native build tools are missing, install the platform prerequisites:
@@ -570,6 +570,8 @@ Find it on [skills.sh](https://www.skills.sh/0xMassi/webclaw-skill/webclaw).
 | `brand` | Extract colors, fonts, logos, and metadata | Yes |
 | `search` | Search the web and scrape results | Hosted API |
 | `research` | Multi-source research workflow | Hosted API |
+| `list_extractors` | List the site-specific extractors and the URLs each one handles | Yes |
+| `vertical_scrape` | Run a site-specific extractor and return typed JSON for that site | Yes, bot-protected sites need `WEBCLAW_API_KEY` |
 
 ---
 

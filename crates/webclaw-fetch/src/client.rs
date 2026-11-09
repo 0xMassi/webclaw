@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -32,15 +33,14 @@ pub struct FetchConfig {
     /// random browser fingerprint. Same-host URLs reuse the same client
     /// for HTTP/2 connection multiplexing.
     pub proxy_pool: Vec<String>,
-    /// Per-attempt timeout handed to the HTTP client.
-    ///
-    /// NOTE: the underlying client applies this as two independent budgets —
-    /// one for the response head, then a *fresh* one for the body — so a single
-    /// attempt can take up to `2 * timeout`. Use [`total_timeout`](Self::total_timeout)
-    /// to bound the whole operation.
+    /// Longest wait for the response head, and longest pause between two
+    /// chunks of the body. A body that keeps arriving is not cut by it; see
+    /// [`total_timeout`](Self::total_timeout).
     pub timeout: Duration,
     /// Ceiling on one complete `fetch`, covering every attempt, redirect and
-    /// body read.
+    /// body read. A body that is still arriving when it runs out keeps going
+    /// while chunks keep coming, up to [`STREAMING_BODY_CAP`] from the start,
+    /// so a large document on a slow link is not cut off mid-download.
     ///
     /// Without this the budget compounds and nothing states the real worst
     /// case: `timeout` is applied twice per attempt by the client, and the
@@ -188,6 +188,15 @@ struct Response {
 /// per page in collapse_whitespace + strip_markdown).
 const MAX_BODY_BYTES: u64 = 50 * 1024 * 1024;
 
+/// Longest a fetch may run while its body is still arriving.
+pub const STREAMING_BODY_CAP: Duration = Duration::from_secs(120);
+
+tokio::task_local! { static BODY_BYTES: Arc<AtomicU64>; }
+
+fn note_body_bytes(len: usize) {
+    let _ = BODY_BYTES.try_with(|bytes| bytes.fetch_add(len as u64, Ordering::Relaxed));
+}
+
 /// Running decompression-bomb guard: reject as soon as the bytes already
 /// buffered plus the next decompressed chunk would cross [`MAX_BODY_BYTES`].
 /// Saturating arithmetic so a huge chunk length can't wrap the sum.
@@ -242,6 +251,7 @@ impl Response {
                 .decoded_bytes
                 .saturating_add(chunk.len() as u64);
             check_body_ceiling(buf.len(), chunk.len())?;
+            note_body_bytes(chunk.len());
             buf.extend_from_slice(&chunk);
         }
 
@@ -340,6 +350,7 @@ pub struct FetchClient {
     cloud: Option<std::sync::Arc<crate::cloud::CloudClient>>,
     /// Ceiling on one complete `fetch`. See [`FetchConfig::total_timeout`].
     total_timeout: Option<Duration>,
+    stall: Duration,
     cache: Option<crate::cache::ResponseCache>,
     archive: Option<crate::warc::Archive>,
     redirects: Option<u32>,
@@ -352,10 +363,6 @@ pub struct FetchClient {
 }
 
 impl FetchClient {
-    /// Run one attempt under the remaining share of the total budget.
-    ///
-    /// Returns `Err(Timeout)` if the budget is already spent, so the caller
-    /// stops retrying rather than starting an attempt it cannot finish.
     async fn within_budget<F, T>(
         &self,
         started: Instant,
@@ -375,12 +382,25 @@ impl FetchClient {
                 total.as_millis()
             )));
         }
-        match tokio::time::timeout(remaining, attempt).await {
-            Ok(res) => res,
-            Err(_) => Err(FetchError::Build(format!(
-                "fetch exceeded its {}ms budget for {url}",
-                total.as_millis()
-            ))),
+        let bytes = Arc::new(AtomicU64::new(0));
+        let attempt = BODY_BYTES.scope(bytes.clone(), attempt);
+        tokio::pin!(attempt);
+        let cap = tokio::time::Instant::from_std(started + STREAMING_BODY_CAP);
+        let mut deadline = tokio::time::Instant::now() + remaining;
+        let mut seen = 0;
+        loop {
+            if let Ok(res) = tokio::time::timeout_at(deadline, &mut attempt).await {
+                return res;
+            }
+            let now = bytes.load(Ordering::Relaxed);
+            if now == seen || tokio::time::Instant::now() >= cap {
+                return Err(FetchError::Build(format!(
+                    "fetch exceeded its {}ms budget for {url}",
+                    total.as_millis()
+                )));
+            }
+            seen = now;
+            deadline = (tokio::time::Instant::now() + self.stall).min(cap);
         }
     }
 
@@ -484,6 +504,7 @@ impl FetchClient {
             pdf_mode,
             cloud: None,
             total_timeout: config.total_timeout,
+            stall: config.timeout,
             cache,
             archive: config.archive.clone(),
             redirects: (config.follow_redirects && config.archive.is_some())
@@ -1851,9 +1872,6 @@ mod tests {
 
     #[test]
     fn total_timeout_defaults_to_twice_the_per_attempt_timeout() {
-        // The client applies `timeout` twice per attempt (head, then a fresh
-        // one for the body), so 2x keeps a single slow-but-successful fetch
-        // intact while stopping the retry loop from compounding it.
         let c = FetchConfig::default();
         assert_eq!(c.timeout, Duration::from_secs(12));
         assert_eq!(c.total_timeout, Some(Duration::from_secs(24)));
@@ -1910,6 +1928,47 @@ mod tests {
             began.elapsed() < Duration::from_secs(2),
             "must abort at the budget, not run to completion"
         );
+    }
+
+    #[tokio::test]
+    async fn within_budget_lets_a_body_that_keeps_arriving_finish() {
+        let client = FetchClient::new(FetchConfig {
+            timeout: Duration::from_millis(60),
+            total_timeout: Some(Duration::from_millis(50)),
+            ..Default::default()
+        })
+        .expect("build client");
+        let res: Result<u8, FetchError> = client
+            .within_budget(Instant::now(), "https://example.com", async {
+                for _ in 0..15 {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    note_body_bytes(1024);
+                }
+                Ok(7)
+            })
+            .await;
+        assert_eq!(res.expect("a steady body must not be cut at the budget"), 7);
+    }
+
+    #[tokio::test]
+    async fn within_budget_cuts_a_body_that_stalls() {
+        let client = FetchClient::new(FetchConfig {
+            timeout: Duration::from_millis(60),
+            total_timeout: Some(Duration::from_millis(50)),
+            ..Default::default()
+        })
+        .expect("build client");
+        let began = Instant::now();
+        let res: Result<u8, FetchError> = client
+            .within_budget(Instant::now(), "https://example.com", async {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                note_body_bytes(1024);
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok(7)
+            })
+            .await;
+        assert!(res.is_err());
+        assert!(began.elapsed() < Duration::from_secs(2));
     }
 
     #[tokio::test]

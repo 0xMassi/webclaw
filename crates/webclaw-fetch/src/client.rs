@@ -189,7 +189,7 @@ struct Response {
 const MAX_BODY_BYTES: u64 = 50 * 1024 * 1024;
 
 /// Longest a fetch may run while its body is still arriving.
-pub const STREAMING_BODY_CAP: Duration = Duration::from_secs(120);
+pub const STREAMING_BODY_CAP: Duration = Duration::from_secs(60);
 
 tokio::task_local! { static BODY_BYTES: Arc<AtomicU64>; }
 
@@ -1948,6 +1948,46 @@ mod tests {
             })
             .await;
         assert_eq!(res.expect("a steady body must not be cut at the budget"), 7);
+    }
+
+    async fn trickle_server(chunks: usize, gap: Duration) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let len = chunks * 1000;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {len}\r\n\r\n"
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            for _ in 0..chunks {
+                tokio::time::sleep(gap).await;
+                if socket.write_all(&[b'a'; 1000]).await.is_err() {
+                    return;
+                }
+            }
+        });
+        format!("http://127.0.0.1:{port}/")
+    }
+
+    #[tokio::test]
+    async fn fetch_finishes_a_trickling_body_past_the_total_budget() {
+        let proxy = trickle_server(20, Duration::from_millis(30)).await;
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            timeout: Duration::from_millis(200),
+            total_timeout: Some(Duration::from_millis(250)),
+            ..Default::default()
+        })
+        .unwrap();
+        let result = client.fetch("http://93.184.215.14/").await;
+        assert_eq!(
+            result.expect("a steady body must finish").html.len(),
+            20_000
+        );
     }
 
     #[tokio::test]

@@ -256,6 +256,18 @@ impl CloudClient {
         parse_cloud_response(resp).await
     }
 
+    /// Generic DELETE.
+    pub async fn delete(&self, endpoint: &str) -> Result<Value, CloudError> {
+        let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));
+        let resp = self
+            .http
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await?;
+        parse_cloud_response(resp).await
+    }
+
     /// Generic GET.
     pub async fn get(&self, endpoint: &str) -> Result<Value, CloudError> {
         let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));

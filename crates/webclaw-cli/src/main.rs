@@ -626,8 +626,118 @@ struct Cli {
     output_dir: Option<PathBuf>,
 }
 
+async fn run_saved_logins(cmd: &Commands, api_key: Option<&str>) {
+    let Some(cloud) = webclaw_fetch::cloud::CloudClient::new(api_key) else {
+        eprintln!("error: set WEBCLAW_API_KEY (or pass --api-key) to manage saved logins");
+        exit(1);
+    };
+    let outcome = match cmd {
+        Commands::Login { domain, cookie } => {
+            let header = match cookie {
+                Some(cookie) => cookie.clone(),
+                None => {
+                    let mut input = String::new();
+                    if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)
+                    {
+                        eprintln!("error: could not read cookies from stdin: {e}");
+                        exit(1);
+                    }
+                    input
+                }
+            };
+            let header = header
+                .trim()
+                .trim_start_matches("Cookie:")
+                .trim()
+                .to_string();
+            if header.is_empty() {
+                eprintln!("error: no cookies given; pass --cookie or pipe the Cookie header in");
+                exit(1);
+            }
+            cloud
+                .post(
+                    "sessions",
+                    serde_json::json!({"domain": domain, "cookies": [header], "source": "cli"}),
+                )
+                .await
+                .map(|saved| {
+                    let names = saved["cookie_names"]
+                        .as_array()
+                        .map(|names| {
+                            names
+                                .iter()
+                                .filter_map(|n| n.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    println!(
+                        "Saved your login for {} (cookies: {names}).",
+                        saved["domain"].as_str().unwrap_or(domain)
+                    );
+                })
+        }
+        Commands::Logins { json } => cloud.get("sessions").await.map(|list| {
+            let sessions = list["sessions"].as_array().cloned().unwrap_or_default();
+            if *json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&sessions).unwrap_or_default()
+                );
+            } else if sessions.is_empty() {
+                println!("No saved logins. Add one with: webclaw login <domain>");
+            } else {
+                for s in &sessions {
+                    println!(
+                        "  {:<32} {:<8} {:<10} last used {}",
+                        s["domain"].as_str().unwrap_or(""),
+                        s["status"].as_str().unwrap_or(""),
+                        s["source"].as_str().unwrap_or(""),
+                        s["last_used_at"].as_str().unwrap_or("never")
+                    );
+                }
+            }
+        }),
+        Commands::Logout { domain } => cloud
+            .delete(&format!("sessions/{domain}"))
+            .await
+            .map(|_| println!("Deleted the saved login for {domain}.")),
+        _ => return,
+    };
+    if let Err(e) = outcome {
+        eprintln!("error: {e}");
+        exit(1);
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
+    /// Save your login for a site, so cloud requests read pages behind it.
+    ///
+    /// Pass the Cookie request header copied from your browser with
+    /// `--cookie`, or pipe it in: `pbpaste | webclaw login medium.com`.
+    /// Needs WEBCLAW_API_KEY. The Chrome extension does this without copying.
+    Login {
+        /// Site host name, for example `medium.com`.
+        domain: String,
+        /// Cookie header value. Read from stdin when omitted.
+        #[arg(long, hide_env_values = true)]
+        cookie: Option<String>,
+    },
+
+    /// List the sites with a saved login.
+    Logins {
+        /// Emit JSON instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Delete the saved login for a site.
+    Logout {
+        /// Site host name, for example `medium.com`.
+        domain: String,
+    },
+
     /// Per-URL extraction micro-benchmark: compares raw HTML vs. the
     /// webclaw --format llm output on token count, bytes, and
     /// extraction time. Uses an approximate tokenizer (see `--help`).
@@ -3756,6 +3866,10 @@ async fn run() {
 
     if let Some(ref cmd) = cli.command {
         match cmd {
+            Commands::Login { .. } | Commands::Logins { .. } | Commands::Logout { .. } => {
+                run_saved_logins(cmd, cli.api_key.as_deref()).await;
+                return;
+            }
             Commands::Bench { url, json, facts } => {
                 let args = bench::BenchArgs {
                     url: url.clone(),

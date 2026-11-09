@@ -549,7 +549,7 @@ pub fn build_client(
             max_redirects as usize,
         ))
         .cookie_store(true)
-        .timeout(timeout)
+        .read_timeout(timeout)
         .connect_timeout(Duration::from_secs(5))
         .pool_idle_timeout(Duration::from_secs(90))
         // wreq's default here is `usize::MAX`, so any value we set REMOVES

@@ -58,9 +58,6 @@ pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
         )));
     }
 
-    // The PDF header may *begin* anywhere in the first 1,024 bytes. Include
-    // enough trailing bytes to match a marker that starts at the last allowed
-    // offset without accepting a marker that starts after that boundary.
     let header_window = &bytes[..bytes.len().min(PDF_HEADER_WINDOW + 4)];
     if !header_window.windows(5).any(|window| window == b"%PDF-") {
         return Err(PdfError::InvalidPdf("missing PDF header".into()));
@@ -75,18 +72,16 @@ pub fn extract_pdf(bytes: &[u8], mode: PdfMode) -> Result<PdfResult, PdfError> {
         )));
     }
     let metadata = read_metadata(&doc);
+    drop(doc);
 
     debug!(pages = page_count, "PDF document loaded");
 
-    // Some real PDFs contain drawing operators that panic pdf-extract's layout
-    // interpreter. Reuse lopdf's text-only reader on the already loaded document.
     let text = match std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes)) {
         Ok(Ok(text)) => text,
         _ => {
             tracing::warn!("PDF layout extraction failed; trying text-only extraction");
+            let doc = Document::load_mem(bytes).map_err(|e| PdfError::InvalidPdf(e.to_string()))?;
             let pages: Vec<_> = doc.get_pages().into_keys().collect();
-            // The document is owned here and discarded on unwind; no parser state
-            // is reused after a panic, including its opaque encryption filters.
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                 doc.extract_text(&pages)
             }))

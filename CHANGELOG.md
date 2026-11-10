@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-10
+
+### Fixed
+- **MCP tools load in Claude Code when the server starts slowly.** Claude Code first asks the server what it supports and falls back to the classic handshake when the answer comes late, which `npx` on Windows can cause. The server then refused the tool list with "request _meta is missing or has malformed required fields". It now accepts both, so the tools load either way.
+- **Large files on slow connections finish downloading.** A response that was still arriving when the time budget ran out was cut off and reported as unreachable. A download now keeps going as long as data keeps arriving, up to 60 seconds in total. A server that sends nothing still times out at the usual budget.
+- **PDF extraction uses less memory.** webclaw kept two parsed copies of a PDF while reading its text and now keeps one. Peak memory on large PDFs dropped by a third or more in our tests.
+
 ## [0.7.2] - 2026-11-04
 
 ### Fixed

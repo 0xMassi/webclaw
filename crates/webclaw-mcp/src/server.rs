@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use serde_json::json;
 use tracing::{error, info, warn};
@@ -1674,8 +1674,8 @@ fn crawl_chunks_json(
 
 #[tool_handler]
 impl ServerHandler for WebclawMcp {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("webclaw-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(String::from(
                 "Webclaw MCP server -- web content extraction for AI agents. \

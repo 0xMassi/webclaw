@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+- **The self-hosted REST server refuses requests from other websites when it runs without an API key.** A web page could call a `webclaw-server` running on your machine in open mode, directly or through DNS rebinding, and read the responses. In open mode the server now answers 403 when a request's `Origin` is not a localhost address, or when its `Host` is not localhost while the server listens on loopback, and CORS allows only localhost origins. Nothing changes when `WEBCLAW_API_KEY` is set. If you run an open-mode server behind a reverse proxy under your own domain, set an API key. Thanks to Liam Giannini for the report.
+
 ## [0.7.3] - 2026-11-10
 
 ### Fixed

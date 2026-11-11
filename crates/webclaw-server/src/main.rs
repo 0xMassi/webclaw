@@ -105,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
     let open_mode = args.api_key.is_none();
     let v1 = if open_mode {
         v1.layer(from_fn_with_state(
-            args.host.is_loopback(),
+            args.host.to_canonical().is_loopback(),
             auth::require_local_origin,
         ))
     } else {

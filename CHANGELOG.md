@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **Collapsed sections that hold a data table are extracted again.** Since 0.7.0 webclaw drops content a page hides, so hidden text can't slip instructions into what an LLM reads. That also dropped collapsed sections such as a download list behind a closed tab, so extraction from those pages came back empty. A hidden block now stays when it holds a table with at least three rows of filled cells. Hidden text, menus, single rows and empty template tables are still dropped.
+
 ## [0.7.4] - 2026-11-11
 
 ### Security

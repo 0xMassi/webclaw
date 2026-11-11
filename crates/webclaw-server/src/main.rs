@@ -25,7 +25,7 @@ use axum::{
     routing::{get, post},
 };
 use clap::Parser;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -102,16 +102,27 @@ async fn main() -> anyhow::Result<()> {
         .route("/diff", post(routes::diff::diff_route))
         .route("/brand", post(routes::brand::brand))
         .layer(from_fn_with_state(state.clone(), auth::require_bearer));
+    let open_mode = args.api_key.is_none();
+    let v1 = if open_mode {
+        v1.layer(from_fn_with_state(
+            args.host.is_loopback(),
+            auth::require_local_origin,
+        ))
+    } else {
+        v1
+    };
+    let allowed_origins = if open_mode {
+        AllowOrigin::predicate(|origin, _| origin.to_str().is_ok_and(auth::is_loopback_origin))
+    } else {
+        AllowOrigin::any()
+    };
 
     let app = Router::new()
         .route("/health", get(routes::health::health))
         .nest("/v1", v1)
         .layer(
-            // Permissive CORS — same posture as a self-hosted dev tool.
-            // Tighten in front with a reverse proxy if you expose this
-            // publicly.
             CorsLayer::new()
-                .allow_origin(Any)
+                .allow_origin(allowed_origins)
                 .allow_methods(Any)
                 .allow_headers(Any)
                 .max_age(Duration::from_secs(3600)),

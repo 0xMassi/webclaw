@@ -3965,7 +3965,7 @@ dependencies = [
 
 [[package]]
 name = "webclaw-cli"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "clap",
  "dotenvy",
@@ -3984,7 +3984,7 @@ dependencies = [
 
 [[package]]
 name = "webclaw-core"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "ego-tree",
  "regex",
@@ -4003,7 +4003,7 @@ dependencies = [
 
 [[package]]
 name = "webclaw-fetch"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4032,7 +4032,7 @@ dependencies = [
 
 [[package]]
 name = "webclaw-llm"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "async-trait",
  "reqwest 0.12.28",
@@ -4045,7 +4045,7 @@ dependencies = [
 
 [[package]]
 name = "webclaw-mcp"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "axum",
  "dirs",
@@ -4065,7 +4065,7 @@ dependencies = [
 
 [[package]]
 name = "webclaw-pdf"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "pdf-extract",
  "thiserror",
@@ -4074,7 +4074,7 @@ dependencies = [
 
 [[package]]
 name = "webclaw-server"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "axum",

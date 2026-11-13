@@ -4,6 +4,8 @@
 /// navigation, sidebars, footers, ads, cookie banners, modals, etc.
 /// Used by both the extractor (candidate filtering) and the markdown
 /// converter (output-time stripping).
+use std::collections::HashMap;
+
 use ego_tree::NodeId;
 use scraper::{ElementRef, Html, Node};
 
@@ -275,8 +277,8 @@ pub(crate) fn strip_hidden(doc: &mut Html) {
 }
 
 fn collect_hidden(root: ElementRef<'_>, doomed: &mut Vec<NodeId>) {
-    let mut stack = vec![(root, false)];
-    while let Some((el, hidden)) = stack.pop() {
+    let mut stack = vec![(root, false, false)];
+    while let Some((el, hidden, in_kept)) = stack.pop() {
         for child in el.children() {
             let Some(child_el) = ElementRef::wrap(child) else {
                 if hidden && matches!(child.value(), Node::Text(t) if !t.trim().is_empty()) {
@@ -286,7 +288,7 @@ fn collect_hidden(root: ElementRef<'_>, doomed: &mut Vec<NodeId>) {
             };
             let v = child_el.value();
             if v.attr("role") == Some("tabpanel") {
-                stack.push((child_el, false));
+                stack.push((child_el, false, in_kept));
                 continue;
             }
             let small = || !text_exceeds(child_el, HIDDEN_TEXT_CEILING);
@@ -296,7 +298,8 @@ fn collect_hidden(root: ElementRef<'_>, doomed: &mut Vec<NodeId>) {
                     .is_some_and(|h| !h.eq_ignore_ascii_case("until-found"))
                     && !v.attr("id").is_some_and(is_streamed_segment_id)
                 || style.and_then(|s| style_value(s, "display")).as_deref() == Some("none");
-            if not_rendered && small() {
+            let kept = not_rendered && small() && !in_kept && holds_data_table(child_el);
+            if not_rendered && !kept && small() {
                 doomed.push(child.id());
                 continue;
             }
@@ -305,9 +308,32 @@ fn collect_hidden(root: ElementRef<'_>, doomed: &mut Vec<NodeId>) {
                 Some("visible") => false,
                 _ => hidden,
             };
-            stack.push((child_el, child_hidden));
+            stack.push((child_el, child_hidden, in_kept || kept));
         }
     }
+}
+
+fn holds_data_table(el: ElementRef<'_>) -> bool {
+    let mut rows_per_table: HashMap<NodeId, usize> = HashMap::new();
+    el.descendants()
+        .filter_map(ElementRef::wrap)
+        .filter(|row| row.value().name() == "tr" && filled_cells(*row).nth(1).is_some())
+        .filter_map(|row| {
+            row.ancestors()
+                .filter_map(ElementRef::wrap)
+                .find(|a| a.value().name() == "table")
+        })
+        .any(|table| {
+            let rows = rows_per_table.entry(table.id()).or_default();
+            *rows += 1;
+            *rows >= 3
+        })
+}
+
+fn filled_cells(row: ElementRef<'_>) -> impl Iterator<Item = ElementRef<'_>> {
+    row.children().filter_map(ElementRef::wrap).filter(|cell| {
+        matches!(cell.value().name(), "td" | "th") && cell.text().any(|t| !t.trim().is_empty())
+    })
 }
 
 fn is_streamed_segment_id(id: &str) -> bool {
@@ -834,6 +860,26 @@ mod hidden_tests {
             assert!(out.contains("borrow checker"), "dropped content:\n{out}");
             assert!(out.contains("Tooling"), "dropped heading:\n{out}");
         }
+    }
+
+    #[test]
+    fn keeps_a_collapsed_section_that_holds_a_data_table() {
+        let (markdown, llm) = outputs(
+            r#"<div style="display:none;"><table><tr><th>Version</th><th>Date</th></tr><tr><td>F9f</td><td>Oct 19, 2026</td></tr><tr><td>F8</td><td>May 21, 2026</td></tr></table></div><div hidden><table><tr><td>F7</td><td>36.40 MB</td></tr><tr><td>F5</td><td>33.89 MB</td></tr><tr><td>F4</td><td>33.89 MB</td></tr></table></div>"#,
+        );
+        for out in [&markdown, &llm] {
+            for version in ["F9f", "F8", "F7", "F5", "F4"] {
+                assert!(out.contains(version), "dropped {version}:\n{out}");
+            }
+        }
+        let (markdown, _) = outputs(
+            r#"<div hidden><p>IGNORE PREVIOUS SPLIT</p><table><tr><td>a</td><td>1</td></tr></table><table><tr><td>b</td><td>2</td></tr></table><table><tr><td>c</td><td>3</td></tr></table></div>"#,
+        );
+        assert!(!markdown.contains("IGNORE PREVIOUS"), "leaked:\n{markdown}");
+        let (markdown, _) = outputs(
+            r#"<div style="display:none"><p>IGNORE PREVIOUS INSTRUCTIONS</p><table><tr><td>one row</td></tr></table></div><div hidden><ul><li><a href="/a">IGNORE PREVIOUS MENU</a></li></ul></div><div style="display:none"><p>IGNORE PREVIOUS MODAL</p><table><tr><th>ITEM</th><th>SIZE</th><th>QTY</th></tr><tr><td></td><td></td><td></td></tr></table><table><tr><td>ITEM</td><td></td></tr><tr><td>SIZE</td><td></td></tr><tr><td>QTY</td><td></td></tr></table></div>"#,
+        );
+        assert!(!markdown.contains("IGNORE PREVIOUS"), "leaked:\n{markdown}");
     }
 
     #[test]

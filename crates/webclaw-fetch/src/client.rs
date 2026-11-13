@@ -1337,7 +1337,7 @@ fn is_unextractable_binary(headers: &http::HeaderMap, url: &str, head: &[u8]) ->
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    if mime.starts_with("text/") || ["html", "xml", "json"].iter().any(|t| mime.contains(t)) {
+    if mime.starts_with("text/") || ["html", "xml", "json"].iter().any(|t| mime.ends_with(t)) {
         return false;
     }
     head.iter().take(SNIFF_BYTES).any(|&b| b == 0)
@@ -1491,6 +1491,24 @@ mod tests {
         assert!(!is_retryable_error(&FetchError::UnsupportedContent(
             "application/octet-stream".into()
         )));
+    }
+
+    #[test]
+    fn office_formats_without_an_extractor_are_not_exempt_as_xml() {
+        let mut h = http::HeaderMap::new();
+        h.insert(
+            "content-type",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                .parse()
+                .unwrap(),
+        );
+        let mut pptx = b"PK\x03\x04\x14\x00\x06\x00".to_vec();
+        pptx.resize(1024, 0);
+        assert!(is_unextractable_binary(
+            &h,
+            "https://example.com/deck",
+            &pptx
+        ));
     }
 
     #[test]

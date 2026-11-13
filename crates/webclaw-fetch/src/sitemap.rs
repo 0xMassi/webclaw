@@ -148,8 +148,11 @@ async fn fetch_sitemaps(
         return;
     }
 
-    let bodies: Vec<Option<String>> = futures_util::stream::iter(urls)
-        .map(|url| fetch_sitemap_xml(client, url, deadline))
+    let mut fetches = Vec::with_capacity(urls.len());
+    for url in urls {
+        fetches.push(fetch_sitemap_xml(client, url, deadline));
+    }
+    let bodies: Vec<Option<String>> = futures_util::stream::iter(fetches)
         .buffered(SITEMAP_CONCURRENCY)
         .collect()
         .await;

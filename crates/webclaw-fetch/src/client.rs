@@ -1340,6 +1340,12 @@ fn is_unextractable_binary(headers: &http::HeaderMap, url: &str, head: &[u8]) ->
     if mime.starts_with("text/") || ["html", "xml", "json"].iter().any(|t| mime.ends_with(t)) {
         return false;
     }
+    if ["image/", "audio/", "video/", "font/"]
+        .iter()
+        .any(|p| mime.starts_with(p))
+    {
+        return true;
+    }
     head.iter().take(SNIFF_BYTES).any(|&b| b == 0)
 }
 
@@ -1508,6 +1514,27 @@ mod tests {
             &h,
             "https://example.com/deck",
             &pptx
+        ));
+    }
+
+    #[test]
+    fn declared_media_types_are_binary_without_a_nul_byte() {
+        let typed = |ct: &str| {
+            let mut h = http::HeaderMap::new();
+            h.insert("content-type", ct.parse().unwrap());
+            h
+        };
+        let head = [0xFFu8; 1024];
+        for ct in ["image/jpeg", "video/mp4", "audio/mpeg", "font/woff2"] {
+            assert!(
+                is_unextractable_binary(&typed(ct), "https://example.com/a", &head),
+                "{ct}"
+            );
+        }
+        assert!(!is_unextractable_binary(
+            &typed("image/svg+xml"),
+            "https://example.com/a.svg",
+            b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"
         ));
     }
 

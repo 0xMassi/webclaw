@@ -223,6 +223,7 @@ impl Response {
     async fn from_wreq(
         resp: wreq::Response,
         mut attempt: crate::transfer::Attempt,
+        text: bool,
     ) -> Result<Self, FetchError> {
         attempt.transfer.status = Some(resp.status().as_u16());
         if let Some(len) = resp.content_length()
@@ -243,6 +244,7 @@ impl Response {
         // compression bomb is aborted before it is fully buffered in memory.
         // No capacity hint on purpose — see `into_text` and the note below.
         let mut buf: Vec<u8> = Vec::new();
+        let mut sniffed = !text;
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| FetchError::BodyDecode(e.to_string()))?;
@@ -253,6 +255,16 @@ impl Response {
             check_body_ceiling(buf.len(), chunk.len())?;
             note_body_bytes(chunk.len());
             buf.extend_from_slice(&chunk);
+            if !sniffed && buf.len() >= SNIFF_BYTES {
+                sniffed = true;
+                if is_unextractable_binary(&headers, &url, &buf) {
+                    let mime = headers
+                        .get(http::header::CONTENT_TYPE)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("no content type");
+                    return Err(FetchError::UnsupportedContent(mime.to_string()));
+                }
+            }
         }
 
         attempt.transfer.complete = true;
@@ -630,7 +642,7 @@ impl FetchClient {
             }
             sent
         };
-        let response = self.send(client, url, &sent).await?;
+        let response = self.send(client, url, &sent, true).await?;
         response_to_result(response, start)
     }
 
@@ -757,6 +769,7 @@ impl FetchClient {
         client: &ObservedClient,
         url: &str,
         sent: &[(&str, String)],
+        text: bool,
     ) -> Result<Response, FetchError> {
         let Some(archive) = &self.archive else {
             let mut req = client.get(url);
@@ -764,7 +777,7 @@ impl FetchClient {
                 req = req.header(*k, v.as_str());
             }
             let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
-            return Response::from_wreq(req.send().await?, attempt).await;
+            return Response::from_wreq(req.send().await?, attempt, text).await;
         };
         let mut headers = client.sends.clone().unwrap_or_default();
         for (name, value) in sent {
@@ -787,7 +800,7 @@ impl FetchClient {
                 req = req.redirect(crate::tls::stop_at_redirect(hops < max));
             }
             let resp = req.send().await?;
-            let response = Response::from_wreq(resp, attempt).await?;
+            let response = Response::from_wreq(resp, attempt, text).await?;
             (archive.0)(&crate::warc::Exchange {
                 url: &response.url,
                 request_headers: &headers,
@@ -855,7 +868,7 @@ impl FetchClient {
             }
             let attempt = crate::transfer::Attempt::new(url, client.proxy.as_deref());
             response_to_result(
-                Response::from_wreq(req.send().await?, attempt).await?,
+                Response::from_wreq(req.send().await?, attempt, true).await?,
                 start,
             )
         })
@@ -880,7 +893,7 @@ impl FetchClient {
             let parsed_url = crate::url_security::validate_public_http_url(url).await?;
             let url = parsed_url.as_str();
             let client = self.pick_client(url);
-            let response = self.send(client, url, &[]).await?;
+            let response = self.send(client, url, &[], false).await?;
             Ok((response.status(), response.into_body()))
         })
         .await
@@ -1308,6 +1321,28 @@ fn is_retryable_error(err: &FetchError) -> bool {
     matches!(err, FetchError::Request(_) | FetchError::BodyDecode(_))
 }
 
+const SNIFF_BYTES: usize = 1024;
+
+fn is_unextractable_binary(headers: &http::HeaderMap, url: &str, head: &[u8]) -> bool {
+    if is_pdf_content_type(headers)
+        || head.starts_with(b"%PDF-")
+        || crate::document::is_document_content_type(headers, url).is_some()
+    {
+        return false;
+    }
+    let mime = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|ct| ct.split(';').next())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if mime.starts_with("text/") || ["html", "xml", "json"].iter().any(|t| mime.contains(t)) {
+        return false;
+    }
+    head.iter().take(SNIFF_BYTES).any(|&b| b == 0)
+}
+
 fn is_pdf_content_type(headers: &http::HeaderMap) -> bool {
     headers
         .get("content-type")
@@ -1407,6 +1442,56 @@ async fn collect_ordered<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unextractable_binary_is_detected_from_the_first_bytes() {
+        let typed = |ct: &str| {
+            let mut h = http::HeaderMap::new();
+            h.insert("content-type", ct.parse().unwrap());
+            h
+        };
+        let mut exe = b"MZ\x90\x00\x03\x00\x00\x00".to_vec();
+        exe.resize(1024, 0);
+        let octet = typed("application/octet-stream");
+        assert!(is_unextractable_binary(
+            &octet,
+            "https://example.com/setup.exe",
+            &exe
+        ));
+        assert!(is_unextractable_binary(
+            &typed("image/png"),
+            "https://example.com/a",
+            &exe
+        ));
+        assert!(is_unextractable_binary(
+            &http::HeaderMap::new(),
+            "https://example.com/a",
+            &exe
+        ));
+        assert!(!is_unextractable_binary(
+            &octet,
+            "https://example.com/r",
+            b"%PDF-1.7\x00\x00"
+        ));
+        assert!(!is_unextractable_binary(
+            &octet,
+            "https://example.com/r.xlsx",
+            &exe
+        ));
+        assert!(!is_unextractable_binary(
+            &typed("text/html"),
+            "https://example.com/",
+            &exe
+        ));
+        assert!(!is_unextractable_binary(
+            &octet,
+            "https://example.com/",
+            b"<html><body>hi</body></html>"
+        ));
+        assert!(!is_retryable_error(&FetchError::UnsupportedContent(
+            "application/octet-stream".into()
+        )));
+    }
 
     #[test]
     fn binary_response_retains_original_bytes_and_rejects_invalid_pdf() {
@@ -1803,7 +1888,7 @@ mod tests {
                 .send()
                 .await
                 .unwrap();
-            assert!(Response::from_wreq(response, attempt).await.is_err());
+            assert!(Response::from_wreq(response, attempt, true).await.is_err());
         })
         .await;
         server.await.unwrap();

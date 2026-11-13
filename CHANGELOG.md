@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **Binary files fail fast instead of downloading in full.** Scraping a URL that serves an installer, archive, image or other binary file used to download the whole file and return its raw bytes as text, which could take longer than the caller's timeout on large files. webclaw now checks the first kilobyte and stops with "the target returned a binary file that cannot be converted to text". PDFs, Word, Excel and CSV files are still extracted as before.
+
 ## [0.7.4] - 2026-11-11
 
 ### Security

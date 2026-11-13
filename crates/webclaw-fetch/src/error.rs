@@ -25,6 +25,9 @@ pub enum FetchError {
     #[error("PDF extraction failed: {0}")]
     Pdf(#[from] webclaw_pdf::PdfError),
 
+    #[error("the target returned a binary file ({0}) that cannot be converted to text")]
+    UnsupportedContent(String),
+
     #[error("client build failed: {0}")]
     Build(String),
 }

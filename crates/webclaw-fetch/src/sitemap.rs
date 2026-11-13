@@ -8,6 +8,8 @@
 /// All HTTP requests go through FetchClient to inherit TLS fingerprinting.
 use std::collections::HashSet;
 
+use futures_util::StreamExt;
+
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::Serialize;
@@ -23,6 +25,7 @@ use crate::error::FetchError;
 /// more than three levels deep — a top index → per-section index →
 /// per-month index → urlset is already four hops. Three cut those off.
 const MAX_RECURSION_DEPTH: usize = 5;
+const SITEMAP_CONCURRENCY: usize = 8;
 
 /// Common sitemap paths to try when robots.txt doesn't list any.
 const FALLBACK_SITEMAP_PATHS: &[&str] = &[
@@ -132,7 +135,6 @@ pub async fn discover_within(
     Ok(entries)
 }
 
-/// Recursively fetch and parse sitemap URLs, handling both urlsets and indexes.
 async fn fetch_sitemaps(
     client: &FetchClient,
     urls: &[String],
@@ -146,69 +148,82 @@ async fn fetch_sitemaps(
         return;
     }
 
-    for sitemap_url in urls {
-        // Stop between fetches rather than being cancelled mid-flight, so
-        // everything parsed so far survives and reaches the caller.
-        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-            debug!(
-                parsed = entries.len(),
-                depth, "sitemap budget spent, returning partial results"
-            );
-            return;
-        }
-        debug!(url = %sitemap_url, depth, "fetching sitemap");
+    let bodies: Vec<Option<String>> = futures_util::stream::iter(urls)
+        .map(|url| fetch_sitemap_xml(client, url, deadline))
+        .buffered(SITEMAP_CONCURRENCY)
+        .collect()
+        .await;
 
-        // Fetch raw bytes so gzipped sitemaps survive intact. `fetch` runs
-        // the body through `from_utf8_lossy`, which corrupts binary gzip.
-        let body = match client.fetch_raw(sitemap_url).await {
-            Ok((200, body)) => body,
-            Ok((status, _)) => {
-                debug!(url = %sitemap_url, status, "sitemap not found");
-                continue;
-            }
-            Err(e) => {
-                debug!(url = %sitemap_url, error = %e, "failed to fetch sitemap");
-                continue;
-            }
-        };
-
-        let xml = match decode_sitemap_body(&body) {
-            Some(xml) => xml,
-            None => {
-                debug!(url = %sitemap_url, "failed to decode sitemap body, skipping");
-                continue;
-            }
-        };
-
+    let mut children = Vec::new();
+    for xml in bodies.into_iter().flatten() {
         match detect_sitemap_type(&xml) {
             SitemapType::UrlSet => {
-                let parsed = parse_urlset(&xml);
-                for entry in parsed {
+                for entry in parse_urlset(&xml) {
                     if seen_urls.insert(entry.url.clone()) {
                         entries.push(entry);
                     }
                 }
             }
-            SitemapType::Index => {
-                let child_urls = parse_sitemap_index(&xml);
-                debug!(count = child_urls.len(), "found child sitemaps in index");
-
-                // Box the recursive call to avoid large future sizes
-                Box::pin(fetch_sitemaps(
-                    client,
-                    &child_urls,
-                    entries,
-                    seen_urls,
-                    depth + 1,
-                    deadline,
-                ))
-                .await;
-            }
-            SitemapType::Unknown => {
-                debug!(url = %sitemap_url, "unrecognized sitemap format, skipping");
-            }
+            SitemapType::Index => children.extend(parse_sitemap_index(&xml)),
+            SitemapType::Unknown => debug!(depth, "unrecognized sitemap format, skipping"),
         }
     }
+
+    if !children.is_empty() {
+        debug!(
+            count = children.len(),
+            depth, "found child sitemaps in index"
+        );
+        Box::pin(fetch_sitemaps(
+            client,
+            &children,
+            entries,
+            seen_urls,
+            depth + 1,
+            deadline,
+        ))
+        .await;
+    }
+}
+
+async fn fetch_sitemap_xml(
+    client: &FetchClient,
+    url: &str,
+    deadline: Option<std::time::Instant>,
+) -> Option<String> {
+    let fetch = client.fetch_raw(url);
+    let fetched = match deadline {
+        Some(deadline) => {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return None;
+            }
+            match tokio::time::timeout(left, fetch).await {
+                Ok(fetched) => fetched,
+                Err(_) => {
+                    debug!(url, "sitemap budget spent before this sitemap arrived");
+                    return None;
+                }
+            }
+        }
+        None => fetch.await,
+    };
+    let body = match fetched {
+        Ok((200, body)) => body,
+        Ok((status, _)) => {
+            debug!(url, status, "sitemap not found");
+            return None;
+        }
+        Err(e) => {
+            debug!(url, error = %e, "failed to fetch sitemap");
+            return None;
+        }
+    };
+    let xml = decode_sitemap_body(&body);
+    if xml.is_none() {
+        debug!(url, "failed to decode sitemap body, skipping");
+    }
+    xml
 }
 
 /// Decode a raw sitemap body into a UTF-8 XML string.
@@ -858,5 +873,70 @@ mod tests {
         // Starts with gzip magic but the rest is garbage -> inflate fails.
         let bad = [0x1f, 0x8b, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef];
         assert!(decode_sitemap_body(&bad).is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn child_sitemaps_load_in_parallel_within_the_budget() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let base = "http://example.com".to_string();
+        let host = base.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let host = host.clone();
+                tokio::spawn(async move {
+                    let mut buffer = Vec::new();
+                    while !buffer.ends_with(b"\r\n\r\n") {
+                        let mut chunk = [0; 1024];
+                        let n = socket.read(&mut chunk).await.unwrap();
+                        if n == 0 {
+                            return;
+                        }
+                        buffer.extend_from_slice(&chunk[..n]);
+                    }
+                    let request = String::from_utf8_lossy(&buffer).to_string();
+                    let target = request.split_whitespace().nth(1).unwrap_or("/");
+                    let path = target
+                        .strip_prefix(host.as_str())
+                        .unwrap_or(target)
+                        .to_string();
+                    let body = match path.as_str() {
+                        "/robots.txt" => format!("Sitemap: {host}/index.xml\n"),
+                        "/index.xml" => format!(
+                            "<sitemapindex>{}</sitemapindex>",
+                            (0..12)
+                                .map(|n| format!(
+                                    "<sitemap><loc>{host}/child-{n}.xml</loc></sitemap>"
+                                ))
+                                .collect::<String>()
+                        ),
+                        child => {
+                            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                            format!(
+                                "<urlset><url><loc>{host}/page{}</loc></url></urlset>",
+                                child.trim_end_matches(".xml")
+                            )
+                        }
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let client = FetchClient::new(crate::FetchConfig {
+            proxy: Some(proxy),
+            ..Default::default()
+        })
+        .unwrap();
+        let entries = discover_within(&client, &base, Some(std::time::Duration::from_secs(2)))
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 12);
     }
 }

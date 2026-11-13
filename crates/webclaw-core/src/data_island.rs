@@ -464,20 +464,14 @@ fn is_content_text(s: &str) -> bool {
     if s.len() < 15 {
         return false;
     }
-    // Skip URLs, IDs, technical strings
     if s.starts_with("http") || s.starts_with('/') || s.starts_with('{') || s.starts_with('[') {
         return false;
     }
-    // Must contain spaces (prose), not just a single technical token
     if !s.contains(' ') {
         return false;
     }
-    // Skip strings that are mostly hex/base64 (hashes, IDs)
     let alnum_ratio = s.chars().filter(|c| c.is_alphanumeric()).count() as f64 / s.len() as f64;
-    if alnum_ratio < 0.6 {
-        return false;
-    }
-    true
+    alnum_ratio >= 0.6
 }
 
 #[cfg(test)]

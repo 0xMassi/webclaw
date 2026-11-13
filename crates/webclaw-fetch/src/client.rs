@@ -257,14 +257,11 @@ impl Response {
             buf.extend_from_slice(&chunk);
             if !sniffed && buf.len() >= SNIFF_BYTES {
                 sniffed = true;
-                if is_unextractable_binary(&headers, &url, &buf) {
-                    let mime = headers
-                        .get(http::header::CONTENT_TYPE)
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or("no content type");
-                    return Err(FetchError::UnsupportedContent(mime.to_string()));
-                }
+                reject_unextractable_binary(&headers, &url, &buf)?;
             }
+        }
+        if !sniffed && !buf.is_empty() {
+            reject_unextractable_binary(&headers, &url, &buf)?;
         }
 
         attempt.transfer.complete = true;
@@ -1323,6 +1320,21 @@ fn is_retryable_error(err: &FetchError) -> bool {
 
 const SNIFF_BYTES: usize = 1024;
 
+fn reject_unextractable_binary(
+    headers: &http::HeaderMap,
+    url: &str,
+    head: &[u8],
+) -> Result<(), FetchError> {
+    if !is_unextractable_binary(headers, url, head) {
+        return Ok(());
+    }
+    let mime = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("no content type");
+    Err(FetchError::UnsupportedContent(mime.to_string()))
+}
+
 fn is_unextractable_binary(headers: &http::HeaderMap, url: &str, head: &[u8]) -> bool {
     if is_pdf_content_type(headers)
         || head.starts_with(b"%PDF-")
@@ -1900,6 +1912,41 @@ mod tests {
                 .key("https://example.com/", &[])
         };
         assert_ne!(key(true), key(false));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets"]
+    async fn binary_body_shorter_than_the_sniff_window_is_rejected() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            assert!(socket.read(&mut request).await.unwrap() > 0);
+            let body = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            socket.write_all(body).await.unwrap();
+        });
+        let url = format!("http://{addr}/icon");
+        let attempt = crate::transfer::Attempt::new(&url, None);
+        let response = wreq::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(&url)
+            .send()
+            .await
+            .unwrap();
+        assert!(matches!(
+            Response::from_wreq(response, attempt, true).await,
+            Err(FetchError::UnsupportedContent(_))
+        ));
+        server.await.unwrap();
     }
 
     #[tokio::test]

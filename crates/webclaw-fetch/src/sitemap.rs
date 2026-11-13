@@ -194,24 +194,11 @@ async fn fetch_sitemap_xml(
     url: &str,
     deadline: Option<std::time::Instant>,
 ) -> Option<String> {
-    let fetch = client.fetch_raw(url);
-    let fetched = match deadline {
-        Some(deadline) => {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
-            if left.is_zero() {
-                return None;
-            }
-            match tokio::time::timeout(left, fetch).await {
-                Ok(fetched) => fetched,
-                Err(_) => {
-                    debug!(url, "sitemap budget spent before this sitemap arrived");
-                    return None;
-                }
-            }
-        }
-        None => fetch.await,
-    };
-    let body = match fetched {
+    if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+        debug!(url, "sitemap budget spent, skipping");
+        return None;
+    }
+    let body = match client.fetch_raw(url).await {
         Ok((200, body)) => body,
         Ok((status, _)) => {
             debug!(url, status, "sitemap not found");
@@ -909,7 +896,7 @@ mod tests {
                                 .collect::<String>()
                         ),
                         stall if stall.starts_with("/stall") => {
-                            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                             String::new()
                         }
                         child => {

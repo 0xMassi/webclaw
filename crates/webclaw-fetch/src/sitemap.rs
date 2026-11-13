@@ -6,9 +6,10 @@
 /// 3. Recursively resolve sitemap index files
 ///
 /// All HTTP requests go through FetchClient to inherit TLS fingerprinting.
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -118,18 +119,7 @@ pub async fn discover_within(
     }
 
     // Step 3: Fetch and parse each sitemap, handling indexes recursively
-    let mut seen_urls: HashSet<String> = HashSet::new();
-    let mut entries: Vec<SitemapEntry> = Vec::new();
-
-    fetch_sitemaps(
-        client,
-        &sitemap_urls,
-        &mut entries,
-        &mut seen_urls,
-        0,
-        deadline,
-    )
-    .await;
+    let entries = fetch_sitemaps(client, &sitemap_urls, deadline).await;
 
     debug!(total = entries.len(), "sitemap discovery complete");
     Ok(entries)
@@ -137,56 +127,66 @@ pub async fn discover_within(
 
 async fn fetch_sitemaps(
     client: &FetchClient,
-    urls: &[String],
-    entries: &mut Vec<SitemapEntry>,
-    seen_urls: &mut HashSet<String>,
-    depth: usize,
+    roots: &[String],
     deadline: Option<std::time::Instant>,
-) {
-    if depth > MAX_RECURSION_DEPTH {
-        warn!(depth, "sitemap recursion limit reached, stopping");
-        return;
-    }
+) -> Vec<SitemapEntry> {
+    let mut pending: VecDeque<(Vec<usize>, String)> = roots
+        .iter()
+        .enumerate()
+        .map(|(i, url)| (vec![i], url.clone()))
+        .collect();
+    let mut in_flight = FuturesUnordered::new();
+    let mut parsed: BTreeMap<Vec<usize>, Vec<SitemapEntry>> = BTreeMap::new();
 
-    let mut fetches = Vec::with_capacity(urls.len());
-    for url in urls {
-        fetches.push(fetch_sitemap_xml(client, url, deadline));
-    }
-    let bodies: Vec<Option<String>> = futures_util::stream::iter(fetches)
-        .buffered(SITEMAP_CONCURRENCY)
-        .collect()
-        .await;
-
-    let mut children = Vec::new();
-    for xml in bodies.into_iter().flatten() {
+    loop {
+        while in_flight.len() < SITEMAP_CONCURRENCY
+            && let Some((key, url)) = pending.pop_front()
+        {
+            if key.len() > MAX_RECURSION_DEPTH + 1 {
+                warn!(
+                    depth = key.len() - 1,
+                    "sitemap recursion limit reached, stopping"
+                );
+                continue;
+            }
+            in_flight.push(async move {
+                let xml = fetch_sitemap_xml(client, &url, deadline).await;
+                (key, xml)
+            });
+        }
+        let Some((key, xml)) = in_flight.next().await else {
+            break;
+        };
+        let Some(xml) = xml else {
+            continue;
+        };
         match detect_sitemap_type(&xml) {
             SitemapType::UrlSet => {
-                for entry in parse_urlset(&xml) {
-                    if seen_urls.insert(entry.url.clone()) {
-                        entries.push(entry);
-                    }
+                parsed.insert(key, parse_urlset(&xml));
+            }
+            SitemapType::Index => {
+                let children = parse_sitemap_index(&xml);
+                debug!(
+                    count = children.len(),
+                    depth = key.len() - 1,
+                    "found child sitemaps in index"
+                );
+                for (i, child) in children.into_iter().enumerate() {
+                    let mut child_key = key.clone();
+                    child_key.push(i);
+                    pending.push_back((child_key, child));
                 }
             }
-            SitemapType::Index => children.extend(parse_sitemap_index(&xml)),
-            SitemapType::Unknown => debug!(depth, "unrecognized sitemap format, skipping"),
+            SitemapType::Unknown => debug!("unrecognized sitemap format, skipping"),
         }
     }
 
-    if !children.is_empty() {
-        debug!(
-            count = children.len(),
-            depth, "found child sitemaps in index"
-        );
-        Box::pin(fetch_sitemaps(
-            client,
-            &children,
-            entries,
-            seen_urls,
-            depth + 1,
-            deadline,
-        ))
-        .await;
-    }
+    let mut seen_urls: HashSet<String> = HashSet::new();
+    parsed
+        .into_values()
+        .flatten()
+        .filter(|entry| seen_urls.insert(entry.url.clone()))
+        .collect()
 }
 
 async fn fetch_sitemap_xml(
@@ -878,18 +878,13 @@ mod tests {
         assert!(decode_sitemap_body(&bad).is_none());
     }
 
-    #[tokio::test]
-    #[ignore = "requires local TCP sockets and public DNS"]
-    async fn child_sitemaps_load_in_parallel_within_the_budget() {
+    async fn serve_sitemaps(robots: &'static str) -> FetchClient {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy = format!("http://{}", listener.local_addr().unwrap());
-        let base = "http://example.com".to_string();
-        let host = base.clone();
         tokio::spawn(async move {
             loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let host = host.clone();
                 tokio::spawn(async move {
                     let mut buffer = Vec::new();
                     while !buffer.ends_with(b"\r\n\r\n") {
@@ -902,25 +897,26 @@ mod tests {
                     }
                     let request = String::from_utf8_lossy(&buffer).to_string();
                     let target = request.split_whitespace().nth(1).unwrap_or("/");
-                    let path = target
-                        .strip_prefix(host.as_str())
-                        .unwrap_or(target)
-                        .to_string();
-                    let body = match path.as_str() {
-                        "/robots.txt" => format!("Sitemap: {host}/index.xml\n"),
+                    let path = target.strip_prefix("http://example.com").unwrap_or(target);
+                    let body = match path {
+                        "/robots.txt" => robots.to_string(),
                         "/index.xml" => format!(
-                            "<sitemapindex>{}</sitemapindex>",
+                            "<sitemapindex><sitemap><loc>http://example.com/stall-child.xml</loc></sitemap>{}</sitemapindex>",
                             (0..12)
                                 .map(|n| format!(
-                                    "<sitemap><loc>{host}/child-{n}.xml</loc></sitemap>"
+                                    "<sitemap><loc>http://example.com/child-{n}.xml</loc></sitemap>"
                                 ))
                                 .collect::<String>()
                         ),
+                        stall if stall.starts_with("/stall") => {
+                            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                            String::new()
+                        }
                         child => {
                             tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                            let n = child.trim_start_matches("/child-").trim_end_matches(".xml");
                             format!(
-                                "<urlset><url><loc>{host}/page{}</loc></url></urlset>",
-                                child.trim_end_matches(".xml")
+                                "<urlset><url><loc>http://example.com/page-{n}</loc></url></urlset>"
                             )
                         }
                     };
@@ -932,14 +928,51 @@ mod tests {
                 });
             }
         });
-        let client = FetchClient::new(crate::FetchConfig {
+        FetchClient::new(crate::FetchConfig {
             proxy: Some(proxy),
             ..Default::default()
         })
+        .unwrap()
+    }
+
+    fn pages(entries: &[SitemapEntry]) -> Vec<String> {
+        entries.iter().map(|e| e.url.clone()).collect()
+    }
+
+    fn expected_pages() -> Vec<String> {
+        (0..12)
+            .map(|n| format!("http://example.com/page-{n}"))
+            .collect()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn child_sitemaps_load_in_parallel_past_a_stalled_sibling() {
+        let client = serve_sitemaps("Sitemap: http://example.com/index.xml\n").await;
+        let entries = discover_within(
+            &client,
+            "http://example.com",
+            Some(std::time::Duration::from_secs(2)),
+        )
+        .await
         .unwrap();
-        let entries = discover_within(&client, &base, Some(std::time::Duration::from_secs(2)))
-            .await
-            .unwrap();
-        assert_eq!(entries.len(), 12);
+        assert_eq!(pages(&entries), expected_pages());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn a_stalled_root_sitemap_leaves_time_for_an_index_children() {
+        let client = serve_sitemaps(
+            "Sitemap: http://example.com/stall.xml\nSitemap: http://example.com/index.xml\n",
+        )
+        .await;
+        let entries = discover_within(
+            &client,
+            "http://example.com",
+            Some(std::time::Duration::from_secs(2)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(pages(&entries), expected_pages());
     }
 }

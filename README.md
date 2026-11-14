@@ -536,6 +536,12 @@ Crawl this documentation site and prepare clean context for a RAG index.
 Extract the brand colors, fonts, and logos from this company website.
 ```
 
+### One-click deploy
+
+To run the MCP server on a hosted machine instead of your own, deploy it with one click:
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/Webclaw/)
+
 ---
 
 ## Use as an agent skill

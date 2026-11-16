@@ -36,6 +36,20 @@ pub(crate) fn has_main_content(doc: &Html) -> bool {
     doc.select(&MAIN_CONTENT_SELECTOR).next().is_some()
 }
 
+fn visible_text_len(element: ElementRef<'_>, exclude: &HashSet<NodeId>) -> usize {
+    element
+        .descendants()
+        .filter_map(|node| node.value().as_text().map(|text| (node, text.len())))
+        .filter(|(node, _)| {
+            !node
+                .ancestors()
+                .take_while(|ancestor| ancestor.id() != element.id())
+                .any(|ancestor| exclude.contains(&ancestor.id()))
+        })
+        .map(|(_, len)| len)
+        .sum()
+}
+
 fn main_content_node<'a>(doc: &'a Html, exclude: &HashSet<NodeId>) -> Option<ElementRef<'a>> {
     if let Some(main) = doc
         .select(&MAIN_SELECTOR)
@@ -49,7 +63,7 @@ fn main_content_node<'a>(doc: &'a Html, exclude: &HashSet<NodeId>) -> Option<Ele
         .collect();
     let sizes: Vec<usize> = articles
         .iter()
-        .map(|a| a.text().map(str::len).sum())
+        .map(|a| visible_text_len(*a, exclude))
         .collect();
     let total: usize = sizes.iter().sum();
     if let Some((idx, &largest)) = sizes.iter().enumerate().max_by_key(|(_, s)| **s)
@@ -1025,6 +1039,22 @@ mod tests {
                 .markdown
                 .contains("Variables and Mutability")
         );
+    }
+
+    #[test]
+    fn main_content_ignores_excluded_text_when_sizing_articles() {
+        let ad = "Sponsored offer text that the caller asked to exclude. ".repeat(60);
+        let html = format!(
+            r#"<html><body><div>
+            <article class="a"><p>Short item one.</p><div class="ad">{ad}</div></article>
+            <article class="b"><p>Short item two.</p></article>
+            </div></body></html>"#
+        );
+        let doc = Html::parse_document(&html);
+        let ad_selector = Selector::parse(".ad").unwrap();
+        let exclude: HashSet<NodeId> = doc.select(&ad_selector).map(|el| el.id()).collect();
+        let node = main_content_node(&doc, &exclude).unwrap();
+        assert_eq!(node.value().name(), "div");
     }
 
     #[test]

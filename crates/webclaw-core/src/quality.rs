@@ -85,10 +85,24 @@ const CONSENT_TITLES: &[&str] = &[
 /// at a known consent host or path, such as `consent.google.com`, or when the
 /// title starts with an English consent-wall phrase and the page has at most
 /// 50 words. Providers localize their consent pages, so the URL is the primary
+fn consent_match_target(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) => format!(
+            "{}://{}{}{}",
+            parsed.scheme(),
+            parsed.host_str().unwrap_or_default(),
+            parsed.path(),
+            if parsed.query().is_some() { "?" } else { "" }
+        )
+        .to_ascii_lowercase(),
+        Err(_) => url.to_ascii_lowercase(),
+    }
+}
+
 /// signal and the title a best-effort fallback.
 pub fn is_consent_wall(result: &ExtractionResult) -> bool {
     if let Some(ref url) = result.metadata.url {
-        let lower = url.to_ascii_lowercase();
+        let lower = consent_match_target(url);
         if CONSENT_URL_FRAGMENTS
             .iter()
             .any(|fragment| lower.contains(fragment))
@@ -240,6 +254,20 @@ mod tests {
         )
         .unwrap();
         assert!(!is_consent_wall(&localized_elsewhere));
+
+        let return_link = extract(
+            "<title>Bevor Sie weiterlesen</title><p>Kurzer Text.</p>",
+            Some("https://example.com/article?next=https://consent.google.com/&from=/consent/"),
+        )
+        .unwrap();
+        assert!(!is_consent_wall(&return_link));
+
+        let consent_path = extract(
+            "<title>Bevor Sie weiterlesen</title><p>Kurzer Text.</p>",
+            Some("https://news.example.com/consent?redirect=/article"),
+        )
+        .unwrap();
+        assert!(is_consent_wall(&consent_path));
     }
 
     #[test]

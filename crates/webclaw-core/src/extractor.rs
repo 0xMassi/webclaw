@@ -43,11 +43,22 @@ fn main_content_node<'a>(doc: &'a Html, exclude: &HashSet<NodeId>) -> Option<Ele
     {
         return Some(main);
     }
-    let mut articles = doc
+    let articles: Vec<ElementRef<'a>> = doc
         .select(&ARTICLE_SELECTOR)
-        .filter(|el| !exclude.contains(&el.id()));
-    let first = articles.next()?;
-    Some(articles.fold(first, |common, article| {
+        .filter(|el| !exclude.contains(&el.id()))
+        .collect();
+    let sizes: Vec<usize> = articles
+        .iter()
+        .map(|a| a.text().map(str::len).sum())
+        .collect();
+    let total: usize = sizes.iter().sum();
+    if let Some((idx, &largest)) = sizes.iter().enumerate().max_by_key(|(_, s)| **s)
+        && largest * 5 >= total * 3
+    {
+        return Some(articles[idx]);
+    }
+    let (first, rest) = articles.split_first()?;
+    Some(rest.iter().copied().fold(*first, |common, article| {
         std::iter::once(*common)
             .chain(common.ancestors())
             .filter_map(ElementRef::wrap)
@@ -1014,6 +1025,21 @@ mod tests {
                 .markdown
                 .contains("Variables and Mutability")
         );
+    }
+
+    #[test]
+    fn main_content_prefers_a_dominant_article_over_related_cards() {
+        let body = "The full story text keeps going with real reporting. ".repeat(40);
+        let html = format!(
+            r#"<html><body><nav><a href="/">Home</a></nav><div>
+            <article class="post"><h1>Main story</h1><p>{body}</p></article>
+            <aside><article class="card"><a href="/x">Related one</a></article>
+            <article class="card"><a href="/y">Related two</a></article></aside>
+            </div></body></html>"#
+        );
+        let doc = Html::parse_document(&html);
+        let node = main_content_node(&doc, &HashSet::new()).unwrap();
+        assert_eq!(node.value().attr("class"), Some("post"));
     }
 
     #[test]

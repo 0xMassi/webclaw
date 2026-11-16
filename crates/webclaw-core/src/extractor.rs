@@ -67,6 +67,7 @@ fn main_content_node<'a>(doc: &'a Html, exclude: &HashSet<NodeId>) -> Option<Ele
         .collect();
     let total: usize = sizes.iter().sum();
     if let Some((idx, &largest)) = sizes.iter().enumerate().max_by_key(|(_, s)| **s)
+        && total > 0
         && largest * 5 >= total * 3
     {
         return Some(articles[idx]);
@@ -1039,6 +1040,18 @@ mod tests {
                 .markdown
                 .contains("Variables and Mutability")
         );
+    }
+
+    #[test]
+    fn main_content_keeps_image_only_listings_whole() {
+        let doc = Html::parse_document(
+            r#"<html><body><nav><a href="/">Home</a></nav><ul>
+            <li><article><a href="/a"><img src="/a.jpg" alt=""></a></article></li>
+            <li><article><a href="/b"><img src="/b.jpg" alt=""></a></article></li>
+            </ul></body></html>"#,
+        );
+        let node = main_content_node(&doc, &HashSet::new()).unwrap();
+        assert_eq!(node.value().name(), "ul");
     }
 
     #[test]

@@ -59,6 +59,73 @@ pub fn allows_empty_content(html: &str, options: &crate::ExtractionOptions) -> b
             && crate::extractor::has_main_content(&scraper::Html::parse_document(html)))
 }
 
+const CONSENT_URL_FRAGMENTS: &[&str] = &[
+    "://consent.",
+    "/consent?",
+    "/consent/",
+    "collectconsent",
+    "consentcheck",
+    "/cmp/",
+    "guce.advertising.com",
+];
+
+const CONSENT_TITLES: &[&str] = &[
+    "before you continue",
+    "your privacy choices",
+    "we value your privacy",
+    "we care about your privacy",
+    "cookie consent",
+    "consent required",
+];
+
+/// Whether the extraction is a GDPR/cookie consent wall instead of the
+/// requested page.
+///
+/// True when `metadata.url` (set it to the final URL after redirects) points
+/// at a known consent host or path, such as `consent.google.com`, or when the
+/// title starts with an English consent-wall phrase and the page has at most
+/// 50 words. Providers localize their consent pages, so the URL is the primary
+fn consent_match_target(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) => format!(
+            "{}://{}{}{}",
+            parsed.scheme(),
+            parsed.host_str().unwrap_or_default(),
+            parsed.path(),
+            if parsed.query().is_some() { "?" } else { "" }
+        )
+        .to_ascii_lowercase(),
+        Err(_) => url.to_ascii_lowercase(),
+    }
+}
+
+/// signal and the title a best-effort fallback.
+pub fn is_consent_wall(result: &ExtractionResult) -> bool {
+    if let Some(ref url) = result.metadata.url {
+        let lower = consent_match_target(url);
+        if CONSENT_URL_FRAGMENTS
+            .iter()
+            .any(|fragment| lower.contains(fragment))
+        {
+            return true;
+        }
+    }
+
+    if result.metadata.word_count <= 50
+        && let Some(ref title) = result.metadata.title
+    {
+        let lower = title.to_lowercase();
+        if CONSENT_TITLES
+            .iter()
+            .any(|prefix| lower.starts_with(prefix))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn content_issue(result: &ExtractionResult) -> Option<ContentIssue> {
     let text = result
         .content
@@ -163,5 +230,55 @@ mod tests {
             "An article about this phrase. ".repeat(60)
         );
         assert_eq!(content_issue(&extract(&article, None).unwrap()), None);
+    }
+
+    #[test]
+    fn consent_walls_are_detected_by_final_url_or_short_titled_page() {
+        let google = extract(
+            "<title>Bevor Sie zu Google weitergehen</title><p>Wir verwenden Cookies und Daten.</p><button>Alle akzeptieren</button>",
+            Some("https://consent.google.com/ml?continue=https://chromewebstore.google.com/&gl=DE&hl=de"),
+        )
+        .unwrap();
+        assert!(is_consent_wall(&google));
+
+        let short_english = extract(
+            "<title>Before you continue to Google</title><p>We use cookies and data to deliver services.</p>",
+            Some("https://www.google.com/"),
+        )
+        .unwrap();
+        assert!(is_consent_wall(&short_english));
+
+        let localized_elsewhere = extract(
+            "<title>Bevor Sie zu Google weitergehen</title><p>Wir verwenden Cookies und Daten.</p>",
+            Some("https://www.google.de/"),
+        )
+        .unwrap();
+        assert!(!is_consent_wall(&localized_elsewhere));
+
+        let return_link = extract(
+            "<title>Bevor Sie weiterlesen</title><p>Kurzer Text.</p>",
+            Some("https://example.com/article?next=https://consent.google.com/&from=/consent/"),
+        )
+        .unwrap();
+        assert!(!is_consent_wall(&return_link));
+
+        let consent_path = extract(
+            "<title>Bevor Sie weiterlesen</title><p>Kurzer Text.</p>",
+            Some("https://news.example.com/consent?redirect=/article"),
+        )
+        .unwrap();
+        assert!(is_consent_wall(&consent_path));
+    }
+
+    #[test]
+    fn privacy_pages_with_real_content_are_not_consent_walls() {
+        let html = format!(
+            "<title>Your privacy choices explained</title><article><h1>Privacy policy</h1><p>{}</p></article>",
+            "This section explains how we collect, store and delete account data for customers. "
+                .repeat(10)
+        );
+        let result = extract(&html, Some("https://example.com/privacy")).unwrap();
+        assert!(result.metadata.word_count > 50);
+        assert!(!is_consent_wall(&result));
     }
 }

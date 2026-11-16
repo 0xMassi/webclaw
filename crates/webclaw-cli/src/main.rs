@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 use webclaw_core::{
     ChangeStatus, ContentDiff, ExtractionOptions, ExtractionResult, Metadata, extract_with_options,
-    to_citations_after, to_llm_text,
+    is_consent_wall, to_citations_after, to_llm_text,
 };
 use webclaw_fetch::{
     BatchExtractResult, BrowserProfile, CrawlConfig, CrawlResult, Crawler, FetchClient,
@@ -35,28 +35,6 @@ const ANTIBOT_TITLES: &[&str] = &[
     "ddos protection",
 ];
 
-/// URL host/path fragments that indicate a GDPR/cookie consent redirect.
-const CONSENT_URL_FRAGMENTS: &[&str] = &[
-    "://consent.",
-    "/consent?",
-    "/consent/",
-    "collectconsent",
-    "consentcheck",
-    "/cmp/",
-    "guce.advertising.com",
-];
-
-/// English consent-wall title prefixes. Many providers localize this page, so
-/// this is a best-effort secondary signal. URL shape is the primary signal.
-const CONSENT_TITLES: &[&str] = &[
-    "before you continue",
-    "your privacy choices",
-    "we value your privacy",
-    "we care about your privacy",
-    "cookie consent",
-    "consent required",
-];
-
 /// Detect why a page returned empty or near-empty content.
 #[derive(Debug, PartialEq, Eq)]
 enum EmptyReason {
@@ -71,18 +49,14 @@ enum EmptyReason {
 }
 
 fn detect_empty(result: &ExtractionResult) -> EmptyReason {
-    // Consent walls can have a tiny body, so check before the content
-    // short-circuit.
     if is_consent_wall(result) {
         return EmptyReason::ConsentWall;
     }
 
-    // Has real content. Nothing to warn about.
     if result.metadata.word_count > 50 || !result.content.markdown.is_empty() {
         return EmptyReason::None;
     }
 
-    // Check for known anti-bot challenge titles
     if let Some(ref title) = result.metadata.title {
         let lower = title.to_lowercase();
         if ANTIBOT_TITLES.iter().any(|t| lower.starts_with(t)) {
@@ -90,41 +64,11 @@ fn detect_empty(result: &ExtractionResult) -> EmptyReason {
         }
     }
 
-    // Empty content with no title or a generic SPA shell = JS-only site
     if result.metadata.word_count == 0 && result.content.links.is_empty() {
         return EmptyReason::JsRequired;
     }
 
     EmptyReason::None
-}
-
-/// A consent wall is identified by either:
-/// 1. The final URL pointing at a known consent host/path, or
-/// 2. A consent-wall title prefix with a very small body.
-fn is_consent_wall(result: &ExtractionResult) -> bool {
-    if let Some(ref url) = result.metadata.url {
-        let lower = url.to_ascii_lowercase();
-        if CONSENT_URL_FRAGMENTS
-            .iter()
-            .any(|fragment| lower.contains(fragment))
-        {
-            return true;
-        }
-    }
-
-    if result.metadata.word_count <= 50
-        && let Some(ref title) = result.metadata.title
-    {
-        let lower = title.to_lowercase();
-        if CONSENT_TITLES
-            .iter()
-            .any(|prefix| lower.starts_with(prefix))
-        {
-            return true;
-        }
-    }
-
-    false
 }
 
 fn warn_empty(url: &str, reason: &EmptyReason) {

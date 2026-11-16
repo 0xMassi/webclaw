@@ -26,12 +26,64 @@ static FOOTER_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("footer").
 static FOOTER_HEADING_SELECTOR: Lazy<Selector> =
     Lazy::new(|| Selector::parse("h2, h3, h4, h5, h6").unwrap());
 
-/// Selector for only_main_content: article, main, [role="main"]
 static MAIN_CONTENT_SELECTOR: Lazy<Selector> =
     Lazy::new(|| Selector::parse("article, main, [role='main']").unwrap());
+static MAIN_SELECTOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("main, [role='main']").unwrap());
+static ARTICLE_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("article").unwrap());
 
 pub(crate) fn has_main_content(doc: &Html) -> bool {
     doc.select(&MAIN_CONTENT_SELECTOR).next().is_some()
+}
+
+fn visible_text_len(element: ElementRef<'_>, exclude: &HashSet<NodeId>) -> usize {
+    element
+        .descendants()
+        .filter_map(|node| node.value().as_text().map(|text| (node, text.len())))
+        .filter(|(node, _)| {
+            !node
+                .ancestors()
+                .take_while(|ancestor| ancestor.id() != element.id())
+                .any(|ancestor| exclude.contains(&ancestor.id()))
+        })
+        .map(|(_, len)| len)
+        .sum()
+}
+
+fn main_content_node<'a>(doc: &'a Html, exclude: &HashSet<NodeId>) -> Option<ElementRef<'a>> {
+    if let Some(main) = doc
+        .select(&MAIN_SELECTOR)
+        .find(|el| !exclude.contains(&el.id()))
+    {
+        return Some(main);
+    }
+    let articles: Vec<ElementRef<'a>> = doc
+        .select(&ARTICLE_SELECTOR)
+        .filter(|el| !exclude.contains(&el.id()))
+        .collect();
+    let sizes: Vec<usize> = articles
+        .iter()
+        .map(|a| visible_text_len(*a, exclude))
+        .collect();
+    let total: usize = sizes.iter().sum();
+    if let Some((idx, &largest)) = sizes.iter().enumerate().max_by_key(|(_, s)| **s)
+        && total > 0
+        && largest * 5 >= total * 3
+    {
+        return Some(articles[idx]);
+    }
+    let (first, rest) = articles.split_first()?;
+    Some(rest.iter().copied().fold(*first, |common, article| {
+        std::iter::once(*common)
+            .chain(common.ancestors())
+            .filter_map(ElementRef::wrap)
+            .find(|candidate| {
+                std::iter::once(*article)
+                    .chain(article.ancestors())
+                    .any(|node| node.id() == candidate.id())
+            })
+            .unwrap_or(common)
+    }))
 }
 
 // A no-script version can be the only readable representation of a page. Keep
@@ -157,13 +209,9 @@ pub fn extract_content(doc: &Html, base_url: Option<&Url>, options: &ExtractionO
         return extract_with_include(doc, base_url, &options.include_selectors, &exclude, options);
     }
 
-    // Main-only recovery stays inside the selected content node.
     let best = options
         .only_main_content
-        .then(|| {
-            doc.select(&MAIN_CONTENT_SELECTOR)
-                .find(|el| !exclude.contains(&el.id()))
-        })
+        .then(|| main_content_node(doc, &exclude))
         .flatten()
         .or_else(|| find_best_node(doc));
 
@@ -992,6 +1040,105 @@ mod tests {
                 .markdown
                 .contains("Variables and Mutability")
         );
+    }
+
+    #[test]
+    fn main_content_keeps_image_only_listings_whole() {
+        let doc = Html::parse_document(
+            r#"<html><body><nav><a href="/">Home</a></nav><ul>
+            <li><article><a href="/a"><img src="/a.jpg" alt=""></a></article></li>
+            <li><article><a href="/b"><img src="/b.jpg" alt=""></a></article></li>
+            </ul></body></html>"#,
+        );
+        let node = main_content_node(&doc, &HashSet::new()).unwrap();
+        assert_eq!(node.value().name(), "ul");
+    }
+
+    #[test]
+    fn main_content_ignores_excluded_text_when_sizing_articles() {
+        let ad = "Sponsored offer text that the caller asked to exclude. ".repeat(60);
+        let html = format!(
+            r#"<html><body><div>
+            <article class="a"><p>Short item one.</p><div class="ad">{ad}</div></article>
+            <article class="b"><p>Short item two.</p></article>
+            </div></body></html>"#
+        );
+        let doc = Html::parse_document(&html);
+        let ad_selector = Selector::parse(".ad").unwrap();
+        let exclude: HashSet<NodeId> = doc.select(&ad_selector).map(|el| el.id()).collect();
+        let node = main_content_node(&doc, &exclude).unwrap();
+        assert_eq!(node.value().name(), "div");
+    }
+
+    #[test]
+    fn main_content_prefers_a_dominant_article_over_related_cards() {
+        let body = "The full story text keeps going with real reporting. ".repeat(40);
+        let html = format!(
+            r#"<html><body><nav><a href="/">Home</a></nav><div>
+            <article class="post"><h1>Main story</h1><p>{body}</p></article>
+            <aside><article class="card"><a href="/x">Related one</a></article>
+            <article class="card"><a href="/y">Related two</a></article></aside>
+            </div></body></html>"#
+        );
+        let doc = Html::parse_document(&html);
+        let node = main_content_node(&doc, &HashSet::new()).unwrap();
+        assert_eq!(node.value().attr("class"), Some("post"));
+    }
+
+    #[test]
+    fn main_content_keeps_every_sibling_article_on_listing_pages() {
+        let doc = Html::parse_document(
+            r#"<html><body>
+            <header><nav><a href="/">Books to Scrape home</a></nav></header>
+            <div class="row">
+              <aside class="sidebar"><ul><li><a href="/travel">Travel category</a></li></ul></aside>
+              <div class="col"><section><ol class="row">
+                <li><article class="product_pod"><h3><a href="/a">A Light in the Attic</a></h3><p class="price_color">£51.77</p></article></li>
+                <li><article class="product_pod"><h3><a href="/b">Tipping the Velvet</a></h3><p class="price_color">£53.74</p></article></li>
+                <li><article class="product_pod"><h3><a href="/c">Soumission</a></h3><p class="price_color">£50.10</p></article></li>
+              </ol></section></div>
+            </div>
+            </body></html>"#,
+        );
+        let options = ExtractionOptions {
+            only_main_content: true,
+            ..Default::default()
+        };
+        let markdown = extract_content(&doc, None, &options).markdown;
+        for item in ["A Light in the Attic", "Tipping the Velvet", "Soumission"] {
+            assert!(markdown.contains(item), "missing {item}: {markdown}");
+        }
+        assert!(!markdown.contains("Books to Scrape home"));
+        assert!(!markdown.contains("Travel category"));
+
+        let excluded = ExtractionOptions {
+            exclude_selectors: vec!["li:first-child article".into()],
+            ..options.clone()
+        };
+        let markdown = extract_content(&doc, None, &excluded).markdown;
+        assert!(!markdown.contains("A Light in the Attic"));
+        assert!(markdown.contains("Soumission"));
+    }
+
+    #[test]
+    fn main_content_prefers_main_over_articles_and_keeps_single_article() {
+        let options = ExtractionOptions {
+            only_main_content: true,
+            ..Default::default()
+        };
+        let doc = Html::parse_document(
+            "<body><article><p>Promo teaser outside main</p></article><main><p>Primary body text</p></main></body>",
+        );
+        let markdown = extract_content(&doc, None, &options).markdown;
+        assert!(markdown.contains("Primary body text"));
+        assert!(!markdown.contains("Promo teaser"));
+
+        let doc = Html::parse_document(
+            "<body><div><p>Outside wrapper text</p><article><p>Only article text</p></article></div></body>",
+        );
+        let markdown = extract_content(&doc, None, &options).markdown;
+        assert!(markdown.contains("Only article text"));
+        assert!(!markdown.contains("Outside wrapper text"));
     }
 
     #[test]

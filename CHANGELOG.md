@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **`webclaw_core::is_consent_wall` tells a GDPR/cookie consent page apart from the page you asked for.** It reads the final URL (`consent.google.com` and other known consent hosts and paths) and, for short pages, the title. The CLI used to keep this check to itself; it now calls the shared function, so services built on `webclaw-core` can flag the same pages. CLI behaviour is unchanged.
+
 ### Fixed
 - **`only_main_content` keeps every item on listing pages.** It took the first `<article>` on the page, so a catalogue that wraps each product in its own `<article>` (books.toscrape.com, for one) came back with 1 of 20 items. A `<main>` or `role="main"` element now wins when the page has one; otherwise several `<article>` elements are extracted together through their closest shared container. A page with a single `<article>` extracts as before.
 - **Sitemap discovery loads child sitemaps 8 at a time.** It fetched them one by one, so a large sitemap index or a site without a `Sitemap:` line in robots.txt ran out of time after a few sitemaps and returned a handful of URLs. The URLs found are the same; they arrive several times faster.

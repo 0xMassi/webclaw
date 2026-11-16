@@ -40,6 +40,7 @@ pub use find::{
 };
 pub use focus::{PageWords, Question, Relevance, focus, focus_extraction};
 pub use llm::to_llm_text;
+pub use quality::is_consent_wall;
 pub use select::{SelectError, select, select_records};
 pub use tables::{Table, tables};
 pub use types::{

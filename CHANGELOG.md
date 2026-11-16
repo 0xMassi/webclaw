@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **`webclaw_core::is_consent_wall` tells a GDPR/cookie consent page apart from the page you asked for.** It reads the final URL (`consent.google.com` and other known consent hosts and paths) and, for short pages, the title. The CLI used to keep this check to itself; it now calls the shared function, so services built on `webclaw-core` can flag the same pages. CLI behaviour is unchanged.
+
 ### Fixed
 - **Sitemap discovery loads child sitemaps 8 at a time.** It fetched them one by one, so a large sitemap index or a site without a `Sitemap:` line in robots.txt ran out of time after a few sitemaps and returned a handful of URLs. The URLs found are the same; they arrive several times faster.
 - **Collapsed sections that hold a data table are extracted again.** Since 0.7.0 webclaw drops content a page hides, so hidden text can't slip instructions into what an LLM reads. That also dropped collapsed sections such as a download list behind a closed tab, so extraction from those pages came back empty. A hidden block now stays when it holds a table with at least three rows of filled cells. Hidden text, menus, single rows and empty template tables are still dropped.

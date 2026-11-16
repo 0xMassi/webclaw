@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- **`only_main_content` keeps every item on listing pages.** It took the first `<article>` on the page, so a catalogue that wraps each product in its own `<article>` (books.toscrape.com, for one) came back with 1 of 20 items. A `<main>` or `role="main"` element now wins when the page has one; otherwise several `<article>` elements are extracted together through their closest shared container. A page with a single `<article>` extracts as before.
 - **Sitemap discovery loads child sitemaps 8 at a time.** It fetched them one by one, so a large sitemap index or a site without a `Sitemap:` line in robots.txt ran out of time after a few sitemaps and returned a handful of URLs. The URLs found are the same; they arrive several times faster.
 - **Collapsed sections that hold a data table are extracted again.** Since 0.7.0 webclaw drops content a page hides, so hidden text can't slip instructions into what an LLM reads. That also dropped collapsed sections such as a download list behind a closed tab, so extraction from those pages came back empty. A hidden block now stays when it holds a table with at least three rows of filled cells. Hidden text, menus, single rows and empty template tables are still dropped.
 

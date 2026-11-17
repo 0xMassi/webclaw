@@ -242,13 +242,14 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
         }
     }
 
-    // Class-based cookie consent detection (prefix match for platform classes)
     if let Some(class) = el.value().attr("class") {
         let class_lower = class.to_lowercase();
-        for prefix in COOKIE_CONSENT_ID_PREFIXES {
-            if class_lower.contains(prefix) {
-                return true;
-            }
+        if class_lower.split_ascii_whitespace().any(|token| {
+            COOKIE_CONSENT_ID_PREFIXES
+                .iter()
+                .any(|prefix| *prefix != "cmp-" && token.starts_with(prefix))
+        }) {
+            return true;
         }
     }
 
@@ -725,6 +726,20 @@ mod form_tests {
         let mut divs = doc.select(&sel);
         assert!(!is_noise(divs.next().unwrap()));
         assert!(is_noise(divs.next().unwrap()));
+    }
+
+    #[test]
+    fn component_classes_that_contain_a_consent_prefix_are_content() {
+        let html = r#"<html><body><main><div class="cmp-container"><div class="accordion acc-panel"><h1>Benefits</h1><ul><li><a href="/ei">Apply for Employment Insurance and check the status of your claim online</a></li><li><a href="/dates">Benefit payment dates for every federal program this year</a></li></ul></div></div></main><div class="qc-cmp2-container">We value your privacy</div><div class="onetrust-pc-dark-filter">Accept all</div><div class="cc-window">This site uses cookies</div></body></html>"#;
+        let doc = Html::parse_document(html);
+        let sel = scraper::Selector::parse("div").unwrap();
+        let divs: Vec<_> = doc.select(&sel).collect();
+        assert!(!is_noise(divs[0]));
+        assert!(!is_noise(divs[1]));
+        assert!(divs[2..].iter().all(|d| is_noise(*d)));
+        let md = crate::extract(html, None).unwrap().content.markdown;
+        assert!(md.contains("Benefit payment dates"), "{md}");
+        assert!(!md.contains("privacy"), "{md}");
     }
 
     #[test]

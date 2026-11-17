@@ -379,6 +379,20 @@ fn parse_urlset(xml: &str) -> Vec<SitemapEntry> {
                     );
                 }
             }
+            Ok(Event::CData(ref e)) => {
+                if let Some(ref tag) = current_tag
+                    && let Ok(text) = e.xml10_content()
+                {
+                    append_url_text(
+                        tag,
+                        &text,
+                        &mut loc,
+                        &mut lastmod,
+                        &mut priority,
+                        &mut changefreq,
+                    );
+                }
+            }
             Ok(Event::GeneralRef(ref e)) => {
                 if let Some(ref tag) = current_tag
                     && let Some(text) = crate::xml::decode_reference(e)
@@ -473,6 +487,11 @@ fn parse_sitemap_index(xml: &str) -> Vec<String> {
             }
             Ok(Event::Text(ref e)) => {
                 if in_loc && let Some(text) = crate::xml::decode_text(e) {
+                    current_loc.push_str(&text);
+                }
+            }
+            Ok(Event::CData(ref e)) => {
+                if in_loc && let Ok(text) = e.xml10_content() {
                     current_loc.push_str(&text);
                 }
             }
@@ -641,6 +660,35 @@ mod tests {
         assert_eq!(
             parse_sitemap_index(index),
             ["https://example.com/sitemap?a=1&b=2"]
+        );
+    }
+
+    #[test]
+    fn urlset_preserves_cdata_and_adjacent_text() {
+        let xml = r#"<urlset><url>
+<loc>https://example.com/<![CDATA[search?a=1&b=2]]>&amp;c=3</loc>
+<lastmod><![CDATA[2026-11-17]]></lastmod>
+<priority><![CDATA[0.8]]></priority>
+<changefreq><![CDATA[daily]]></changefreq>
+</url></urlset>"#;
+        let entries = parse_sitemap_xml(xml);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, "https://example.com/search?a=1&b=2&c=3");
+        assert_eq!(entries[0].last_modified.as_deref(), Some("2026-11-17"));
+        assert_eq!(entries[0].priority, Some(0.8));
+        assert_eq!(entries[0].change_freq.as_deref(), Some("daily"));
+    }
+
+    #[test]
+    fn sitemap_index_preserves_cdata_urls() {
+        let xml = r#"<sitemapindex><sitemap>
+<loc><![CDATA[https://example.com/sitemap?a=1&b=2&amp;c=3]]></loc>
+</sitemap></sitemapindex>"#;
+        let entries = parse_sitemap_xml(xml);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url,
+            "https://example.com/sitemap?a=1&b=2&amp;c=3"
         );
     }
 

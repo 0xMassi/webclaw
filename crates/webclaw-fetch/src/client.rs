@@ -612,6 +612,20 @@ impl FetchClient {
         }
         self.within_budget(Instant::now(), url, async {
             let resp = self.fetch_with_headers(url, extra).await?;
+            let resp = match meta_refresh(&resp.html, &resp.url).filter(|_| resp.status < 400) {
+                Some((delay, target)) => {
+                    debug!(url, %target, "following a meta refresh");
+                    tokio::time::sleep(delay).await;
+                    match self.fetch_with_headers(&target, extra).await {
+                        Ok(next) => next,
+                        Err(e) => {
+                            debug!(url, error = %e, "meta refresh target failed");
+                            resp
+                        }
+                    }
+                }
+                None => resp,
+            };
             let Some(homepage) = extract_homepage(url).filter(|_| is_challenge_html(&resp.html))
             else {
                 return Ok(resp);
@@ -1337,6 +1351,45 @@ fn pick_random(clients: &[ObservedClient]) -> &ObservedClient {
 }
 
 const MAX_ATTEMPTS: usize = 2;
+const MAX_REFRESH_DELAY: Duration = Duration::from_secs(10);
+const MAX_REFRESH_PAGE_BYTES: usize = 64 * 1024;
+
+fn meta_refresh(html: &str, base: &str) -> Option<(Duration, String)> {
+    static NOSCRIPT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static REFRESH: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    if html.len() > MAX_REFRESH_PAGE_BYTES {
+        return None;
+    }
+    let visible = NOSCRIPT
+        .get_or_init(|| regex::Regex::new(r"(?is)<noscript\b.*?</noscript\s*>").unwrap())
+        .replace_all(html, "");
+    let content = REFRESH
+        .get_or_init(|| {
+            regex::Regex::new(
+                r#"(?is)<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh\b[^>]*\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')"#,
+            )
+            .unwrap()
+        })
+        .captures(&visible)
+        .and_then(|c| c.get(1).or_else(|| c.get(2)))?
+        .as_str();
+    let (delay, target) = content.split_once([';', ','])?;
+    let delay = Duration::try_from_secs_f64(delay.trim().parse().ok()?).ok()?;
+    let target = target.trim();
+    let target = match target.get(..3) {
+        Some(key) if key.eq_ignore_ascii_case("url") => {
+            target[3..].trim_start().strip_prefix('=')?
+        }
+        _ => target,
+    };
+    let target = target.trim().trim_matches(['"', '\'']);
+    let base = url::Url::parse(base).ok()?;
+    let next = base.join(target).ok()?;
+    let followable =
+        delay <= MAX_REFRESH_DELAY && matches!(next.scheme(), "http" | "https") && next != base;
+    followable.then(|| (delay, next.to_string()))
+}
+
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
 const RETRY_AFTER_CAP: Duration = Duration::from_secs(30);
 
@@ -1740,6 +1793,109 @@ mod tests {
         assert!(wire[1].contains("cookie: session=1\r\n"));
         assert!(!wire[2].contains("cookie:"), "{}", wire[2]);
         assert!(wire[2].contains("referer: http://example.com/b\r\n"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn smart_fetch_follows_a_meta_refresh_with_the_cookies_it_set() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let refresh = "<html><head><meta http-equiv=\"refresh\" content=\"0; URL='/shop?verify=abc'\"></head><body></body></html>";
+        let wire = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for reply in [
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nSet-Cookie: gate=open; Path=/\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{refresh}",
+                    refresh.len()
+                ),
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 14\r\nConnection: close\r\n\r\n<p>catalog</p>".to_string(),
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = Vec::new();
+                while !buffer.ends_with(b"\r\n\r\n") {
+                    let mut chunk = [0; 4096];
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert!(n > 0);
+                    buffer.extend_from_slice(&chunk[..n]);
+                }
+                requests.push(String::from_utf8(buffer).unwrap().to_ascii_lowercase());
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::new(),
+            ..Default::default()
+        })
+        .unwrap();
+        let page = client.fetch_smart("http://example.com/shop").await.unwrap();
+        let wire = wire.await.unwrap();
+        assert_eq!(page.html, "<p>catalog</p>");
+        assert!(
+            wire[1].starts_with("get http://example.com/shop?verify=abc "),
+            "{}",
+            wire[1]
+        );
+        assert!(wire[1].contains("cookie: gate=open\r\n"), "{}", wire[1]);
+    }
+
+    #[test]
+    fn meta_refresh_only_follows_short_visible_redirects_elsewhere() {
+        let base = "https://example.com/a";
+        let page = |meta: &str| format!("<html><head>{meta}</head><body></body></html>");
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<meta http-equiv="refresh" content="5; URL='/a?t=1'">"#),
+                base
+            ),
+            Some((
+                Duration::from_secs(5),
+                "https://example.com/a?t=1".to_string()
+            ))
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<META HTTP-EQUIV=Refresh CONTENT="0;url=https://example.org/new">"#),
+                base
+            ),
+            Some((Duration::ZERO, "https://example.org/new".to_string()))
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(
+                    r#"<noscript><meta http-equiv="refresh" content="0;url=/no-js.html"></noscript>"#
+                ),
+                base
+            ),
+            None
+        );
+        assert_eq!(
+            meta_refresh(&page(r#"<meta http-equiv="refresh" content="300">"#), base),
+            None
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<meta http-equiv="refresh" content="60;url=/b">"#),
+                base
+            ),
+            None
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<meta http-equiv="refresh" content="0;url=/a">"#),
+                base
+            ),
+            None
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<meta http-equiv="refresh" content="0;url=javascript:alert(1)">"#),
+                base
+            ),
+            None
+        );
     }
 
     #[tokio::test]

@@ -188,6 +188,9 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
             {
                 continue;
             }
+            if lower == "widget" && class.split_whitespace().any(|t| t == "so-panel") {
+                continue;
+            }
             if NOISE_CLASSES.contains(&lower.as_str()) {
                 class_matched = true;
                 break;
@@ -213,7 +216,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
             // noise-class element has massive text content, it's almost certainly
             // a broken wrapper — treat it as content, not noise.
             let text_len = el.text().collect::<String>().len();
-            if text_len > 5000 {
+            if text_len > 5000 || holds_main_landmark(el) {
                 return false;
             }
             return true;
@@ -226,7 +229,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
         if NOISE_IDS.contains(&id_lower.as_str()) && !is_structural_id(&id_lower) {
             // Same safety valve for ID-matched noise elements
             let text_len = el.text().collect::<String>().len();
-            if text_len > 5000 {
+            if text_len > 5000 || holds_main_landmark(el) {
                 return false;
             }
             return true;
@@ -250,6 +253,12 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
     }
 
     false
+}
+
+fn holds_main_landmark(el: ElementRef<'_>) -> bool {
+    el.descendants()
+        .filter_map(ElementRef::wrap)
+        .any(|d| d.value().name() == "main" || d.value().attr("role") == Some("main"))
 }
 
 const HIDDEN_TEXT_CEILING: usize = 5000;
@@ -706,6 +715,28 @@ mod form_tests {
             .next()
             .unwrap();
         assert!(is_noise(form), "Small login form SHOULD be noise");
+    }
+
+    #[test]
+    fn page_builder_panels_are_content_but_sidebar_widgets_are_not() {
+        let html = r#"<html><body><div class="so-panel widget widget_sow-editor"><p>Bristol and Bath are the third-largest media hub in the country.</p></div><div class="widget widget_recent_entries">Recent posts</div></body></html>"#;
+        let doc = Html::parse_document(html);
+        let sel = scraper::Selector::parse("div").unwrap();
+        let mut divs = doc.select(&sel);
+        assert!(!is_noise(divs.next().unwrap()));
+        assert!(is_noise(divs.next().unwrap()));
+    }
+
+    #[test]
+    fn header_layout_wrapper_around_main_is_content() {
+        let html = r#"<html><body><div class="header-over-content dmFreeHeader"><div class="header">Logo</div><div role="main"><h3>PADI courses</h3><p>Learn to dive with certified instructors on the reefs of Curacao, from first breath underwater to divemaster.</p></div></div></body></html>"#;
+        let doc = Html::parse_document(html);
+        let sel = scraper::Selector::parse("div").unwrap();
+        let mut divs = doc.select(&sel);
+        assert!(!is_noise(divs.next().unwrap()));
+        assert!(is_noise(divs.next().unwrap()));
+        let md = crate::extract(html, None).unwrap().content.markdown;
+        assert!(md.contains("Learn to dive"), "{md}");
     }
 }
 

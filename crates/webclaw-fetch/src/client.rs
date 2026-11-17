@@ -199,9 +199,31 @@ struct Response {
     version: http::Version,
     ip: Option<std::net::IpAddr>,
     headers: http::HeaderMap,
-    /// Owned as `Vec<u8>` rather than `Bytes` so `into_text` can hand the
-    /// allocation straight to `String` instead of copying it (see `into_text`).
     body: Vec<u8>,
+}
+
+fn declared_encoding(
+    headers: &http::HeaderMap,
+    body: &[u8],
+) -> Option<&'static encoding_rs::Encoding> {
+    let from_header = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(charset_label);
+    let label = from_header
+        .or_else(|| charset_label(&String::from_utf8_lossy(&body[..body.len().min(4096)])))?;
+    encoding_rs::Encoding::for_label(label.as_bytes()).filter(|e| *e != encoding_rs::UTF_8)
+}
+
+fn charset_label(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let start = lower.find("charset=")? + "charset=".len();
+    let label: String = lower[start..]
+        .trim_start_matches(['"', '\'', ' '])
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'))
+        .collect();
+    (!label.is_empty()).then_some(label)
 }
 
 /// Maximum fetched body size. A single 50 MB HTML document is already
@@ -303,24 +325,15 @@ impl Response {
         &self.body
     }
 
-    /// Decode the body to `String`, consuming the buffer.
-    ///
-    /// The valid-UTF-8 case — effectively every page — takes ownership of the
-    /// existing allocation, so this costs no allocation and no copy.
-    /// `from_utf8_lossy(&self.body).into_owned()` always allocated a second
-    /// full-size buffer and memcpy'd the whole body into it.
-    ///
-    /// The fallback must decode `e.as_bytes()`, i.e. the bytes handed back by
-    /// the failed conversion, so invalid-UTF-8 output stays byte-identical to
-    /// the previous implementation. Do NOT add `shrink_to_fit()` — it would
-    /// reintroduce exactly the copy this removes.
-    ///
-    /// Charset handling is unchanged and still ignores `Content-Type: charset`;
-    /// a page in a non-UTF-8 encoding produces the same mojibake it did before.
-    /// Fixing that is separate work with extraction-quality blast radius.
     fn into_text(self) -> String {
-        String::from_utf8(self.body)
-            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+        let bytes = match String::from_utf8(self.body) {
+            Ok(text) => return text,
+            Err(e) => e.into_bytes(),
+        };
+        match declared_encoding(&self.headers, &bytes) {
+            Some(encoding) => encoding.decode(&bytes).0.into_owned(),
+            None => String::from_utf8_lossy(&bytes).into_owned(),
+        }
     }
 
     /// Consume the response and return the raw, undecoded body bytes.
@@ -2264,6 +2277,42 @@ mod tests {
                 &body[..body.len().min(24)]
             );
         }
+    }
+
+    #[test]
+    fn into_text_decodes_the_declared_charset_when_the_body_is_not_utf8() {
+        let with_type = |content_type: &str, body: Vec<u8>| {
+            let mut resp = resp_with_body(body);
+            resp.headers
+                .insert("content-type", content_type.parse().unwrap());
+            resp.into_text()
+        };
+        let (sjis, _, _) = encoding_rs::SHIFT_JIS.encode("<p>Akihabara (秋葉原)</p>");
+        assert_eq!(
+            with_type("text/html;charset=shift-jis", sjis.to_vec()),
+            "<p>Akihabara (秋葉原)</p>"
+        );
+
+        let latin = b"<html><head><meta charset=\"windows-1252\"></head><p>caf\xe9 \x93hi\x94</p>";
+        assert_eq!(
+            resp_with_body(latin.to_vec()).into_text(),
+            "<html><head><meta charset=\"windows-1252\"></head><p>café “hi”</p>"
+        );
+        let http_equiv = b"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=ISO-8859-1\"><p>Z\xfcrich</p>";
+        assert!(
+            resp_with_body(http_equiv.to_vec())
+                .into_text()
+                .ends_with("<p>Zürich</p>")
+        );
+
+        assert_eq!(
+            with_type("text/html; charset=iso-8859-1", "café".as_bytes().to_vec()),
+            "café"
+        );
+        assert_eq!(
+            with_type("text/html; charset=utf-8", b"bad \xff byte".to_vec()),
+            "bad \u{fffd} byte"
+        );
     }
 
     #[test]

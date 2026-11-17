@@ -4009,6 +4009,7 @@ dependencies = [
  "bytes",
  "calamine",
  "chromey",
+ "encoding_rs",
  "flate2",
  "futures-util",
  "http",

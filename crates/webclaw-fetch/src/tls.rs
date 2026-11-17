@@ -272,6 +272,64 @@ const EDGE_HEADERS: &[(&str, &str)] = &[
     ("priority", "u=0, i"),
 ];
 
+/// The `sec-ch-ua`, `sec-ch-ua-mobile` and `sec-ch-ua-platform` headers a
+/// Chromium browser with this User-Agent sends, so a request that carries a
+/// browser's User-Agent can carry the matching client hints. `None` for a
+/// User-Agent that is not Chromium's, since other browsers send none.
+pub fn chrome_client_hints(user_agent: &str) -> Option<[(&'static str, String); 3]> {
+    let major = |marker: &str| -> Option<u32> {
+        let (_, rest) = user_agent.split_once(marker)?;
+        rest.split('.').next()?.parse().ok()
+    };
+    let chromium = major("Chrome/")?;
+    let (brand, version) = match major("Edg/") {
+        Some(edge) => ("Microsoft Edge", edge),
+        None => ("Google Chrome", chromium),
+    };
+    const CHARS: [char; 11] = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_'];
+    const VERSIONS: [&str; 3] = ["8", "99", "24"];
+    const ORDERS: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let seed = version as usize;
+    let grease = format!(
+        r#""Not{}A{}Brand";v="{}""#,
+        CHARS[seed % 11],
+        CHARS[(seed + 1) % 11],
+        VERSIONS[seed % 3]
+    );
+    let mut brands = [String::new(), String::new(), String::new()];
+    let order = ORDERS[seed % 6];
+    brands[order[0]] = grease;
+    brands[order[1]] = format!(r#""Chromium";v="{chromium}""#);
+    brands[order[2]] = format!(r#""{brand}";v="{version}""#);
+    let platform = [
+        ("Android", "Android"),
+        ("Windows", "Windows"),
+        ("Macintosh", "macOS"),
+        ("CrOS", "Chrome OS"),
+        ("Linux", "Linux"),
+    ]
+    .into_iter()
+    .find(|(marker, _)| user_agent.contains(marker))
+    .map_or("Unknown", |(_, name)| name);
+    let mobile = if user_agent.contains("Mobile") {
+        "?1"
+    } else {
+        "?0"
+    };
+    Some([
+        ("sec-ch-ua", brands.join(", ")),
+        ("sec-ch-ua-mobile", mobile.to_string()),
+        ("sec-ch-ua-platform", format!("\"{platform}\"")),
+    ])
+}
+
 fn chrome_tls() -> TlsOptions {
     // permute_extensions is off so the explicit extension_permutation sticks.
     // Real Chrome permutes, but indeed.com's WAF allowlists bogdanfinn's
@@ -643,6 +701,43 @@ fn ssrf_safe_redirect_policy(
 #[cfg(test)]
 mod tests {
     use super::redact_proxy_url;
+
+    #[test]
+    fn client_hints_match_what_chrome_sends_for_its_version() {
+        let cases = [
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+                r#""Not-A.Brand";v="99", "Google Chrome";v="157", "Chromium";v="157""#,
+                "\"macOS\"",
+            ),
+            (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+                r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#,
+                "\"Windows\"",
+            ),
+            (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
+                "\"Linux\"",
+            ),
+            (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0",
+                r#""Chromium";v="140", "Not=A?Brand";v="24", "Microsoft Edge";v="140""#,
+                "\"Windows\"",
+            ),
+        ];
+        for (agent, brands, platform) in cases {
+            let [ua, mobile, os] = super::chrome_client_hints(agent).expect(agent);
+            assert_eq!(ua, ("sec-ch-ua", brands.to_string()), "{agent}");
+            assert_eq!(mobile, ("sec-ch-ua-mobile", "?0".to_string()), "{agent}");
+            assert_eq!(os, ("sec-ch-ua-platform", platform.to_string()), "{agent}");
+        }
+        let android = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36";
+        let [_, mobile, os] = super::chrome_client_hints(android).unwrap();
+        assert_eq!(mobile.1, "?1");
+        assert_eq!(os.1, "\"Android\"");
+        assert!(super::chrome_client_hints(super::SAFARI_IOS_HEADERS[3].1).is_none());
+    }
 
     #[test]
     fn no_profile_refuses_every_response_header() {

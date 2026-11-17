@@ -410,11 +410,16 @@ impl FetchClient {
         if config.render.as_ref().is_some_and(|render| render.solve)
             && !matches!(
                 config.browser,
-                BrowserProfile::Chrome | BrowserProfile::ChromeMacos | BrowserProfile::Edge
+                BrowserProfile::Chrome
+                    | BrowserProfile::ChromeMacos
+                    | BrowserProfile::Edge
+                    | BrowserProfile::Chrome149
+                    | BrowserProfile::ChromeMacos149
+                    | BrowserProfile::Edge149
             )
         {
             return Err(FetchError::Build(
-                "solving Cloudflare challenges sends Chrome's User-Agent over HTTP, so it needs the chrome, chrome-macos or edge browser profile".into(),
+                "solving Cloudflare challenges sends Chrome's User-Agent over HTTP, so it needs a chrome, chrome-macos or edge browser profile".into(),
             ));
         }
         let variants = collect_variants(&config.browser);
@@ -1226,6 +1231,11 @@ fn collect_variants(profile: &BrowserProfile) -> Vec<BrowserVariant> {
         BrowserProfile::Safari => vec![BrowserVariant::Safari],
         BrowserProfile::Edge => vec![BrowserVariant::Edge],
         BrowserProfile::SafariIos => vec![BrowserVariant::SafariIos26],
+        BrowserProfile::Chrome149 => vec![BrowserVariant::Chrome149],
+        BrowserProfile::ChromeMacos149 => vec![BrowserVariant::ChromeMacos149],
+        BrowserProfile::Edge149 => vec![BrowserVariant::Edge149],
+        BrowserProfile::Firefox151 => vec![BrowserVariant::Firefox151],
+        BrowserProfile::Safari26 => vec![BrowserVariant::Safari26],
     }
 }
 

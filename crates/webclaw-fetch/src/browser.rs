@@ -16,6 +16,17 @@ pub enum BrowserProfile {
     /// DataDome's immobiliare.it / idealista.it / target.com-class
     /// rules when paired with a country-scoped residential proxy.
     SafariIos,
+    /// Chrome 149 on Windows: the ALPN Chrome sends over TCP and client
+    /// hints that match its User-Agent.
+    Chrome149,
+    /// Chrome 149 on macOS.
+    ChromeMacos149,
+    /// Edge 149 on Windows.
+    Edge149,
+    /// Firefox 151 on Windows.
+    Firefox151,
+    /// Safari 26.4 on macOS.
+    Safari26,
     /// Randomly pick from all available profiles on each request.
     Random,
 }
@@ -29,6 +40,11 @@ pub enum BrowserVariant {
     Safari,
     SafariIos26,
     Edge,
+    Chrome149,
+    ChromeMacos149,
+    Edge149,
+    Firefox151,
+    Safari26,
 }
 
 /// All Chrome variants we ship.

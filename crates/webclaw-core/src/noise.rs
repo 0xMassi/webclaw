@@ -245,9 +245,12 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
     if let Some(class) = el.value().attr("class") {
         let class_lower = class.to_lowercase();
         if class_lower.split_ascii_whitespace().any(|token| {
-            COOKIE_CONSENT_ID_PREFIXES
-                .iter()
-                .any(|prefix| *prefix != "cmp-" && token.starts_with(prefix))
+            COOKIE_CONSENT_ID_PREFIXES.iter().any(|prefix| {
+                *prefix != "cmp-"
+                    && token
+                        .match_indices(prefix)
+                        .any(|(at, _)| at == 0 || matches!(token.as_bytes()[at - 1], b'-' | b'_'))
+            })
         }) {
             return true;
         }
@@ -730,7 +733,7 @@ mod form_tests {
 
     #[test]
     fn component_classes_that_contain_a_consent_prefix_are_content() {
-        let html = r#"<html><body><main><div class="cmp-container"><div class="accordion acc-panel"><h1>Benefits</h1><ul><li><a href="/ei">Apply for Employment Insurance and check the status of your claim online</a></li><li><a href="/dates">Benefit payment dates for every federal program this year</a></li></ul></div></div></main><div class="qc-cmp2-container">We value your privacy</div><div class="onetrust-pc-dark-filter">Accept all</div><div class="cc-window">This site uses cookies</div></body></html>"#;
+        let html = r#"<html><body><main><div class="cmp-container"><div class="accordion acc-panel"><h1>Benefits</h1><ul><li><a href="/ei">Apply for Employment Insurance and check the status of your claim online</a></li><li><a href="/dates">Benefit payment dates for every federal program this year</a></li></ul></div></div></main><div class="qc-cmp2-container">We value your privacy</div><div class="onetrust-pc-dark-filter">Accept all</div><div class="cc-window">This site uses cookies</div><div class="fig-consent-banner">You refused cookies</div></body></html>"#;
         let doc = Html::parse_document(html);
         let sel = scraper::Selector::parse("div").unwrap();
         let divs: Vec<_> = doc.select(&sel).collect();

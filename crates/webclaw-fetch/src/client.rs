@@ -627,11 +627,20 @@ impl FetchClient {
                     .chain(std::iter::once(cookies.as_str()))
                     .collect::<Vec<_>>()
                     .join("; ");
+                let hints: Vec<_> = crate::tls::chrome_client_hints(&agent)
+                    .into_iter()
+                    .flatten()
+                    .collect();
                 sent.retain(|(name, _)| {
-                    !name.eq_ignore_ascii_case("cookie") && !name.eq_ignore_ascii_case("user-agent")
+                    !name.eq_ignore_ascii_case("cookie")
+                        && !name.eq_ignore_ascii_case("user-agent")
+                        && !hints
+                            .iter()
+                            .any(|(hint, _)| name.eq_ignore_ascii_case(hint))
                 });
                 sent.push(("cookie", cookies));
                 sent.push(("user-agent", agent));
+                sent.extend(hints);
             }
             sent
         };

@@ -146,11 +146,35 @@ fn extract_fetched(
             return Ok(result);
         }
     }
+    if is_plain_text(&fetched.headers, &fetched.html) {
+        return Ok(text_extraction_result(
+            fetched.html.clone(),
+            fetched.html.clone(),
+            &fetched.url,
+        ));
+    }
     Ok(webclaw_core::extract_with_options(
         &fetched.html,
         Some(&fetched.url),
         options,
     )?)
+}
+
+fn is_plain_text(headers: &http::HeaderMap, body: &str) -> bool {
+    let plain = headers
+        .get("content-type")
+        .and_then(|ct| ct.to_str().ok())
+        .and_then(|ct| ct.split(';').next())
+        .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("text/plain"));
+    let head = body
+        .trim_start()
+        .get(..15)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    plain
+        && !body.trim().is_empty()
+        && !head.starts_with("<!doctype html")
+        && !head.starts_with("<html")
 }
 
 /// Result for a single URL in a batch fetch operation.
@@ -1373,14 +1397,25 @@ fn pdf_to_extraction_result(
     pdf: &webclaw_pdf::PdfResult,
     url: &str,
 ) -> webclaw_core::ExtractionResult {
-    let markdown = webclaw_pdf::to_markdown(pdf);
+    let mut result = text_extraction_result(webclaw_pdf::to_markdown(pdf), pdf.text.clone(), url);
+    result.metadata.title = pdf.metadata.title.clone();
+    result.metadata.description = pdf.metadata.subject.clone();
+    result.metadata.author = pdf.metadata.author.clone();
+    result
+}
+
+fn text_extraction_result(
+    markdown: String,
+    plain_text: String,
+    url: &str,
+) -> webclaw_core::ExtractionResult {
     let word_count = markdown.split_whitespace().count();
 
     webclaw_core::ExtractionResult {
         metadata: webclaw_core::Metadata {
-            title: pdf.metadata.title.clone(),
-            description: pdf.metadata.subject.clone(),
-            author: pdf.metadata.author.clone(),
+            title: None,
+            description: None,
+            author: None,
             published_date: None,
             language: None,
             url: Some(url.to_string()),
@@ -1391,7 +1426,7 @@ fn pdf_to_extraction_result(
         },
         content: webclaw_core::Content {
             markdown,
-            plain_text: pdf.text.clone(),
+            plain_text,
             links: Vec::new(),
             images: Vec::new(),
             code_blocks: Vec::new(),
@@ -1426,6 +1461,29 @@ async fn collect_ordered<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_text_source_files_are_returned_verbatim() {
+        let source = "@model HomeVm\n<div class=\"row\">\n  @foreach (var v in Model.Vehicles) { <span>@v.Name</span> }\n</div>\n";
+        let mut response = resp_with_body(source.as_bytes().to_vec());
+        response
+            .headers
+            .insert("content-type", "text/plain; charset=utf-8".parse().unwrap());
+        let fetched = response_to_result(response, Instant::now()).unwrap();
+        let result = fetched.extract_with_options(&Default::default()).unwrap();
+        assert_eq!(result.content.markdown, source);
+        assert!(result.metadata.word_count > 5);
+
+        let mut mislabeled = resp_with_body(
+            b"<!DOCTYPE html><html><body><p>Hello there friend</p></body></html>".to_vec(),
+        );
+        mislabeled
+            .headers
+            .insert("content-type", "text/plain".parse().unwrap());
+        let fetched = response_to_result(mislabeled, Instant::now()).unwrap();
+        let result = fetched.extract_with_options(&Default::default()).unwrap();
+        assert!(!result.content.markdown.contains("<p>"));
+    }
 
     #[test]
     fn binary_response_retains_original_bytes_and_rejects_invalid_pdf() {

@@ -171,6 +171,15 @@ fn extract_fetched(
     )?)
 }
 
+const GOOGLE_CONSENT_DECLINED: &str = "SOCS=CAI";
+
+fn skips_google_consent(url: &url::Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        host.split('.')
+            .any(|label| label == "google" || label == "youtube")
+    })
+}
+
 fn is_binary_text(body: &str) -> bool {
     body.bytes().take(1024).any(|b| b == 0)
 }
@@ -688,7 +697,14 @@ impl FetchClient {
         let start = Instant::now();
         let client = self.pick_client(url);
 
-        let sent: Vec<(&str, String)> = extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        let mut sent: Vec<(&str, String)> =
+            extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        let has_cookie = extra
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
+        if !has_cookie && skips_google_consent(&parsed_url) {
+            sent.push(("cookie", GOOGLE_CONSENT_DECLINED.to_string()));
+        }
         #[cfg(feature = "browser")]
         let sent = {
             let mut sent = sent;
@@ -1578,6 +1594,26 @@ mod tests {
         let fetched = response_to_result(mislabeled, Instant::now()).unwrap();
         let result = fetched.extract_with_options(&Default::default()).unwrap();
         assert!(!result.content.markdown.contains("<p>"));
+    }
+
+    #[test]
+    fn google_hosts_get_the_declined_consent_cookie() {
+        for host in [
+            "https://chromewebstore.google.com/detail/x",
+            "https://www.google.de/maps",
+            "https://www.youtube.com/watch?v=x",
+        ] {
+            assert!(
+                skips_google_consent(&url::Url::parse(host).unwrap()),
+                "{host}"
+            );
+        }
+        for host in ["https://googleblog.example/", "https://example.com/google"] {
+            assert!(
+                !skips_google_consent(&url::Url::parse(host).unwrap()),
+                "{host}"
+            );
+        }
     }
 
     #[test]

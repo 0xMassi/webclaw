@@ -146,6 +146,17 @@ fn extract_fetched(
             return Ok(result);
         }
     }
+    if is_binary_text(&fetched.html) {
+        let mime = fetched
+            .headers
+            .get("content-type")
+            .and_then(|ct| ct.to_str().ok())
+            .and_then(|ct| ct.split(';').next())
+            .unwrap_or("unknown type")
+            .trim()
+            .to_string();
+        return Err(FetchError::Binary(mime));
+    }
     if is_plain_text(&fetched.headers, &fetched.html) {
         return Ok(text_extraction_result(
             fetched.html.clone(),
@@ -158,6 +169,10 @@ fn extract_fetched(
         Some(&fetched.url),
         options,
     )?)
+}
+
+fn is_binary_text(body: &str) -> bool {
+    body.bytes().take(1024).any(|b| b == 0)
 }
 
 fn is_plain_text(headers: &http::HeaderMap, body: &str) -> bool {
@@ -1549,6 +1564,25 @@ mod tests {
         let fetched = response_to_result(mislabeled, Instant::now()).unwrap();
         let result = fetched.extract_with_options(&Default::default()).unwrap();
         assert!(!result.content.markdown.contains("<p>"));
+    }
+
+    #[test]
+    fn executables_and_other_binaries_are_refused_not_extracted() {
+        let mut exe =
+            b"MZ\x90\x00\x03\x00\x00\x00\x04\x00This program cannot be run in DOS mode.".to_vec();
+        exe.extend(std::iter::repeat_n(0u8, 64));
+        let mut response = resp_with_body(exe);
+        response
+            .headers
+            .insert("content-type", "application/octet-stream".parse().unwrap());
+        let fetched = response_to_result(response, Instant::now()).unwrap();
+        let err = fetched
+            .extract_with_options(&Default::default())
+            .unwrap_err();
+        assert!(
+            matches!(&err, FetchError::Binary(mime) if mime == "application/octet-stream"),
+            "{err:?}"
+        );
     }
 
     #[test]

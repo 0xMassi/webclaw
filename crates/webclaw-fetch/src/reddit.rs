@@ -41,6 +41,41 @@ pub fn to_feed_url(url: &str) -> String {
     parsed.to_string()
 }
 
+/// True when the feed did not carry the page: Reddit answers with an empty
+/// "Not Found" feed, a 404 or a 429 for feeds it no longer serves.
+pub fn feed_refused(resp: &crate::client::FetchResult) -> bool {
+    resp.status != 200 || !resp.html.contains("<entry")
+}
+
+/// The www.reddit.com page for any Reddit URL, without a `.json` or `.rss`
+/// suffix.
+pub fn to_page_url(url: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        return url.to_string();
+    };
+    let path = parsed.path().to_string();
+    let path = path
+        .trim_end_matches(".json")
+        .trim_end_matches(".rss")
+        .trim_end_matches("/.");
+    let path = if path.is_empty() { "/" } else { path };
+    parsed.set_path(path);
+    parsed.set_fragment(None);
+    let _ = parsed.set_scheme("https");
+    let _ = parsed.set_host(Some("www.reddit.com"));
+    parsed.to_string()
+}
+
+/// True for the URL that answers Reddit's script check.
+pub fn is_challenge_answer(url: &str) -> bool {
+    url.contains("jsc_token=")
+}
+
+/// The URL that answers Reddit's script check on `html`, if it is one.
+pub fn challenge_url(html: &str, page_url: &str) -> Option<String> {
+    webclaw_core::reddit::challenge_answer(html, page_url)
+}
+
 /// Reddit's server-rendered comment tree for a `/r/<sub>/comments/<id>` URL.
 /// It carries the comment scores the feed leaves out.
 pub fn to_comments_url(url: &str) -> Option<String> {
@@ -58,6 +93,30 @@ pub fn to_comments_url(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_urls_drop_api_suffixes_and_move_to_www() {
+        for (from, to) in [
+            (
+                "https://old.reddit.com/r/macapps/new/",
+                "https://www.reddit.com/r/macapps/new/",
+            ),
+            (
+                "https://www.reddit.com/comments/1w7bugd.json?limit=100",
+                "https://www.reddit.com/comments/1w7bugd?limit=100",
+            ),
+            (
+                "https://www.reddit.com/r/rust/.rss",
+                "https://www.reddit.com/r/rust/",
+            ),
+            ("https://reddit.com", "https://www.reddit.com/"),
+        ] {
+            assert_eq!(to_page_url(from), to, "{from}");
+        }
+        assert!(is_challenge_answer(
+            "https://www.reddit.com/r/rust/?solution=a&jsc_token=b"
+        ));
+    }
 
     #[test]
     fn thread_maps_to_its_comment_feed() {

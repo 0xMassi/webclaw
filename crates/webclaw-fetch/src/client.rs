@@ -619,9 +619,14 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        if crate::reddit::is_reddit_url(url) {
+        if crate::reddit::is_reddit_url(url) && !crate::reddit::is_challenge_answer(url) {
             let feed = crate::reddit::to_feed_url(url);
             let mut resp = self.fetch_with_headers(&feed, extra).await?;
+            if crate::reddit::feed_refused(&resp)
+                && let Some(page) = self.reddit_page(url, extra).await
+            {
+                resp = page;
+            }
             resp.url = url.to_string();
             return Ok(resp);
         }
@@ -650,6 +655,15 @@ impl FetchClient {
             self.fetch_with_headers(url, extra).await
         })
         .await
+    }
+
+    async fn reddit_page(&self, url: &str, extra: &[(&str, &str)]) -> Option<FetchResult> {
+        let page = crate::reddit::to_page_url(url);
+        let mut resp = self.fetch_with_headers(&page, extra).await.ok()?;
+        if let Some(answer) = crate::reddit::challenge_url(&resp.html, &page) {
+            resp = self.fetch_with_headers(&answer, extra).await.ok()?;
+        }
+        (resp.status == 200 && webclaw_core::reddit::is_page_html(&resp.html)).then_some(resp)
     }
 
     /// Fetch a URL and return the raw HTML + response metadata.

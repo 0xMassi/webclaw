@@ -27,7 +27,14 @@ pub fn matches(url: &str) -> bool {
 }
 
 pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchError> {
-    let resp = client.fetch(&crate::reddit::to_feed_url(url)).await?;
+    let mut resp = client.fetch(&crate::reddit::to_feed_url(url)).await?;
+    if crate::reddit::feed_refused(&resp) && !webclaw_core::reddit::is_page_html(&resp.html) {
+        let page = crate::reddit::to_page_url(url);
+        resp = client.fetch(&page).await?;
+        if let Some(answer) = crate::reddit::challenge_url(&resp.html, &page) {
+            resp = client.fetch(&answer).await?;
+        }
+    }
     if resp.status != 200 {
         return Err(FetchError::Build(format!(
             "reddit: unexpected status {}",
@@ -39,7 +46,8 @@ pub async fn extract(client: &dyn Fetcher, url: &str) -> Result<Value, FetchErro
         webclaw_core::reddit::try_extract_thread(&resp.html, url).ok_or_else(|| {
             FetchError::BodyDecode("reddit: no thread in the feed — is this a thread URL?".into())
         })?;
-    if let Some(tree) = crate::reddit::to_comments_url(url)
+    if thread.comments.iter().all(|c| c.score.is_none())
+        && let Some(tree) = crate::reddit::to_comments_url(url)
         && let Ok(scored) = client.fetch(&tree).await
         && scored.status == 200
     {

@@ -126,7 +126,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
 
     // Tag-based noise (script, style, nav, etc.)
     if NOISE_TAGS.contains(&tag) {
-        return true;
+        return !(matches!(tag, "header" | "nav" | "aside" | "footer") && holds_main_landmark(el));
     }
 
     // <form> heuristic: ASP.NET wraps the entire page body in a single <form>.
@@ -159,7 +159,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
     if let Some(role) = el.value().attr("role")
         && NOISE_ROLES.contains(&role)
     {
-        return true;
+        return !holds_main_landmark(el);
     }
 
     // Exact class token matching — split class attribute into tokens,
@@ -188,6 +188,9 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
             {
                 continue;
             }
+            if lower == "widget" && class.split_whitespace().any(|t| t == "so-panel") {
+                continue;
+            }
             if NOISE_CLASSES.contains(&lower.as_str()) {
                 class_matched = true;
                 break;
@@ -213,7 +216,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
             // noise-class element has massive text content, it's almost certainly
             // a broken wrapper — treat it as content, not noise.
             let text_len = el.text().collect::<String>().len();
-            if text_len > 5000 {
+            if text_len > 5000 || holds_main_landmark(el) {
                 return false;
             }
             return true;
@@ -226,7 +229,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
         if NOISE_IDS.contains(&id_lower.as_str()) && !is_structural_id(&id_lower) {
             // Same safety valve for ID-matched noise elements
             let text_len = el.text().collect::<String>().len();
-            if text_len > 5000 {
+            if text_len > 5000 || holds_main_landmark(el) {
                 return false;
             }
             return true;
@@ -239,17 +242,27 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
         }
     }
 
-    // Class-based cookie consent detection (prefix match for platform classes)
     if let Some(class) = el.value().attr("class") {
         let class_lower = class.to_lowercase();
-        for prefix in COOKIE_CONSENT_ID_PREFIXES {
-            if class_lower.contains(prefix) {
-                return true;
-            }
+        if class_lower.split_ascii_whitespace().any(|token| {
+            COOKIE_CONSENT_ID_PREFIXES.iter().any(|prefix| {
+                *prefix != "cmp-"
+                    && token
+                        .match_indices(prefix)
+                        .any(|(at, _)| at == 0 || matches!(token.as_bytes()[at - 1], b'-' | b'_'))
+            })
+        }) {
+            return true;
         }
     }
 
     false
+}
+
+pub(crate) fn holds_main_landmark(el: ElementRef<'_>) -> bool {
+    el.descendants()
+        .filter_map(ElementRef::wrap)
+        .any(|d| d.value().name() == "main" || d.value().attr("role") == Some("main"))
 }
 
 const HIDDEN_TEXT_CEILING: usize = 5000;
@@ -707,6 +720,42 @@ mod form_tests {
             .unwrap();
         assert!(is_noise(form), "Small login form SHOULD be noise");
     }
+
+    #[test]
+    fn page_builder_panels_are_content_but_sidebar_widgets_are_not() {
+        let html = r#"<html><body><div class="so-panel widget widget_sow-editor"><p>Bristol and Bath are the third-largest media hub in the country.</p></div><div class="widget widget_recent_entries">Recent posts</div></body></html>"#;
+        let doc = Html::parse_document(html);
+        let sel = scraper::Selector::parse("div").unwrap();
+        let mut divs = doc.select(&sel);
+        assert!(!is_noise(divs.next().unwrap()));
+        assert!(is_noise(divs.next().unwrap()));
+    }
+
+    #[test]
+    fn component_classes_that_contain_a_consent_prefix_are_content() {
+        let html = r#"<html><body><main><div class="cmp-container"><div class="accordion acc-panel"><h1>Benefits</h1><ul><li><a href="/ei">Apply for Employment Insurance and check the status of your claim online</a></li><li><a href="/dates">Benefit payment dates for every federal program this year</a></li></ul></div></div></main><div class="qc-cmp2-container">We value your privacy</div><div class="onetrust-pc-dark-filter">Accept all</div><div class="cc-window">This site uses cookies</div><div class="fig-consent-banner">You refused cookies</div></body></html>"#;
+        let doc = Html::parse_document(html);
+        let sel = scraper::Selector::parse("div").unwrap();
+        let divs: Vec<_> = doc.select(&sel).collect();
+        assert!(!is_noise(divs[0]));
+        assert!(!is_noise(divs[1]));
+        assert!(divs[2..].iter().all(|d| is_noise(*d)));
+        let md = crate::extract(html, None).unwrap().content.markdown;
+        assert!(md.contains("Benefit payment dates"), "{md}");
+        assert!(!md.contains("privacy"), "{md}");
+    }
+
+    #[test]
+    fn header_layout_wrapper_around_main_is_content() {
+        let html = r#"<html><body><div class="header-over-content dmFreeHeader"><div class="header">Logo</div><div role="main"><h3>PADI courses</h3><p>Learn to dive with certified instructors on the reefs of Curacao, from first breath underwater to divemaster.</p></div></div></body></html>"#;
+        let doc = Html::parse_document(html);
+        let sel = scraper::Selector::parse("div").unwrap();
+        let mut divs = doc.select(&sel);
+        assert!(!is_noise(divs.next().unwrap()));
+        assert!(is_noise(divs.next().unwrap()));
+        let md = crate::extract(html, None).unwrap().content.markdown;
+        assert!(md.contains("Learn to dive"), "{md}");
+    }
 }
 
 #[cfg(test)]
@@ -890,5 +939,15 @@ mod hidden_tests {
         );
         let result = crate::extract(&html, None).unwrap();
         assert!(result.content.markdown.contains("borrow checker"));
+    }
+
+    #[test]
+    fn header_tag_wrapping_the_whole_app_is_content() {
+        let html = r#"<html><body><app-root><header class="navigation"><nav><a href="/">Home</a><a href="/blog">Blog</a></nav><main><h1>Device metrics</h1><p>Calculate the right measurements for design across devices, from screen dimensions to density buckets and dp resolution.</p></main></header></app-root></body></html>"#;
+        let md = crate::extract(html, None).unwrap().content.markdown;
+        assert!(md.contains("density buckets"), "{md}");
+        let page_header = r#"<html><body><header><a href="/">Logo</a><p>Site tagline that should not appear in the article output.</p></header><main><p>Calculate the right measurements for design across devices, from screen dimensions to density buckets.</p></main></body></html>"#;
+        let md = crate::extract(page_header, None).unwrap().content.markdown;
+        assert!(!md.contains("tagline"), "{md}");
     }
 }

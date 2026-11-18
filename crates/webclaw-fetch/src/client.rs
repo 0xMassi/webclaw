@@ -146,11 +146,59 @@ fn extract_fetched(
             return Ok(result);
         }
     }
+    if is_binary_text(&fetched.html) {
+        let mime = fetched
+            .headers
+            .get("content-type")
+            .and_then(|ct| ct.to_str().ok())
+            .and_then(|ct| ct.split(';').next())
+            .unwrap_or("unknown type")
+            .trim()
+            .to_string();
+        return Err(FetchError::Binary(mime));
+    }
+    if is_plain_text(&fetched.headers, &fetched.html) {
+        return Ok(text_extraction_result(
+            fetched.html.clone(),
+            fetched.html.clone(),
+            &fetched.url,
+        ));
+    }
     Ok(webclaw_core::extract_with_options(
         &fetched.html,
         Some(&fetched.url),
         options,
     )?)
+}
+
+const GOOGLE_CONSENT_DECLINED: &str = "SOCS=CAI";
+
+fn skips_google_consent(url: &url::Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        host.split('.')
+            .any(|label| label == "google" || label == "youtube")
+    })
+}
+
+fn is_binary_text(body: &str) -> bool {
+    body.bytes().take(1024).any(|b| b == 0)
+}
+
+fn is_plain_text(headers: &http::HeaderMap, body: &str) -> bool {
+    let plain = headers
+        .get("content-type")
+        .and_then(|ct| ct.to_str().ok())
+        .and_then(|ct| ct.split(';').next())
+        .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("text/plain"));
+    let head = body
+        .trim_start()
+        .get(..15)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    plain
+        && !body.trim().is_empty()
+        && !head.starts_with("<!doctype html")
+        && !head.starts_with("<html")
 }
 
 /// Result for a single URL in a batch fetch operation.
@@ -175,9 +223,31 @@ struct Response {
     version: http::Version,
     ip: Option<std::net::IpAddr>,
     headers: http::HeaderMap,
-    /// Owned as `Vec<u8>` rather than `Bytes` so `into_text` can hand the
-    /// allocation straight to `String` instead of copying it (see `into_text`).
     body: Vec<u8>,
+}
+
+fn declared_encoding(
+    headers: &http::HeaderMap,
+    body: &[u8],
+) -> Option<&'static encoding_rs::Encoding> {
+    let from_header = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(charset_label);
+    let label = from_header
+        .or_else(|| charset_label(&String::from_utf8_lossy(&body[..body.len().min(4096)])))?;
+    encoding_rs::Encoding::for_label(label.as_bytes()).filter(|e| *e != encoding_rs::UTF_8)
+}
+
+fn charset_label(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let start = lower.find("charset=")? + "charset=".len();
+    let label: String = lower[start..]
+        .trim_start_matches(['"', '\'', ' '])
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'))
+        .collect();
+    (!label.is_empty()).then_some(label)
 }
 
 /// Maximum fetched body size. A single 50 MB HTML document is already
@@ -279,24 +349,15 @@ impl Response {
         &self.body
     }
 
-    /// Decode the body to `String`, consuming the buffer.
-    ///
-    /// The valid-UTF-8 case — effectively every page — takes ownership of the
-    /// existing allocation, so this costs no allocation and no copy.
-    /// `from_utf8_lossy(&self.body).into_owned()` always allocated a second
-    /// full-size buffer and memcpy'd the whole body into it.
-    ///
-    /// The fallback must decode `e.as_bytes()`, i.e. the bytes handed back by
-    /// the failed conversion, so invalid-UTF-8 output stays byte-identical to
-    /// the previous implementation. Do NOT add `shrink_to_fit()` — it would
-    /// reintroduce exactly the copy this removes.
-    ///
-    /// Charset handling is unchanged and still ignores `Content-Type: charset`;
-    /// a page in a non-UTF-8 encoding produces the same mojibake it did before.
-    /// Fixing that is separate work with extraction-quality blast radius.
     fn into_text(self) -> String {
-        String::from_utf8(self.body)
-            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+        let bytes = match String::from_utf8(self.body) {
+            Ok(text) => return text,
+            Err(e) => e.into_bytes(),
+        };
+        match declared_encoding(&self.headers, &bytes) {
+            Some(encoding) => encoding.decode(&bytes).0.into_owned(),
+            None => String::from_utf8_lossy(&bytes).into_owned(),
+        }
     }
 
     /// Consume the response and return the raw, undecoded body bytes.
@@ -410,11 +471,16 @@ impl FetchClient {
         if config.render.as_ref().is_some_and(|render| render.solve)
             && !matches!(
                 config.browser,
-                BrowserProfile::Chrome | BrowserProfile::ChromeMacos | BrowserProfile::Edge
+                BrowserProfile::Chrome
+                    | BrowserProfile::ChromeMacos
+                    | BrowserProfile::Edge
+                    | BrowserProfile::Chrome149
+                    | BrowserProfile::ChromeMacos149
+                    | BrowserProfile::Edge149
             )
         {
             return Err(FetchError::Build(
-                "solving Cloudflare challenges sends Chrome's User-Agent over HTTP, so it needs the chrome, chrome-macos or edge browser profile".into(),
+                "solving Cloudflare challenges sends Chrome's User-Agent over HTTP, so it needs a chrome, chrome-macos or edge browser profile".into(),
             ));
         }
         let variants = collect_variants(&config.browser);
@@ -562,14 +628,33 @@ impl FetchClient {
         url: &str,
         extra: &[(&str, &str)],
     ) -> Result<FetchResult, FetchError> {
-        if crate::reddit::is_reddit_url(url) {
+        if crate::reddit::is_reddit_url(url) && !crate::reddit::is_challenge_answer(url) {
             let feed = crate::reddit::to_feed_url(url);
             let mut resp = self.fetch_with_headers(&feed, extra).await?;
+            if crate::reddit::feed_refused(&resp)
+                && let Some(page) = self.reddit_page(url, extra).await
+            {
+                resp = page;
+            }
             resp.url = url.to_string();
             return Ok(resp);
         }
         self.within_budget(Instant::now(), url, async {
             let resp = self.fetch_with_headers(url, extra).await?;
+            let resp = match meta_refresh(&resp.html, &resp.url).filter(|_| resp.status < 400) {
+                Some((delay, target)) => {
+                    debug!(url, %target, "following a meta refresh");
+                    tokio::time::sleep(delay).await;
+                    match self.fetch_with_headers(&target, extra).await {
+                        Ok(next) => next,
+                        Err(e) => {
+                            debug!(url, error = %e, "meta refresh target failed");
+                            resp
+                        }
+                    }
+                }
+                None => resp,
+            };
             let Some(homepage) = extract_homepage(url).filter(|_| is_challenge_html(&resp.html))
             else {
                 return Ok(resp);
@@ -579,6 +664,15 @@ impl FetchClient {
             self.fetch_with_headers(url, extra).await
         })
         .await
+    }
+
+    async fn reddit_page(&self, url: &str, extra: &[(&str, &str)]) -> Option<FetchResult> {
+        let page = crate::reddit::to_page_url(url);
+        let mut resp = self.fetch_with_headers(&page, extra).await.ok()?;
+        if let Some(answer) = crate::reddit::challenge_url(&resp.html, &page) {
+            resp = self.fetch_with_headers(&answer, extra).await.ok()?;
+        }
+        (resp.status == 200 && webclaw_core::reddit::is_page_html(&resp.html)).then_some(resp)
     }
 
     /// Fetch a URL and return the raw HTML + response metadata.
@@ -603,7 +697,14 @@ impl FetchClient {
         let start = Instant::now();
         let client = self.pick_client(url);
 
-        let sent: Vec<(&str, String)> = extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        let mut sent: Vec<(&str, String)> =
+            extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        let has_cookie = extra
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
+        if !has_cookie && skips_google_consent(&parsed_url) {
+            sent.push(("cookie", GOOGLE_CONSENT_DECLINED.to_string()));
+        }
         #[cfg(feature = "browser")]
         let sent = {
             let mut sent = sent;
@@ -622,11 +723,20 @@ impl FetchClient {
                     .chain(std::iter::once(cookies.as_str()))
                     .collect::<Vec<_>>()
                     .join("; ");
+                let hints: Vec<_> = crate::tls::chrome_client_hints(&agent)
+                    .into_iter()
+                    .flatten()
+                    .collect();
                 sent.retain(|(name, _)| {
-                    !name.eq_ignore_ascii_case("cookie") && !name.eq_ignore_ascii_case("user-agent")
+                    !name.eq_ignore_ascii_case("cookie")
+                        && !name.eq_ignore_ascii_case("user-agent")
+                        && !hints
+                            .iter()
+                            .any(|(hint, _)| name.eq_ignore_ascii_case(hint))
                 });
                 sent.push(("cookie", cookies));
                 sent.push(("user-agent", agent));
+                sent.extend(hints);
             }
             sent
         };
@@ -1226,6 +1336,11 @@ fn collect_variants(profile: &BrowserProfile) -> Vec<BrowserVariant> {
         BrowserProfile::Safari => vec![BrowserVariant::Safari],
         BrowserProfile::Edge => vec![BrowserVariant::Edge],
         BrowserProfile::SafariIos => vec![BrowserVariant::SafariIos26],
+        BrowserProfile::Chrome149 => vec![BrowserVariant::Chrome149],
+        BrowserProfile::ChromeMacos149 => vec![BrowserVariant::ChromeMacos149],
+        BrowserProfile::Edge149 => vec![BrowserVariant::Edge149],
+        BrowserProfile::Firefox151 => vec![BrowserVariant::Firefox151],
+        BrowserProfile::Safari26 => vec![BrowserVariant::Safari26],
     }
 }
 
@@ -1281,6 +1396,45 @@ fn pick_random(clients: &[ObservedClient]) -> &ObservedClient {
 }
 
 const MAX_ATTEMPTS: usize = 2;
+const MAX_REFRESH_DELAY: Duration = Duration::from_secs(10);
+const MAX_REFRESH_PAGE_BYTES: usize = 64 * 1024;
+
+fn meta_refresh(html: &str, base: &str) -> Option<(Duration, String)> {
+    static NOSCRIPT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static REFRESH: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    if html.len() > MAX_REFRESH_PAGE_BYTES {
+        return None;
+    }
+    let visible = NOSCRIPT
+        .get_or_init(|| regex::Regex::new(r"(?is)<noscript\b.*?</noscript\s*>").unwrap())
+        .replace_all(html, "");
+    let content = REFRESH
+        .get_or_init(|| {
+            regex::Regex::new(
+                r#"(?is)<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh\b[^>]*\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')"#,
+            )
+            .unwrap()
+        })
+        .captures(&visible)
+        .and_then(|c| c.get(1).or_else(|| c.get(2)))?
+        .as_str();
+    let (delay, target) = content.split_once([';', ','])?;
+    let delay = Duration::try_from_secs_f64(delay.trim().parse().ok()?).ok()?;
+    let target = target.trim();
+    let target = match target.get(..3) {
+        Some(key) if key.eq_ignore_ascii_case("url") => {
+            target[3..].trim_start().strip_prefix('=')?
+        }
+        _ => target,
+    };
+    let target = target.trim().trim_matches(['"', '\'']);
+    let base = url::Url::parse(base).ok()?;
+    let next = base.join(target).ok()?;
+    let followable =
+        delay <= MAX_REFRESH_DELAY && matches!(next.scheme(), "http" | "https") && next != base;
+    followable.then(|| (delay, next.to_string()))
+}
+
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
 const RETRY_AFTER_CAP: Duration = Duration::from_secs(30);
 
@@ -1354,14 +1508,25 @@ fn pdf_to_extraction_result(
     pdf: &webclaw_pdf::PdfResult,
     url: &str,
 ) -> webclaw_core::ExtractionResult {
-    let markdown = webclaw_pdf::to_markdown(pdf);
+    let mut result = text_extraction_result(webclaw_pdf::to_markdown(pdf), pdf.text.clone(), url);
+    result.metadata.title = pdf.metadata.title.clone();
+    result.metadata.description = pdf.metadata.subject.clone();
+    result.metadata.author = pdf.metadata.author.clone();
+    result
+}
+
+fn text_extraction_result(
+    markdown: String,
+    plain_text: String,
+    url: &str,
+) -> webclaw_core::ExtractionResult {
     let word_count = markdown.split_whitespace().count();
 
     webclaw_core::ExtractionResult {
         metadata: webclaw_core::Metadata {
-            title: pdf.metadata.title.clone(),
-            description: pdf.metadata.subject.clone(),
-            author: pdf.metadata.author.clone(),
+            title: None,
+            description: None,
+            author: None,
             published_date: None,
             language: None,
             url: Some(url.to_string()),
@@ -1372,7 +1537,7 @@ fn pdf_to_extraction_result(
         },
         content: webclaw_core::Content {
             markdown,
-            plain_text: pdf.text.clone(),
+            plain_text,
             links: Vec::new(),
             images: Vec::new(),
             code_blocks: Vec::new(),
@@ -1407,6 +1572,68 @@ async fn collect_ordered<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_text_source_files_are_returned_verbatim() {
+        let source = "@model HomeVm\n<div class=\"row\">\n  @foreach (var v in Model.Vehicles) { <span>@v.Name</span> }\n</div>\n";
+        let mut response = resp_with_body(source.as_bytes().to_vec());
+        response
+            .headers
+            .insert("content-type", "text/plain; charset=utf-8".parse().unwrap());
+        let fetched = response_to_result(response, Instant::now()).unwrap();
+        let result = fetched.extract_with_options(&Default::default()).unwrap();
+        assert_eq!(result.content.markdown, source);
+        assert!(result.metadata.word_count > 5);
+
+        let mut mislabeled = resp_with_body(
+            b"<!DOCTYPE html><html><body><p>Hello there friend</p></body></html>".to_vec(),
+        );
+        mislabeled
+            .headers
+            .insert("content-type", "text/plain".parse().unwrap());
+        let fetched = response_to_result(mislabeled, Instant::now()).unwrap();
+        let result = fetched.extract_with_options(&Default::default()).unwrap();
+        assert!(!result.content.markdown.contains("<p>"));
+    }
+
+    #[test]
+    fn google_hosts_get_the_declined_consent_cookie() {
+        for host in [
+            "https://chromewebstore.google.com/detail/x",
+            "https://www.google.de/maps",
+            "https://www.youtube.com/watch?v=x",
+        ] {
+            assert!(
+                skips_google_consent(&url::Url::parse(host).unwrap()),
+                "{host}"
+            );
+        }
+        for host in ["https://googleblog.example/", "https://example.com/google"] {
+            assert!(
+                !skips_google_consent(&url::Url::parse(host).unwrap()),
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn executables_and_other_binaries_are_refused_not_extracted() {
+        let mut exe =
+            b"MZ\x90\x00\x03\x00\x00\x00\x04\x00This program cannot be run in DOS mode.".to_vec();
+        exe.extend(std::iter::repeat_n(0u8, 64));
+        let mut response = resp_with_body(exe);
+        response
+            .headers
+            .insert("content-type", "application/octet-stream".parse().unwrap());
+        let fetched = response_to_result(response, Instant::now()).unwrap();
+        let err = fetched
+            .extract_with_options(&Default::default())
+            .unwrap_err();
+        assert!(
+            matches!(&err, FetchError::Binary(mime) if mime == "application/octet-stream"),
+            "{err:?}"
+        );
+    }
 
     #[test]
     fn binary_response_retains_original_bytes_and_rejects_invalid_pdf() {
@@ -1650,6 +1877,109 @@ mod tests {
         assert!(wire[1].contains("cookie: session=1\r\n"));
         assert!(!wire[2].contains("cookie:"), "{}", wire[2]);
         assert!(wire[2].contains("referer: http://example.com/b\r\n"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local TCP sockets and public DNS"]
+    async fn smart_fetch_follows_a_meta_refresh_with_the_cookies_it_set() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let refresh = "<html><head><meta http-equiv=\"refresh\" content=\"0; URL='/shop?verify=abc'\"></head><body></body></html>";
+        let wire = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for reply in [
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nSet-Cookie: gate=open; Path=/\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{refresh}",
+                    refresh.len()
+                ),
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 14\r\nConnection: close\r\n\r\n<p>catalog</p>".to_string(),
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = Vec::new();
+                while !buffer.ends_with(b"\r\n\r\n") {
+                    let mut chunk = [0; 4096];
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert!(n > 0);
+                    buffer.extend_from_slice(&chunk[..n]);
+                }
+                requests.push(String::from_utf8(buffer).unwrap().to_ascii_lowercase());
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        let client = FetchClient::new(FetchConfig {
+            proxy: Some(proxy),
+            headers: HashMap::new(),
+            ..Default::default()
+        })
+        .unwrap();
+        let page = client.fetch_smart("http://example.com/shop").await.unwrap();
+        let wire = wire.await.unwrap();
+        assert_eq!(page.html, "<p>catalog</p>");
+        assert!(
+            wire[1].starts_with("get http://example.com/shop?verify=abc "),
+            "{}",
+            wire[1]
+        );
+        assert!(wire[1].contains("cookie: gate=open\r\n"), "{}", wire[1]);
+    }
+
+    #[test]
+    fn meta_refresh_only_follows_short_visible_redirects_elsewhere() {
+        let base = "https://example.com/a";
+        let page = |meta: &str| format!("<html><head>{meta}</head><body></body></html>");
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<meta http-equiv="refresh" content="5; URL='/a?t=1'">"#),
+                base
+            ),
+            Some((
+                Duration::from_secs(5),
+                "https://example.com/a?t=1".to_string()
+            ))
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<META HTTP-EQUIV=Refresh CONTENT="0;url=https://example.org/new">"#),
+                base
+            ),
+            Some((Duration::ZERO, "https://example.org/new".to_string()))
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(
+                    r#"<noscript><meta http-equiv="refresh" content="0;url=/no-js.html"></noscript>"#
+                ),
+                base
+            ),
+            None
+        );
+        assert_eq!(
+            meta_refresh(&page(r#"<meta http-equiv="refresh" content="300">"#), base),
+            None
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<meta http-equiv="refresh" content="60;url=/b">"#),
+                base
+            ),
+            None
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<meta http-equiv="refresh" content="0;url=/a">"#),
+                base
+            ),
+            None
+        );
+        assert_eq!(
+            meta_refresh(
+                &page(r#"<meta http-equiv="refresh" content="0;url=javascript:alert(1)">"#),
+                base
+            ),
+            None
+        );
     }
 
     #[tokio::test]
@@ -2187,6 +2517,42 @@ mod tests {
                 &body[..body.len().min(24)]
             );
         }
+    }
+
+    #[test]
+    fn into_text_decodes_the_declared_charset_when_the_body_is_not_utf8() {
+        let with_type = |content_type: &str, body: Vec<u8>| {
+            let mut resp = resp_with_body(body);
+            resp.headers
+                .insert("content-type", content_type.parse().unwrap());
+            resp.into_text()
+        };
+        let (sjis, _, _) = encoding_rs::SHIFT_JIS.encode("<p>Akihabara (秋葉原)</p>");
+        assert_eq!(
+            with_type("text/html;charset=shift-jis", sjis.to_vec()),
+            "<p>Akihabara (秋葉原)</p>"
+        );
+
+        let latin = b"<html><head><meta charset=\"windows-1252\"></head><p>caf\xe9 \x93hi\x94</p>";
+        assert_eq!(
+            resp_with_body(latin.to_vec()).into_text(),
+            "<html><head><meta charset=\"windows-1252\"></head><p>café “hi”</p>"
+        );
+        let http_equiv = b"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=ISO-8859-1\"><p>Z\xfcrich</p>";
+        assert!(
+            resp_with_body(http_equiv.to_vec())
+                .into_text()
+                .ends_with("<p>Zürich</p>")
+        );
+
+        assert_eq!(
+            with_type("text/html; charset=iso-8859-1", "café".as_bytes().to_vec()),
+            "café"
+        );
+        assert_eq!(
+            with_type("text/html; charset=utf-8", b"bad \xff byte".to_vec()),
+            "bad \u{fffd} byte"
+        );
     }
 
     #[test]

@@ -11,6 +11,7 @@ use tracing::debug;
 
 static SCRIPT_JSON_SELECTOR: Lazy<Selector> =
     Lazy::new(|| Selector::parse("script[type='application/json']").unwrap());
+static PAGE_PROPS_SELECTOR: Lazy<Selector> = Lazy::new(|| Selector::parse("[data-page]").unwrap());
 
 /// Below this word count, try data islands for supplemental content.
 /// Set high enough to cover marketing homepages with partial SSR (e.g., Notion
@@ -69,6 +70,18 @@ pub fn try_extract(doc: &Html, dom_word_count: usize, existing_markdown: &str) -
             );
             all_chunks.extend(chunks);
         }
+    }
+
+    for root in doc.select(&PAGE_PROPS_SELECTOR) {
+        let Some(props) = root
+            .value()
+            .attr("data-page")
+            .and_then(|page| serde_json::from_str::<serde_json::Value>(page).ok())
+            .and_then(|mut page| page.get_mut("props").map(serde_json::Value::take))
+        else {
+            continue;
+        };
+        walk_props(&props, &mut all_chunks, 0);
     }
 
     // Note: SvelteKit data islands are handled in structured_data.rs
@@ -201,6 +214,45 @@ fn walk_json(value: &serde_json::Value, chunks: &mut Vec<TextChunk>, depth: usiz
 
             for v in arr {
                 walk_json(v, chunks, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn walk_props(value: &serde_json::Value, chunks: &mut Vec<TextChunk>, depth: usize) {
+    if depth > 15 || chunks.len() >= MAX_CHUNKS {
+        return;
+    }
+    match value {
+        serde_json::Value::String(text) => {
+            let text = if text.contains('<') {
+                Html::parse_fragment(text)
+                    .root_element()
+                    .text()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                text.clone()
+            };
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if is_content_text(&text) {
+                chunks.push(TextChunk {
+                    heading: None,
+                    body: text,
+                });
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                walk_props(item, chunks, depth + 1);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, v) in map {
+                if !is_media_key(key) && !is_configuration_key(key) {
+                    walk_props(v, chunks, depth + 1);
+                }
             }
         }
         _ => {}
@@ -477,6 +529,21 @@ fn is_content_text(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_page_props_from_a_data_page_root() {
+        let html = r#"<html><body><div id="app" data-page="{&quot;component&quot;:&quot;SectorsSingleView&quot;,&quot;props&quot;:{&quot;sector&quot;:{&quot;header&quot;:&quot;We help education providers engage their community and improve learning outcomes.&quot;,&quot;overview&quot;:&quot;No two schools or students are the same, so digital platforms in education have to be built around them.&quot;}},&quot;url&quot;:&quot;/sectors/education&quot;}"></div><script src="/app.js"></script></body></html>"#;
+        let result = crate::extract(html, Some("https://example.com/sectors/education")).unwrap();
+        assert!(
+            result
+                .content
+                .markdown
+                .contains("No two schools or students are the same"),
+            "{}",
+            result.content.markdown
+        );
+        assert!(crate::quality::content_issue(&result).is_none());
+    }
 
     #[test]
     fn extracts_contentful_rich_text() {

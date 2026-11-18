@@ -227,6 +227,23 @@ const SAFARI_HEADERS: &[(&str, &str)] = &[
     ("sec-fetch-dest", "document"),
 ];
 
+const SAFARI_26_HEADERS: &[(&str, &str)] = &[
+    ("sec-fetch-dest", "document"),
+    (
+        "user-agent",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Safari/605.1.15",
+    ),
+    (
+        "accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    ),
+    ("sec-fetch-site", "none"),
+    ("sec-fetch-mode", "navigate"),
+    ("accept-language", "en-US,en;q=0.9"),
+    ("priority", "u=0, i"),
+    ("accept-encoding", "gzip, deflate, br"),
+];
+
 /// Safari iOS 26 headers, in the wire order real Safari emits. Critically:
 /// NO `sec-fetch-*`, NO `priority: u=0, i` (both Chromium-only leaks), but
 /// `upgrade-insecure-requests: 1` is present. `accept-encoding` does not
@@ -272,6 +289,64 @@ const EDGE_HEADERS: &[(&str, &str)] = &[
     ("priority", "u=0, i"),
 ];
 
+/// The `sec-ch-ua`, `sec-ch-ua-mobile` and `sec-ch-ua-platform` headers a
+/// Chromium browser with this User-Agent sends, so a request that carries a
+/// browser's User-Agent can carry the matching client hints. `None` for a
+/// User-Agent that is not Chromium's, since other browsers send none.
+pub fn chrome_client_hints(user_agent: &str) -> Option<[(&'static str, String); 3]> {
+    let major = |marker: &str| -> Option<u32> {
+        let (_, rest) = user_agent.split_once(marker)?;
+        rest.split('.').next()?.parse().ok()
+    };
+    let chromium = major("Chrome/")?;
+    let (brand, version) = match major("Edg/") {
+        Some(edge) => ("Microsoft Edge", edge),
+        None => ("Google Chrome", chromium),
+    };
+    const CHARS: [char; 11] = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_'];
+    const VERSIONS: [&str; 3] = ["8", "99", "24"];
+    const ORDERS: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let seed = version as usize;
+    let grease = format!(
+        r#""Not{}A{}Brand";v="{}""#,
+        CHARS[seed % 11],
+        CHARS[(seed + 1) % 11],
+        VERSIONS[seed % 3]
+    );
+    let mut brands = [String::new(), String::new(), String::new()];
+    let order = ORDERS[seed % 6];
+    brands[order[0]] = grease;
+    brands[order[1]] = format!(r#""Chromium";v="{chromium}""#);
+    brands[order[2]] = format!(r#""{brand}";v="{version}""#);
+    let platform = [
+        ("Android", "Android"),
+        ("Windows", "Windows"),
+        ("Macintosh", "macOS"),
+        ("CrOS", "Chrome OS"),
+        ("Linux", "Linux"),
+    ]
+    .into_iter()
+    .find(|(marker, _)| user_agent.contains(marker))
+    .map_or("Unknown", |(_, name)| name);
+    let mobile = if user_agent.contains("Mobile") {
+        "?1"
+    } else {
+        "?0"
+    };
+    Some([
+        ("sec-ch-ua", brands.join(", ")),
+        ("sec-ch-ua-mobile", mobile.to_string()),
+        ("sec-ch-ua-platform", format!("\"{platform}\"")),
+    ])
+}
+
 fn chrome_tls() -> TlsOptions {
     // permute_extensions is off so the explicit extension_permutation sticks.
     // Real Chrome permutes, but indeed.com's WAF allowlists bogdanfinn's
@@ -299,6 +374,46 @@ fn chrome_tls() -> TlsOptions {
         .aes_hw_override(true)
         .certificate_compressors(CHROME_CERT_COMPRESSORS)
         .build()
+}
+
+fn chrome_149_tls() -> TlsOptions {
+    let mut tls = chrome_tls();
+    tls.alpn_protocols = Some(Cow::Borrowed(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1]));
+    tls.alps_protocols = Some(Cow::Borrowed(&[AlpsProtocol::HTTP2]));
+    tls
+}
+
+fn chrome_149_headers(legacy: &[(&str, &str)]) -> http::HeaderMap {
+    let mut headers = build_headers(legacy);
+    let agent = headers
+        .get(http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .replace("145.0.0.0", "149.0.0.0");
+    for (name, value) in chrome_client_hints(&agent)
+        .into_iter()
+        .flatten()
+        .chain([("user-agent", agent.clone())])
+    {
+        if let Ok(value) = http::header::HeaderValue::from_str(&value) {
+            headers.insert(name, value);
+        }
+    }
+    headers
+}
+
+fn library_emulation(
+    profile: wreq_util::Profile,
+    platform: wreq_util::Platform,
+    headers: http::HeaderMap,
+) -> wreq::Emulation {
+    let mut em = wreq_util::Emulation::builder()
+        .profile(profile)
+        .platform(platform)
+        .build()
+        .into_emulation();
+    em.headers = headers;
+    em
 }
 
 fn firefox_tls() -> TlsOptions {
@@ -501,23 +616,49 @@ fn emulation(
     variant: BrowserVariant,
     extra_headers: &std::collections::HashMap<String, String>,
 ) -> wreq::Emulation {
+    let hand_rolled = |tls, h2, headers| {
+        Emulation::builder()
+            .tls_options(tls)
+            .http2_options(h2)
+            .headers(build_headers(headers))
+            .build(Group::default())
+    };
+    let chrome_149 = |legacy| {
+        Emulation::builder()
+            .tls_options(chrome_149_tls())
+            .http2_options(chrome_h2())
+            .headers(chrome_149_headers(legacy))
+            .build(Group::default())
+    };
     let mut emulation = match variant {
         BrowserVariant::SafariIos26 => safari_ios_emulation(),
-        other => {
-            let (tls, h2, headers) = match other {
-                BrowserVariant::Chrome => (chrome_tls(), chrome_h2(), CHROME_HEADERS),
-                BrowserVariant::ChromeMacos => (chrome_tls(), chrome_h2(), CHROME_MACOS_HEADERS),
-                BrowserVariant::Firefox => (firefox_tls(), firefox_h2(), FIREFOX_HEADERS),
-                BrowserVariant::Safari => (safari_tls(), safari_h2(), SAFARI_HEADERS),
-                BrowserVariant::Edge => (chrome_tls(), chrome_h2(), EDGE_HEADERS),
-                BrowserVariant::SafariIos26 => unreachable!("handled above"),
-            };
-            Emulation::builder()
-                .tls_options(tls)
-                .http2_options(h2)
-                .headers(build_headers(headers))
-                .build(Group::default())
+        BrowserVariant::Chrome149 => chrome_149(CHROME_HEADERS),
+        BrowserVariant::ChromeMacos149 => chrome_149(CHROME_MACOS_HEADERS),
+        BrowserVariant::Edge149 => chrome_149(EDGE_HEADERS),
+        BrowserVariant::Firefox151 => {
+            let mut headers = build_headers(FIREFOX_HEADERS);
+            headers.insert(
+                http::header::USER_AGENT,
+                http::header::HeaderValue::from_static(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:151.0) Gecko/20100101 Firefox/151.0",
+                ),
+            );
+            library_emulation(
+                wreq_util::Profile::Firefox151,
+                wreq_util::Platform::Windows,
+                headers,
+            )
         }
+        BrowserVariant::Safari26 => library_emulation(
+            wreq_util::Profile::Safari26_4,
+            wreq_util::Platform::MacOS,
+            build_headers(SAFARI_26_HEADERS),
+        ),
+        BrowserVariant::Chrome => hand_rolled(chrome_tls(), chrome_h2(), CHROME_HEADERS),
+        BrowserVariant::ChromeMacos => hand_rolled(chrome_tls(), chrome_h2(), CHROME_MACOS_HEADERS),
+        BrowserVariant::Firefox => hand_rolled(firefox_tls(), firefox_h2(), FIREFOX_HEADERS),
+        BrowserVariant::Safari => hand_rolled(safari_tls(), safari_h2(), SAFARI_HEADERS),
+        BrowserVariant::Edge => hand_rolled(chrome_tls(), chrome_h2(), EDGE_HEADERS),
     };
 
     let hm = &mut emulation.headers;
@@ -645,18 +786,144 @@ mod tests {
     use super::redact_proxy_url;
 
     #[test]
-    fn no_profile_refuses_every_response_header() {
-        let ios = super::safari_ios_emulation()
-            .http2_options
-            .expect("the iOS Safari profile sets HTTP/2 options");
-        for h2 in [
-            super::chrome_h2(),
-            super::firefox_h2(),
-            super::safari_h2(),
-            ios,
-        ] {
-            assert_ne!(h2.max_header_list_size, Some(0));
+    fn client_hints_match_what_chrome_sends_for_its_version() {
+        let cases = [
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+                r#""Not-A.Brand";v="99", "Google Chrome";v="157", "Chromium";v="157""#,
+                "\"macOS\"",
+            ),
+            (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+                r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#,
+                "\"Windows\"",
+            ),
+            (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
+                "\"Linux\"",
+            ),
+            (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0",
+                r#""Chromium";v="140", "Not=A?Brand";v="24", "Microsoft Edge";v="140""#,
+                "\"Windows\"",
+            ),
+        ];
+        for (agent, brands, platform) in cases {
+            let [ua, mobile, os] = super::chrome_client_hints(agent).expect(agent);
+            assert_eq!(ua, ("sec-ch-ua", brands.to_string()), "{agent}");
+            assert_eq!(mobile, ("sec-ch-ua-mobile", "?0".to_string()), "{agent}");
+            assert_eq!(os, ("sec-ch-ua-platform", platform.to_string()), "{agent}");
         }
+        let android = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36";
+        let [_, mobile, os] = super::chrome_client_hints(android).unwrap();
+        assert_eq!(mobile.1, "?1");
+        assert_eq!(os.1, "\"Android\"");
+        assert!(super::chrome_client_hints(super::SAFARI_IOS_HEADERS[3].1).is_none());
+    }
+
+    const ALL: [crate::browser::BrowserVariant; 11] = {
+        use crate::browser::BrowserVariant::*;
+        [
+            Chrome,
+            ChromeMacos,
+            Firefox,
+            Safari,
+            SafariIos26,
+            Edge,
+            Chrome149,
+            ChromeMacos149,
+            Edge149,
+            Firefox151,
+            Safari26,
+        ]
+    };
+
+    #[test]
+    fn no_profile_refuses_every_response_header() {
+        for variant in ALL {
+            let h2 = super::emulation(variant, &Default::default())
+                .http2_options
+                .expect("every profile sets HTTP/2 options");
+            assert_ne!(h2.max_header_list_size, Some(0), "{variant:?}");
+        }
+    }
+
+    #[test]
+    fn legacy_chrome_keeps_its_hello_and_headers() {
+        use crate::browser::BrowserVariant::Chrome;
+        let em = super::emulation(Chrome, &Default::default());
+        let tls = em.tls_options.clone().unwrap();
+        assert_eq!(tls.alpn_protocols.as_deref().map(<[_]>::len), Some(3));
+        assert_eq!(tls.alps_protocols.as_deref().map(<[_]>::len), Some(2));
+        assert!(
+            em.headers["user-agent"]
+                .to_str()
+                .unwrap()
+                .contains("Chrome/145.0.0.0")
+        );
+    }
+
+    #[test]
+    fn chrome_149_profiles_offer_h2_and_send_matching_client_hints() {
+        use crate::browser::BrowserVariant::{Chrome, Chrome149, ChromeMacos149, Edge149};
+        let legacy: Vec<_> = super::emulation(Chrome, &Default::default())
+            .headers
+            .keys()
+            .map(|k| k.to_string())
+            .collect();
+        for variant in [Chrome149, ChromeMacos149, Edge149] {
+            let em = super::emulation(variant, &Default::default());
+            let tls = em.tls_options.clone().unwrap();
+            assert_eq!(
+                tls.alpn_protocols.as_deref(),
+                Some(
+                    &[
+                        wreq::tls::AlpnProtocol::HTTP2,
+                        wreq::tls::AlpnProtocol::HTTP1
+                    ][..]
+                )
+            );
+            assert_eq!(
+                tls.alps_protocols.as_deref(),
+                Some(&[wreq::tls::AlpsProtocol::HTTP2][..])
+            );
+            let agent = em.headers["user-agent"].to_str().unwrap();
+            assert!(
+                agent.contains("Chrome/149.0.0.0") && !agent.contains("145"),
+                "{agent}"
+            );
+            for (name, value) in super::chrome_client_hints(agent).unwrap() {
+                assert_eq!(em.headers[name], value.as_str(), "{variant:?} {name}");
+            }
+            let order: Vec<_> = em.headers.keys().map(|k| k.to_string()).collect();
+            assert_eq!(order, legacy, "{variant:?}");
+        }
+    }
+
+    #[test]
+    fn firefox_151_and_safari_26_use_the_library_profiles() {
+        use crate::browser::BrowserVariant::{Firefox151, Safari26};
+        let firefox = super::emulation(Firefox151, &Default::default());
+        let tls = firefox.tls_options.clone().unwrap();
+        assert_ne!(tls.grease_enabled, Some(true));
+        assert_eq!(tls.key_shares.map(|k| k.len()), Some(3));
+        assert!(
+            firefox.headers["user-agent"]
+                .to_str()
+                .unwrap()
+                .contains("Firefox/151.0")
+        );
+        let safari = super::emulation(Safari26, &Default::default());
+        assert!(
+            safari.headers["user-agent"]
+                .to_str()
+                .unwrap()
+                .contains("Version/26.4")
+        );
+        let order: Vec<_> = safari.headers.keys().map(|k| k.as_str()).collect();
+        let expected: Vec<_> = super::SAFARI_26_HEADERS.iter().map(|(k, _)| *k).collect();
+        assert_eq!(order, expected);
     }
 
     #[test]

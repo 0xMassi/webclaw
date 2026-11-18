@@ -183,10 +183,12 @@ fn node_to_md(
             if cell_has_block_content(element) {
                 children_to_md(element, base_url, assets, list_depth, exclude, depth)
             } else {
-                format!(
-                    "**{}**",
-                    inline_text(element, base_url, assets, exclude, depth)
-                )
+                let inner = inline_text(element, base_url, assets, exclude, depth);
+                if inner.trim().is_empty() {
+                    inner
+                } else {
+                    format!("**{inner}**")
+                }
             }
         }
 
@@ -195,10 +197,12 @@ fn node_to_md(
             if cell_has_block_content(element) {
                 children_to_md(element, base_url, assets, list_depth, exclude, depth)
             } else {
-                format!(
-                    "*{}*",
-                    inline_text(element, base_url, assets, exclude, depth)
-                )
+                let inner = inline_text(element, base_url, assets, exclude, depth);
+                if inner.trim().is_empty() {
+                    inner
+                } else {
+                    format!("*{inner}*")
+                }
             }
         }
 
@@ -1017,6 +1021,17 @@ mod tests {
 
         let (md, _, _) = convert_html("<h3>Sub</h3>", None);
         assert!(md.contains("### Sub"));
+    }
+
+    #[test]
+    fn icon_only_emphasis_leaves_no_markers() {
+        let (md, _, _) = convert_html(
+            r#"<p class="star-rating Three"><i class="icon-star"></i><i class="icon-star"></i></p><p><i class="icon-ok"></i> In stock <b> </b><em>now</em></p>"#,
+            None,
+        );
+        assert!(!md.contains("**"), "{md}");
+        assert!(md.contains("In stock"), "{md}");
+        assert!(md.contains("*now*"), "{md}");
     }
 
     #[test]

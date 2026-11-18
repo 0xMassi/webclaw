@@ -27,6 +27,9 @@ pub enum FetchError {
 
     #[error("client build failed: {0}")]
     Build(String),
+
+    #[error("the target is a binary file ({0}), not a page or document")]
+    Binary(String),
 }
 
 impl FetchError {

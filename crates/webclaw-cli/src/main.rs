@@ -690,6 +690,16 @@ enum Browser {
     /// Safari iOS 26. Pair with a country-matched residential proxy for sites
     /// that reject non-mobile profiles.
     SafariIos,
+    #[value(name = "chrome-149")]
+    Chrome149,
+    #[value(name = "chrome-macos-149")]
+    ChromeMacos149,
+    #[value(name = "edge-149")]
+    Edge149,
+    #[value(name = "firefox-151")]
+    Firefox151,
+    #[value(name = "safari-26")]
+    Safari26,
     Random,
 }
 
@@ -720,6 +730,11 @@ impl From<Browser> for BrowserProfile {
             Browser::Safari => BrowserProfile::Safari,
             Browser::Edge => BrowserProfile::Edge,
             Browser::SafariIos => BrowserProfile::SafariIos,
+            Browser::Chrome149 => BrowserProfile::Chrome149,
+            Browser::ChromeMacos149 => BrowserProfile::ChromeMacos149,
+            Browser::Edge149 => BrowserProfile::Edge149,
+            Browser::Firefox151 => BrowserProfile::Firefox151,
+            Browser::Safari26 => BrowserProfile::Safari26,
             Browser::Random => BrowserProfile::Random,
         }
     }

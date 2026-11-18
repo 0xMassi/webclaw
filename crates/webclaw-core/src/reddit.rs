@@ -80,12 +80,197 @@ pub fn try_extract_thread(feed: &str, url: &str) -> Option<RedditThread> {
     if !url.contains("/comments/") {
         return None;
     }
+    if is_page_html(feed) {
+        return thread_from_html(&Html::parse_document(feed), url);
+    }
     thread_from_feed(&parse_feed(feed)?, url)
+}
+
+/// Reddit gates logged-out page views behind a script that doubles a seed
+/// string and submits it with a token. Returns the URL that answers it.
+pub fn challenge_answer(html: &str, page_url: &str) -> Option<String> {
+    const SEED: &str = "async e=>e+e)(\"";
+    let start = html.find(SEED)? + SEED.len();
+    let seed = &html[start..start + html[start..].find('"')?];
+    if seed.is_empty() || !seed.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let doc = Html::parse_document(html);
+    let form = doc
+        .select(&Selector::parse("form").ok()?)
+        .find(|f| f.inner_html().contains("jsc_token"))?;
+    let mut answer = url::Url::parse(page_url)
+        .ok()?
+        .join(form.value().attr("action")?)
+        .ok()?;
+    {
+        let mut query = answer.query_pairs_mut();
+        query.clear();
+        query.append_pair("solution", &format!("{seed}{seed}"));
+        for input in form.select(&Selector::parse("input[name][value]").ok()?) {
+            let (Some(name), Some(value)) =
+                (input.value().attr("name"), input.value().attr("value"))
+            else {
+                continue;
+            };
+            query.append_pair(name, value);
+        }
+    }
+    Some(answer.to_string())
+}
+
+/// True for Reddit's server-rendered page, which carries posts as
+/// `<shreddit-post>` elements.
+pub fn is_page_html(body: &str) -> bool {
+    body.contains("<shreddit-post")
+}
+
+fn attr(el: ElementRef, name: &str) -> Option<String> {
+    el.value()
+        .attr(name)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+fn post_from_html(el: ElementRef, body: Option<String>) -> Option<RedditPost> {
+    let permalink = attr(el, "permalink")?;
+    let link = attr(el, "content-href").filter(|href| !href.contains(&permalink));
+    Some(RedditPost {
+        id: attr(el, "id").map(|id| id.trim_start_matches("t3_").to_string()),
+        title: attr(el, "post-title")?,
+        author: attr(el, "author").unwrap_or_else(|| "[deleted]".to_string()),
+        subreddit: attr(el, "subreddit-name"),
+        score: attr(el, "score").and_then(|s| s.parse().ok()),
+        body,
+        num_comments: attr(el, "comment-count")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        permalink: format!("https://www.reddit.com{permalink}"),
+        is_self: link.is_none(),
+        url: link,
+        flair: None,
+        created_utc: attr(el, "created-timestamp"),
+    })
+}
+
+fn thread_from_html(doc: &Html, url: &str) -> Option<RedditThread> {
+    static POST: std::sync::LazyLock<Selector> = std::sync::LazyLock::new(|| {
+        Selector::parse("shreddit-post[post-title]").expect("valid selector")
+    });
+    static BODY: std::sync::LazyLock<Selector> = std::sync::LazyLock::new(|| {
+        Selector::parse(r#"shreddit-post [slot="text-body"] .md, shreddit-post [slot="text-body"]"#)
+            .expect("valid selector")
+    });
+    static COMMENT: std::sync::LazyLock<Selector> = std::sync::LazyLock::new(|| {
+        Selector::parse("shreddit-comment[thingid]").expect("valid selector")
+    });
+    static COMMENT_BODY: std::sync::LazyLock<Selector> = std::sync::LazyLock::new(|| {
+        Selector::parse(r#"[slot="comment"]"#).expect("valid selector")
+    });
+    let body = doc
+        .select(&BODY)
+        .next()
+        .map(md_to_markdown)
+        .filter(|b| !b.is_empty());
+    let post = doc
+        .select(&POST)
+        .next()
+        .and_then(|el| post_from_html(el, body));
+    let op = post.as_ref().map(|p| p.author.clone()).unwrap_or_default();
+    let comments: Vec<RedditComment> = doc
+        .select(&COMMENT)
+        .filter_map(|c| {
+            let id = attr(c, "thingid")?;
+            let own = format!("{id}-comment-rtjson-content");
+            let body = c
+                .select(&COMMENT_BODY)
+                .find(|b| b.value().attr("id") == Some(own.as_str()))
+                .map(md_to_markdown)
+                .unwrap_or_default();
+            let author = attr(c, "author").unwrap_or_else(|| "[deleted]".to_string());
+            Some(RedditComment {
+                id: Some(id.trim_start_matches("t1_").to_string()),
+                is_op: !op.is_empty() && author == op,
+                author,
+                body,
+                score: attr(c, "score").and_then(|s| s.parse().ok()),
+                depth: attr(c, "depth").and_then(|d| d.parse().ok()).unwrap_or(0),
+                created_utc: attr(c, "created"),
+                replies: vec![],
+            })
+        })
+        .collect();
+    if post.is_none() && comments.is_empty() {
+        return None;
+    }
+    Some(RedditThread {
+        source_url: url.to_string(),
+        post,
+        comments,
+    })
+}
+
+fn listing_from_html(doc: &Html) -> Option<(Option<String>, String)> {
+    static POST: std::sync::LazyLock<Selector> = std::sync::LazyLock::new(|| {
+        Selector::parse("shreddit-post[post-title]").expect("valid selector")
+    });
+    static TITLE: std::sync::LazyLock<Selector> =
+        std::sync::LazyLock::new(|| Selector::parse("h1").expect("valid selector"));
+    let posts: Vec<RedditPost> = doc
+        .select(&POST)
+        .filter_map(|el| post_from_html(el, None))
+        .collect();
+    if posts.is_empty() {
+        return None;
+    }
+    let title = doc
+        .select(&TITLE)
+        .next()
+        .map(|h| h.text().collect::<String>().trim().to_string())
+        .filter(|t| !t.is_empty());
+    let mut out = String::new();
+    if let Some(title) = &title {
+        out.push_str(&format!("# {title}\n\n"));
+    }
+    for p in &posts {
+        out.push_str(&format!("## [{}]({})\n\n", p.title, p.permalink));
+        let mut line = vec![format!("**u/{}**", p.author)];
+        line.extend(p.subreddit.as_ref().map(|s| format!("r/{s}")));
+        line.extend(p.score.map(pt_label));
+        match p.num_comments {
+            0 => {}
+            1 => line.push("1 comment".to_string()),
+            n => line.push(format!("{n} comments")),
+        }
+        line.extend(p.created_utc.clone());
+        out.push_str(&line.join(" · "));
+        out.push_str("\n\n");
+        if let Some(link) = &p.url {
+            out.push_str(&format!("[Link]({link})\n\n"));
+        }
+    }
+    Some((title, collapse_blank_lines(out.trim_end())))
 }
 
 /// Entry point for `webclaw-core`'s extraction fast path: a thread or a
 /// listing (subreddit, search, user) from its Atom feed.
 pub fn try_extract(feed: &str, url: &str) -> Option<ExtractionResult> {
+    if is_page_html(feed) {
+        let doc = Html::parse_document(feed);
+        if url.contains("/comments/") {
+            let thread = thread_from_html(&doc, url)?;
+            let post = thread.post.as_ref();
+            let (title, author, site) = (
+                post.map(|p| p.title.clone()),
+                post.map(|p| p.author.clone()),
+                post.and_then(|p| p.subreddit.clone()),
+            );
+            return Some(result(to_markdown(&thread), url, title, author, site));
+        }
+        let (title, md) = listing_from_html(&doc)?;
+        return Some(result(md, url, title, None, None));
+    }
     let feed = parse_feed(feed)?;
     if url.contains("/comments/") {
         let thread = thread_from_feed(&feed, url)?;
@@ -603,6 +788,65 @@ mod tests {
 
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!("testdata/reddit-feed/{name}")).unwrap()
+    }
+
+    const PAGE_THREAD: &str = r#"<html><body><shreddit-post id="t3_abc" permalink="/r/rust/comments/abc/poison/" content-href="https://www.reddit.com/r/rust/comments/abc/poison/" post-title="Mutex poisoning" author="op_user" subreddit-name="rust" score="25" comment-count="2" created-timestamp="2026-11-18T07:43:02+0000"><div slot="text-body"><div class="md"><p>Is poisoning worth it?</p></div></div></shreddit-post>
+<shreddit-comment thingid="t1_c1" author="alice" score="5" depth="0" created="2026-11-18T08:00:00+0000"><div id="t1_c1-comment-rtjson-content" slot="comment"><p>Mostly not.</p></div>
+<shreddit-comment thingid="t1_c2" author="op_user" depth="1"><div id="t1_c2-comment-rtjson-content" slot="comment"><p>Fair, thanks.</p></div></shreddit-comment></shreddit-comment></body></html>"#;
+
+    #[test]
+    fn script_check_is_answered_with_the_doubled_seed() {
+        let page = r#"<html><head><script>document.addEventListener("DOMContentLoaded",async function(){var e=document.forms[0],n=(e.onsubmit=function(t){return!0},await(async e=>e+e)("3ca3d93c"));e.elements.namedItem("solution").value=n,e.requestSubmit()},{once:!0});</script></head><body><form hidden method="GET" action="/r/rust/"><input type="hidden" name="solution" /><input type="hidden" name="js_challenge" value="1"/><input type="hidden" name="jsc_token" value="2824be"/><input type="hidden" name="jsc_orig_r" value=""/></form></body></html>"#;
+        assert_eq!(
+            challenge_answer(page, "https://www.reddit.com/r/rust/").as_deref(),
+            Some(
+                "https://www.reddit.com/r/rust/?solution=3ca3d93c3ca3d93c&js_challenge=1&jsc_token=2824be&jsc_orig_r="
+            )
+        );
+        assert_eq!(
+            challenge_answer(PAGE_THREAD, "https://www.reddit.com/r/rust/"),
+            None
+        );
+    }
+
+    #[test]
+    fn server_rendered_thread_keeps_scores_bodies_and_nesting() {
+        let thread = try_extract_thread(
+            PAGE_THREAD,
+            "https://www.reddit.com/r/rust/comments/abc/poison/",
+        )
+        .unwrap();
+        let post = thread.post.as_ref().unwrap();
+        assert_eq!(
+            (post.title.as_str(), post.score, post.num_comments),
+            ("Mutex poisoning", Some(25), 2)
+        );
+        assert_eq!(post.body.as_deref(), Some("Is poisoning worth it?"));
+        assert!(post.is_self);
+        assert_eq!(thread.comments.len(), 2);
+        assert_eq!(
+            (thread.comments[0].body.as_str(), thread.comments[0].score),
+            ("Mostly not.", Some(5))
+        );
+        assert_eq!(
+            (
+                thread.comments[1].depth,
+                thread.comments[1].is_op,
+                thread.comments[1].score
+            ),
+            (1, true, None)
+        );
+        assert_eq!(thread.comments[1].body, "Fair, thanks.");
+
+        let listing = try_extract(PAGE_THREAD, "https://www.reddit.com/r/rust/").unwrap();
+        assert!(
+            listing.content.markdown.contains(
+                "## [Mutex poisoning](https://www.reddit.com/r/rust/comments/abc/poison/)"
+            ),
+            "{}",
+            listing.content.markdown
+        );
+        assert!(listing.content.markdown.contains("25 pts · 2 comments"));
     }
 
     #[test]

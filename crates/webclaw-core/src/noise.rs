@@ -126,7 +126,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
 
     // Tag-based noise (script, style, nav, etc.)
     if NOISE_TAGS.contains(&tag) {
-        return true;
+        return !(matches!(tag, "header" | "nav" | "aside" | "footer") && holds_main_landmark(el));
     }
 
     // <form> heuristic: ASP.NET wraps the entire page body in a single <form>.
@@ -159,7 +159,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
     if let Some(role) = el.value().attr("role")
         && NOISE_ROLES.contains(&role)
     {
-        return true;
+        return !holds_main_landmark(el);
     }
 
     // Exact class token matching — split class attribute into tokens,
@@ -259,7 +259,7 @@ pub fn is_noise(el: ElementRef<'_>) -> bool {
     false
 }
 
-fn holds_main_landmark(el: ElementRef<'_>) -> bool {
+pub(crate) fn holds_main_landmark(el: ElementRef<'_>) -> bool {
     el.descendants()
         .filter_map(ElementRef::wrap)
         .any(|d| d.value().name() == "main" || d.value().attr("role") == Some("main"))
@@ -939,5 +939,15 @@ mod hidden_tests {
         );
         let result = crate::extract(&html, None).unwrap();
         assert!(result.content.markdown.contains("borrow checker"));
+    }
+
+    #[test]
+    fn header_tag_wrapping_the_whole_app_is_content() {
+        let html = r#"<html><body><app-root><header class="navigation"><nav><a href="/">Home</a><a href="/blog">Blog</a></nav><main><h1>Device metrics</h1><p>Calculate the right measurements for design across devices, from screen dimensions to density buckets and dp resolution.</p></main></header></app-root></body></html>"#;
+        let md = crate::extract(html, None).unwrap().content.markdown;
+        assert!(md.contains("density buckets"), "{md}");
+        let page_header = r#"<html><body><header><a href="/">Logo</a><p>Site tagline that should not appear in the article output.</p></header><main><p>Calculate the right measurements for design across devices, from screen dimensions to density buckets.</p></main></body></html>"#;
+        let md = crate::extract(page_header, None).unwrap().content.markdown;
+        assert!(!md.contains("tagline"), "{md}");
     }
 }

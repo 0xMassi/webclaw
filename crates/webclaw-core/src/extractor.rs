@@ -884,7 +884,8 @@ fn is_inside_structural_noise(el: ElementRef<'_>) -> bool {
     while let Some(parent) = node {
         if let Some(parent_el) = ElementRef::wrap(parent) {
             let tag = parent_el.value().name();
-            if STRUCTURAL_NOISE_TAGS.contains(&tag) {
+            if STRUCTURAL_NOISE_TAGS.contains(&tag) && !crate::noise::holds_main_landmark(parent_el)
+            {
                 return true;
             }
             // Also check role-based structural noise

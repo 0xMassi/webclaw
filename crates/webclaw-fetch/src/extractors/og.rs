@@ -78,8 +78,9 @@ pub(crate) fn html_unescape(s: &str) -> String {
         out.push_str(&rest[..amp]);
         rest = &rest[amp..];
         let decoded = rest[1..]
-            .find(';')
-            .filter(|&end| end <= 10)
+            .bytes()
+            .take(11)
+            .position(|b| b == b';')
             .and_then(|end| decode_entity(&rest[1..=end]).map(|c| (c, end + 2)));
         match decoded {
             Some((c, len)) => {
@@ -126,5 +127,7 @@ mod tests {
             "AT&T &#xZZ; &unknown; 5 & 6"
         );
         assert_eq!(html_unescape("&amp;quot; &#39;x&#39;"), "&quot; 'x'");
+        let many = format!("{}&#65;", "&".repeat(50_000));
+        assert_eq!(html_unescape(&many), format!("{}A", "&".repeat(50_000)));
     }
 }

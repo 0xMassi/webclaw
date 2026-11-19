@@ -1,10 +1,37 @@
 /// Extract structured data from HTML.
-///
-/// Handles three sources:
-/// 1. JSON-LD (`<script type="application/ld+json">`) — e-commerce, news, recipes
-/// 2. `__NEXT_DATA__` (`<script id="__NEXT_DATA__" type="application/json">`) — Next.js pages
-/// 3. SvelteKit data islands (`kit.start(app, element, { data: [...] })`) — SPAs
-use serde_json::Value;
+use std::sync::LazyLock;
+
+use scraper::{Html, Selector};
+use serde_json::{Map, Value};
+
+static PRODUCT_META: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("meta[property^='product:']").unwrap());
+static MAGENTO_INIT: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("script[type='text/x-magento-init']").unwrap());
+
+pub fn extract_product_meta(doc: &Html) -> Option<Value> {
+    let mut meta = Map::new();
+    for tag in doc.select(&PRODUCT_META) {
+        if let (Some(property), Some(content)) =
+            (tag.value().attr("property"), tag.value().attr("content"))
+        {
+            meta.entry(property)
+                .or_insert_with(|| Value::String(content.to_string()));
+        }
+    }
+    (!meta.is_empty()).then(|| serde_json::json!({ "meta": meta }))
+}
+
+pub fn extract_magento_gallery(doc: &Html) -> Option<Value> {
+    doc.select(&MAGENTO_INIT).find_map(|script| {
+        let init: Value = serde_json::from_str(&script.text().collect::<String>()).ok()?;
+        init.as_object()?.values().find_map(|widgets| {
+            let data = widgets.get("mage/gallery/gallery")?.get("data")?;
+            data.is_array()
+                .then(|| serde_json::json!({ "gallery": data }))
+        })
+    })
+}
 
 /// Extract all JSON-LD blocks from raw HTML.
 ///
@@ -494,5 +521,36 @@ newline"}"#;
         assert_eq!(parsed["name"], "déjà vu");
         assert_eq!(parsed["city"], "東京");
         assert_eq!(parsed["emoji"], "🌱");
+    }
+    #[test]
+    fn product_meta_and_magento_gallery_reach_structured_data() {
+        let html = r#"<html><head>
+            <meta property="og:type" content="product" />
+            <meta property="product:price:amount" content="1998.99"/>
+            <meta property="product:price:currency" content="EUR"/>
+            </head><body><h1>Spirit</h1><p>A small electric outboard.</p>
+            <script type="text/x-magento-init">{"*":{"mage/cookies":{"path":"/"}}}</script>
+            <script type="text/x-magento-init">
+            {"[data-gallery-role=gallery-placeholder]":{"mage/gallery/gallery":{
+              "data":[{"thumb":"https://shop.test/t/a.png","img":"https://shop.test/i/a.png","full":"https://shop.test/f/a.png","isMain":true},
+                      {"thumb":"https://shop.test/t/b.jpg","img":"https://shop.test/i/b.jpg","full":"https://shop.test/f/b.jpg","isMain":false}]}}}
+            </script>
+            </body></html>"#;
+        let result = crate::extract(html, Some("https://shop.test/spirit.html")).unwrap();
+        let data = &result.structured_data;
+        let meta = data.iter().find_map(|v| v.get("meta")).unwrap();
+        assert_eq!(meta["product:price:amount"], "1998.99");
+        assert_eq!(meta["product:price:currency"], "EUR");
+        let gallery = data.iter().find_map(|v| v.get("gallery")).unwrap();
+        assert_eq!(gallery.as_array().unwrap().len(), 2);
+        assert_eq!(gallery[1]["full"], "https://shop.test/f/b.jpg");
+        assert!(!data.iter().any(|v| v.to_string().contains("mage/cookies")));
+    }
+
+    #[test]
+    fn pages_without_product_meta_or_gallery_add_nothing() {
+        let html = r#"<html><head><meta property="og:title" content="Hi"/></head><body><p>Hello world</p></body></html>"#;
+        let result = crate::extract(html, None).unwrap();
+        assert!(result.structured_data.is_empty());
     }
 }

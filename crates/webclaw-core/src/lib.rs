@@ -246,10 +246,11 @@ fn extract_with_options_inner(
     let domain_type = domain::detect(url, html);
     let domain_data = Some(DomainData { domain_type });
 
-    // Structured data: JSON-LD + __NEXT_DATA__ + SvelteKit data islands
     let mut structured_data = structured_data::extract_json_ld(html);
     structured_data.extend(structured_data::extract_next_data(html));
     structured_data.extend(structured_data::extract_sveltekit(html));
+    structured_data.extend(structured_data::extract_product_meta(&doc));
+    structured_data.extend(structured_data::extract_magento_gallery(&doc));
 
     Ok(ExtractionResult {
         metadata: meta,

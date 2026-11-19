@@ -42,7 +42,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::ExtractorInfo;
-use super::og::{og, parse_og};
+use super::og::{html_unescape, og, parse_og};
 use crate::error::FetchError;
 use crate::fetcher::Fetcher;
 
@@ -152,8 +152,8 @@ fn build_og_payload(html: &str, url: &str) -> Value {
     json!({
         "url":                url,
         "data_source":        "og_fallback",
-        "name":               og_meta.raw("title"),
-        "description":        og_meta.raw("description"),
+        "name":               og_meta.unescaped("title"),
+        "description":        og_meta.unescaped("description"),
         "brand":              meta_property(html, "product:brand"),
         "sku":                None::<String>,
         "mpn":                None::<String>,
@@ -381,7 +381,7 @@ fn meta_property(html: &str, prop: &str) -> Option<String> {
     });
     for c in re.captures_iter(html) {
         if c.get(1).is_some_and(|m| m.as_str() == prop) {
-            return c.get(2).map(|m| m.as_str().to_string());
+            return c.get(2).map(|m| html_unescape(m.as_str()));
         }
     }
     None
@@ -496,6 +496,22 @@ mod tests {
         assert_eq!(v["offers"][0]["currency"], "USD");
         assert_eq!(v["offers"][0]["availability"], "in stock");
         assert_eq!(v["images"][0], "https://cdn.example.com/candle.jpg");
+    }
+
+    #[test]
+    fn og_fallback_decodes_numeric_entities() {
+        let html = r##"<html><head>
+            <meta property="og:type" content="product">
+            <meta property="og:title"
+                  content="Spirit&#x20;1.0&#x20;PLUS&#x20;Pinne" />
+            <meta property="og:description" content="Au&#xDF;enborder &#252;ber &amp; mehr" />
+            <meta property="product:price:amount" content="1998.99">
+            <meta property="product:brand" content="ePropulsion&#x20;GmbH">
+        </head></html>"##;
+        let v = parse(html, "https://example.com/p/spirit").unwrap();
+        assert_eq!(v["brand"], "ePropulsion GmbH");
+        assert_eq!(v["name"], "Spirit 1.0 PLUS Pinne");
+        assert_eq!(v["description"], "Außenborder über & mehr");
     }
 
     #[test]

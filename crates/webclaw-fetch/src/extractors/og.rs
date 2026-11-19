@@ -72,8 +72,59 @@ impl OgMeta {
 
 /// Decode the small set of HTML entities that show up in `og:*` content.
 pub(crate) fn html_unescape(s: &str) -> String {
-    s.replace("&quot;", "\"")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let decoded = rest[1..]
+            .find(';')
+            .filter(|&end| end <= 10)
+            .and_then(|end| decode_entity(&rest[1..=end]).map(|c| (c, end + 2)));
+        match decoded {
+            Some((c, len)) => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn decode_entity(name: &str) -> Option<char> {
+    match name {
+        "quot" => Some('"'),
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "apos" => Some('\''),
+        "nbsp" => Some('\u{a0}'),
+        _ => {
+            let num = name.strip_prefix('#')?;
+            let code = match num.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => num.parse().ok()?,
+            };
+            char::from_u32(code)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::html_unescape;
+
+    #[test]
+    fn html_unescape_leaves_text_that_is_not_an_entity() {
+        assert_eq!(
+            html_unescape("AT&T &#xZZ; &unknown; 5 & 6"),
+            "AT&T &#xZZ; &unknown; 5 & 6"
+        );
+        assert_eq!(html_unescape("&amp;quot; &#39;x&#39;"), "&quot; 'x'");
+    }
 }

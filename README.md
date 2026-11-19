@@ -782,6 +782,21 @@ Please remove secrets, cookies, private tokens, and customer data from logs befo
       structured search engine results. SerpApi supports webclaw as a Strategic Partner.
     </td>
   </tr>
+  <tr>
+    <td align="center">
+      <a href="https://decodo.com/deals/free-plan-web-data-api?utm_medium=affiliate&amp;utm_source=Webclaw+OSS&amp;promoter_id=15982293&amp;fpr=webclaw-aa612b">
+        <img src="./assets/sponsors/decodo-banner.png" alt="Decodo" width="720" />
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <strong>Decodo</strong> supports webclaw as a Strategic Partner. Extract structured data from
+      websites without managing proxies, handling CAPTCHAs, or rendering JavaScript yourself.
+      Decodo comes with 125M+ built-in proxies, 100+ ready-made templates, and a 99.99% success rate.
+      <a href="https://decodo.com/deals/free-plan-web-data-api?utm_medium=affiliate&amp;utm_source=Webclaw+OSS&amp;promoter_id=15982293&amp;fpr=webclaw-aa612b">Claim 10k requests for free</a>.
+    </td>
+  </tr>
 </table>
 
 ---

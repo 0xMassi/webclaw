@@ -674,6 +674,9 @@ pub async fn smart_fetch(
         page_words
     };
     let looks_unrendered = needs_js_rendering(words, &fetch_result.html);
+    if formats.contains(&"rawHtml") {
+        extraction.content.raw_html = Some(fetch_result.html.clone());
+    }
     let empty_without_browser =
         !cfg!(feature = "browser") && issue == Some(webclaw_core::quality::ContentIssue::Empty);
     if (issue.is_none() || empty_without_browser) && looks_unrendered && cloud.is_none() {
@@ -1098,6 +1101,40 @@ mod tests {
         .expect("local extraction should be returned");
         assert!(
             matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("First result"))
+        );
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_returns_the_whole_page_html_when_raw_html_is_asked_for() {
+        let html = "<html><head><meta property=\"product:price:amount\" content=\"19.90\"></head><body><article><h1>Lamp</h1><p>A desk lamp with a long arm and a warm light that suits reading at night.</p></article><script type=\"application/json\">{\"data\":[]}</script></body></html>";
+        let result = smart_fetch(
+            &StaticPage(html),
+            None,
+            "https://example.com/lamp",
+            &[],
+            &[],
+            false,
+            &["rawHtml"],
+        )
+        .await
+        .expect("local extraction should be returned");
+        let (SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e)) = result else {
+            panic!("expected a local extraction");
+        };
+        assert_eq!(e.content.raw_html.as_deref(), Some(html));
+        let plain = smart_fetch(
+            &StaticPage(html),
+            None,
+            "https://example.com/lamp",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(plain, SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e) if e.content.raw_html.is_none())
         );
     }
 

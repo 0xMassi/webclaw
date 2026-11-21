@@ -166,7 +166,7 @@ fn parse_actions(
 
 fn citations(on: Option<bool>, format: &str, chunk: bool, tool: &str) -> Result<bool, String> {
     let on = on.unwrap_or(false);
-    if on && (chunk || matches!(format, "llm" | "text")) {
+    if on && (chunk || matches!(format, "llm" | "text" | "raw_html")) {
         let takes = match tool {
             "scrape" => "the markdown or json format, without chunk",
             "crawl" => "the markdown format, without chunk",
@@ -191,6 +191,14 @@ where
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+fn fetched_key(format: &str) -> &str {
+    if format == "raw_html" {
+        "rawHtml"
+    } else {
+        format
+    }
 }
 
 fn format_page(extraction: webclaw_core::ExtractionResult, format: &str, url: &str) -> String {
@@ -525,7 +533,7 @@ impl WebclawMcp {
             headers.push(("Cookie".into(), cookies.join("; ")));
         }
         let webclaw_fetch::render::Captured {
-            page,
+            mut page,
             js_results: results,
             network,
         } = match &capture {
@@ -573,7 +581,7 @@ impl WebclawMcp {
             webclaw_core::extract_with_options(&page.html, Some(&page.url), &options)
                 .map_err(|e| format!("Extraction failed: {e}"))?;
         if params.format.as_deref() == Some("raw_html") {
-            extraction.content.raw_html = Some(page.html.clone());
+            extraction.content.raw_html = Some(std::mem::take(&mut page.html));
         }
         if let Some(ref query) = params.query {
             webclaw_core::focus_extraction(&mut extraction, query);
@@ -687,11 +695,16 @@ impl WebclawMcp {
         validate_url(&params.url).await?;
         let sizes = chunk_sizes(params.chunk, params.chunk_overlap)?;
         let format = params.format.as_deref().unwrap_or("markdown");
+        if format == "raw_html" && sizes.is_some() {
+            return Err(
+                "chunk splits the markdown, so scrape takes it without the raw_html format".into(),
+            );
+        }
         let cite_links = citations(params.citations, format, sizes.is_some(), "scrape")?;
-        let fetched = match format {
-            _ if sizes.is_some() => "markdown",
-            "raw_html" => "rawHtml",
-            format => format,
+        let fetched = if sizes.is_some() {
+            "markdown"
+        } else {
+            fetched_key(format)
         };
         let browser = parse_browser(params.browser.as_deref())?;
         #[cfg(feature = "browser")]
@@ -1598,11 +1611,7 @@ async fn scraped(
                 .map_err(|e| e.to_string())?;
             }
             let content = resp
-                .get(if format == "raw_html" {
-                    "rawHtml"
-                } else {
-                    format
-                })
+                .get(fetched_key(format))
                 .or_else(|| resp.get("markdown"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -2136,6 +2145,26 @@ mod tests {
 
     #[cfg(not(feature = "browser"))]
     #[tokio::test]
+    async fn raw_html_refuses_chunk_and_citations_which_work_on_markdown() {
+        use rmcp::handler::server::wrapper::Parameters;
+        for extra in [json!({"chunk": 100}), json!({"citations": true})] {
+            let mut args = json!({"url": PAGE, "format": "raw_html"});
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let err = mcp(None)
+                .scrape(Parameters(serde_json::from_value(args).unwrap()))
+                .await
+                .unwrap_err();
+            assert!(
+                err.contains("raw_html") || err.contains("citations"),
+                "{err}"
+            );
+        }
+    }
+
+    #[cfg(not(feature = "browser"))]
+    #[tokio::test]
     async fn raw_html_asks_the_hosted_api_for_the_page_html_and_returns_it() {
         use rmcp::handler::server::wrapper::Parameters;
         let html = "<html><head><meta property=\"product:price:amount\" content=\"19.90\"></head><body><h1>Lamp</h1></body></html>";
@@ -2193,6 +2222,7 @@ mod tests {
             batch.contains("markdown format") && !batch.contains("json"),
             "{batch}"
         );
+        assert!(citations(Some(true), "raw_html", false, "scrape").is_err());
         let scrape = citations(Some(true), "llm", false, "scrape").unwrap_err();
         assert!(scrape.contains("markdown or json format"), "{scrape}");
         assert_eq!(citations(None, "text", true, "crawl"), Ok(false));

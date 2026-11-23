@@ -125,7 +125,7 @@ fn actions_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 pub struct ScrapeParams {
     /// URL to scrape
     pub url: String,
-    /// Output format: "markdown" (default), "llm", "text", or "json"
+    /// Output format: "markdown" (default), "llm", "text", "json", or "raw_html" for the page's full HTML, with its meta tags, JSON-LD and inline scripts, instead of extracted content. Raw HTML is often hundreds of KB, far larger than the markdown
     pub format: Option<String>,
     /// CSS selectors to include (only extract matching elements)
     pub include_selectors: Option<Vec<String>>,

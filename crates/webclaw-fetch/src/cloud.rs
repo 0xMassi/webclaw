@@ -654,14 +654,18 @@ pub async fn smart_fetch(
         webclaw_core::extract(&fetch_result.html, Some(&fetch_result.url))
             .map_or(0, |e| e.metadata.word_count)
     };
+    let mut rendered_source = None;
     if !rendered_already
         && let Some(rendered) = client.render_if_needed(&fetch_result, page_words).await
-        && let Ok(better) =
-            webclaw_core::extract_with_options(&rendered.html, Some(&rendered.url), &options)
-        && better.metadata.word_count > extraction.metadata.word_count
     {
-        extraction = better;
-        fetch_result = rendered;
+        match webclaw_core::extract_with_options(&rendered.html, Some(&rendered.url), &options) {
+            Ok(better) if better.metadata.word_count > extraction.metadata.word_count => {
+                extraction = better;
+                fetch_result = rendered;
+            }
+            _ if formats.contains(&"rawHtml") => rendered_source = Some(rendered.html),
+            _ => {}
+        }
     }
 
     let issue = webclaw_core::quality::content_issue(&extraction).filter(|issue| {
@@ -676,10 +680,16 @@ pub async fn smart_fetch(
     let looks_unrendered = needs_js_rendering(words, &fetch_result.html);
     let empty_without_browser =
         !cfg!(feature = "browser") && issue == Some(webclaw_core::quality::ContentIssue::Empty);
-    if (issue.is_none() || empty_without_browser) && looks_unrendered && cloud.is_none() {
-        return Ok(SmartFetchResult::Unrendered(Box::new(extraction)));
-    }
-    if issue.is_some() || (whole_page && looks_unrendered) {
+    let page_source_only = cloud.is_none()
+        && matches!(formats, ["rawHtml"])
+        && matches!(
+            issue,
+            None | Some(webclaw_core::quality::ContentIssue::Empty)
+        );
+    let unrendered = (issue.is_none() || empty_without_browser || page_source_only)
+        && looks_unrendered
+        && cloud.is_none();
+    if !unrendered && !page_source_only && (issue.is_some() || (whole_page && looks_unrendered)) {
         info!(
             url,
             word_count = extraction.metadata.word_count,
@@ -696,8 +706,15 @@ pub async fn smart_fetch(
         )
         .await;
     }
-
-    Ok(SmartFetchResult::Local(Box::new(extraction)))
+    if formats.contains(&"rawHtml") {
+        extraction.content.raw_html =
+            Some(rendered_source.unwrap_or_else(|| std::mem::take(&mut fetch_result.html)));
+    }
+    Ok(if unrendered {
+        SmartFetchResult::Unrendered(Box::new(extraction))
+    } else {
+        SmartFetchResult::Local(Box::new(extraction))
+    })
 }
 
 async fn cloud_scrape_fallback(
@@ -1099,6 +1116,99 @@ mod tests {
         assert!(
             matches!(result, SmartFetchResult::Local(e) if e.content.markdown.contains("First result"))
         );
+    }
+
+    #[tokio::test]
+    async fn smart_fetch_returns_the_whole_page_html_when_raw_html_is_asked_for() {
+        let html = "<html><head><meta property=\"product:price:amount\" content=\"19.90\"></head><body><article><h1>Lamp</h1><p>A desk lamp with a long arm and a warm light that suits reading at night.</p></article><script type=\"application/json\">{\"data\":[]}</script></body></html>";
+        let result = smart_fetch(
+            &StaticPage(html),
+            None,
+            "https://example.com/lamp",
+            &[],
+            &[],
+            false,
+            &["rawHtml"],
+        )
+        .await
+        .expect("local extraction should be returned");
+        let (SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e)) = result else {
+            panic!("expected a local extraction");
+        };
+        assert_eq!(e.content.raw_html.as_deref(), Some(html));
+        let plain = smart_fetch(
+            &StaticPage(html),
+            None,
+            "https://example.com/lamp",
+            &[],
+            &[],
+            false,
+            &["markdown"],
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(plain, SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e) if e.content.raw_html.is_none())
+        );
+    }
+
+    struct ScriptFilledMeta;
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for ScriptFilledMeta {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            StaticPage("<html><head></head><body><h1>Lamp</h1><div id=\"app\"></div><script src=\"/app.js\"></script></body></html>").fetch(url).await
+        }
+
+        async fn render_if_needed(
+            &self,
+            fetched: &crate::client::FetchResult,
+            _http_words: usize,
+        ) -> Option<crate::client::FetchResult> {
+            StaticPage("<html><head><meta property=\"product:price:amount\" content=\"19.90\"></head><body><h1>Lamp</h1><div id=\"app\"></div></body></html>").fetch(&fetched.url).await.ok()
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_html_keeps_the_rendered_source_when_rendering_adds_no_text() {
+        let result = smart_fetch(
+            &ScriptFilledMeta,
+            None,
+            "https://example.com/lamp",
+            &[],
+            &[],
+            false,
+            &["rawHtml"],
+        )
+        .await
+        .expect("the page source is returned");
+        let (SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e)) = result else {
+            panic!("expected the local page");
+        };
+        assert!(e.content.raw_html.unwrap().contains("19.90"));
+    }
+
+    #[tokio::test]
+    async fn raw_html_of_a_page_without_readable_text_comes_back_without_a_cloud_key() {
+        let html = "<html><head><meta property=\"product:price:amount\" content=\"19.90\"><script type=\"application/ld+json\">{\"@type\":\"Product\"}</script></head><body><div id=\"app\"></div></body></html>";
+        let result = smart_fetch(
+            &StaticPage(html),
+            None,
+            "https://example.com/lamp",
+            &[],
+            &[],
+            false,
+            &["rawHtml"],
+        )
+        .await
+        .expect("the page source is returned instead of an error");
+        let (SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e)) = result else {
+            panic!("expected the local page");
+        };
+        assert_eq!(e.content.raw_html.as_deref(), Some(html));
     }
 
     #[tokio::test]

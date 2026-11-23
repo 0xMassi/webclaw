@@ -663,7 +663,12 @@ pub async fn smart_fetch(
                 extraction = better;
                 fetch_result = rendered;
             }
-            _ if formats.contains(&"rawHtml") => rendered_source = Some(rendered.html),
+            _ if formats.contains(&"rawHtml")
+                && rendered.status < 400
+                && !blocked(&rendered.html, &rendered.headers, widgets_block) =>
+            {
+                rendered_source = Some(rendered.html)
+            }
             _ => {}
         }
     }
@@ -1189,6 +1194,49 @@ mod tests {
             panic!("expected the local page");
         };
         assert!(e.content.raw_html.unwrap().contains("19.90"));
+    }
+
+    struct RenderHitsChallenge;
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for RenderHitsChallenge {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            ScriptFilledMeta.fetch(url).await
+        }
+
+        async fn render_if_needed(
+            &self,
+            fetched: &crate::client::FetchResult,
+            _http_words: usize,
+        ) -> Option<crate::client::FetchResult> {
+            let mut page = StuckChallenge.fetch(&fetched.url).await.ok()?;
+            page.status = 200;
+            Some(page)
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_html_never_returns_a_render_that_ended_on_a_challenge() {
+        let result = smart_fetch(
+            &RenderHitsChallenge,
+            None,
+            "https://example.com/lamp",
+            &[],
+            &[],
+            false,
+            &["rawHtml"],
+        )
+        .await
+        .expect("the fetched page source is returned");
+        let (SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e)) = result else {
+            panic!("expected the local page");
+        };
+        let html = e.content.raw_html.unwrap();
+        assert!(html.contains("<h1>Lamp</h1>"));
+        assert!(!html.contains("_cf_chl_opt"));
     }
 
     #[tokio::test]

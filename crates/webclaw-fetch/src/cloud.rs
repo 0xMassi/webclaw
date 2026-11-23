@@ -654,14 +654,18 @@ pub async fn smart_fetch(
         webclaw_core::extract(&fetch_result.html, Some(&fetch_result.url))
             .map_or(0, |e| e.metadata.word_count)
     };
+    let mut rendered_source = None;
     if !rendered_already
         && let Some(rendered) = client.render_if_needed(&fetch_result, page_words).await
-        && let Ok(better) =
-            webclaw_core::extract_with_options(&rendered.html, Some(&rendered.url), &options)
-        && better.metadata.word_count > extraction.metadata.word_count
     {
-        extraction = better;
-        fetch_result = rendered;
+        match webclaw_core::extract_with_options(&rendered.html, Some(&rendered.url), &options) {
+            Ok(better) if better.metadata.word_count > extraction.metadata.word_count => {
+                extraction = better;
+                fetch_result = rendered;
+            }
+            _ if formats.contains(&"rawHtml") => rendered_source = Some(rendered.html),
+            _ => {}
+        }
     }
 
     let issue = webclaw_core::quality::content_issue(&extraction).filter(|issue| {
@@ -703,7 +707,8 @@ pub async fn smart_fetch(
         .await;
     }
     if formats.contains(&"rawHtml") {
-        extraction.content.raw_html = Some(std::mem::take(&mut fetch_result.html));
+        extraction.content.raw_html =
+            Some(rendered_source.unwrap_or_else(|| std::mem::take(&mut fetch_result.html)));
     }
     Ok(if unrendered {
         SmartFetchResult::Unrendered(Box::new(extraction))
@@ -1145,6 +1150,45 @@ mod tests {
         assert!(
             matches!(plain, SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e) if e.content.raw_html.is_none())
         );
+    }
+
+    struct ScriptFilledMeta;
+
+    #[async_trait::async_trait]
+    impl crate::fetcher::Fetcher for ScriptFilledMeta {
+        async fn fetch(
+            &self,
+            url: &str,
+        ) -> Result<crate::client::FetchResult, crate::error::FetchError> {
+            StaticPage("<html><head></head><body><h1>Lamp</h1><div id=\"app\"></div><script src=\"/app.js\"></script></body></html>").fetch(url).await
+        }
+
+        async fn render_if_needed(
+            &self,
+            fetched: &crate::client::FetchResult,
+            _http_words: usize,
+        ) -> Option<crate::client::FetchResult> {
+            StaticPage("<html><head><meta property=\"product:price:amount\" content=\"19.90\"></head><body><h1>Lamp</h1><div id=\"app\"></div></body></html>").fetch(&fetched.url).await.ok()
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_html_keeps_the_rendered_source_when_rendering_adds_no_text() {
+        let result = smart_fetch(
+            &ScriptFilledMeta,
+            None,
+            "https://example.com/lamp",
+            &[],
+            &[],
+            false,
+            &["rawHtml"],
+        )
+        .await
+        .expect("the page source is returned");
+        let (SmartFetchResult::Local(e) | SmartFetchResult::Unrendered(e)) = result else {
+            panic!("expected the local page");
+        };
+        assert!(e.content.raw_html.unwrap().contains("19.90"));
     }
 
     #[tokio::test]

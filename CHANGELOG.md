@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-11-23
+
 ### Added
 - **The MCP `scrape` tool returns a page's full HTML with `format: "raw_html"`.** Markdown leaves out what sits outside the readable content: meta tags, JSON-LD and data in inline scripts, such as a product price in a meta tag or a gallery in script JSON. `raw_html` returns the fetched or rendered page source instead, from a local fetch, a browser render or the hosted API. `citations` and `chunk` work on markdown, so the tool rejects them with `raw_html`. `webclaw_fetch::cloud::smart_fetch` now fills `content.raw_html` with the whole page when `"rawHtml"` is among the requested formats, and with no API key it returns that page source instead of an error when the page has no readable text.
 - **`webclaw_core::is_consent_wall` tells a GDPR/cookie consent page apart from the page you asked for.** It reads the final URL (`consent.google.com` and other known consent hosts and paths) and, for short pages, the title. The CLI used to keep this check to itself; it now calls the shared function, so services built on `webclaw-core` can flag the same pages. CLI behaviour is unchanged.

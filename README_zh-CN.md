@@ -453,14 +453,14 @@ URL:
   </tr>
   <tr>
     <td width="340" align="center">
-      <a href="https://mangoproxy.com/?utm_source=github&utm_medium=partner&utm_campaign=0xmassi">
+      <a href="https://mangoproxy.com/prod-isp-static/?utm_source=0xmassi&utm_medium=partner&utm_campaign=0xmassi_github">
         <img src="./assets/sponsors/mangoproxy-banner.png" alt="MangoProxy" width="300" />
       </a>
     </td>
     <td>
       <strong>MangoProxy</strong> 提供覆盖 200+ 地区的住宅、ISP、数据中心与移动代理，背靠 9000 万+ IP 池，
       支持 HTTP 与 SOCKS5，为大规模网页抓取与数据采集提供高稳定性。在
-      <a href="https://mangoproxy.com/?utm_source=github&utm_medium=partner&utm_campaign=0xmassi">mangoproxy.com</a>
+      <a href="https://mangoproxy.com/prod-isp-static/?utm_source=0xmassi&utm_medium=partner&utm_campaign=0xmassi_github">mangoproxy.com</a>
       使用优惠码 <code>0XMASSI</code> 享 ISP（静态）代理 8% 折扣。
     </td>
   </tr>

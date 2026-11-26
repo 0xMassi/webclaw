@@ -339,7 +339,8 @@ fn parse_urlset(xml: &str) -> Vec<SitemapEntry> {
     let mut entries = Vec::new();
 
     // State for current <url> element being parsed
-    let mut in_url = false;
+    let mut depth: usize = 0;
+    let mut url_depth = None;
     let mut current_tag: Option<UrlTag> = None;
     let mut loc: Option<String> = None;
     let mut lastmod: Option<String> = None;
@@ -349,25 +350,42 @@ fn parse_urlset(xml: &str) -> Vec<SitemapEntry> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
+                depth += 1;
+                let is_url_child = url_depth == Some(depth - 1);
                 let name = e.local_name();
                 match name.as_ref() {
-                    b"url" => {
-                        in_url = true;
+                    b"url" if url_depth.is_none() => {
+                        url_depth = Some(depth);
+                        current_tag = None;
                         loc = None;
                         lastmod = None;
                         priority = None;
                         changefreq = None;
                     }
-                    b"loc" if in_url => current_tag = Some(UrlTag::Loc),
-                    b"lastmod" if in_url => current_tag = Some(UrlTag::LastMod),
-                    b"priority" if in_url => current_tag = Some(UrlTag::Priority),
-                    b"changefreq" if in_url => current_tag = Some(UrlTag::ChangeFreq),
+                    b"loc" if is_url_child => current_tag = Some(UrlTag::Loc),
+                    b"lastmod" if is_url_child => current_tag = Some(UrlTag::LastMod),
+                    b"priority" if is_url_child => current_tag = Some(UrlTag::Priority),
+                    b"changefreq" if is_url_child => current_tag = Some(UrlTag::ChangeFreq),
                     _ => current_tag = None,
                 }
             }
             Ok(Event::Text(ref e)) => {
                 if let Some(ref tag) = current_tag
                     && let Some(text) = crate::xml::decode_text(e)
+                {
+                    append_url_text(
+                        tag,
+                        &text,
+                        &mut loc,
+                        &mut lastmod,
+                        &mut priority,
+                        &mut changefreq,
+                    );
+                }
+            }
+            Ok(Event::CData(ref e)) => {
+                if let Some(ref tag) = current_tag
+                    && let Ok(text) = e.xml10_content()
                 {
                     append_url_text(
                         tag,
@@ -395,7 +413,7 @@ fn parse_urlset(xml: &str) -> Vec<SitemapEntry> {
             }
             Ok(Event::End(ref e)) => {
                 let name = e.local_name();
-                if name.as_ref() == b"url" && in_url {
+                if name.as_ref() == b"url" && url_depth == Some(depth) {
                     if let Some(url) = loc.take().map(|value| value.trim().to_string())
                         && !url.is_empty()
                     {
@@ -406,9 +424,10 @@ fn parse_urlset(xml: &str) -> Vec<SitemapEntry> {
                             change_freq: changefreq.take().map(|value| value.trim().to_string()),
                         });
                     }
-                    in_url = false;
+                    url_depth = None;
                 }
                 current_tag = None;
+                depth = depth.saturating_sub(1);
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -473,6 +492,11 @@ fn parse_sitemap_index(xml: &str) -> Vec<String> {
             }
             Ok(Event::Text(ref e)) => {
                 if in_loc && let Some(text) = crate::xml::decode_text(e) {
+                    current_loc.push_str(&text);
+                }
+            }
+            Ok(Event::CData(ref e)) => {
+                if in_loc && let Ok(text) = e.xml10_content() {
                     current_loc.push_str(&text);
                 }
             }
@@ -641,6 +665,69 @@ mod tests {
         assert_eq!(
             parse_sitemap_index(index),
             ["https://example.com/sitemap?a=1&b=2"]
+        );
+    }
+
+    #[test]
+    fn urlset_preserves_cdata_and_adjacent_text() {
+        let xml = r#"<urlset><url>
+<loc>https://example.com/<![CDATA[search?a=1&b=2]]>&amp;c=3</loc>
+<lastmod><![CDATA[2026-11-17]]></lastmod>
+<priority><![CDATA[0.8]]></priority>
+<changefreq><![CDATA[daily]]></changefreq>
+</url></urlset>"#;
+        let entries = parse_sitemap_xml(xml);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, "https://example.com/search?a=1&b=2&c=3");
+        assert_eq!(entries[0].last_modified.as_deref(), Some("2026-11-17"));
+        assert_eq!(entries[0].priority, Some(0.8));
+        assert_eq!(entries[0].change_freq.as_deref(), Some("daily"));
+    }
+
+    #[test]
+    fn urlset_ignores_nested_extension_fields() {
+        for image_loc in [
+            "https://example.com/image?a=1&amp;b=2",
+            "<![CDATA[https://example.com/image?a=1&b=2]]>",
+        ] {
+            let xml = format!(
+                r#"<urlset xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+<url>
+<loc>https://example.com/page?a=1&amp;b=2</loc>
+<lastmod>2026-11-17</lastmod>
+<priority>0.8</priority>
+<changefreq>daily</changefreq>
+<image:image>
+<image:loc>{image_loc}</image:loc>
+<lastmod><![CDATA[2000-01-01]]></lastmod>
+<priority>0.1</priority>
+<changefreq>never</changefreq>
+</image:image>
+</url>
+<url><loc><![CDATA[https://example.com/next]]></loc></url>
+</urlset>"#
+            );
+            let entries = parse_sitemap_xml(&xml);
+            assert_eq!(entries.len(), 2);
+            assert_eq!(entries[0].url, "https://example.com/page?a=1&b=2");
+            assert_eq!(entries[0].last_modified.as_deref(), Some("2026-11-17"));
+            assert_eq!(entries[0].priority, Some(0.8));
+            assert_eq!(entries[0].change_freq.as_deref(), Some("daily"));
+            assert_eq!(entries[1].url, "https://example.com/next");
+            assert_eq!(entries[1].last_modified, None);
+        }
+    }
+
+    #[test]
+    fn sitemap_index_preserves_cdata_urls() {
+        let xml = r#"<sitemapindex><sitemap>
+<loc><![CDATA[https://example.com/sitemap?a=1&b=2&amp;c=3]]></loc>
+</sitemap></sitemapindex>"#;
+        let entries = parse_sitemap_xml(xml);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url,
+            "https://example.com/sitemap?a=1&b=2&amp;c=3"
         );
     }
 
